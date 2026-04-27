@@ -42,6 +42,10 @@ These rules apply to all Java code written or modified in this repository.
 - Prefer commands such as `./gradlew -g .gradle-user-home ...` or the equivalent environment-variable-based configuration.
 - When running Gradle `test` tasks, use a higher timeout of ten minutes.
 
+## Project Workflow
+
+- 请在每次完成后清理 PLANS.md。
+
 ## Commit Messages
 
 - After each completed modification, generate a commit message for the user, but do not run git commands to create the commit.
