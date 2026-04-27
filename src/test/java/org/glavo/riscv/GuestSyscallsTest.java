@@ -52,6 +52,9 @@ public final class GuestSyscallsTest {
     /// Linux `EINTR` as a raw negative syscall result.
     private static final long EINTR = -4;
 
+    /// Linux `EAGAIN` as a raw negative syscall result.
+    private static final long EAGAIN = -11;
+
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
 
@@ -64,8 +67,14 @@ public final class GuestSyscallsTest {
     /// Linux `ENOTTY` as a raw negative syscall result.
     private static final long ENOTTY = -25;
 
+    /// Linux `ENOSYS` as a raw negative syscall result.
+    private static final long ENOSYS = -38;
+
     /// Linux `ESPIPE` as a raw negative syscall result.
     private static final long ESPIPE = -29;
+
+    /// Linux `ETIMEDOUT` as a raw negative syscall result.
+    private static final long ETIMEDOUT = -110;
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
@@ -99,6 +108,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final long SYS_SET_TID_ADDRESS = 96;
+
+    /// The Linux RISC-V syscall number for `futex`.
+    private static final long SYS_FUTEX = 98;
 
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
@@ -321,6 +333,27 @@ public final class GuestSyscallsTest {
 
     /// Linux `MAP_NORESERVE`.
     private static final long MAP_NORESERVE = 0x4000;
+
+    /// Linux `FUTEX_WAIT`.
+    private static final long FUTEX_WAIT = 0;
+
+    /// Linux `FUTEX_WAKE`.
+    private static final long FUTEX_WAKE = 1;
+
+    /// Linux `FUTEX_WAIT_BITSET`.
+    private static final long FUTEX_WAIT_BITSET = 9;
+
+    /// Linux `FUTEX_WAKE_BITSET`.
+    private static final long FUTEX_WAKE_BITSET = 10;
+
+    /// Linux `FUTEX_PRIVATE_FLAG`.
+    private static final long FUTEX_PRIVATE_FLAG = 128;
+
+    /// Linux `FUTEX_CLOCK_REALTIME`.
+    private static final long FUTEX_CLOCK_REALTIME = 256;
+
+    /// Linux `FUTEX_BITSET_MATCH_ANY`.
+    private static final long FUTEX_BITSET_MATCH_ANY = 0xffff_ffffL;
 
     /// Linux `CLONE_VM`.
     private static final long CLONE_VM = 0x00000100L;
@@ -991,6 +1024,98 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SET_ROBUST_LIST, memory.baseAddress() + 64, -1, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies non-blocking single-threaded futex wait results.
+    @Test
+    public void futexWaitComparesWordAndReturnsImmediately() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long futexAddress = memory.baseAddress() + 64;
+            long timeoutAddress = memory.baseAddress() + 80;
+
+            memory.writeInt(futexAddress, 7);
+            setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 9, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 7, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ETIMEDOUT, state.register(10));
+
+            memory.writeLong(timeoutAddress, 0);
+            memory.writeLong(timeoutAddress + Long.BYTES, 1);
+            setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 7, timeoutAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ETIMEDOUT, state.register(10));
+
+            memory.writeLong(timeoutAddress + Long.BYTES, 1_000_000_000L);
+            setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 7, timeoutAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies futex wake operations against the empty waiter set.
+    @Test
+    public void futexWakeReportsNoWaiters() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long futexAddress = memory.baseAddress() + 64;
+
+            setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_FUTEX,
+                    futexAddress,
+                    FUTEX_WAKE_BITSET | FUTEX_PRIVATE_FLAG,
+                    1,
+                    0,
+                    0,
+                    FUTEX_BITSET_MATCH_ANY);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, -1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies futex validation and unsupported operation reporting.
+    @Test
+    public void futexRejectsInvalidOrUnsupportedOperations() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long futexAddress = memory.baseAddress() + 64;
+
+            setSyscall(state, SYS_FUTEX, futexAddress + 1, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_FUTEX,
+                    futexAddress,
+                    FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME,
+                    0,
+                    0,
+                    0,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAKE | FUTEX_CLOCK_REALTIME, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX, futexAddress, 3 | FUTEX_PRIVATE_FLAG, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOSYS, state.register(10));
         }
     }
 

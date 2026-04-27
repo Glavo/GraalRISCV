@@ -62,6 +62,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final long SYS_SET_TID_ADDRESS = 96;
 
+    /// The Linux RISC-V syscall number for `futex`.
+    private static final long SYS_FUTEX = 98;
+
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
 
@@ -134,6 +137,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `EINTR` as a raw negative syscall result.
     private static final long EINTR = -4;
 
+    /// Linux `EAGAIN` as a raw negative syscall result.
+    private static final long EAGAIN = -11;
+
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
 
@@ -149,8 +155,14 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `ENAMETOOLONG` as a raw negative syscall result.
     private static final long ENAMETOOLONG = -36;
 
+    /// Linux `ENOSYS` as a raw negative syscall result.
+    private static final long ENOSYS = -38;
+
     /// Linux `ESPIPE` as a raw negative syscall result.
     private static final long ESPIPE = -29;
+
+    /// Linux `ETIMEDOUT` as a raw negative syscall result.
+    private static final long ETIMEDOUT = -110;
 
     /// The maximum Linux `iovcnt` accepted by `readv` and `writev`.
     private static final long IOV_MAX = 1024;
@@ -319,6 +331,33 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `MADV_COLLAPSE`.
     private static final long MADV_COLLAPSE = 25;
+
+    /// Linux `FUTEX_WAIT`.
+    private static final long FUTEX_WAIT = 0;
+
+    /// Linux `FUTEX_WAKE`.
+    private static final long FUTEX_WAKE = 1;
+
+    /// Linux `FUTEX_WAIT_BITSET`.
+    private static final long FUTEX_WAIT_BITSET = 9;
+
+    /// Linux `FUTEX_WAKE_BITSET`.
+    private static final long FUTEX_WAKE_BITSET = 10;
+
+    /// Linux futex command mask.
+    private static final long FUTEX_COMMAND_MASK = 0x7f;
+
+    /// Linux `FUTEX_PRIVATE_FLAG`.
+    private static final long FUTEX_PRIVATE_FLAG = 128;
+
+    /// Linux `FUTEX_CLOCK_REALTIME`.
+    private static final long FUTEX_CLOCK_REALTIME = 256;
+
+    /// Linux futex flags accepted by this simulator.
+    private static final long SUPPORTED_FUTEX_FLAGS = FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME;
+
+    /// Linux `FUTEX_BITSET_MATCH_ANY`.
+    private static final long FUTEX_BITSET_MATCH_ANY = 0xffff_ffffL;
 
     /// Linux `CLONE_VM`.
     private static final long CLONE_VM = 0x00000100L;
@@ -876,6 +915,16 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, setTidAddress(state.register(10)));
             return;
         }
+        if (callNumber == SYS_FUTEX) {
+            state.setRegister(10, futex(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
+            return;
+        }
         if (callNumber == SYS_SET_ROBUST_LIST) {
             state.setRegister(10, setRobustList(state.register(10), state.register(11)));
             return;
@@ -1405,6 +1454,64 @@ public final class GuestSyscalls implements AutoCloseable {
     private long setTidAddress(long address) {
         clearChildTidAddress = address;
         return GUEST_PROCESS_ID;
+    }
+
+    /// Handles single-threaded Linux futex wait and wake operations.
+    private long futex(
+            long address,
+            long operation,
+            long expectedValue,
+            long timeoutAddress,
+            long secondAddress,
+            long thirdValue) {
+        if ((address & (Integer.BYTES - 1L)) != 0) {
+            return EINVAL;
+        }
+
+        long command = operation & FUTEX_COMMAND_MASK;
+        long flags = operation & ~FUTEX_COMMAND_MASK;
+        if ((flags & ~SUPPORTED_FUTEX_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if ((flags & FUTEX_CLOCK_REALTIME) != 0 && command != FUTEX_WAIT && command != FUTEX_WAIT_BITSET) {
+            return EINVAL;
+        }
+
+        return switch ((int) command) {
+            case (int) FUTEX_WAIT -> futexWait(address, expectedValue, timeoutAddress, FUTEX_BITSET_MATCH_ANY);
+            case (int) FUTEX_WAKE -> futexWake(expectedValue, FUTEX_BITSET_MATCH_ANY);
+            case (int) FUTEX_WAIT_BITSET -> futexWait(address, expectedValue, timeoutAddress, thirdValue);
+            case (int) FUTEX_WAKE_BITSET -> futexWake(expectedValue, thirdValue);
+            default -> ENOSYS;
+        };
+    }
+
+    /// Handles a futex wait without blocking the single-threaded interpreter.
+    private long futexWait(long address, long expectedValue, long timeoutAddress, long bitset) {
+        if ((bitset & 0xffff_ffffL) == 0) {
+            return EINVAL;
+        }
+
+        int currentValue = memory.readInt(address);
+        if (currentValue != (int) expectedValue) {
+            return EAGAIN;
+        }
+        if (timeoutAddress != 0) {
+            long seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
+            long nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            if (!isValidTimespec(seconds, nanoseconds)) {
+                return EINVAL;
+            }
+        }
+        return ETIMEDOUT;
+    }
+
+    /// Handles a futex wake against an empty single-threaded waiter set.
+    private static long futexWake(long count, long bitset) {
+        if (count < 0 || (bitset & 0xffff_ffffL) == 0) {
+            return EINVAL;
+        }
+        return 0;
     }
 
     /// Handles the parent return path for Linux thread-style `clone` requests.
