@@ -7,12 +7,8 @@ These rules apply to all Java code written or modified in this repository.
 - Annotate every class with JetBrains Annotations `@NotNullByDefault`.
 - Any type, field, parameter, return value, local variable, or generic type argument that may be `null` must be explicitly annotated with `@Nullable`.
 - Nullability must never be implicit.
-
-## Optional Values
-
 - Do not use Java `Optional`.
 - Represent optional or absent values with `@Nullable` instead.
-- Do not introduce APIs that require callers to unwrap `Optional`.
 
 ## Java Types
 
@@ -44,7 +40,8 @@ These rules apply to all Java code written or modified in this repository.
 
 ## Project Workflow
 
-- 请在每次完成后清理 PLANS.md。
+- After completing a task, update `PLANS.md` to remove or revise only the work that is actually done.
+- Do not delete active or still-relevant plans from `PLANS.md`; preserve pending work and update it as needed.
 
 ## Commit Messages
 
