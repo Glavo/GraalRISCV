@@ -4,6 +4,7 @@ import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -50,6 +51,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `writev`.
     private static final long SYS_WRITEV = 66;
 
+    /// The Linux RISC-V syscall number for `readlinkat`.
+    private static final long SYS_READLINKAT = 78;
+
+    /// The Linux RISC-V syscall number for `newfstatat`.
+    private static final long SYS_NEWFSTATAT = 79;
+
     /// The Linux RISC-V syscall number for `fstat`.
     private static final long SYS_FSTAT = 80;
 
@@ -86,11 +93,29 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `uname`.
+    private static final long SYS_UNAME = 160;
+
     /// The Linux RISC-V syscall number for `prctl`.
     private static final long SYS_PRCTL = 167;
 
+    /// The Linux RISC-V syscall number for `gettimeofday`.
+    private static final long SYS_GETTIMEOFDAY = 169;
+
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
+
+    /// The Linux RISC-V syscall number for `getuid`.
+    private static final long SYS_GETUID = 174;
+
+    /// The Linux RISC-V syscall number for `geteuid`.
+    private static final long SYS_GETEUID = 175;
+
+    /// The Linux RISC-V syscall number for `getgid`.
+    private static final long SYS_GETGID = 176;
+
+    /// The Linux RISC-V syscall number for `getegid`.
+    private static final long SYS_GETEGID = 177;
 
     /// The Linux RISC-V syscall number for `gettid`.
     private static final long SYS_GETTID = 178;
@@ -116,6 +141,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
     private static final long SYS_RISCV_HWPROBE = 258;
 
+    /// The Linux RISC-V syscall number for `prlimit64`.
+    private static final long SYS_PRLIMIT64 = 261;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -125,8 +153,14 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `ENOENT` as a raw negative syscall result.
     private static final long ENOENT = -2;
 
+    /// Linux `ESRCH` as a raw negative syscall result.
+    private static final long ESRCH = -3;
+
     /// Linux `EACCES` as a raw negative syscall result.
     private static final long EACCES = -13;
+
+    /// Linux `EPERM` as a raw negative syscall result.
+    private static final long EPERM = -1;
 
     /// Linux `ENOMEM` as a raw negative syscall result.
     private static final long ENOMEM = -12;
@@ -178,6 +212,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
     private static final long AT_FDCWD = -100;
+
+    /// Linux `AT_SYMLINK_NOFOLLOW`.
+    private static final long AT_SYMLINK_NOFOLLOW = 0x100;
+
+    /// Linux `AT_EMPTY_PATH`.
+    private static final long AT_EMPTY_PATH = 0x1000;
+
+    /// Linux `newfstatat` flags accepted by this simulator.
+    private static final long SUPPORTED_NEWFSTATAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
 
     /// Linux `O_ACCMODE`.
     private static final long O_ACCMODE = 0x3;
@@ -238,6 +281,72 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE = 128;
+
+    /// The byte size of one Linux `struct utsname` field.
+    private static final int UTSNAME_FIELD_SIZE = 65;
+
+    /// The byte size of Linux `struct utsname`.
+    private static final int UTSNAME_SIZE = 6 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `sysname` inside Linux `struct utsname`.
+    private static final int UTSNAME_SYSNAME_OFFSET = 0;
+
+    /// The byte offset of `nodename` inside Linux `struct utsname`.
+    private static final int UTSNAME_NODENAME_OFFSET = UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `release` inside Linux `struct utsname`.
+    private static final int UTSNAME_RELEASE_OFFSET = 2 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `version` inside Linux `struct utsname`.
+    private static final int UTSNAME_VERSION_OFFSET = 3 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `machine` inside Linux `struct utsname`.
+    private static final int UTSNAME_MACHINE_OFFSET = 4 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `domainname` inside Linux `struct utsname`.
+    private static final int UTSNAME_DOMAINNAME_OFFSET = 5 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `tv_sec` inside Linux RISC-V 64-bit `struct timeval`.
+    private static final int TIMEVAL_SECONDS_OFFSET = 0;
+
+    /// The byte offset of `tv_usec` inside Linux RISC-V 64-bit `struct timeval`.
+    private static final int TIMEVAL_MICROSECONDS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `tz_minuteswest` inside Linux `struct timezone`.
+    private static final int TIMEZONE_MINUTESWEST_OFFSET = 0;
+
+    /// The byte offset of `tz_dsttime` inside Linux `struct timezone`.
+    private static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `rlim_cur` inside Linux RISC-V 64-bit `struct rlimit64`.
+    private static final int RLIMIT_CURRENT_OFFSET = 0;
+
+    /// The byte offset of `rlim_max` inside Linux RISC-V 64-bit `struct rlimit64`.
+    private static final int RLIMIT_MAXIMUM_OFFSET = Long.BYTES;
+
+    /// Linux `RLIM_INFINITY`.
+    private static final long RLIM_INFINITY = -1L;
+
+    /// The number of Linux resource limits tracked by this simulator.
+    private static final int RESOURCE_LIMIT_COUNT = 16;
+
+    /// Linux `RLIMIT_STACK`.
+    private static final int RLIMIT_STACK = 3;
+
+    /// Linux `RLIMIT_NOFILE`.
+    private static final int RLIMIT_NOFILE = 7;
+
+    /// The default stack soft limit exposed through `prlimit64`.
+    private static final long DEFAULT_STACK_LIMIT = 8L * 1024L * 1024L;
+
+    /// The default open-file soft and hard limit exposed through `prlimit64`.
+    private static final long DEFAULT_OPEN_FILE_LIMIT = 1024;
+
+    /// Default Linux resource-limit soft values.
+    private static final long @Unmodifiable [] DEFAULT_RESOURCE_LIMIT_CURRENT = initialResourceLimitCurrent();
+
+    /// Default Linux resource-limit hard values.
+    private static final long @Unmodifiable [] DEFAULT_RESOURCE_LIMIT_MAXIMUM = initialResourceLimitMaximum();
 
     /// The guest page size used for page-based Linux memory syscalls.
     private static final long PAGE_SIZE = 4096;
@@ -652,6 +761,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux `S_IFCHR` file type bit used for character devices.
     private static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
 
+    /// The Linux `S_IFDIR` file type bit used for directories.
+    private static final int STAT_MODE_DIRECTORY = 0040000;
+
     /// The Linux `S_IFREG` file type bit used for regular files.
     private static final int STAT_MODE_REGULAR_FILE = 0100000;
 
@@ -661,6 +773,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The file permission bits exposed for read-only host files.
     private static final int STAT_MODE_READ_ALL = 0444;
 
+    /// The file permission bits exposed for readable host directories.
+    private static final int STAT_MODE_READ_EXECUTE_ALL = 0555;
+
     /// The `st_mode` value exposed for the simulator standard streams.
     private static final int STANDARD_STREAM_STAT_MODE = STAT_MODE_CHARACTER_DEVICE | STAT_MODE_READ_WRITE_ALL;
 
@@ -669,6 +784,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The fixed guest process id returned by process identity syscalls.
     private static final long GUEST_PROCESS_ID = 1;
+
+    /// The deterministic guest user id exposed by identity syscalls.
+    private static final long GUEST_USER_ID = 1000;
+
+    /// The deterministic guest group id exposed by identity syscalls.
+    private static final long GUEST_GROUP_ID = 1000;
 
     /// The non-cryptographic seed used for deterministic `getrandom` bytes.
     private static final long RANDOM_SEED = 0x4752_4953_4356_0001L;
@@ -757,6 +878,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The transparent huge page disable state reported by `PR_GET_THP_DISABLE`.
     private int transparentHugePagesDisabled;
 
+    /// The current soft resource limits returned by `prlimit64`.
+    private final long[] resourceLimitCurrent = DEFAULT_RESOURCE_LIMIT_CURRENT.clone();
+
+    /// The current hard resource limits returned by `prlimit64`.
+    private final long[] resourceLimitMaximum = DEFAULT_RESOURCE_LIMIT_MAXIMUM.clone();
+
     /// The next deterministic random state used by `getrandom`.
     private long randomState = RANDOM_SEED;
 
@@ -772,6 +899,27 @@ public final class GuestSyscalls implements AutoCloseable {
         byte[] defaultName = RiscVLanguage.ID.getBytes(StandardCharsets.US_ASCII);
         System.arraycopy(defaultName, 0, name, 0, Math.min(defaultName.length, TASK_COMMAND_LENGTH - 1));
         return name;
+    }
+
+    /// Creates the default soft Linux resource-limit table.
+    private static long @Unmodifiable [] initialResourceLimitCurrent() {
+        long[] limits = new long[RESOURCE_LIMIT_COUNT];
+        for (int index = 0; index < limits.length; index++) {
+            limits[index] = RLIM_INFINITY;
+        }
+        limits[RLIMIT_STACK] = DEFAULT_STACK_LIMIT;
+        limits[RLIMIT_NOFILE] = DEFAULT_OPEN_FILE_LIMIT;
+        return limits;
+    }
+
+    /// Creates the default hard Linux resource-limit table.
+    private static long @Unmodifiable [] initialResourceLimitMaximum() {
+        long[] limits = new long[RESOURCE_LIMIT_COUNT];
+        for (int index = 0; index < limits.length; index++) {
+            limits[index] = RLIM_INFINITY;
+        }
+        limits[RLIMIT_NOFILE] = DEFAULT_OPEN_FILE_LIMIT;
+        return limits;
     }
 
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
@@ -904,6 +1052,22 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, writev((int) state.register(10), state.register(11), state.register(12)));
             return;
         }
+        if (callNumber == SYS_READLINKAT) {
+            state.setRegister(10, readlinkat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_NEWFSTATAT) {
+            state.setRegister(10, newfstatat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            return;
+        }
         if (callNumber == SYS_FSTAT) {
             state.setRegister(10, fstat((int) state.register(10), state.register(11)));
             return;
@@ -961,6 +1125,10 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(13)));
             return;
         }
+        if (callNumber == SYS_UNAME) {
+            state.setRegister(10, uname(state.register(10)));
+            return;
+        }
         if (callNumber == SYS_PRCTL) {
             state.setRegister(10, prctl(
                     state.register(10),
@@ -970,8 +1138,20 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(14)));
             return;
         }
+        if (callNumber == SYS_GETTIMEOFDAY) {
+            state.setRegister(10, gettimeofday(state.register(10), state.register(11)));
+            return;
+        }
         if (callNumber == SYS_GETPID || callNumber == SYS_GETTID) {
             state.setRegister(10, GUEST_PROCESS_ID);
+            return;
+        }
+        if (callNumber == SYS_GETUID || callNumber == SYS_GETEUID) {
+            state.setRegister(10, GUEST_USER_ID);
+            return;
+        }
+        if (callNumber == SYS_GETGID || callNumber == SYS_GETEGID) {
+            state.setRegister(10, GUEST_GROUP_ID);
             return;
         }
         if (callNumber == SYS_CLONE) {
@@ -1016,6 +1196,14 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            return;
+        }
+        if (callNumber == SYS_PRLIMIT64) {
+            state.setRegister(10, prlimit64(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             return;
         }
         if (callNumber == SYS_GETRANDOM) {
@@ -1378,14 +1566,86 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Writes a minimal Linux generic 64-bit `struct stat`.
+    /// Reads a sandboxed symbolic link target into guest memory.
+    private long readlinkat(long directoryFileDescriptor, long pathAddress, long bufferAddress, long bufferSize) {
+        if (directoryFileDescriptor != AT_FDCWD) {
+            return EBADF;
+        }
+        if (bufferSize <= 0 || bufferSize > Integer.MAX_VALUE) {
+            return EINVAL;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+
+        try {
+            if (!hostFile.exists()) {
+                return ENOENT;
+            }
+            if (!hostFile.isSymbolicLink()) {
+                return EINVAL;
+            }
+            if (!canonicalFileStaysBelowHostRoot(hostFile)) {
+                return EACCES;
+            }
+
+            String target = hostFile.readSymbolicLink().toString();
+            byte[] targetBytes = target.getBytes(StandardCharsets.UTF_8);
+            int length = Math.min(targetBytes.length, (int) bufferSize);
+            memory.writeBytes(bufferAddress, targetBytes, 0, length);
+            return length;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Writes a minimal Linux generic 64-bit `struct stat` for a path or file descriptor.
+    private long newfstatat(long directoryFileDescriptor, long pathAddress, long statAddress, long flags) {
+        if ((flags & ~SUPPORTED_NEWFSTATAT_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+
+        if (guestPath.isEmpty()) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return ENOENT;
+            }
+            if (directoryFileDescriptor == AT_FDCWD) {
+                @Nullable TruffleFile root = currentHostRoot();
+                return root == null ? EACCES : statHostFile(root, statAddress);
+            }
+            return fstat((int) directoryFileDescriptor, statAddress);
+        }
+
+        if (directoryFileDescriptor != AT_FDCWD) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+        return statHostFile(hostFile, statAddress);
+    }
+
+    /// Writes a minimal Linux generic 64-bit `struct stat` for a file descriptor.
     private long fstat(int fileDescriptor, long statAddress) {
         if (isStandardFileDescriptor(fileDescriptor)) {
-            memory.clear(statAddress, STAT_SIZE);
-            memory.writeLong(statAddress + STAT_INODE_OFFSET, fileDescriptor + 1L);
-            memory.writeInt(statAddress + STAT_MODE_OFFSET, STANDARD_STREAM_STAT_MODE);
-            memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
-            memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
+            writeStat(statAddress, fileDescriptor + 1L, STANDARD_STREAM_STAT_MODE, 0);
             return 0;
         }
 
@@ -1398,17 +1658,55 @@ public final class GuestSyscalls implements AutoCloseable {
             long size = openFile.channel().size();
             int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
                     | (openFile.writable() ? 0222 : 0);
-            memory.clear(statAddress, STAT_SIZE);
-            memory.writeLong(statAddress + STAT_INODE_OFFSET, fileDescriptor + 1L);
-            memory.writeInt(statAddress + STAT_MODE_OFFSET, STAT_MODE_REGULAR_FILE | permissions);
-            memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
-            memory.writeLong(statAddress + STAT_SIZE_OFFSET, size);
-            memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
-            memory.writeLong(statAddress + STAT_BLOCK_COUNT_OFFSET, (size + 511L) / 512L);
+            writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_REGULAR_FILE | permissions, size);
             return 0;
         } catch (IOException exception) {
             throw new RiscVException("Guest fstat syscall failed", exception);
         }
+    }
+
+    /// Writes a minimal Linux generic 64-bit `struct stat` for a sandboxed host file.
+    private long statHostFile(TruffleFile hostFile, long statAddress) {
+        try {
+            if (!hostFile.exists()) {
+                return ENOENT;
+            }
+            if (!canonicalFileStaysBelowHostRoot(hostFile)) {
+                return EACCES;
+            }
+
+            if (hostFile.isDirectory()) {
+                int permissions = hostFile.isReadable() ? STAT_MODE_READ_EXECUTE_ALL : 0;
+                writeStat(statAddress, syntheticInode(hostFile), STAT_MODE_DIRECTORY | permissions, 0);
+                return 0;
+            }
+            if (hostFile.isRegularFile()) {
+                long size = hostFile.size();
+                int permissions = (hostFile.isReadable() ? STAT_MODE_READ_ALL : 0)
+                        | (hostFile.isWritable() ? 0222 : 0);
+                writeStat(statAddress, syntheticInode(hostFile), STAT_MODE_REGULAR_FILE | permissions, size);
+                return 0;
+            }
+            return ENODEV;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Writes the shared subset of Linux generic 64-bit `struct stat` fields.
+    private void writeStat(long statAddress, long inode, int mode, long size) {
+        memory.clear(statAddress, STAT_SIZE);
+        memory.writeLong(statAddress + STAT_INODE_OFFSET, inode);
+        memory.writeInt(statAddress + STAT_MODE_OFFSET, mode);
+        memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
+        memory.writeLong(statAddress + STAT_SIZE_OFFSET, size);
+        memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
+        memory.writeLong(statAddress + STAT_BLOCK_COUNT_OFFSET, (size + 511L) / 512L);
+    }
+
+    /// Returns a deterministic synthetic inode number for a sandboxed host path.
+    private static long syntheticInode(TruffleFile hostFile) {
+        return Integer.toUnsignedLong(hostFile.toString().hashCode()) + 1024L;
     }
 
     /// Handles tty-related ioctls used by common `isatty` and stdio setup paths.
@@ -1756,6 +2054,39 @@ public final class GuestSyscalls implements AutoCloseable {
             }
         }
         return true;
+    }
+
+    /// Writes a deterministic Linux `struct utsname` for the simulated guest.
+    private long uname(long utsnameAddress) {
+        memory.clear(utsnameAddress, UTSNAME_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_SYSNAME_OFFSET, "Linux", UTSNAME_FIELD_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_NODENAME_OFFSET, "localhost", UTSNAME_FIELD_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_RELEASE_OFFSET, "6.12.0", UTSNAME_FIELD_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_VERSION_OFFSET, "#1 SMP", UTSNAME_FIELD_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_MACHINE_OFFSET, "riscv64", UTSNAME_FIELD_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_DOMAINNAME_OFFSET, "localdomain", UTSNAME_FIELD_SIZE);
+        return 0;
+    }
+
+    /// Writes a null-terminated US-ASCII string into a fixed-size guest field.
+    private void writeNullTerminatedAscii(long address, String value, int fieldSize) {
+        byte[] bytes = value.getBytes(StandardCharsets.US_ASCII);
+        int length = Math.min(bytes.length, fieldSize - 1);
+        memory.writeBytes(address, bytes, 0, length);
+    }
+
+    /// Writes Linux `struct timeval` and optional `struct timezone` values.
+    private long gettimeofday(long timevalAddress, long timezoneAddress) {
+        if (timevalAddress != 0) {
+            Instant instant = clock.instant();
+            memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, instant.getEpochSecond());
+            memory.writeLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET, instant.getNano() / 1000L);
+        }
+        if (timezoneAddress != 0) {
+            memory.writeInt(timezoneAddress + TIMEZONE_MINUTESWEST_OFFSET, 0);
+            memory.writeInt(timezoneAddress + TIMEZONE_DSTTIME_OFFSET, 0);
+        }
+        return 0;
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timespec` for common clock ids.
@@ -2163,6 +2494,43 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Gets or lowers Linux resource limits for the single guest process.
+    private long prlimit64(long processId, long resource, long newLimitAddress, long oldLimitAddress) {
+        if (processId != 0 && processId != GUEST_PROCESS_ID) {
+            return ESRCH;
+        }
+        if (resource < 0 || resource >= RESOURCE_LIMIT_COUNT) {
+            return EINVAL;
+        }
+
+        int index = (int) resource;
+        long oldCurrent = resourceLimitCurrent[index];
+        long oldMaximum = resourceLimitMaximum[index];
+        if (oldLimitAddress != 0) {
+            writeResourceLimit(oldLimitAddress, oldCurrent, oldMaximum);
+        }
+
+        if (newLimitAddress != 0) {
+            long newCurrent = memory.readLong(newLimitAddress + RLIMIT_CURRENT_OFFSET);
+            long newMaximum = memory.readLong(newLimitAddress + RLIMIT_MAXIMUM_OFFSET);
+            if (Long.compareUnsigned(newCurrent, newMaximum) > 0) {
+                return EINVAL;
+            }
+            if (Long.compareUnsigned(newMaximum, oldMaximum) > 0) {
+                return EPERM;
+            }
+            resourceLimitCurrent[index] = newCurrent;
+            resourceLimitMaximum[index] = newMaximum;
+        }
+        return 0;
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct rlimit64`.
+    private void writeResourceLimit(long address, long current, long maximum) {
+        memory.writeLong(address + RLIMIT_CURRENT_OFFSET, current);
+        memory.writeLong(address + RLIMIT_MAXIMUM_OFFSET, maximum);
+    }
+
     /// Fills a guest buffer with deterministic bytes for the Linux `getrandom` syscall.
     private long getrandom(long address, long length, long flags) {
         if ((flags & ~GETRANDOM_SUPPORTED_FLAGS) != 0) {
@@ -2220,6 +2588,15 @@ public final class GuestSyscalls implements AutoCloseable {
         } catch (InvalidPathException exception) {
             return null;
         }
+    }
+
+    /// Returns true when a host file's canonical location stays below the sandbox root.
+    private boolean canonicalFileStaysBelowHostRoot(TruffleFile hostFile) throws IOException {
+        @Nullable TruffleFile root = currentHostRoot();
+        if (root == null) {
+            return false;
+        }
+        return hostFile.getCanonicalFile().startsWith(root.getCanonicalFile());
     }
 
     /// Returns the resolved host root, creating it through the Truffle environment on first use.

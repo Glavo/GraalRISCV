@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /// Tests guest syscall behavior directly against architectural state.
 @NotNullByDefault
@@ -40,8 +41,14 @@ public final class GuestSyscallsTest {
     /// Linux `ENOENT` as a raw negative syscall result.
     private static final long ENOENT = -2;
 
+    /// Linux `ESRCH` as a raw negative syscall result.
+    private static final long ESRCH = -3;
+
     /// Linux `EACCES` as a raw negative syscall result.
     private static final long EACCES = -13;
+
+    /// Linux `EPERM` as a raw negative syscall result.
+    private static final long EPERM = -1;
 
     /// Linux `ENOMEM` as a raw negative syscall result.
     private static final long ENOMEM = -12;
@@ -103,6 +110,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `writev`.
     private static final long SYS_WRITEV = 66;
 
+    /// The Linux RISC-V syscall number for `readlinkat`.
+    private static final long SYS_READLINKAT = 78;
+
+    /// The Linux RISC-V syscall number for `newfstatat`.
+    private static final long SYS_NEWFSTATAT = 79;
+
     /// The Linux RISC-V syscall number for `fstat`.
     private static final long SYS_FSTAT = 80;
 
@@ -133,11 +146,29 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `uname`.
+    private static final long SYS_UNAME = 160;
+
     /// The Linux RISC-V syscall number for `prctl`.
     private static final long SYS_PRCTL = 167;
 
+    /// The Linux RISC-V syscall number for `gettimeofday`.
+    private static final long SYS_GETTIMEOFDAY = 169;
+
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
+
+    /// The Linux RISC-V syscall number for `getuid`.
+    private static final long SYS_GETUID = 174;
+
+    /// The Linux RISC-V syscall number for `geteuid`.
+    private static final long SYS_GETEUID = 175;
+
+    /// The Linux RISC-V syscall number for `getgid`.
+    private static final long SYS_GETGID = 176;
+
+    /// The Linux RISC-V syscall number for `getegid`.
+    private static final long SYS_GETEGID = 177;
 
     /// The Linux RISC-V syscall number for `gettid`.
     private static final long SYS_GETTID = 178;
@@ -162,6 +193,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
     private static final long SYS_RISCV_HWPROBE = 258;
+
+    /// The Linux RISC-V syscall number for `prlimit64`.
+    private static final long SYS_PRLIMIT64 = 261;
 
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
@@ -193,11 +227,62 @@ public final class GuestSyscallsTest {
     /// The expected `st_mode` value for read-write regular host files.
     private static final int READ_WRITE_REGULAR_FILE_STAT_MODE = 0100000 | 0666;
 
+    /// The expected `st_mode` value for readable host directories.
+    private static final int READABLE_DIRECTORY_STAT_MODE = 0040000 | 0555;
+
     /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE_OFFSET = 48;
 
     /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
     private static final long AT_FDCWD = -100;
+
+    /// Linux `AT_EMPTY_PATH`.
+    private static final long AT_EMPTY_PATH = 0x1000;
+
+    /// The byte size of one Linux `struct utsname` field.
+    private static final int UTSNAME_FIELD_SIZE = 65;
+
+    /// The byte offset of `sysname` inside Linux `struct utsname`.
+    private static final int UTSNAME_SYSNAME_OFFSET = 0;
+
+    /// The byte offset of `release` inside Linux `struct utsname`.
+    private static final int UTSNAME_RELEASE_OFFSET = 2 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `machine` inside Linux `struct utsname`.
+    private static final int UTSNAME_MACHINE_OFFSET = 4 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `tv_sec` inside Linux RISC-V 64-bit `struct timeval`.
+    private static final int TIMEVAL_SECONDS_OFFSET = 0;
+
+    /// The byte offset of `tv_usec` inside Linux RISC-V 64-bit `struct timeval`.
+    private static final int TIMEVAL_MICROSECONDS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `tz_minuteswest` inside Linux `struct timezone`.
+    private static final int TIMEZONE_MINUTESWEST_OFFSET = 0;
+
+    /// The byte offset of `tz_dsttime` inside Linux `struct timezone`.
+    private static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `rlim_cur` inside Linux RISC-V 64-bit `struct rlimit64`.
+    private static final int RLIMIT_CURRENT_OFFSET = 0;
+
+    /// The byte offset of `rlim_max` inside Linux RISC-V 64-bit `struct rlimit64`.
+    private static final int RLIMIT_MAXIMUM_OFFSET = Long.BYTES;
+
+    /// Linux `RLIM_INFINITY`.
+    private static final long RLIM_INFINITY = -1L;
+
+    /// Linux `RLIMIT_STACK`.
+    private static final long RLIMIT_STACK = 3;
+
+    /// Linux `RLIMIT_NOFILE`.
+    private static final long RLIMIT_NOFILE = 7;
+
+    /// The default stack soft limit exposed by the simulator.
+    private static final long DEFAULT_STACK_LIMIT = 8L * 1024L * 1024L;
+
+    /// The default open-file limit exposed by the simulator.
+    private static final long DEFAULT_OPEN_FILE_LIMIT = 1024;
 
     /// Linux `O_RDONLY`.
     private static final long O_RDONLY = 0;
@@ -600,6 +685,90 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that `newfstatat` reports sandboxed host files and directories.
+    @Test
+    public void newfstatatReportsSandboxedHostPaths() throws Exception {
+        Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
+        Files.createDirectories(tempDirectory.resolve("directory"));
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/message.txt");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READ_WRITE_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(9, memory.readLong(statAddress + STAT_SIZE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "directory");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "../message.txt");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+        }
+    }
+
+    /// Verifies that `readlinkat` reads sandboxed symbolic link targets when the host supports them.
+    @Test
+    public void readlinkatReadsSandboxedSymlinkTargets() throws Exception {
+        Files.writeString(tempDirectory.resolve("target.txt"), "target", StandardCharsets.UTF_8);
+        try {
+            Files.createSymbolicLink(tempDirectory.resolve("link.txt"), Path.of("target.txt"));
+        } catch (IOException | SecurityException | UnsupportedOperationException exception) {
+            assumeTrue(false, "Host filesystem does not allow symbolic link creation");
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 256;
+            writeGuestString(memory, pathAddress, "link.txt");
+
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals("target.txt".length(), state.register(10));
+            assertArrayEquals("target.txt".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(bufferAddress, "target.txt".length()));
+
+            writeGuestString(memory, pathAddress, "target.txt");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies that `openat` exposes read-only host files below the configured host root.
     @Test
     public void openatReadsHostFileBelowRoot() throws Exception {
@@ -938,6 +1107,22 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SET_TID_ADDRESS, memory.baseAddress() + 32, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_GETUID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
+
+            setSyscall(state, SYS_GETEUID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
+
+            setSyscall(state, SYS_GETGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
+
+            setSyscall(state, SYS_GETEGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
         }
     }
 
@@ -1267,6 +1452,23 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies the deterministic Linux machine identity reported by `uname`.
+    @Test
+    public void unameReportsRiscvLinuxIdentity() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long utsnameAddress = memory.baseAddress() + 64;
+
+            setSyscall(state, SYS_UNAME, utsnameAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(0, state.register(10));
+            assertEquals("Linux", readGuestCString(memory, utsnameAddress + UTSNAME_SYSNAME_OFFSET, UTSNAME_FIELD_SIZE));
+            assertEquals("6.12.0", readGuestCString(memory, utsnameAddress + UTSNAME_RELEASE_OFFSET, UTSNAME_FIELD_SIZE));
+            assertEquals("riscv64", readGuestCString(memory, utsnameAddress + UTSNAME_MACHINE_OFFSET, UTSNAME_FIELD_SIZE));
+        }
+    }
+
     /// Verifies that `clock_gettime` uses host clocks by default.
     @Test
     public void clockGettimeUsesHostTimeByDefault() {
@@ -1332,6 +1534,74 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
             assertEquals(-1, memory.readLong(timespecAddress));
+        }
+    }
+
+    /// Verifies that `gettimeofday` uses the configured guest clock.
+    @Test
+    public void gettimeofdayUsesConfiguredClock() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            Clock fixedClock = Clock.fixed(
+                    Instant.ofEpochSecond(1_700_000_000L, 987_654_321L),
+                    ZoneOffset.UTC);
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            long timevalAddress = memory.baseAddress() + 64;
+            long timezoneAddress = memory.baseAddress() + 80;
+
+            memory.writeInt(timezoneAddress + TIMEZONE_MINUTESWEST_OFFSET, -1);
+            memory.writeInt(timezoneAddress + TIMEZONE_DSTTIME_OFFSET, -1);
+            setSyscall(state, SYS_GETTIMEOFDAY, timevalAddress, timezoneAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(0, state.register(10));
+            assertEquals(1_700_000_000L, memory.readLong(timevalAddress + TIMEVAL_SECONDS_OFFSET));
+            assertEquals(987_654L, memory.readLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET));
+            assertEquals(0, memory.readInt(timezoneAddress + TIMEZONE_MINUTESWEST_OFFSET));
+            assertEquals(0, memory.readInt(timezoneAddress + TIMEZONE_DSTTIME_OFFSET));
+
+            setSyscall(state, SYS_GETTIMEOFDAY, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies `prlimit64` reports and lowers tracked resource limits.
+    @Test
+    public void prlimit64ReportsAndUpdatesResourceLimits() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long newLimitAddress = memory.baseAddress() + 64;
+            long oldLimitAddress = memory.baseAddress() + 80;
+
+            setSyscall(state, SYS_PRLIMIT64, 0, RLIMIT_STACK, 0, oldLimitAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(DEFAULT_STACK_LIMIT, memory.readLong(oldLimitAddress + RLIMIT_CURRENT_OFFSET));
+            assertEquals(RLIM_INFINITY, memory.readLong(oldLimitAddress + RLIMIT_MAXIMUM_OFFSET));
+
+            memory.writeLong(newLimitAddress + RLIMIT_CURRENT_OFFSET, 512);
+            memory.writeLong(newLimitAddress + RLIMIT_MAXIMUM_OFFSET, DEFAULT_OPEN_FILE_LIMIT);
+            setSyscall(state, SYS_PRLIMIT64, 0, RLIMIT_NOFILE, newLimitAddress, oldLimitAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(DEFAULT_OPEN_FILE_LIMIT, memory.readLong(oldLimitAddress + RLIMIT_CURRENT_OFFSET));
+            assertEquals(DEFAULT_OPEN_FILE_LIMIT, memory.readLong(oldLimitAddress + RLIMIT_MAXIMUM_OFFSET));
+
+            setSyscall(state, SYS_PRLIMIT64, 0, RLIMIT_NOFILE, 0, oldLimitAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(512, memory.readLong(oldLimitAddress + RLIMIT_CURRENT_OFFSET));
+            assertEquals(DEFAULT_OPEN_FILE_LIMIT, memory.readLong(oldLimitAddress + RLIMIT_MAXIMUM_OFFSET));
+
+            memory.writeLong(newLimitAddress + RLIMIT_CURRENT_OFFSET, 2048);
+            memory.writeLong(newLimitAddress + RLIMIT_MAXIMUM_OFFSET, 2048);
+            setSyscall(state, SYS_PRLIMIT64, 0, RLIMIT_NOFILE, newLimitAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            setSyscall(state, SYS_PRLIMIT64, 99, RLIMIT_NOFILE, 0, oldLimitAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
         }
     }
 
@@ -2085,6 +2355,19 @@ public final class GuestSyscallsTest {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         memory.writeBytes(address, bytes, 0, bytes.length);
         memory.writeByte(address + bytes.length, (byte) 0);
+    }
+
+    /// Reads a null-terminated UTF-8 string from guest memory.
+    private static String readGuestCString(Memory memory, long address, int maximumLength) {
+        byte[] bytes = new byte[maximumLength];
+        for (int index = 0; index < bytes.length; index++) {
+            int value = memory.readUnsignedByte(address + index);
+            if (value == 0) {
+                return new String(bytes, 0, index, StandardCharsets.UTF_8);
+            }
+            bytes[index] = (byte) value;
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /// Writes a Linux RISC-V 64-bit `stack_t` into guest memory.
