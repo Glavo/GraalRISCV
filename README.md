@@ -46,17 +46,11 @@ Unsupported `ecall` failures include the syscall number, program counter, and ar
 
 ## Build The C Hello World Example
 
-Install a RISC-V bare-metal GCC toolchain that provides `riscv64-unknown-elf-gcc`, then run:
+Gradle downloads the configured Zig toolchain and uses `zig cc` to build the RISC-V ELF:
 
 ```text
 ./gradlew -g .gradle-user-home buildHelloWorldExample
 ./gradlew -g .gradle-user-home runHelloWorldExample
-```
-
-To use a non-default compiler path:
-
-```text
-./gradlew -g .gradle-user-home -PriscvGcc=C:\path\to\riscv64-unknown-elf-gcc.exe runHelloWorldExample
 ```
 
 The generated ELF is written to:
@@ -70,7 +64,7 @@ The example source and linker script live under `examples/hello`.
 The example task uses the same freestanding build flags as the manual workflow:
 
 ```text
-riscv64-unknown-elf-gcc -march=rv64imac -mabi=lp64 -mcmodel=medany -nostdlib -nostartfiles -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,-T,examples/hello/linker.ld -Wl,--no-relax -Wl,--build-id=none -o build/examples/hello/hello.elf examples/hello/HelloWorld.c
+zig cc --target=riscv64-freestanding -Xclang -target-feature -Xclang +m -Xclang -target-feature -Xclang +a -Xclang -target-feature -Xclang +c -mabi=lp64 -mcmodel=medany -nostdlib -ffreestanding -fno-sanitize=undefined -fno-builtin -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,-T,examples/hello/linker.ld -Wl,--build-id=none -o build/examples/hello/hello.elf examples/hello/HelloWorld.c
 ```
 
 The expected simulator output is:
@@ -84,5 +78,3 @@ Run every available Hello World smoke check:
 ```text
 ./gradlew -g .gradle-user-home checkHelloWorldExample
 ```
-
-These tasks skip the example build and run steps when `riscv64-unknown-elf-gcc` is not available. Set `-PriscvGcc=<path>` to use a compiler outside `PATH`.
