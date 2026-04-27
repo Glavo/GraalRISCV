@@ -32,6 +32,12 @@ public final class InstructionNode extends Node {
     /// The floating-point inexact exception flag.
     private static final int FLOATING_POINT_INEXACT = 0x01;
 
+    /// The floating-point underflow exception flag.
+    private static final int FLOATING_POINT_UNDERFLOW = 0x02;
+
+    /// The floating-point overflow exception flag.
+    private static final int FLOATING_POINT_OVERFLOW = 0x04;
+
     /// The floating-point invalid-operation exception flag.
     private static final int FLOATING_POINT_INVALID_OPERATION = 0x10;
 
@@ -306,12 +312,13 @@ public final class InstructionNode extends Node {
             case FMIN -> floatingPointMinimumMaximum(state, nextPc, true);
             case FMAX -> floatingPointMinimumMaximum(state, nextPc, false);
             case FCVT_S_D -> {
-                checkEffectiveRoundingMode(state);
+                int roundingMode = effectiveRoundingMode(state);
                 long bits = state.floatingPointRegister(rs1);
                 if (isSignalingDoubleNaN(bits)) {
                     state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
                 }
-                writeSingleBits(state, rd, canonicalizeSingleBits((float) Double.longBitsToDouble(bits)));
+                double value = Double.longBitsToDouble(bits);
+                writeSingleBits(state, rd, canonicalizeSingleBits(roundSingleResult(state, value, (float) value, roundingMode)));
                 state.setPc(nextPc);
             }
             case FCVT_D_S -> {
@@ -639,7 +646,7 @@ public final class InstructionNode extends Node {
 
     /// Executes an F or D fused multiply-add operation.
     private void fusedMultiplyAdd(MachineState state, long nextPc, boolean negateProduct, boolean subtractAddend) {
-        checkEffectiveRoundingMode(state);
+        int roundingMode = effectiveRoundingMode(state);
         int rs3 = thirdFloatingPointSource();
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int leftBits = readSingleBits(state, rs1);
@@ -652,7 +659,8 @@ public final class InstructionNode extends Node {
             float effectiveLeft = negateProduct ? -left : left;
             float effectiveAddend = subtractAddend ? -addend : addend;
             updateInvalidFlagForFusedMultiplyAdd(state, effectiveLeft, right, effectiveAddend);
-            float result = Math.fma(effectiveLeft, right, effectiveAddend);
+            double exact = ((double) effectiveLeft * (double) right) + (double) effectiveAddend;
+            float result = roundSingleResult(state, exact, Math.fma(effectiveLeft, right, effectiveAddend), roundingMode);
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
             long leftBits = state.floatingPointRegister(rs1);
@@ -666,6 +674,7 @@ public final class InstructionNode extends Node {
             double effectiveAddend = subtractAddend ? -addend : addend;
             updateInvalidFlagForFusedMultiplyAdd(state, effectiveLeft, right, effectiveAddend);
             double result = Math.fma(effectiveLeft, right, effectiveAddend);
+            updateDoubleArithmeticFlags(state, effectiveLeft, right, effectiveAddend, result);
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
@@ -673,7 +682,7 @@ public final class InstructionNode extends Node {
 
     /// Executes a basic binary floating-point arithmetic operation.
     private void floatingPointArithmetic(MachineState state, long nextPc, char operator) {
-        checkEffectiveRoundingMode(state);
+        int roundingMode = effectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int leftBits = readSingleBits(state, rs1);
             int rightBits = readSingleBits(state, rs2);
@@ -684,13 +693,21 @@ public final class InstructionNode extends Node {
             if (operator == '/') {
                 updateDivideByZeroFlag(state, left, right);
             }
-            float result = switch (operator) {
+            double exact = switch (operator) {
+                case '+' -> (double) left + (double) right;
+                case '-' -> (double) left - (double) right;
+                case '*' -> (double) left * (double) right;
+                case '/' -> (double) left / (double) right;
+                default -> throw unexpectedFloatingPointOperator(operator);
+            };
+            float nearest = switch (operator) {
                 case '+' -> left + right;
                 case '-' -> left - right;
                 case '*' -> left * right;
                 case '/' -> left / right;
                 default -> throw unexpectedFloatingPointOperator(operator);
             };
+            float result = roundSingleResult(state, exact, nearest, roundingMode);
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
             long leftBits = state.floatingPointRegister(rs1);
@@ -709,6 +726,7 @@ public final class InstructionNode extends Node {
                 case '/' -> left / right;
                 default -> throw unexpectedFloatingPointOperator(operator);
             };
+            updateDoubleArithmeticFlags(state, left, right, operator, result);
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
@@ -928,6 +946,88 @@ public final class InstructionNode extends Node {
         if (Double.isInfinite(product) && Double.isInfinite(addend)
                 && Math.copySign(1.0d, product) != Math.copySign(1.0d, addend)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Rounds a single-precision arithmetic result and records single-precision arithmetic flags.
+    private static float roundSingleResult(MachineState state, double exact, float nearest, int roundingMode) {
+        if (Double.isNaN(exact) || Double.isInfinite(exact)) {
+            return nearest;
+        }
+
+        float rounded = nearest;
+        if ((double) nearest != exact) {
+            rounded = switch (roundingMode) {
+                case ROUND_NEAREST_EVEN, ROUND_NEAREST_MAX_MAGNITUDE -> nearest;
+                case ROUND_TOWARD_ZERO -> {
+                    if (exact > 0.0d && nearest > exact) {
+                        yield Math.nextDown(nearest);
+                    }
+                    if (exact < 0.0d && nearest < exact) {
+                        yield Math.nextUp(nearest);
+                    }
+                    yield nearest;
+                }
+                case ROUND_DOWN -> nearest > exact ? Math.nextDown(nearest) : nearest;
+                case ROUND_UP -> nearest < exact ? Math.nextUp(nearest) : nearest;
+                default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+            };
+        }
+
+        updateSingleArithmeticFlags(state, exact, rounded);
+        return rounded;
+    }
+
+    /// Records single-precision arithmetic flags using a higher-precision exact value.
+    private static void updateSingleArithmeticFlags(MachineState state, double exact, float rounded) {
+        if (Double.isNaN(exact) || Double.isInfinite(exact)) {
+            return;
+        }
+
+        boolean inexact = (double) rounded != exact;
+        if (Float.isInfinite(rounded)) {
+            state.addFloatingPointFlags(FLOATING_POINT_OVERFLOW | FLOATING_POINT_INEXACT);
+            return;
+        }
+        if (inexact) {
+            state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        }
+        if (inexact && exact != 0.0d && (rounded == 0.0f || Math.abs(rounded) < Float.MIN_NORMAL)) {
+            state.addFloatingPointFlags(FLOATING_POINT_UNDERFLOW);
+        }
+    }
+
+    /// Records conservative double-precision arithmetic flags for binary operations.
+    private static void updateDoubleArithmeticFlags(MachineState state, double left, double right, char operator, double result) {
+        if (Double.isNaN(result)) {
+            return;
+        }
+        if (operator == '/' && right == 0.0d) {
+            return;
+        }
+        if (Double.isFinite(left) && Double.isFinite(right) && Double.isInfinite(result)) {
+            state.addFloatingPointFlags(FLOATING_POINT_OVERFLOW | FLOATING_POINT_INEXACT);
+            return;
+        }
+        if (Double.isFinite(result) && result != 0.0d && Math.abs(result) < Double.MIN_NORMAL) {
+            state.addFloatingPointFlags(FLOATING_POINT_UNDERFLOW | FLOATING_POINT_INEXACT);
+        }
+        if (operator == '/' && Double.isFinite(left) && Double.isFinite(right) && right != 0.0d && result * right != left) {
+            state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        }
+    }
+
+    /// Records conservative double-precision arithmetic flags for fused multiply-add operations.
+    private static void updateDoubleArithmeticFlags(MachineState state, double left, double right, double addend, double result) {
+        if (Double.isNaN(result)) {
+            return;
+        }
+        if (Double.isFinite(left) && Double.isFinite(right) && Double.isFinite(addend) && Double.isInfinite(result)) {
+            state.addFloatingPointFlags(FLOATING_POINT_OVERFLOW | FLOATING_POINT_INEXACT);
+            return;
+        }
+        if (Double.isFinite(result) && result != 0.0d && Math.abs(result) < Double.MIN_NORMAL) {
+            state.addFloatingPointFlags(FLOATING_POINT_UNDERFLOW | FLOATING_POINT_INEXACT);
         }
     }
 

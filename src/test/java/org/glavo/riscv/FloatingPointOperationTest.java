@@ -270,6 +270,63 @@ public final class FloatingPointOperationTest {
         }
     }
 
+    /// Verifies single-precision directed rounding and arithmetic exception flags.
+    @Test
+    public void singleArithmeticRoundingModesAndExceptionFlagsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    faddS(3, 1, 2, 2),
+                    faddS(4, 1, 2, 3),
+                    fmulS(5, 6, 7, 0),
+                    fmulS(8, 9, 10, 0),
+                    fcvtSD(11, 12, 2),
+                    fcvtSD(13, 12, 3),
+                    csrrs(RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeSingleBits(machine.state(), 1, Float.floatToRawIntBits(1.0f));
+            writeSingleBits(machine.state(), 2, Float.floatToRawIntBits(0x1.0p-25f));
+            writeSingleBits(machine.state(), 6, Float.floatToRawIntBits(Float.MAX_VALUE));
+            writeSingleBits(machine.state(), 7, Float.floatToRawIntBits(2.0f));
+            writeSingleBits(machine.state(), 9, 1);
+            writeSingleBits(machine.state(), 10, Float.floatToRawIntBits(0.5f));
+            writeDouble(machine.state(), 12, 1.0d + 0x1.0p-25d);
+
+            runDecodedProgram(machine);
+
+            assertEquals(boxedSingle(Float.floatToRawIntBits(1.0f)), machine.state().floatingPointRegister(3));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextUp(1.0f))), machine.state().floatingPointRegister(4));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Float.POSITIVE_INFINITY)), machine.state().floatingPointRegister(5));
+            assertEquals(boxedSingle(0), machine.state().floatingPointRegister(8));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(1.0f)), machine.state().floatingPointRegister(11));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextUp(1.0f))), machine.state().floatingPointRegister(13));
+            assertEquals(0x07, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies that unboxed single-precision registers are consumed as canonical NaN values.
+    @Test
+    public void unboxedSinglePrecisionInputBehavesAsCanonicalNaN() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fclassS(RESULT_REGISTER, LEFT_FLOAT_REGISTER),
+                    faddS(3, LEFT_FLOAT_REGISTER, RIGHT_FLOAT_REGISTER, 0),
+                    csrrs(SECOND_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setFloatingPointRegister(LEFT_FLOAT_REGISTER, Float.floatToRawIntBits(1.0f));
+            writeSingleBits(machine.state(), RIGHT_FLOAT_REGISTER, Float.floatToRawIntBits(2.0f));
+
+            runDecodedProgram(machine);
+
+            assertEquals(1 << 9, machine.state().register(RESULT_REGISTER));
+            assertEquals(boxedSingle(0x7fc0_0000), machine.state().floatingPointRegister(3));
+            assertEquals(0, machine.state().register(SECOND_RESULT_REGISTER));
+        }
+    }
+
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
     private static void prepareExit(MachineState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
@@ -326,6 +383,11 @@ public final class FloatingPointOperationTest {
         return opFp(0x01, rd, 0, rs1, rs2);
     }
 
+    /// Encodes `fadd.s`.
+    private static int faddS(int rd, int rs1, int rs2, int roundingMode) {
+        return opFp(0x00, rd, roundingMode, rs1, rs2);
+    }
+
     /// Encodes `fsub.d`.
     private static int fsubD(int rd, int rs1, int rs2) {
         return opFp(0x05, rd, 0, rs1, rs2);
@@ -334,6 +396,11 @@ public final class FloatingPointOperationTest {
     /// Encodes `fmul.d`.
     private static int fmulD(int rd, int rs1, int rs2) {
         return opFp(0x09, rd, 0, rs1, rs2);
+    }
+
+    /// Encodes `fmul.s`.
+    private static int fmulS(int rd, int rs1, int rs2, int roundingMode) {
+        return opFp(0x08, rd, roundingMode, rs1, rs2);
     }
 
     /// Encodes `fdiv.d`.
@@ -439,6 +506,11 @@ public final class FloatingPointOperationTest {
     /// Encodes `fcvt.s.d`.
     private static int fcvtSD(int rd, int rs1) {
         return opFp(0x20, rd, 0, rs1, 1);
+    }
+
+    /// Encodes `fcvt.s.d` with an explicit rounding mode.
+    private static int fcvtSD(int rd, int rs1, int roundingMode) {
+        return opFp(0x20, rd, roundingMode, rs1, 1);
     }
 
     /// Encodes `fmadd.d`.

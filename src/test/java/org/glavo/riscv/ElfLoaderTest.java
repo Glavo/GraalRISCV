@@ -24,6 +24,25 @@ public final class ElfLoaderTest {
         assertEquals(1, image.loadSegments().size());
         assertEquals(ElfTestImages.BASE_ADDRESS, image.loadSegments().getFirst().virtualAddress());
         assertEquals(Integer.BYTES, image.loadSegments().getFirst().contents().length);
+        assertEquals(ElfImage.ABSENT_ADDRESS, image.programHeaderAddress());
+    }
+
+    /// Verifies that the loader records program header metadata when it is present in a load segment.
+    @Test
+    public void recordsLoadedProgramHeaderMetadata() {
+        byte[] elf = ElfTestImages.executable(ElfTestImages.ecall());
+        long segmentAddress = ElfTestImages.BASE_ADDRESS - ElfTestImages.PROGRAM_OFFSET;
+        putProgramHeaderLong(elf, 0, 8, 0);
+        putProgramHeaderLong(elf, 0, 16, segmentAddress);
+        putProgramHeaderLong(elf, 0, 24, segmentAddress);
+        putProgramHeaderLong(elf, 0, 32, elf.length);
+        putProgramHeaderLong(elf, 0, 40, elf.length);
+
+        ElfImage image = ElfLoader.load(elf);
+
+        assertEquals(segmentAddress + ElfTestImages.PROGRAM_HEADER_OFFSET, image.programHeaderAddress());
+        assertEquals(ElfTestImages.PROGRAM_HEADER_SIZE, image.programHeaderEntrySize());
+        assertEquals(1, image.programHeaderCount());
     }
 
     /// Verifies that non-ELF input is rejected.

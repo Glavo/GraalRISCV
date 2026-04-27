@@ -23,16 +23,31 @@ public final class ElfImage {
     /// The optional `fromhost` symbol guest address.
     private final long fromhostAddress;
 
+    /// The guest address of the loaded ELF program header table, or `ABSENT_ADDRESS` when absent.
+    private final long programHeaderAddress;
+
+    /// The byte size of one ELF program header entry.
+    private final int programHeaderEntrySize;
+
+    /// The number of ELF program header entries.
+    private final int programHeaderCount;
+
     /// Creates a validated ELF image description.
     public ElfImage(
             long entryPoint,
             @Unmodifiable List<LoadSegment> loadSegments,
             long tohostAddress,
-            long fromhostAddress) {
+            long fromhostAddress,
+            long programHeaderAddress,
+            int programHeaderEntrySize,
+            int programHeaderCount) {
         this.entryPoint = entryPoint;
         this.loadSegments = List.copyOf(loadSegments);
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
+        this.programHeaderAddress = programHeaderAddress;
+        this.programHeaderEntrySize = programHeaderEntrySize;
+        this.programHeaderCount = programHeaderCount;
     }
 
     /// Returns the initial guest program counter.
@@ -58,6 +73,21 @@ public final class ElfImage {
     /// Returns the `fromhost` symbol guest address, or `ABSENT_ADDRESS` when absent.
     public long fromhostAddress() {
         return fromhostAddress;
+    }
+
+    /// Returns the guest address of the loaded ELF program header table, or `ABSENT_ADDRESS` when absent.
+    public long programHeaderAddress() {
+        return programHeaderAddress;
+    }
+
+    /// Returns the byte size of one ELF program header entry.
+    public int programHeaderEntrySize() {
+        return programHeaderEntrySize;
+    }
+
+    /// Returns the number of ELF program header entries.
+    public int programHeaderCount() {
+        return programHeaderCount;
     }
 
     /// Describes a loadable ELF segment and its guest memory extent.

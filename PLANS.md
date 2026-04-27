@@ -5,18 +5,14 @@
 ### 1. Implement user-mode RV64GC instruction support
 
 - Keep the current RV64IMAC behavior stable while adding the missing RV64GC pieces.
-- Tighten floating-point rounding-mode behavior beyond the default Java IEEE operations for arithmetic and floating-point format conversions.
-- Complete floating-point exception-flag behavior for arithmetic inexact, overflow, underflow, and NaN payload handling.
-- Add focused decoder and execution tests for remaining arithmetic rounding modes, arithmetic exception flags, and NaN-boxing edge cases.
+- Finish double-precision directed rounding beyond the default Java IEEE operations and audit remaining RMM tie cases.
+- Complete the remaining floating-point exception-flag edge cases and settle the NaN payload preservation policy.
+- Add focused decoder and execution tests for remaining double-precision rounding, exact exception-flag edge cases, and NaN payload behavior.
 
 ### 2. Support static Linux user-mode programs
 
 - Keep the simulator user-mode only; do not implement privileged mode, page tables, interrupts, devices, or Linux kernel boot.
-- Update the CLI shape to support `graalriscv [options] <program.elf> [program-args...]`.
-- Construct a Linux-compatible initial stack with `argc`, `argv`, `envp`, `auxv`, and string storage.
-- Keep the initial stack 16-byte aligned and initialize `sp` to that stack.
-- Provide deterministic default environment variables such as `LANG=C`, `PATH=/usr/bin:/bin`, and `PWD=/`.
-- Populate enough auxv entries for static libc startup, including program headers, page size, entry point, uid/gid values, random bytes, and platform strings.
+- Extend auxv with any additional entries required by static libc startup after real Zig/musl verification.
 - Accept statically linked Linux ELF executables with resolved load segments.
 - Reject dynamic linking in this phase with clear diagnostics when inputs contain `PT_INTERP`, `PT_DYNAMIC`, or unresolved relocation metadata.
 - Preserve existing freestanding ELF behavior and tests while adding Linux static program behavior.

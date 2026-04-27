@@ -26,8 +26,12 @@ public final class ElfLoader {
             validateSections(elfFile, bytes);
 
             ArrayList<ElfImage.LoadSegment> loadSegments = new ArrayList<>();
+            long programHeaderAddress = ElfImage.ABSENT_ADDRESS;
+            int programHeaderEntrySize = Short.toUnsignedInt(elfFile.e_phentsize);
+            int programHeaderCount = Short.toUnsignedInt(elfFile.e_phnum);
+            long programHeaderTableSize = (long) programHeaderEntrySize * programHeaderCount;
             boolean entryPointIsExecutable = false;
-            for (int index = 0; index < Short.toUnsignedInt(elfFile.e_phnum); index++) {
+            for (int index = 0; index < programHeaderCount; index++) {
                 ElfSegment segment = elfFile.getProgramHeader(index);
                 if (segment.p_type == ElfSegment.PT_DYNAMIC) {
                     throw new RiscVException("Dynamic ELF files are not supported");
@@ -55,6 +59,10 @@ public final class ElfLoader {
                 if (segment.isExecutable() && containsAddress(segment.p_vaddr, segmentEnd, elfFile.e_entry)) {
                     entryPointIsExecutable = true;
                 }
+                if (programHeaderAddress == ElfImage.ABSENT_ADDRESS
+                        && containsFileRange(segment.p_offset, segment.p_filesz, elfFile.e_phoff, programHeaderTableSize)) {
+                    programHeaderAddress = segment.p_vaddr + (elfFile.e_phoff - segment.p_offset);
+                }
 
                 byte[] contents = new byte[(int) segment.p_filesz];
                 System.arraycopy(bytes, (int) segment.p_offset, contents, 0, (int) segment.p_filesz);
@@ -69,7 +77,10 @@ public final class ElfLoader {
                     elfFile.e_entry,
                     loadSegments,
                     symbolAddress(elfFile, "tohost"),
-                    symbolAddress(elfFile, "fromhost"));
+                    symbolAddress(elfFile, "fromhost"),
+                    programHeaderAddress,
+                    programHeaderEntrySize,
+                    programHeaderCount);
         } catch (ElfException | IndexOutOfBoundsException exception) {
             throw new RiscVException("Invalid ELF file", exception);
         }
@@ -200,5 +211,14 @@ public final class ElfLoader {
     /// Returns true if the half-open address range contains the supplied guest address.
     private static boolean containsAddress(long start, long end, long address) {
         return start <= address && address < end;
+    }
+
+    /// Returns true if a file range contains another complete file range.
+    private static boolean containsFileRange(long segmentOffset, long segmentSize, long requestedOffset, long requestedSize) {
+        if (requestedSize < 0 || requestedOffset < segmentOffset) {
+            return false;
+        }
+        long relativeOffset = requestedOffset - segmentOffset;
+        return relativeOffset <= segmentSize && requestedSize <= segmentSize - relativeOffset;
     }
 }

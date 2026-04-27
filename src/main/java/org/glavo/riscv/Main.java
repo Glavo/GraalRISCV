@@ -6,6 +6,7 @@ import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.ByteSequence;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,13 +15,15 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /// Provides the command-line entry point for executing RISC-V ELF programs.
 @NotNullByDefault
 public final class Main {
     /// The usage text printed for invalid arguments or `--help`.
     private static final String USAGE = """
-            Usage: graalriscv [options] <program.elf>
+            Usage: graalriscv [options] <program.elf> [program-args...]
 
             Options:
               --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
@@ -92,6 +95,7 @@ public final class Main {
                 .in(in)
                 .out(out)
                 .err(err)
+                .arguments(RiscVLanguage.ID, options.applicationArguments())
                 .option("engine.WarnInterpreterOnly", "false");
 
         if (options.memoryBase() != null) {
@@ -126,6 +130,7 @@ public final class Main {
         @Nullable Path hostRoot = null;
         boolean trace = false;
         @Nullable Path programPath = null;
+        ArrayList<String> programArguments = new ArrayList<>();
         boolean parseOptions = true;
 
         for (int index = 0; index < args.length; index++) {
@@ -198,13 +203,12 @@ public final class Main {
                 }
                 continue;
             }
+            if (programPath != null) {
+                programArguments.add(argument);
+                continue;
+            }
             if (parseOptions && argument.startsWith("-")) {
                 err.println("Unknown option: " + argument);
-                printUsage(err);
-                return CliOptions.error();
-            }
-            if (programPath != null) {
-                err.println("Only one ELF file can be executed at a time.");
                 printUsage(err);
                 return CliOptions.error();
             }
@@ -218,7 +222,7 @@ public final class Main {
         }
 
         Path resolvedHostRoot = hostRoot != null ? hostRoot : defaultHostRoot(programPath);
-        return CliOptions.execute(programPath, memoryBase, memorySize, maxInstructions, resolvedHostRoot, trace);
+        return CliOptions.execute(programPath, programArguments, memoryBase, memorySize, maxInstructions, resolvedHostRoot, trace);
     }
 
     /// Parses a signed long option and returns its normalized decimal string value.
@@ -292,6 +296,9 @@ public final class Main {
             /// The guest ELF path to execute.
             Path programPath,
 
+            /// The guest application arguments after the ELF path.
+            String @Unmodifiable [] programArguments,
+
             /// The optional guest memory base option value.
             @Nullable String memoryBase,
 
@@ -306,19 +313,31 @@ public final class Main {
 
             /// Whether instruction tracing is enabled.
             boolean trace) {
+        /// Creates parsed command-line options.
+        private CliOptions {
+            programArguments = programArguments.clone();
+        }
+
+        /// Returns a copy of the guest arguments after the ELF path.
+        @Override
+        public String @Unmodifiable [] programArguments() {
+            return programArguments.clone();
+        }
+
         /// Creates options for printing help.
         static CliOptions help() {
-            return new CliOptions(CliMode.HELP, Path.of("."), null, null, null, Path.of("."), false);
+            return new CliOptions(CliMode.HELP, Path.of("."), new String[0], null, null, null, Path.of("."), false);
         }
 
         /// Creates options for a usage error.
         static CliOptions error() {
-            return new CliOptions(CliMode.ERROR, Path.of("."), null, null, null, Path.of("."), false);
+            return new CliOptions(CliMode.ERROR, Path.of("."), new String[0], null, null, null, Path.of("."), false);
         }
 
         /// Creates options for executing a guest ELF program.
         static CliOptions execute(
                 Path programPath,
+                List<String> programArguments,
                 @Nullable String memoryBase,
                 @Nullable String memorySize,
                 @Nullable String maxInstructions,
@@ -327,11 +346,20 @@ public final class Main {
             return new CliOptions(
                     CliMode.EXECUTE,
                     programPath,
+                    programArguments.toArray(String[]::new),
                     memoryBase,
                     memorySize,
                     maxInstructions,
                     hostRoot,
                     trace);
+        }
+
+        /// Returns the arguments exposed to the guest as `argv`, including `argv[0]`.
+        String @Unmodifiable [] applicationArguments() {
+            String[] result = new String[programArguments.length + 1];
+            result[0] = programPath.toString();
+            System.arraycopy(programArguments, 0, result, 1, programArguments.length);
+            return result;
         }
     }
 }

@@ -2,6 +2,7 @@ package org.glavo.riscv;
 
 import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -26,6 +27,9 @@ public final class RiscVContext {
 
     /// The normalized host directory exposed through read-only guest file syscalls.
     private final Path hostRoot;
+
+    /// The guest application arguments supplied after the ELF path.
+    private final String @Unmodifiable [] programArguments;
 
     /// Creates a simulator context.
     public RiscVContext(
@@ -59,6 +63,7 @@ public final class RiscVContext {
         this.memorySize = memorySize;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
+        this.programArguments = env.getApplicationArguments().clone();
     }
 
     /// Returns the Truffle environment associated with this context.
@@ -89,5 +94,10 @@ public final class RiscVContext {
     /// Returns the host directory exposed through read-only guest file syscalls.
     public Path hostRoot() {
         return hostRoot;
+    }
+
+    /// Returns the guest application arguments supplied after the ELF path.
+    public String @Unmodifiable [] programArguments() {
+        return programArguments.clone();
     }
 }

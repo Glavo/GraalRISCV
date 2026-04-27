@@ -86,6 +86,30 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that arguments after the ELF path are accepted as guest program arguments.
+    @Test
+    public void acceptsGuestProgramArgumentsAfterElfPath() throws Exception {
+        Path elfPath = tempDirectory.resolve("hello-with-args.elf");
+        Files.write(elfPath, ElfTestImages.executable(helloWorldCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        elfPath.toString(),
+                        "first",
+                        "--guest-flag"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Verifies that an explicit memory base above the ELF load address reports a useful layout error.
     @Test
     public void reportsElfSegmentBelowMemoryBase() throws Exception {
