@@ -3,6 +3,7 @@ package org.glavo.riscv;
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -11,6 +12,9 @@ import java.util.HashMap;
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
+    /// The guest block dispatch count reported to Truffle loop infrastructure at one time.
+    private static final int LOOP_REPORT_STRIDE = 1024;
+
     /// Resolves the current RISC-V context for this root node.
     private static final TruffleLanguage.ContextReference<RiscVContext> CONTEXT_REFERENCE =
             TruffleLanguage.ContextReference.create(RiscVLanguage.class);
@@ -20,6 +24,10 @@ public final class RiscVRootNode extends RootNode {
 
     /// The lazily populated block cache for this execution root.
     private final HashMap<Long, BlockNode> blocks = new HashMap<>();
+
+    /// The self-specializing dispatch cache for hot guest basic blocks.
+    @Child
+    private BlockDispatchNode dispatch = new BlockDispatchNode();
 
     /// Creates a root node for a parsed ELF image.
     public RiscVRootNode(RiscVLanguage language, ElfImage image) {
@@ -34,8 +42,14 @@ public final class RiscVRootNode extends RootNode {
         try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
             MachineState state = createState(context, memory);
             try {
+                int loopCount = 0;
                 while (true) {
-                    blockFor(memory, state.pc()).execute(state);
+                    dispatch.execute(this, memory, state);
+                    loopCount++;
+                    if (loopCount == LOOP_REPORT_STRIDE) {
+                        LoopNode.reportLoopCount(this, LOOP_REPORT_STRIDE);
+                        loopCount = 0;
+                    }
                 }
             } finally {
                 state.syscalls().close();
@@ -94,13 +108,12 @@ public final class RiscVRootNode extends RootNode {
         return baseAddress == Long.MAX_VALUE ? Memory.DEFAULT_BASE_ADDRESS : baseAddress;
     }
 
-    /// Returns a cached block for the supplied guest program counter.
+    /// Returns a cached block for program counters outside the dispatch inline cache.
     @CompilerDirectives.TruffleBoundary
-    private BlockNode blockFor(Memory memory, long pc) {
+    BlockNode blockForUncached(Memory memory, long pc) {
         BlockNode block = blocks.get(pc);
         if (block == null) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
-            block = insert(RiscVDecoder.decodeBlock(memory, pc));
+            block = RiscVDecoder.decodeBlock(memory, pc);
             blocks.put(pc, block);
         }
         return block;

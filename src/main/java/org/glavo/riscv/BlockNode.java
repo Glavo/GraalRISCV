@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -16,6 +17,7 @@ public final class BlockNode extends Node {
     }
 
     /// Executes this block until it reaches the block terminator.
+    @ExplodeLoop
     public void execute(MachineState state) {
         for (InstructionNode instruction : instructions) {
             instruction.execute(state);

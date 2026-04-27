@@ -33,6 +33,9 @@ public final class Memory implements AutoCloseable {
     /// The mutable guest memory segment.
     private final MemorySegment segment;
 
+    /// The byte size of the initial contiguous guest memory segment.
+    private final long size;
+
     /// The sparse memory regions created by Linux user-mode memory syscalls.
     private final ArrayList<MappedRegion> mappedRegions = new ArrayList<>();
 
@@ -51,6 +54,7 @@ public final class Memory implements AutoCloseable {
         this.baseAddress = baseAddress;
         this.arena = Arena.ofConfined();
         this.segment = arena.allocate(size, Long.BYTES);
+        this.size = size;
     }
 
     /// Returns the inclusive base address of the memory window.
@@ -60,28 +64,45 @@ public final class Memory implements AutoCloseable {
 
     /// Returns the memory window size in bytes.
     public long size() {
-        return segment.byteSize();
+        return size;
     }
 
     /// Returns the exclusive end address of the memory window.
     public long endAddress() {
-        return baseAddress + segment.byteSize();
+        return baseAddress + size;
     }
 
     /// Copies bytes from a host array into guest memory.
     public void load(long address, byte[] source, int offset, int length) {
+        long accessOffset = initialOffset(address, length);
+        if (accessOffset >= 0) {
+            MemorySegment.copy(source, offset, segment, ValueLayout.JAVA_BYTE, accessOffset, length);
+            return;
+        }
+
         MemoryAccess access = access(address, length);
         MemorySegment.copy(source, offset, access.segment(), ValueLayout.JAVA_BYTE, access.offset(), length);
     }
 
     /// Fills a guest memory range with zero bytes.
     public void clear(long address, long length) {
+        long accessOffset = initialOffset(address, length);
+        if (accessOffset >= 0) {
+            segment.asSlice(accessOffset, length).fill((byte) 0);
+            return;
+        }
+
         MemoryAccess access = access(address, length);
         access.segment().asSlice(access.offset(), length).fill((byte) 0);
     }
 
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
+        long offset = initialOffset(address, Byte.BYTES);
+        if (offset >= 0) {
+            return segment.get(ValueLayout.JAVA_BYTE, offset);
+        }
+
         MemoryAccess access = access(address, Byte.BYTES);
         return access.segment().get(ValueLayout.JAVA_BYTE, access.offset());
     }
@@ -94,6 +115,11 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 16-bit value from an aligned guest address.
     public short readShort(long address) {
         requireAligned(address, Short.BYTES);
+        long offset = initialOffset(address, Short.BYTES);
+        if (offset >= 0) {
+            return segment.get(SHORT_LE, offset);
+        }
+
         MemoryAccess access = access(address, Short.BYTES);
         return access.segment().get(SHORT_LE, access.offset());
     }
@@ -106,6 +132,11 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 32-bit value from an aligned guest address.
     public int readInt(long address) {
         requireAligned(address, Integer.BYTES);
+        long offset = initialOffset(address, Integer.BYTES);
+        if (offset >= 0) {
+            return segment.get(INT_LE, offset);
+        }
+
         MemoryAccess access = access(address, Integer.BYTES);
         return access.segment().get(INT_LE, access.offset());
     }
@@ -122,6 +153,12 @@ public final class Memory implements AutoCloseable {
         }
 
         byte[] result = new byte[(int) length];
+        long offset = initialOffset(address, length);
+        if (offset >= 0) {
+            MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, offset, result, 0, (int) length);
+            return result;
+        }
+
         MemoryAccess access = access(address, length);
         MemorySegment.copy(access.segment(), ValueLayout.JAVA_BYTE, access.offset(), result, 0, (int) length);
         return result;
@@ -129,6 +166,12 @@ public final class Memory implements AutoCloseable {
 
     /// Copies host bytes into guest memory.
     public void writeBytes(long address, byte[] source, int offset, int length) {
+        long accessOffset = initialOffset(address, length);
+        if (accessOffset >= 0) {
+            MemorySegment.copy(source, offset, segment, ValueLayout.JAVA_BYTE, accessOffset, length);
+            return;
+        }
+
         MemoryAccess access = access(address, length);
         MemorySegment.copy(source, offset, access.segment(), ValueLayout.JAVA_BYTE, access.offset(), length);
     }
@@ -136,6 +179,14 @@ public final class Memory implements AutoCloseable {
     /// Reads a little-endian 32-bit instruction from a 16-bit-aligned guest address.
     public int readInstructionInt(long address) {
         requireAligned(address, Short.BYTES);
+        long fastOffset = initialOffset(address, Integer.BYTES);
+        if (fastOffset >= 0) {
+            return (segment.get(ValueLayout.JAVA_BYTE, fastOffset) & 0xff)
+                    | ((segment.get(ValueLayout.JAVA_BYTE, fastOffset + 1) & 0xff) << 8)
+                    | ((segment.get(ValueLayout.JAVA_BYTE, fastOffset + 2) & 0xff) << 16)
+                    | (segment.get(ValueLayout.JAVA_BYTE, fastOffset + 3) << 24);
+        }
+
         MemoryAccess access = access(address, Integer.BYTES);
         MemorySegment accessSegment = access.segment();
         long offset = access.offset();
@@ -148,12 +199,23 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 64-bit value from an aligned guest address.
     public long readLong(long address) {
         requireAligned(address, Long.BYTES);
+        long offset = initialOffset(address, Long.BYTES);
+        if (offset >= 0) {
+            return segment.get(LONG_LE, offset);
+        }
+
         MemoryAccess access = access(address, Long.BYTES);
         return access.segment().get(LONG_LE, access.offset());
     }
 
     /// Writes a byte to guest memory.
     public void writeByte(long address, byte value) {
+        long offset = initialOffset(address, Byte.BYTES);
+        if (offset >= 0) {
+            segment.set(ValueLayout.JAVA_BYTE, offset, value);
+            return;
+        }
+
         MemoryAccess access = access(address, Byte.BYTES);
         access.segment().set(ValueLayout.JAVA_BYTE, access.offset(), value);
     }
@@ -161,6 +223,12 @@ public final class Memory implements AutoCloseable {
     /// Writes a little-endian 16-bit value to an aligned guest address.
     public void writeShort(long address, short value) {
         requireAligned(address, Short.BYTES);
+        long offset = initialOffset(address, Short.BYTES);
+        if (offset >= 0) {
+            segment.set(SHORT_LE, offset, value);
+            return;
+        }
+
         MemoryAccess access = access(address, Short.BYTES);
         access.segment().set(SHORT_LE, access.offset(), value);
     }
@@ -168,6 +236,12 @@ public final class Memory implements AutoCloseable {
     /// Writes a little-endian 32-bit value to an aligned guest address.
     public void writeInt(long address, int value) {
         requireAligned(address, Integer.BYTES);
+        long offset = initialOffset(address, Integer.BYTES);
+        if (offset >= 0) {
+            segment.set(INT_LE, offset, value);
+            return;
+        }
+
         MemoryAccess access = access(address, Integer.BYTES);
         access.segment().set(INT_LE, access.offset(), value);
     }
@@ -175,6 +249,12 @@ public final class Memory implements AutoCloseable {
     /// Writes a little-endian 64-bit value to an aligned guest address.
     public void writeLong(long address, long value) {
         requireAligned(address, Long.BYTES);
+        long offset = initialOffset(address, Long.BYTES);
+        if (offset >= 0) {
+            segment.set(LONG_LE, offset, value);
+            return;
+        }
+
         MemoryAccess access = access(address, Long.BYTES);
         access.segment().set(LONG_LE, access.offset(), value);
     }
@@ -270,6 +350,19 @@ public final class Memory implements AutoCloseable {
         return access;
     }
 
+    /// Returns the offset inside the initial segment for a backed range, or `-1` when it is outside.
+    private long initialOffset(long address, long length) {
+        if (length < 0) {
+            throw new RiscVException("Negative memory access length: " + length);
+        }
+
+        long offset = address - baseAddress;
+        if (address >= baseAddress && offset >= 0 && offset <= size - length) {
+            return offset;
+        }
+        return -1;
+    }
+
     /// Finds the host segment and offset backing a guest range, or null when absent.
     private @Nullable MemoryAccess findAccess(long address, long length) {
         if (length < 0) {
@@ -280,7 +373,7 @@ public final class Memory implements AutoCloseable {
         }
 
         long offset = address - baseAddress;
-        if (address >= baseAddress && offset >= 0 && offset <= segment.byteSize() - length) {
+        if (address >= baseAddress && offset >= 0 && offset <= size - length) {
             return new MemoryAccess(segment, offset);
         }
 

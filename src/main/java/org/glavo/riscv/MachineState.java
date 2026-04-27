@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.io.OutputStream;
@@ -213,6 +214,16 @@ public final class MachineState {
 
     /// Records one guest instruction retirement and enforces the instruction budget.
     public void beforeInstruction(long address, int raw) {
+        if (maxInstructions == 0 && !trace) {
+            instructionCount++;
+            return;
+        }
+
+        beforeInstructionChecked(address, raw);
+    }
+
+    /// Records one guest instruction retirement on configurations that need checks or tracing.
+    private void beforeInstructionChecked(long address, int raw) {
         if (maxInstructions > 0 && instructionCount >= maxInstructions) {
             throw new RiscVException("Guest instruction limit exceeded: " + maxInstructions);
         }
@@ -263,6 +274,7 @@ public final class MachineState {
     }
 
     /// Writes a single trace line for a guest instruction.
+    @CompilerDirectives.TruffleBoundary
     private static void traceInstruction(PrintStream stream, long address, int raw) {
         stream.println("pc=0x" + Long.toUnsignedString(address, 16) + " raw=0x" + Integer.toUnsignedString(raw, 16));
     }
