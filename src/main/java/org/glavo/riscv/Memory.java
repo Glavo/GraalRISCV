@@ -33,8 +33,14 @@ public final class Memory implements AutoCloseable {
 
     /// Creates a memory window at the supplied guest base address.
     public Memory(long baseAddress, long size) {
+        if (baseAddress < 0) {
+            throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
+        }
         if (size <= 0) {
             throw new RiscVException("Guest memory size must be positive: " + size);
+        }
+        if (baseAddress > Long.MAX_VALUE - size) {
+            throw new RiscVException("Guest memory range overflows: base=" + baseAddress + ", size=" + size);
         }
 
         this.baseAddress = baseAddress;

@@ -31,7 +31,7 @@ public final class RiscVRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
-        try (Memory memory = new Memory(context.memoryBase(), context.memorySize())) {
+        try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
             MachineState state = createState(context, memory);
             while (true) {
                 blockFor(memory, state.pc()).execute(state);
@@ -63,6 +63,19 @@ public final class RiscVRootNode extends RootNode {
         state.setPc(image.entryPoint());
         state.setRegister(2, memory.endAddress() & ~0xfL);
         return state;
+    }
+
+    /// Resolves the memory base from context options or the lowest ELF load segment address.
+    private long resolveMemoryBase(RiscVContext context) {
+        if (context.memoryBase() != RiscVLanguage.AUTO_MEMORY_BASE) {
+            return context.memoryBase();
+        }
+
+        long baseAddress = Long.MAX_VALUE;
+        for (ElfImage.LoadSegment segment : image.loadSegments()) {
+            baseAddress = Math.min(baseAddress, segment.virtualAddress());
+        }
+        return baseAddress == Long.MAX_VALUE ? Memory.DEFAULT_BASE_ADDRESS : baseAddress;
     }
 
     /// Returns a cached block for the supplied guest program counter.

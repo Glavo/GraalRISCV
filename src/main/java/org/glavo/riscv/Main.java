@@ -22,7 +22,7 @@ public final class Main {
             Usage: graalriscv [options] <program.elf>
 
             Options:
-              --memory-base <address>    Guest memory base address; accepts decimal or 0x-prefixed hex.
+              --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
               --memory-size <bytes>      Guest memory size in bytes.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --trace                    Print guest instruction trace lines.
@@ -189,6 +189,10 @@ public final class Main {
 
     /// Parses a signed long option and returns its normalized decimal string value.
     private static @Nullable String parseLongOption(String optionName, String value, PrintStream err) {
+        if ("--memory-base".equals(optionName) && "auto".equalsIgnoreCase(value)) {
+            return Long.toString(RiscVLanguage.AUTO_MEMORY_BASE);
+        }
+
         try {
             return Long.toString(Long.decode(value));
         } catch (NumberFormatException exception) {

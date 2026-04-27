@@ -40,25 +40,39 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
-    /// Verifies that the CLI can execute an ELF whose load segment starts below `0x80000000`.
+    /// Verifies that the CLI can infer a memory base from an ELF segment below `0x80000000`.
     @Test
     public void runsPageAlignedSegmentBelowDefaultMemoryBase() throws Exception {
         Path elfPath = tempDirectory.resolve("hello-low-segment.elf");
-        int padding = 0x1000;
-        byte[] program = helloWorldCode();
-        ByteBuffer segment = ByteBuffer.allocate(padding + program.length).order(ByteOrder.LITTLE_ENDIAN);
-        segment.position(padding);
-        segment.put(program);
-        Files.write(elfPath, ElfTestImages.executable(
-                ElfTestImages.BASE_ADDRESS - padding,
-                ElfTestImages.BASE_ADDRESS,
-                segment.array()));
+        Files.write(elfPath, pageAlignedHelloWorldElf());
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         int exitCode = Main.run(
                 new String[]{
-                        "--memory-base", "0x7ffff000",
+                        "--max-instructions", "1000",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that the CLI accepts an explicit `auto` memory base.
+    @Test
+    public void acceptsExplicitAutoMemoryBase() throws Exception {
+        Path elfPath = tempDirectory.resolve("hello-auto-base.elf");
+        Files.write(elfPath, pageAlignedHelloWorldElf());
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--memory-base", "auto",
                         "--max-instructions", "1000",
                         elfPath.toString()
                 },
@@ -101,5 +115,18 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put(message);
         return code.array();
+    }
+
+    /// Builds a Hello World ELF with a page-aligned load segment below the entry point.
+    private static byte[] pageAlignedHelloWorldElf() {
+        int padding = 0x1000;
+        byte[] program = helloWorldCode();
+        ByteBuffer segment = ByteBuffer.allocate(padding + program.length).order(ByteOrder.LITTLE_ENDIAN);
+        segment.position(padding);
+        segment.put(program);
+        return ElfTestImages.executable(
+                ElfTestImages.BASE_ADDRESS - padding,
+                ElfTestImages.BASE_ADDRESS,
+                segment.array());
     }
 }

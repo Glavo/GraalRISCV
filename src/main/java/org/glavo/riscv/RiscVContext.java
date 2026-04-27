@@ -23,13 +23,13 @@ public final class RiscVContext {
 
     /// Creates a simulator context.
     public RiscVContext(TruffleLanguage.Env env, long memoryBase, long memorySize, long maxInstructions, boolean trace) {
-        if (memoryBase < 0) {
-            throw new RiscVException("riscv.memoryBase must be non-negative: " + memoryBase);
+        if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
+            throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
         if (memorySize <= 0) {
             throw new RiscVException("riscv.memorySize must be positive: " + memorySize);
         }
-        if (memoryBase > Long.MAX_VALUE - memorySize) {
+        if (memoryBase != RiscVLanguage.AUTO_MEMORY_BASE && memoryBase > Long.MAX_VALUE - memorySize) {
             throw new RiscVException("Guest memory range overflows: base=" + memoryBase + ", size=" + memorySize);
         }
         if (maxInstructions < 0) {
