@@ -17,7 +17,6 @@
 
 ### 4. Improve Truffle integration and execution structure
 
-- Split large instruction dispatch logic into smaller execution helpers or node groups where it reduces risk and improves profiling clarity.
 - Check that interpreter state, memory access, and block execution remain compatible with Truffle partial evaluation expectations.
 - Keep the public CLI stable while internal execution nodes evolve.
 

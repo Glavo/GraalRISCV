@@ -74,9 +74,26 @@ public final class InstructionNode extends Node {
         Memory memory = state.memory();
 
         switch (operation) {
-            case NOP -> {
-                state.setPc(nextPc);
-            }
+            case NOP, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU, FENCE, ECALL, EBREAK ->
+                    executeControl(state, nextPc);
+            case LB, LH, LW, LD, LBU, LHU, LWU -> executeLoad(state, memory, nextPc);
+            case SB, SH, SW, SD -> executeStore(state, memory, nextPc);
+            case ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI, ADDIW, SLLIW, SRLIW, SRAIW ->
+                    executeImmediateInteger(state, nextPc);
+            case ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, ADDW, SUBW, SLLW, SRLW, SRAW ->
+                    executeRegisterInteger(state, nextPc);
+            case MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, MULW, DIVW, DIVUW, REMW, REMUW ->
+                    executeMultiplyDivide(state, nextPc);
+            case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
+                    AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
+                    AMOMIN_D, AMOMAX_D, AMOMINU_D, AMOMAXU_D -> executeAtomic(state, memory, nextPc);
+        }
+    }
+
+    /// Executes control-flow and system operations.
+    private void executeControl(MachineState state, long nextPc) {
+        switch (operation) {
+            case NOP, FENCE -> state.setPc(nextPc);
             case LUI -> {
                 state.setRegister(rd, immediate);
                 state.setPc(nextPc);
@@ -100,6 +117,15 @@ public final class InstructionNode extends Node {
             case BGE -> branch(state, state.register(rs1) >= state.register(rs2), nextPc);
             case BLTU -> branch(state, Long.compareUnsigned(state.register(rs1), state.register(rs2)) < 0, nextPc);
             case BGEU -> branch(state, Long.compareUnsigned(state.register(rs1), state.register(rs2)) >= 0, nextPc);
+            case ECALL -> ecall(state);
+            case EBREAK -> throw new ProgramExitException(0);
+            default -> throw unexpectedOperationGroup("control");
+        }
+    }
+
+    /// Executes load operations.
+    private void executeLoad(MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
             case LB -> loadByte(state, memory, nextPc);
             case LH -> loadShort(state, memory, nextPc);
             case LW -> loadInt(state, memory, nextPc);
@@ -107,10 +133,24 @@ public final class InstructionNode extends Node {
             case LBU -> loadUnsignedByte(state, memory, nextPc);
             case LHU -> loadUnsignedShort(state, memory, nextPc);
             case LWU -> loadUnsignedInt(state, memory, nextPc);
+            default -> throw unexpectedOperationGroup("load");
+        }
+    }
+
+    /// Executes store operations.
+    private void executeStore(MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
             case SB -> storeByte(state, memory, nextPc);
             case SH -> storeShort(state, memory, nextPc);
             case SW -> storeInt(state, memory, nextPc);
             case SD -> storeLong(state, memory, nextPc);
+            default -> throw unexpectedOperationGroup("store");
+        }
+    }
+
+    /// Executes integer register-immediate operations.
+    private void executeImmediateInteger(MachineState state, long nextPc) {
+        switch (operation) {
             case ADDI -> binaryImmediate(state, nextPc, state.register(rs1) + immediate);
             case SLTI -> binaryImmediate(state, nextPc, state.register(rs1) < immediate ? 1 : 0);
             case SLTIU -> binaryImmediate(state, nextPc, Long.compareUnsigned(state.register(rs1), immediate) < 0 ? 1 : 0);
@@ -124,6 +164,13 @@ public final class InstructionNode extends Node {
             case SLLIW -> wordImmediate(state, nextPc, (int) state.register(rs1) << immediate);
             case SRLIW -> wordImmediate(state, nextPc, (int) state.register(rs1) >>> immediate);
             case SRAIW -> wordImmediate(state, nextPc, (int) state.register(rs1) >> immediate);
+            default -> throw unexpectedOperationGroup("immediate integer");
+        }
+    }
+
+    /// Executes integer register-register operations.
+    private void executeRegisterInteger(MachineState state, long nextPc) {
+        switch (operation) {
             case ADD -> binaryRegister(state, nextPc, state.register(rs1) + state.register(rs2));
             case SUB -> binaryRegister(state, nextPc, state.register(rs1) - state.register(rs2));
             case SLL -> binaryRegister(state, nextPc, state.register(rs1) << (state.register(rs2) & 0x3f));
@@ -139,6 +186,13 @@ public final class InstructionNode extends Node {
             case SLLW -> wordRegister(state, nextPc, (int) state.register(rs1) << (state.register(rs2) & 0x1f));
             case SRLW -> wordRegister(state, nextPc, (int) state.register(rs1) >>> (state.register(rs2) & 0x1f));
             case SRAW -> wordRegister(state, nextPc, (int) state.register(rs1) >> (state.register(rs2) & 0x1f));
+            default -> throw unexpectedOperationGroup("register integer");
+        }
+    }
+
+    /// Executes RV64M multiply and divide operations.
+    private void executeMultiplyDivide(MachineState state, long nextPc) {
+        switch (operation) {
             case MUL -> binaryRegister(state, nextPc, state.register(rs1) * state.register(rs2));
             case MULH -> binaryRegister(state, nextPc, Math.multiplyHigh(state.register(rs1), state.register(rs2)));
             case MULHSU -> binaryRegister(state, nextPc, multiplyHighSignedUnsigned(state.register(rs1), state.register(rs2)));
@@ -152,11 +206,13 @@ public final class InstructionNode extends Node {
             case DIVUW -> wordRegister(state, nextPc, divideUnsignedWord((int) state.register(rs1), (int) state.register(rs2)));
             case REMW -> wordRegister(state, nextPc, remainderSignedWord((int) state.register(rs1), (int) state.register(rs2)));
             case REMUW -> wordRegister(state, nextPc, remainderUnsignedWord((int) state.register(rs1), (int) state.register(rs2)));
-            case FENCE -> {
-                state.setPc(nextPc);
-            }
-            case ECALL -> ecall(state);
-            case EBREAK -> throw new ProgramExitException(0);
+            default -> throw unexpectedOperationGroup("multiply/divide");
+        }
+    }
+
+    /// Executes RV64A atomic operations.
+    private void executeAtomic(MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
             case LR_W -> lrWord(state, memory, nextPc);
             case LR_D -> lrDouble(state, memory, nextPc);
             case SC_W -> scWord(state, memory, nextPc);
@@ -179,7 +235,13 @@ public final class InstructionNode extends Node {
             case AMOMAX_D -> amoDouble(state, memory, nextPc, AmoKind.MAX);
             case AMOMINU_D -> amoDouble(state, memory, nextPc, AmoKind.MINU);
             case AMOMAXU_D -> amoDouble(state, memory, nextPc, AmoKind.MAXU);
+            default -> throw unexpectedOperationGroup("atomic");
         }
+    }
+
+    /// Creates an assertion error for an impossible operation group dispatch.
+    private AssertionError unexpectedOperationGroup(String group) {
+        return new AssertionError("Unexpected " + group + " operation: " + operation);
     }
 
     /// Sets the next program counter for a conditional branch.
