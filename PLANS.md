@@ -2,12 +2,10 @@
 
 ## Active Work
 
-### 1. Make the C example workflow reproducible
+### 1. Verify the C example workflow with a RISC-V toolchain
 
-- Update user-facing build and run documentation so every Gradle command follows the repository rule of using `./gradlew -g .gradle-user-home ...`.
-- Keep `examples/hello/HelloWorld.c` as the baseline freestanding C program and document the exact `riscv64-unknown-elf-gcc` command, linker script, and expected CLI output.
-- Add a smoke-check path for `buildHelloWorldExample` and `runHelloWorldExample` that clearly reports when the RISC-V toolchain is missing instead of failing ambiguously.
-- Verify the packaged CLI can run the compiled example through `run`, `installDist`, and the Shadow JAR path.
+- Run `./gradlew -g .gradle-user-home checkHelloWorldExample` on a machine with `riscv64-unknown-elf-gcc` available.
+- Record any platform-specific RISC-V toolchain setup or linker troubleshooting that is needed after real-toolchain verification.
 
 ### 2. Harden ELF loading and diagnostics
 
@@ -20,7 +18,6 @@
 
 - Keep `read`, `write`, and `exit` as the initial stable syscall surface and add focused tests for stdin EOF, partial writes, invalid file descriptors, and guest memory bounds.
 - Decide which additional Linux RISC-V ABI calls are required for the next useful C workload, such as `brk`, `close`, `fstat`, `lseek`, or `isatty`.
-- Make unsupported `ecall` errors include the syscall number, program counter, and argument registers.
 - Keep host I/O behavior deterministic enough for tests while still mapping stdout and stderr to the CLI process.
 
 ### 4. Expand ISA coverage and execution tests

@@ -38,8 +38,8 @@ public final class GuestSyscalls {
         this.err = err;
     }
 
-    /// Executes the syscall described by the guest argument registers.
-    public void handle(MachineState state) {
+    /// Executes the syscall described by the guest argument registers at the supplied program counter.
+    public void handle(MachineState state, long pc) {
         long callNumber = state.register(17);
         if (callNumber == SYS_READ) {
             state.setRegister(10, read((int) state.register(10), state.register(11), state.register(12)));
@@ -52,7 +52,26 @@ public final class GuestSyscalls {
         if (callNumber == SYS_EXIT) {
             throw new ProgramExitException(state.register(10));
         }
-        throw new RiscVException("Unsupported ecall number: " + callNumber);
+        throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
+    }
+
+    /// Builds a diagnostic message for a syscall that is not implemented by the simulator.
+    private static String unsupportedEcallMessage(MachineState state, long pc, long callNumber) {
+        return "Unsupported ecall number: " + callNumber
+                + ", pc=0x" + unsignedHex(pc)
+                + ", a0=0x" + unsignedHex(state.register(10))
+                + ", a1=0x" + unsignedHex(state.register(11))
+                + ", a2=0x" + unsignedHex(state.register(12))
+                + ", a3=0x" + unsignedHex(state.register(13))
+                + ", a4=0x" + unsignedHex(state.register(14))
+                + ", a5=0x" + unsignedHex(state.register(15))
+                + ", a6=0x" + unsignedHex(state.register(16))
+                + ", a7=0x" + unsignedHex(state.register(17));
+    }
+
+    /// Formats a guest register value as an unsigned hexadecimal string.
+    private static String unsignedHex(long value) {
+        return Long.toUnsignedString(value, 16);
     }
 
     /// Reads bytes from guest stdin into guest memory and returns the guest syscall result.

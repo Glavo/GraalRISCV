@@ -289,9 +289,9 @@ public final class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
-    /// Implements the bare-metal MVP ecall convention.
+    /// Executes an environment call through the configured syscall handler.
     private void ecall(MachineState state) {
-        state.syscalls().handle(state);
+        state.syscalls().handle(state, address);
         state.setPc(address + length);
     }
 

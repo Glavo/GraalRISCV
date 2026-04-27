@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// Tests the command-line entry point.
 @NotNullByDefault
@@ -118,6 +119,35 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that unsupported syscalls include enough guest state for diagnosis.
+    @Test
+    public void reportsUnsupportedSyscallContext() throws Exception {
+        Path elfPath = tempDirectory.resolve("unsupported-syscall.elf");
+        Files.write(elfPath, ElfTestImages.executable(unsupportedSyscallCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--max-instructions", "1000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        String diagnostics = err.toString(StandardCharsets.UTF_8);
+        assertEquals(1, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(diagnostics.contains("Unsupported ecall number: 123"));
+        assertTrue(diagnostics.contains("pc=0x80000020"));
+        assertTrue(diagnostics.contains("a0=0x1"));
+        assertTrue(diagnostics.contains("a1=0x2"));
+        assertTrue(diagnostics.contains("a2=0x3"));
+        assertTrue(diagnostics.contains("a3=0x4"));
+        assertTrue(diagnostics.contains("a4=0x5"));
+        assertTrue(diagnostics.contains("a5=0x6"));
+        assertTrue(diagnostics.contains("a6=0x7"));
+        assertTrue(diagnostics.contains("a7=0x7b"));
+    }
+
     /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
     private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
@@ -167,6 +197,29 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put((byte) 0);
+        return code.array();
+    }
+
+    /// Builds a program that invokes an unsupported Linux syscall with recognizable arguments.
+    private static byte[] unsupportedSyscallCode() {
+        return rawCode(
+                ElfTestImages.addi(10, 0, 1),
+                ElfTestImages.addi(11, 0, 2),
+                ElfTestImages.addi(12, 0, 3),
+                ElfTestImages.addi(13, 0, 4),
+                ElfTestImages.addi(14, 0, 5),
+                ElfTestImages.addi(15, 0, 6),
+                ElfTestImages.addi(16, 0, 7),
+                ElfTestImages.addi(17, 0, 123),
+                ElfTestImages.ecall());
+    }
+
+    /// Encodes the supplied 32-bit instructions as raw little-endian code bytes.
+    private static byte[] rawCode(int... instructions) {
+        ByteBuffer code = ByteBuffer.allocate(instructions.length * Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        for (int instruction : instructions) {
+            ElfTestImages.putInt(code, instruction);
+        }
         return code.array();
     }
 }

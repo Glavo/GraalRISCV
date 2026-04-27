@@ -1,5 +1,6 @@
 import java.time.Duration
 import java.io.File
+import org.gradle.jvm.tasks.Jar
 
 plugins {
     id("java")
@@ -68,8 +69,7 @@ fun findExecutable(command: String): String? {
     }
 
     val path = System.getenv("PATH") ?: return null
-    val isWindows = System.getProperty("os.name").lowercase().contains("win")
-    val extensions = if (isWindows) {
+    val extensions = if (isWindowsHost) {
         listOf("") + (System.getenv("PATHEXT") ?: ".EXE;.BAT;.CMD")
             .split(';')
             .filter { it.isNotBlank() }
@@ -93,8 +93,21 @@ fun findExecutable(command: String): String? {
         ?.absolutePath
 }
 
+val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val riscvGcc = providers.gradleProperty("riscvGcc").orElse("riscv64-unknown-elf-gcc")
 val helloWorldExampleElf = layout.buildDirectory.file("examples/hello/hello.elf")
+val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
+val javaLauncher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(25)
+}
+
+fun helloWorldExampleElfExists(taskName: String): Boolean {
+    val elf = helloWorldExampleElf.get().asFile
+    if (!elf.isFile) {
+        logger.lifecycle("Skipping $taskName: ${elf.absolutePath} does not exist.")
+    }
+    return elf.isFile
+}
 
 tasks.register<Exec>("buildHelloWorldExample") {
     group = "verification"
@@ -106,7 +119,7 @@ tasks.register<Exec>("buildHelloWorldExample") {
     onlyIf {
         val compiler = findExecutable(riscvGcc.get())
         if (compiler == null) {
-            logger.lifecycle("Skipping buildHelloWorldExample: ${riscvGcc.get()} was not found in PATH.")
+            logger.lifecycle("Skipping buildHelloWorldExample: ${riscvGcc.get()} was not found in PATH. Use -PriscvGcc=<path> to set the compiler.")
         }
         compiler != null
     }
@@ -148,14 +161,71 @@ tasks.register<JavaExec>("runHelloWorldExample") {
     jvmArgs(application.applicationDefaultJvmArgs)
 
     onlyIf {
-        val elf = helloWorldExampleElf.get().asFile
-        if (!elf.isFile) {
-            logger.lifecycle("Skipping runHelloWorldExample: ${elf.absolutePath} does not exist.")
-        }
-        elf.isFile
+        helloWorldExampleElfExists(name)
     }
 
     doFirst {
         args(helloWorldExampleElf.get().asFile.absolutePath)
     }
+}
+
+tasks.register<Exec>("runHelloWorldInstalledExample") {
+    group = "verification"
+    description = "Runs the Hello World example through the installDist launch script."
+
+    dependsOn("installDist", "buildHelloWorldExample")
+
+    onlyIf {
+        helloWorldExampleElfExists(name)
+    }
+
+    doFirst {
+        val scriptName = if (isWindowsHost) {
+            "graalriscv.bat"
+        } else {
+            "graalriscv"
+        }
+        val script = layout.buildDirectory.file("install/graalriscv/bin/$scriptName").get().asFile
+        val elf = helloWorldExampleElf.get().asFile
+
+        if (isWindowsHost) {
+            commandLine("cmd", "/c", script.absolutePath, elf.absolutePath)
+        } else {
+            commandLine(script.absolutePath, elf.absolutePath)
+        }
+    }
+}
+
+tasks.register<Exec>("runHelloWorldShadowJarExample") {
+    group = "verification"
+    description = "Runs the Hello World example through the packaged Shadow JAR."
+
+    dependsOn("shadowJar", "buildHelloWorldExample")
+    inputs.file(shadowJarFile)
+
+    onlyIf {
+        helloWorldExampleElfExists(name)
+    }
+
+    doFirst {
+        commandLine(
+            javaLauncher.get().executablePath.asFile.absolutePath,
+            "--enable-native-access=ALL-UNNAMED",
+            "--sun-misc-unsafe-memory-access=allow",
+            "-jar",
+            shadowJarFile.get().asFile.absolutePath,
+            helloWorldExampleElf.get().asFile.absolutePath
+        )
+    }
+}
+
+tasks.register("checkHelloWorldExample") {
+    group = "verification"
+    description = "Runs every available Hello World example smoke check."
+
+    dependsOn(
+        "runHelloWorldExample",
+        "runHelloWorldInstalledExample",
+        "runHelloWorldShadowJarExample"
+    )
 }

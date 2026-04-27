@@ -35,6 +35,12 @@ public final class Main {
     /// The process exit code used for host-side execution failures.
     private static final int HOST_ERROR = 1;
 
+    /// The Truffle system property that controls attach-library diagnostics.
+    private static final String ATTACH_LIBRARY_FAILURE_ACTION_PROPERTY = "polyglotimpl.AttachLibraryFailureAction";
+
+    /// The default attach-library diagnostic behavior used by the CLI.
+    private static final String DEFAULT_ATTACH_LIBRARY_FAILURE_ACTION = "ignore";
+
     /// Prevents construction of this utility class.
     private Main() {
     }
@@ -78,6 +84,8 @@ public final class Main {
 
     /// Creates the Polyglot context used for guest execution.
     private static Context createContext(CliOptions options, InputStream in, OutputStream out, OutputStream err) {
+        configurePolyglotDefaults();
+
         Context.Builder builder = Context.newBuilder(RiscVLanguage.ID)
                 .in(in)
                 .out(out)
@@ -98,6 +106,13 @@ public final class Main {
         }
 
         return builder.build();
+    }
+
+    /// Applies CLI defaults for Polyglot runtime behavior without overriding user-supplied properties.
+    private static void configurePolyglotDefaults() {
+        if (System.getProperty(ATTACH_LIBRARY_FAILURE_ACTION_PROPERTY) == null) {
+            System.setProperty(ATTACH_LIBRARY_FAILURE_ACTION_PROPERTY, DEFAULT_ATTACH_LIBRARY_FAILURE_ACTION);
+        }
     }
 
     /// Parses command-line arguments.
