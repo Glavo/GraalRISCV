@@ -2,25 +2,27 @@
 
 GraalRISCV is a GraalVM Truffle-based RV64IMAC ELF simulator.
 
+TODO: In development.
+
 ## Run An ELF
 
 Use the Gradle application task during development:
 
 ```text
-./gradlew -g .gradle-user-home run --args="hello.elf"
+./gradlew run --args="hello.elf"
 ```
 
 Create installable launch scripts:
 
 ```text
-./gradlew -g .gradle-user-home installDist
+./gradlew installDist
 build\install\graalriscv\bin\graalriscv.bat hello.elf
 ```
 
 Create and run the Shadow JAR:
 
 ```text
-./gradlew -g .gradle-user-home shadowJar
+./gradlew shadowJar
 java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -jar build/libs/GraalRISCV-1.0-SNAPSHOT-all.jar hello.elf
 ```
 
@@ -49,8 +51,8 @@ Unsupported `ecall` failures include the syscall number, program counter, and ar
 Gradle downloads the configured Zig toolchain and uses `zig cc` to build the RISC-V ELF:
 
 ```text
-./gradlew -g .gradle-user-home buildHelloWorldExample
-./gradlew -g .gradle-user-home runHelloWorldExample
+./gradlew buildHelloWorldExample
+./gradlew runHelloWorldExample
 ```
 
 The generated ELF is written to:
@@ -76,5 +78,5 @@ Hello World!
 Run every available Hello World smoke check:
 
 ```text
-./gradlew -g .gradle-user-home checkHelloWorldExample
+./gradlew checkHelloWorldExample
 ```
