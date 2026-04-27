@@ -65,6 +65,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
 
+    /// The Linux RISC-V syscall number for `nanosleep`.
+    private static final long SYS_NANOSLEEP = 101;
+
     /// The Linux RISC-V syscall number for `clock_gettime`.
     private static final long SYS_CLOCK_GETTIME = 113;
 
@@ -112,6 +115,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `EEXIST` as a raw negative syscall result.
     private static final long EEXIST = -17;
+
+    /// Linux `EINTR` as a raw negative syscall result.
+    private static final long EINTR = -4;
 
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
@@ -268,6 +274,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The `tv_nsec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
     private static final int TIMESPEC_NANOSECONDS_OFFSET = Long.BYTES;
+
+    /// The number of nanoseconds in one second.
+    private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
+
+    /// The number of nanoseconds in one millisecond.
+    private static final long NANOSECONDS_PER_MILLISECOND = 1_000_000L;
 
     /// Linux `PR_SET_PDEATHSIG`.
     private static final long PR_SET_PDEATHSIG = 1;
@@ -615,6 +627,10 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_SET_ROBUST_LIST) {
             state.setRegister(10, setRobustList(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_NANOSLEEP) {
+            state.setRegister(10, nanosleep(state.register(10), state.register(11)));
             return;
         }
         if (callNumber == SYS_CLOCK_GETTIME) {
@@ -1120,6 +1136,36 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Sleeps for the requested Linux RISC-V 64-bit `struct timespec` duration.
+    private long nanosleep(long requestAddress, long remainingAddress) {
+        long seconds = memory.readLong(requestAddress + TIMESPEC_SECONDS_OFFSET);
+        long nanoseconds = memory.readLong(requestAddress + TIMESPEC_NANOSECONDS_OFFSET);
+        if (!isValidTimespec(seconds, nanoseconds)) {
+            return EINVAL;
+        }
+
+        long totalNanoseconds = timespecToSaturatedNanoseconds(seconds, nanoseconds);
+        if (totalNanoseconds == 0) {
+            return 0;
+        }
+
+        long startNanoseconds = System.nanoTime();
+        try {
+            Thread.sleep(
+                    totalNanoseconds / NANOSECONDS_PER_MILLISECOND,
+                    (int) (totalNanoseconds % NANOSECONDS_PER_MILLISECOND));
+            return 0;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            if (remainingAddress != 0) {
+                long elapsedNanoseconds = Math.max(0, System.nanoTime() - startNanoseconds);
+                long remainingNanoseconds = Math.max(0, totalNanoseconds - elapsedNanoseconds);
+                writeTimespecFromNanoseconds(remainingAddress, remainingNanoseconds);
+            }
+            return EINTR;
+        }
+    }
+
     /// Reports a deterministic single-CPU affinity mask for static libc queries.
     private long schedGetaffinity(long processId, long cpuSetSize, long cpuSetAddress) {
         if (cpuSetSize < MINIMUM_CPU_AFFINITY_MASK_SIZE) {
@@ -1161,6 +1207,25 @@ public final class GuestSyscalls implements AutoCloseable {
 
         memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, duration.getSeconds());
         memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, duration.getNano());
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct timespec` from a non-negative nanosecond count.
+    private void writeTimespecFromNanoseconds(long timespecAddress, long nanoseconds) {
+        memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, nanoseconds / NANOSECONDS_PER_SECOND);
+        memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, nanoseconds % NANOSECONDS_PER_SECOND);
+    }
+
+    /// Returns true when the supplied timespec fields represent a valid non-negative duration.
+    private static boolean isValidTimespec(long seconds, long nanoseconds) {
+        return seconds >= 0 && nanoseconds >= 0 && nanoseconds < NANOSECONDS_PER_SECOND;
+    }
+
+    /// Converts a valid timespec to nanoseconds, saturating very large values.
+    private static long timespecToSaturatedNanoseconds(long seconds, long nanoseconds) {
+        if (seconds > (Long.MAX_VALUE - nanoseconds) / NANOSECONDS_PER_SECOND) {
+            return Long.MAX_VALUE;
+        }
+        return seconds * NANOSECONDS_PER_SECOND + nanoseconds;
     }
 
     /// Returns true when `clock_gettime` accepts the supplied Linux clock id.

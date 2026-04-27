@@ -49,6 +49,9 @@ public final class GuestSyscallsTest {
     /// Linux `EEXIST` as a raw negative syscall result.
     private static final long EEXIST = -17;
 
+    /// Linux `EINTR` as a raw negative syscall result.
+    private static final long EINTR = -4;
+
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
 
@@ -99,6 +102,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
+
+    /// The Linux RISC-V syscall number for `nanosleep`.
+    private static final long SYS_NANOSLEEP = 101;
 
     /// The Linux RISC-V syscall number for `clock_gettime`.
     private static final long SYS_CLOCK_GETTIME = 113;
@@ -758,6 +764,62 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SET_ROBUST_LIST, memory.baseAddress() + 64, -1, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `nanosleep` validation and successful short sleeps.
+    @Test
+    public void nanosleepValidatesTimespec() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long requestAddress = memory.baseAddress() + 64;
+            long remainingAddress = memory.baseAddress() + 80;
+
+            memory.writeLong(requestAddress, 0);
+            memory.writeLong(requestAddress + Long.BYTES, 1_000_000L);
+            memory.writeLong(remainingAddress, 123);
+            memory.writeLong(remainingAddress + Long.BYTES, 456);
+            setSyscall(state, SYS_NANOSLEEP, requestAddress, remainingAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(123, memory.readLong(remainingAddress));
+            assertEquals(456, memory.readLong(remainingAddress + Long.BYTES));
+
+            memory.writeLong(requestAddress, 0);
+            memory.writeLong(requestAddress + Long.BYTES, 1_000_000_000L);
+            setSyscall(state, SYS_NANOSLEEP, requestAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(requestAddress, -1);
+            memory.writeLong(requestAddress + Long.BYTES, 0);
+            setSyscall(state, SYS_NANOSLEEP, requestAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `nanosleep` interruption handling and remaining-time reporting.
+    @Test
+    public void nanosleepReportsRemainingTimeOnInterrupt() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long requestAddress = memory.baseAddress() + 64;
+            long remainingAddress = memory.baseAddress() + 80;
+
+            memory.writeLong(requestAddress, 1);
+            memory.writeLong(requestAddress + Long.BYTES, 0);
+            Thread.currentThread().interrupt();
+            try {
+                setSyscall(state, SYS_NANOSLEEP, requestAddress, remainingAddress, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(EINTR, state.register(10));
+                assertTrue(memory.readLong(remainingAddress) >= 0);
+                assertTrue(memory.readLong(remainingAddress + Long.BYTES) >= 0);
+                assertTrue(memory.readLong(remainingAddress + Long.BYTES) < 1_000_000_000L);
+            } finally {
+                Thread.interrupted();
+            }
         }
     }
 
