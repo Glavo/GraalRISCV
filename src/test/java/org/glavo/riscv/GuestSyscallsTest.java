@@ -112,6 +112,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
 
+    /// The Linux RISC-V syscall number for `sigaltstack`.
+    private static final long SYS_SIGALTSTACK = 132;
+
     /// The Linux RISC-V syscall number for `rt_sigaction`.
     private static final long SYS_RT_SIGACTION = 134;
 
@@ -210,6 +213,27 @@ public final class GuestSyscallsTest {
 
     /// The Linux generic kernel `sigset_t` size accepted by signal syscalls.
     private static final long KERNEL_SIGSET_SIZE = 8;
+
+    /// The byte offset of `ss_sp` inside Linux RISC-V 64-bit `stack_t`.
+    private static final long SIGNAL_STACK_POINTER_OFFSET = 0;
+
+    /// The byte offset of `ss_flags` inside Linux RISC-V 64-bit `stack_t`.
+    private static final long SIGNAL_STACK_FLAGS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `ss_size` inside Linux RISC-V 64-bit `stack_t`.
+    private static final long SIGNAL_STACK_SIZE_OFFSET = 2L * Long.BYTES;
+
+    /// Linux `MINSIGSTKSZ`.
+    private static final long MINIMUM_SIGNAL_STACK_SIZE = 2048;
+
+    /// Linux `SS_ONSTACK`.
+    private static final long SS_ONSTACK = 1;
+
+    /// Linux `SS_DISABLE`.
+    private static final long SS_DISABLE = 2;
+
+    /// Linux `SS_AUTODISARM`.
+    private static final long SS_AUTODISARM = 1L << 31;
 
     /// The guest page size used by `mmap` and `munmap`.
     private static final long PAGE_SIZE = 4096;
@@ -1266,6 +1290,74 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies alternate signal stack registration for runtimes that install signal handlers.
+    @Test
+    public void sigaltstackTracksSingleThreadedSignalStack() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long stackAddress = memory.baseAddress() + 64;
+            long oldStackAddress = memory.baseAddress() + 128;
+            long alternateStackPointer = memory.baseAddress() + 1024;
+
+            setSyscall(state, SYS_SIGALTSTACK, 0, oldStackAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, readSignalStackPointer(memory, oldStackAddress));
+            assertEquals(SS_DISABLE, readSignalStackFlags(memory, oldStackAddress));
+            assertEquals(0, readSignalStackSize(memory, oldStackAddress));
+
+            writeSignalStack(memory, stackAddress, alternateStackPointer, SS_AUTODISARM, MINIMUM_SIGNAL_STACK_SIZE);
+            setSyscall(state, SYS_SIGALTSTACK, stackAddress, oldStackAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(SS_DISABLE, readSignalStackFlags(memory, oldStackAddress));
+
+            memory.clear(oldStackAddress, 24);
+            setSyscall(state, SYS_SIGALTSTACK, 0, oldStackAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(alternateStackPointer, readSignalStackPointer(memory, oldStackAddress));
+            assertEquals(SS_AUTODISARM, readSignalStackFlags(memory, oldStackAddress));
+            assertEquals(MINIMUM_SIGNAL_STACK_SIZE, readSignalStackSize(memory, oldStackAddress));
+
+            writeSignalStack(memory, stackAddress, 0, SS_DISABLE, 0);
+            setSyscall(state, SYS_SIGALTSTACK, stackAddress, oldStackAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.clear(oldStackAddress, 24);
+            setSyscall(state, SYS_SIGALTSTACK, 0, oldStackAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(SS_DISABLE, readSignalStackFlags(memory, oldStackAddress));
+        }
+    }
+
+    /// Verifies Linux-compatible `sigaltstack` validation for unsupported stack descriptions.
+    @Test
+    public void sigaltstackRejectsInvalidStacks() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long stackAddress = memory.baseAddress() + 64;
+            long stackPointer = memory.baseAddress() + 1024;
+
+            writeSignalStack(memory, stackAddress, stackPointer, 0, MINIMUM_SIGNAL_STACK_SIZE - 1);
+            setSyscall(state, SYS_SIGALTSTACK, stackAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+
+            writeSignalStack(memory, stackAddress, stackPointer, SS_ONSTACK, MINIMUM_SIGNAL_STACK_SIZE);
+            setSyscall(state, SYS_SIGALTSTACK, stackAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeSignalStack(memory, stackAddress, stackPointer, 0x10, MINIMUM_SIGNAL_STACK_SIZE);
+            setSyscall(state, SYS_SIGALTSTACK, stackAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies deterministic signal action handling for runtimes that initialize signal handlers.
     @Test
     public void rtSigactionAcceptsRuntimeSetup() {
@@ -1746,6 +1838,29 @@ public final class GuestSyscallsTest {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         memory.writeBytes(address, bytes, 0, bytes.length);
         memory.writeByte(address + bytes.length, (byte) 0);
+    }
+
+    /// Writes a Linux RISC-V 64-bit `stack_t` into guest memory.
+    private static void writeSignalStack(Memory memory, long address, long stackPointer, long flags, long size) {
+        memory.writeLong(address + SIGNAL_STACK_POINTER_OFFSET, stackPointer);
+        memory.writeInt(address + SIGNAL_STACK_FLAGS_OFFSET, (int) flags);
+        memory.writeInt(address + SIGNAL_STACK_FLAGS_OFFSET + Integer.BYTES, 0);
+        memory.writeLong(address + SIGNAL_STACK_SIZE_OFFSET, size);
+    }
+
+    /// Reads `ss_sp` from a Linux RISC-V 64-bit `stack_t`.
+    private static long readSignalStackPointer(Memory memory, long address) {
+        return memory.readLong(address + SIGNAL_STACK_POINTER_OFFSET);
+    }
+
+    /// Reads `ss_flags` from a Linux RISC-V 64-bit `stack_t`.
+    private static long readSignalStackFlags(Memory memory, long address) {
+        return Integer.toUnsignedLong(memory.readInt(address + SIGNAL_STACK_FLAGS_OFFSET));
+    }
+
+    /// Reads `ss_size` from a Linux RISC-V 64-bit `stack_t`.
+    private static long readSignalStackSize(Memory memory, long address) {
+        return memory.readLong(address + SIGNAL_STACK_SIZE_OFFSET);
     }
 
     /// Writes a `struct riscv_hwprobe` key with a zero value.

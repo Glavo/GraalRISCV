@@ -74,6 +74,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
 
+    /// The Linux RISC-V syscall number for `sigaltstack`.
+    private static final long SYS_SIGALTSTACK = 132;
+
     /// The Linux RISC-V syscall number for `rt_sigaction`.
     private static final long SYS_RT_SIGACTION = 134;
 
@@ -319,6 +322,33 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of Linux generic 64-bit kernel `struct sigaction`.
     private static final long KERNEL_SIGACTION_SIZE = 32;
+
+    /// The byte offset of `ss_sp` inside Linux RISC-V 64-bit `stack_t`.
+    private static final long SIGNAL_STACK_POINTER_OFFSET = 0;
+
+    /// The byte offset of `ss_flags` inside Linux RISC-V 64-bit `stack_t`.
+    private static final long SIGNAL_STACK_FLAGS_OFFSET = Long.BYTES;
+
+    /// The padding byte offset after `ss_flags` inside Linux RISC-V 64-bit `stack_t`.
+    private static final long SIGNAL_STACK_FLAGS_PADDING_OFFSET = SIGNAL_STACK_FLAGS_OFFSET + Integer.BYTES;
+
+    /// The byte offset of `ss_size` inside Linux RISC-V 64-bit `stack_t`.
+    private static final long SIGNAL_STACK_SIZE_OFFSET = 2L * Long.BYTES;
+
+    /// Linux `MINSIGSTKSZ`.
+    private static final long MINIMUM_SIGNAL_STACK_SIZE = 2048;
+
+    /// Linux `SS_ONSTACK`.
+    private static final long SS_ONSTACK = 1;
+
+    /// Linux `SS_DISABLE`.
+    private static final long SS_DISABLE = 2;
+
+    /// Linux `SS_AUTODISARM`.
+    private static final long SS_AUTODISARM = 1L << 31;
+
+    /// Linux flags accepted when registering an alternate signal stack.
+    private static final long SUPPORTED_SIGNAL_STACK_FLAGS = SS_DISABLE | SS_AUTODISARM;
 
     /// The byte size of the minimal CPU affinity mask exposed to the guest.
     private static final long MINIMUM_CPU_AFFINITY_MASK_SIZE = Long.BYTES;
@@ -603,6 +633,15 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The robust futex list structure length supplied by `set_robust_list`.
     private long robustListLength;
 
+    /// The guest alternate signal stack pointer registered by `sigaltstack`.
+    private long alternateSignalStackPointer;
+
+    /// The guest alternate signal stack size registered by `sigaltstack`.
+    private long alternateSignalStackSize;
+
+    /// The guest alternate signal stack flags reported by `sigaltstack`.
+    private long alternateSignalStackFlags = SS_DISABLE;
+
     /// The signal reported by `PR_GET_PDEATHSIG`, or zero when unset.
     private int parentDeathSignal;
 
@@ -796,6 +835,10 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_SCHED_GETAFFINITY) {
             state.setRegister(10, schedGetaffinity(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_SIGALTSTACK) {
+            state.setRegister(10, sigaltstack(state.register(10), state.register(11)));
             return;
         }
         if (callNumber == SYS_RT_SIGACTION) {
@@ -1308,6 +1351,50 @@ public final class GuestSyscalls implements AutoCloseable {
         robustListHeadAddress = headAddress;
         robustListLength = length;
         return 0;
+    }
+
+    /// Registers or reports the single-threaded alternate signal stack.
+    private long sigaltstack(long stackAddress, long oldStackAddress) {
+        long newStackPointer = 0;
+        long newStackSize = 0;
+        long newStackFlags = 0;
+        if (stackAddress != 0) {
+            newStackPointer = memory.readLong(stackAddress + SIGNAL_STACK_POINTER_OFFSET);
+            newStackFlags = Integer.toUnsignedLong(memory.readInt(stackAddress + SIGNAL_STACK_FLAGS_OFFSET));
+            newStackSize = memory.readLong(stackAddress + SIGNAL_STACK_SIZE_OFFSET);
+            if ((newStackFlags & ~SUPPORTED_SIGNAL_STACK_FLAGS) != 0
+                    || (newStackFlags & SS_ONSTACK) != 0
+                    || newStackSize < 0) {
+                return EINVAL;
+            }
+            if ((newStackFlags & SS_DISABLE) == 0 && newStackSize < MINIMUM_SIGNAL_STACK_SIZE) {
+                return ENOMEM;
+            }
+        }
+
+        if (oldStackAddress != 0) {
+            writeSignalStack(oldStackAddress);
+        }
+        if (stackAddress != 0) {
+            if ((newStackFlags & SS_DISABLE) != 0) {
+                alternateSignalStackPointer = 0;
+                alternateSignalStackSize = 0;
+                alternateSignalStackFlags = SS_DISABLE;
+            } else {
+                alternateSignalStackPointer = newStackPointer;
+                alternateSignalStackSize = newStackSize;
+                alternateSignalStackFlags = newStackFlags;
+            }
+        }
+        return 0;
+    }
+
+    /// Writes the current Linux RISC-V 64-bit `stack_t` alternate signal stack.
+    private void writeSignalStack(long stackAddress) {
+        memory.writeLong(stackAddress + SIGNAL_STACK_POINTER_OFFSET, alternateSignalStackPointer);
+        memory.writeInt(stackAddress + SIGNAL_STACK_FLAGS_OFFSET, (int) alternateSignalStackFlags);
+        memory.writeInt(stackAddress + SIGNAL_STACK_FLAGS_PADDING_OFFSET, 0);
+        memory.writeLong(stackAddress + SIGNAL_STACK_SIZE_OFFSET, alternateSignalStackSize);
     }
 
     /// Sleeps for the requested Linux RISC-V 64-bit `struct timespec` duration.
