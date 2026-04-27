@@ -112,6 +112,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `prctl`.
+    private static final long SYS_PRCTL = 167;
+
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
 
@@ -222,6 +225,57 @@ public final class GuestSyscallsTest {
 
     /// Linux `CLOCK_BOOTTIME`.
     private static final long CLOCK_BOOTTIME = 7;
+
+    /// Linux `PR_SET_PDEATHSIG`.
+    private static final long PR_SET_PDEATHSIG = 1;
+
+    /// Linux `PR_GET_PDEATHSIG`.
+    private static final long PR_GET_PDEATHSIG = 2;
+
+    /// Linux `PR_GET_DUMPABLE`.
+    private static final long PR_GET_DUMPABLE = 3;
+
+    /// Linux `PR_SET_DUMPABLE`.
+    private static final long PR_SET_DUMPABLE = 4;
+
+    /// Linux `PR_SET_NAME`.
+    private static final long PR_SET_NAME = 15;
+
+    /// Linux `PR_GET_NAME`.
+    private static final long PR_GET_NAME = 16;
+
+    /// Linux `PR_SET_TIMERSLACK`.
+    private static final long PR_SET_TIMERSLACK = 29;
+
+    /// Linux `PR_GET_TIMERSLACK`.
+    private static final long PR_GET_TIMERSLACK = 30;
+
+    /// Linux `PR_SET_CHILD_SUBREAPER`.
+    private static final long PR_SET_CHILD_SUBREAPER = 36;
+
+    /// Linux `PR_GET_CHILD_SUBREAPER`.
+    private static final long PR_GET_CHILD_SUBREAPER = 37;
+
+    /// Linux `PR_SET_NO_NEW_PRIVS`.
+    private static final long PR_SET_NO_NEW_PRIVS = 38;
+
+    /// Linux `PR_GET_NO_NEW_PRIVS`.
+    private static final long PR_GET_NO_NEW_PRIVS = 39;
+
+    /// Linux `PR_GET_TID_ADDRESS`.
+    private static final long PR_GET_TID_ADDRESS = 40;
+
+    /// Linux `PR_SET_THP_DISABLE`.
+    private static final long PR_SET_THP_DISABLE = 41;
+
+    /// Linux `PR_GET_THP_DISABLE`.
+    private static final long PR_GET_THP_DISABLE = 42;
+
+    /// Linux `PR_SET_VMA`.
+    private static final long PR_SET_VMA = 0x53564d41L;
+
+    /// Linux `PR_SET_VMA_ANON_NAME`.
+    private static final long PR_SET_VMA_ANON_NAME = 0;
 
     /// Verifies that stdin EOF is reported as a zero-byte read.
     @Test
@@ -792,6 +846,151 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
             assertEquals(-1, memory.readLong(timespecAddress));
+        }
+    }
+
+    /// Verifies `prctl` process-name truncation and retrieval.
+    @Test
+    public void prctlSupportsProcessName() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long inputAddress = memory.baseAddress() + 64;
+            long outputAddress = memory.baseAddress() + 128;
+
+            writeGuestString(memory, inputAddress, "0123456789abcdefghi");
+            setSyscall(state, SYS_PRCTL, PR_SET_NAME, inputAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_NAME, outputAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertArrayEquals(
+                    new byte[]{
+                            '0', '1', '2', '3', '4', '5', '6', '7',
+                            '8', '9', 'a', 'b', 'c', 'd', 'e', 0
+                    },
+                    memory.readBytes(outputAddress, 16));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_NAME, inputAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `prctl` state tracked by the single-process simulator.
+    @Test
+    public void prctlTracksSingleProcessState() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long intAddress = memory.baseAddress() + 64;
+            long longAddress = memory.baseAddress() + 72;
+            long tidAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_PRCTL, PR_GET_DUMPABLE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_DUMPABLE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_DUMPABLE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_DUMPABLE, 2, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_PDEATHSIG, 15, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_PDEATHSIG, intAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(15, memory.readInt(intAddress));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_CHILD_SUBREAPER, intAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1, memory.readInt(intAddress));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_NO_NEW_PRIVS, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_THP_DISABLE, 1, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_THP_DISABLE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_TIMERSLACK, 1234, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_TIMERSLACK, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1234, state.register(10));
+
+            setSyscall(state, SYS_SET_TID_ADDRESS, tidAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_TID_ADDRESS, longAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(tidAddress, memory.readLong(longAddress));
+        }
+    }
+
+    /// Verifies `prctl` no-op support and unsupported operation errors.
+    @Test
+    public void prctlAcceptsVirtualMemoryAreaNames() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long nameAddress = memory.baseAddress() + 64;
+
+            writeGuestString(memory, nameAddress, "heap");
+            setSyscall(
+                    state,
+                    SYS_PRCTL,
+                    PR_SET_VMA,
+                    PR_SET_VMA_ANON_NAME,
+                    memory.baseAddress(),
+                    PAGE_SIZE,
+                    nameAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_VMA, 1, memory.baseAddress(), PAGE_SIZE, nameAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, 9999, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 

@@ -77,6 +77,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `prctl`.
+    private static final long SYS_PRCTL = 167;
+
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
 
@@ -266,6 +269,63 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The `tv_nsec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
     private static final int TIMESPEC_NANOSECONDS_OFFSET = Long.BYTES;
 
+    /// Linux `PR_SET_PDEATHSIG`.
+    private static final long PR_SET_PDEATHSIG = 1;
+
+    /// Linux `PR_GET_PDEATHSIG`.
+    private static final long PR_GET_PDEATHSIG = 2;
+
+    /// Linux `PR_GET_DUMPABLE`.
+    private static final long PR_GET_DUMPABLE = 3;
+
+    /// Linux `PR_SET_DUMPABLE`.
+    private static final long PR_SET_DUMPABLE = 4;
+
+    /// Linux `PR_SET_NAME`.
+    private static final long PR_SET_NAME = 15;
+
+    /// Linux `PR_GET_NAME`.
+    private static final long PR_GET_NAME = 16;
+
+    /// Linux `PR_SET_TIMERSLACK`.
+    private static final long PR_SET_TIMERSLACK = 29;
+
+    /// Linux `PR_GET_TIMERSLACK`.
+    private static final long PR_GET_TIMERSLACK = 30;
+
+    /// Linux `PR_SET_CHILD_SUBREAPER`.
+    private static final long PR_SET_CHILD_SUBREAPER = 36;
+
+    /// Linux `PR_GET_CHILD_SUBREAPER`.
+    private static final long PR_GET_CHILD_SUBREAPER = 37;
+
+    /// Linux `PR_SET_NO_NEW_PRIVS`.
+    private static final long PR_SET_NO_NEW_PRIVS = 38;
+
+    /// Linux `PR_GET_NO_NEW_PRIVS`.
+    private static final long PR_GET_NO_NEW_PRIVS = 39;
+
+    /// Linux `PR_GET_TID_ADDRESS`.
+    private static final long PR_GET_TID_ADDRESS = 40;
+
+    /// Linux `PR_SET_THP_DISABLE`.
+    private static final long PR_SET_THP_DISABLE = 41;
+
+    /// Linux `PR_GET_THP_DISABLE`.
+    private static final long PR_GET_THP_DISABLE = 42;
+
+    /// Linux `PR_SET_VMA`.
+    private static final long PR_SET_VMA = 0x53564d41L;
+
+    /// Linux `PR_SET_VMA_ANON_NAME`.
+    private static final long PR_SET_VMA_ANON_NAME = 0;
+
+    /// The Linux task command string size used by `PR_SET_NAME` and `PR_GET_NAME`.
+    private static final int TASK_COMMAND_LENGTH = 16;
+
+    /// The default timer slack value exposed by `PR_GET_TIMERSLACK`.
+    private static final long DEFAULT_TIMER_SLACK_NANOSECONDS = 50_000L;
+
     /// The lowest regular Linux signal number accepted by signal syscalls.
     private static final long MIN_SIGNAL_NUMBER = 1;
 
@@ -374,6 +434,27 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The robust futex list structure length supplied by `set_robust_list`.
     private long robustListLength;
 
+    /// The signal reported by `PR_GET_PDEATHSIG`, or zero when unset.
+    private int parentDeathSignal;
+
+    /// The dumpable state reported by `PR_GET_DUMPABLE`.
+    private int dumpable = 1;
+
+    /// The process name reported by `PR_GET_NAME`.
+    private final byte[] processName = initialProcessName();
+
+    /// The timer slack value reported by `PR_GET_TIMERSLACK`.
+    private long timerSlackNanoseconds = DEFAULT_TIMER_SLACK_NANOSECONDS;
+
+    /// Whether this single-process guest is marked as a child subreaper.
+    private boolean childSubreaper;
+
+    /// Whether `PR_SET_NO_NEW_PRIVS` has been applied.
+    private boolean noNewPrivileges;
+
+    /// The transparent huge page disable state reported by `PR_GET_THP_DISABLE`.
+    private int transparentHugePagesDisabled;
+
     /// The next deterministic random state used by `getrandom`.
     private long randomState = RANDOM_SEED;
 
@@ -382,6 +463,14 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The guest clock instant captured when the syscall handler was created.
     private final Instant clockStartInstant;
+
+    /// Creates the default process name used by `PR_GET_NAME`.
+    private static byte[] initialProcessName() {
+        byte[] name = new byte[TASK_COMMAND_LENGTH];
+        byte[] defaultName = RiscVLanguage.ID.getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(defaultName, 0, name, 0, Math.min(defaultName.length, TASK_COMMAND_LENGTH - 1));
+        return name;
+    }
 
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
     public GuestSyscalls(
@@ -550,6 +639,15 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_PRCTL) {
+            state.setRegister(10, prctl(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             return;
         }
         if (callNumber == SYS_GETPID || callNumber == SYS_GETTID) {
@@ -1110,6 +1208,189 @@ public final class GuestSyscalls implements AutoCloseable {
             memory.writeLong(oldSetAddress, 0);
         }
         return 0;
+    }
+
+    /// Handles the Linux `prctl` operations needed by single-process user-mode guests.
+    private long prctl(long option, long argument2, long argument3, long argument4, long argument5) {
+        if (option == PR_SET_PDEATHSIG) {
+            return setParentDeathSignal(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_PDEATHSIG) {
+            return getParentDeathSignal(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_DUMPABLE) {
+            return noArguments(argument2, argument3, argument4, argument5) ? dumpable : EINVAL;
+        }
+        if (option == PR_SET_DUMPABLE) {
+            return setDumpable(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_SET_NAME) {
+            return setProcessName(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_NAME) {
+            return getProcessName(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_SET_TIMERSLACK) {
+            return setTimerSlack(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_TIMERSLACK) {
+            return noArguments(argument2, argument3, argument4, argument5) ? timerSlackNanoseconds : EINVAL;
+        }
+        if (option == PR_SET_CHILD_SUBREAPER) {
+            return setChildSubreaper(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_CHILD_SUBREAPER) {
+            return getChildSubreaper(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_SET_NO_NEW_PRIVS) {
+            return setNoNewPrivileges(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_NO_NEW_PRIVS) {
+            return noArguments(argument2, argument3, argument4, argument5) ? (noNewPrivileges ? 1 : 0) : EINVAL;
+        }
+        if (option == PR_GET_TID_ADDRESS) {
+            return getTidAddress(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_SET_THP_DISABLE) {
+            return setTransparentHugePagesDisabled(argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_THP_DISABLE) {
+            return noArguments(argument2, argument3, argument4, argument5) ? transparentHugePagesDisabled : EINVAL;
+        }
+        if (option == PR_SET_VMA) {
+            return setVirtualMemoryAreaName(argument2, argument3, argument4, argument5);
+        }
+        return EINVAL;
+    }
+
+    /// Stores the parent-death signal value used by `PR_GET_PDEATHSIG`.
+    private long setParentDeathSignal(long signalNumber, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+        if (signalNumber != 0 && (signalNumber < MIN_SIGNAL_NUMBER || signalNumber > MAX_SIGNAL_NUMBER)) {
+            return EINVAL;
+        }
+        parentDeathSignal = (int) signalNumber;
+        return 0;
+    }
+
+    /// Writes the configured parent-death signal to a guest `int` pointer.
+    private long getParentDeathSignal(long address, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+        memory.writeInt(address, parentDeathSignal);
+        return 0;
+    }
+
+    /// Stores the dumpable state exposed by `PR_GET_DUMPABLE`.
+    private long setDumpable(long value, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || (value != 0 && value != 1)) {
+            return EINVAL;
+        }
+        dumpable = (int) value;
+        return 0;
+    }
+
+    /// Copies a Linux task command name from guest memory.
+    private long setProcessName(long address, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+
+        for (int index = 0; index < processName.length; index++) {
+            processName[index] = 0;
+        }
+        for (int index = 0; index < TASK_COMMAND_LENGTH - 1; index++) {
+            int value = memory.readUnsignedByte(address + index);
+            if (value == 0) {
+                return 0;
+            }
+            processName[index] = (byte) value;
+        }
+        return 0;
+    }
+
+    /// Copies the Linux task command name to guest memory.
+    private long getProcessName(long address, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+        memory.writeBytes(address, processName, 0, processName.length);
+        return 0;
+    }
+
+    /// Stores the timer slack value exposed by `PR_GET_TIMERSLACK`.
+    private long setTimerSlack(long value, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || value < 0) {
+            return EINVAL;
+        }
+        timerSlackNanoseconds = value == 0 ? DEFAULT_TIMER_SLACK_NANOSECONDS : value;
+        return 0;
+    }
+
+    /// Stores the child-subreaper flag exposed by `PR_GET_CHILD_SUBREAPER`.
+    private long setChildSubreaper(long value, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || (value != 0 && value != 1)) {
+            return EINVAL;
+        }
+        childSubreaper = value == 1;
+        return 0;
+    }
+
+    /// Writes the child-subreaper flag to a guest `int` pointer.
+    private long getChildSubreaper(long address, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+        memory.writeInt(address, childSubreaper ? 1 : 0);
+        return 0;
+    }
+
+    /// Applies the monotonic `PR_SET_NO_NEW_PRIVS` flag.
+    private long setNoNewPrivileges(long value, long argument3, long argument4, long argument5) {
+        if (value != 1 || !unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+        noNewPrivileges = true;
+        return 0;
+    }
+
+    /// Writes the clear-child-TID address to a guest `long` pointer.
+    private long getTidAddress(long address, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+        memory.writeLong(address, clearChildTidAddress);
+        return 0;
+    }
+
+    /// Stores the transparent huge page disable state exposed by `PR_GET_THP_DISABLE`.
+    private long setTransparentHugePagesDisabled(long value, long argument3, long argument4, long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || (value != 0 && value != 1)) {
+            return EINVAL;
+        }
+        transparentHugePagesDisabled = (int) value;
+        return 0;
+    }
+
+    /// Accepts Linux memory-area naming requests as a no-op in the flat guest memory model.
+    private static long setVirtualMemoryAreaName(long suboption, long startAddress, long length, long nameAddress) {
+        if (suboption != PR_SET_VMA_ANON_NAME || startAddress < 0 || length < 0 || nameAddress < 0) {
+            return EINVAL;
+        }
+        return 0;
+    }
+
+    /// Returns true when all `prctl` arguments are unused zero values.
+    private static boolean noArguments(long argument2, long argument3, long argument4, long argument5) {
+        return argument2 == 0 && unusedArgumentsAreZero(argument3, argument4, argument5);
+    }
+
+    /// Returns true when all trailing `prctl` arguments are unused zero values.
+    private static boolean unusedArgumentsAreZero(long argument3, long argument4, long argument5) {
+        return argument3 == 0 && argument4 == 0 && argument5 == 0;
     }
 
     /// Implements the Linux `brk` syscall within the simulator memory window.

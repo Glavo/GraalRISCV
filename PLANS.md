@@ -22,7 +22,7 @@
 - Keep syscall handling deterministic and single-process unless a later plan explicitly expands that boundary.
 - Preserve `--host-root` as the TruffleFile-backed filesystem sandbox root and reject path escapes.
 - Broaden file descriptor support beyond the current regular-file read/write/create/truncate/append and minimal `fcntl` baseline, including directory fds and additional Linux flags when needed.
-- Add syscall implementations commonly needed by static musl programs beyond the current `fcntl`, `clock_gettime`, and `sched_getaffinity` baseline: `mprotect`, `madvise`, `prlimit64`, `uname`, `gettimeofday`, `newfstatat`, `readlinkat`, `getuid`, `geteuid`, `getgid`, `getegid`, and single-threaded `futex` behavior.
+- Add syscall implementations commonly needed by static musl programs beyond the current `fcntl`, `clock_gettime`, `prctl`, and `sched_getaffinity` baseline: `mprotect`, `madvise`, `prlimit64`, `uname`, `gettimeofday`, `newfstatat`, `readlinkat`, `getuid`, `geteuid`, `getgid`, `getegid`, and single-threaded `futex` behavior.
 - Keep unsupported syscall diagnostics actionable by including the syscall number, guest PC, and argument registers.
 - Add direct syscall tests for success paths, Linux-compatible error returns, filesystem sandboxing, configurable time, and deterministic random behavior.
 
