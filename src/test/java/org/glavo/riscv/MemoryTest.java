@@ -20,11 +20,11 @@ public final class MemoryTest {
         }
     }
 
-    /// Verifies that data accesses remain naturally aligned.
+    /// Verifies that MemorySegment rejects unaligned data access.
     @Test
     public void rejectsMisalignedDataAccess() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
-            assertThrows(RiscVException.class, () -> memory.readInt(Memory.DEFAULT_BASE_ADDRESS + 2));
+            assertThrows(IllegalArgumentException.class, () -> memory.readInt(Memory.DEFAULT_BASE_ADDRESS + 2));
         }
     }
 }

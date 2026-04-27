@@ -9,7 +9,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 
-/// Provides checked little-endian access to the guest physical memory window.
+/// Provides MemorySegment-backed little-endian access to guest memory.
 @NotNullByDefault
 public final class Memory implements AutoCloseable {
     /// The default base address used by the bare-metal guest memory image.
@@ -98,7 +98,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
-        long offset = initialOffset(address, Byte.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             return segment.get(ValueLayout.JAVA_BYTE, offset);
         }
@@ -112,10 +112,9 @@ public final class Memory implements AutoCloseable {
         return readByte(address) & 0xff;
     }
 
-    /// Reads a signed little-endian 16-bit value from an aligned guest address.
+    /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
-        requireAligned(address, Short.BYTES);
-        long offset = initialOffset(address, Short.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             return segment.get(SHORT_LE, offset);
         }
@@ -129,10 +128,9 @@ public final class Memory implements AutoCloseable {
         return readShort(address) & 0xffff;
     }
 
-    /// Reads a signed little-endian 32-bit value from an aligned guest address.
+    /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
-        requireAligned(address, Integer.BYTES);
-        long offset = initialOffset(address, Integer.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             return segment.get(INT_LE, offset);
         }
@@ -178,8 +176,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a little-endian 32-bit instruction from a 16-bit-aligned guest address.
     public int readInstructionInt(long address) {
-        requireAligned(address, Short.BYTES);
-        long fastOffset = initialOffset(address, Integer.BYTES);
+        long fastOffset = initialScalarOffset(address);
         if (fastOffset >= 0) {
             return (segment.get(ValueLayout.JAVA_BYTE, fastOffset) & 0xff)
                     | ((segment.get(ValueLayout.JAVA_BYTE, fastOffset + 1) & 0xff) << 8)
@@ -196,10 +193,9 @@ public final class Memory implements AutoCloseable {
                 | (accessSegment.get(ValueLayout.JAVA_BYTE, offset + 3) << 24);
     }
 
-    /// Reads a signed little-endian 64-bit value from an aligned guest address.
+    /// Reads a signed little-endian 64-bit value from guest memory.
     public long readLong(long address) {
-        requireAligned(address, Long.BYTES);
-        long offset = initialOffset(address, Long.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             return segment.get(LONG_LE, offset);
         }
@@ -210,7 +206,7 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a byte to guest memory.
     public void writeByte(long address, byte value) {
-        long offset = initialOffset(address, Byte.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             segment.set(ValueLayout.JAVA_BYTE, offset, value);
             return;
@@ -220,10 +216,9 @@ public final class Memory implements AutoCloseable {
         access.segment().set(ValueLayout.JAVA_BYTE, access.offset(), value);
     }
 
-    /// Writes a little-endian 16-bit value to an aligned guest address.
+    /// Writes a little-endian 16-bit value to guest memory.
     public void writeShort(long address, short value) {
-        requireAligned(address, Short.BYTES);
-        long offset = initialOffset(address, Short.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             segment.set(SHORT_LE, offset, value);
             return;
@@ -233,10 +228,9 @@ public final class Memory implements AutoCloseable {
         access.segment().set(SHORT_LE, access.offset(), value);
     }
 
-    /// Writes a little-endian 32-bit value to an aligned guest address.
+    /// Writes a little-endian 32-bit value to guest memory.
     public void writeInt(long address, int value) {
-        requireAligned(address, Integer.BYTES);
-        long offset = initialOffset(address, Integer.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             segment.set(INT_LE, offset, value);
             return;
@@ -246,10 +240,9 @@ public final class Memory implements AutoCloseable {
         access.segment().set(INT_LE, access.offset(), value);
     }
 
-    /// Writes a little-endian 64-bit value to an aligned guest address.
+    /// Writes a little-endian 64-bit value to guest memory.
     public void writeLong(long address, long value) {
-        requireAligned(address, Long.BYTES);
-        long offset = initialOffset(address, Long.BYTES);
+        long offset = initialScalarOffset(address);
         if (offset >= 0) {
             segment.set(LONG_LE, offset, value);
             return;
@@ -350,6 +343,15 @@ public final class Memory implements AutoCloseable {
         return access;
     }
 
+    /// Returns the offset inside the initial segment for a scalar access, or `-1` when it starts outside.
+    private long initialScalarOffset(long address) {
+        long offset = address - baseAddress;
+        if (address >= baseAddress && offset >= 0 && offset < size) {
+            return offset;
+        }
+        return -1;
+    }
+
     /// Returns the offset inside the initial segment for a backed range, or `-1` when it is outside.
     private long initialOffset(long address, long length) {
         if (length < 0) {
@@ -410,14 +412,6 @@ public final class Memory implements AutoCloseable {
     /// Returns true when two half-open address ranges overlap.
     private static boolean rangesOverlap(long firstStart, long firstEnd, long secondStart, long secondEnd) {
         return firstStart < secondEnd && secondStart < firstEnd;
-    }
-
-    /// Requires an address to be naturally aligned for the supplied access width.
-    private static void requireAligned(long address, int width) {
-        if ((address & (width - 1L)) != 0) {
-            throw new RiscVException("Misaligned guest memory access: address=0x"
-                    + Long.toUnsignedString(address, 16) + ", width=" + width);
-        }
     }
 
     /// Describes a concrete host segment access for a guest memory range.
