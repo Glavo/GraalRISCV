@@ -1,3 +1,5 @@
+import java.time.Duration
+
 plugins {
     id("java")
 }
@@ -9,12 +11,30 @@ repositories {
     mavenCentral()
 }
 
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
 dependencies {
+    implementation("org.graalvm.truffle:truffle-api:25.0.2")
+    implementation("net.fornwall:jelf:0.11.0")
+    runtimeOnly("org.graalvm.truffle:truffle-runtime:25.0.2")
+
+    compileOnly("org.jetbrains:annotations:26.1.0")
+    testCompileOnly("org.jetbrains:annotations:26.1.0")
+
+    annotationProcessor("org.graalvm.truffle:truffle-dsl-processor:25.0.2")
+    testAnnotationProcessor("org.graalvm.truffle:truffle-dsl-processor:25.0.2")
+
     testImplementation(platform("org.junit:junit-bom:6.0.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("org.graalvm.polyglot:polyglot:25.0.2")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test {
     useJUnitPlatform()
+    timeout.set(Duration.ofMinutes(10))
 }
