@@ -23,7 +23,5 @@
 
 ### 5. Prepare packaging and CI workflow
 
-- Add CI-ready Gradle verification steps that compile main code, compile tests, run unit tests, and build the distribution artifacts with workspace-local Gradle state.
-- Add a packaged binary smoke test that runs a tiny checked-in ELF fixture or a generated fixture that does not require an external toolchain.
 - Keep the Gradle-managed Zig setup cacheable and CI-friendly so contributors do not need a separately installed RISC-V toolchain.
 - Track release notes for supported ISA subsets, ELF limitations, syscall coverage, and known unsupported workloads.

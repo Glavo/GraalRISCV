@@ -65,3 +65,4 @@ tasks.test {
 }
 
 apply(from = "gradle/hello-world-example.gradle.kts")
+apply(from = "gradle/packaging-smoke.gradle.kts")

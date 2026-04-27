@@ -96,3 +96,24 @@ Run every available Hello World smoke check:
 ```text
 ./gradlew checkHelloWorldExample
 ```
+
+## CI And Package Smoke Checks
+
+Run the no-toolchain package smoke tests:
+
+```text
+./gradlew packageSmokeTest
+```
+
+This generates a tiny RISC-V ELF fixture under `build/fixtures/smoke`, then runs it through both
+the `installDist` launch script and the packaged Shadow JAR. It does not require Zig or any host
+RISC-V compiler.
+
+Run the local CI verification task:
+
+```text
+./gradlew ciCheck
+```
+
+This compiles main and test sources, runs the unit tests, builds distribution artifacts, builds the
+Shadow JAR, and runs the no-toolchain package smoke checks.
