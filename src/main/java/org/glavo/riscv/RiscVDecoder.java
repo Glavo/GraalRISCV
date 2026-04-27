@@ -5,7 +5,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.util.ArrayList;
 
-/// Decodes RV64IMAC instructions from guest memory into executable nodes.
+/// Decodes RV64GC guest instruction subsets from guest memory into executable nodes.
 @NotNullByDefault
 public final class RiscVDecoder {
     /// The maximum number of straight-line instructions decoded into one block.
@@ -51,16 +51,30 @@ public final class RiscVDecoder {
             case 0x67 -> decodeJalr(address, raw);
             case 0x63 -> decodeBranch(address, raw);
             case 0x03 -> decodeLoad(address, raw);
+            case 0x07 -> decodeFloatingPointLoad(address, raw);
             case 0x23 -> decodeStore(address, raw);
+            case 0x27 -> decodeFloatingPointStore(address, raw);
             case 0x13 -> decodeOpImmediate(address, raw);
             case 0x1b -> decodeOpImmediateWord(address, raw);
             case 0x33 -> decodeOp(address, raw);
             case 0x3b -> decodeOpWord(address, raw);
-            case 0x0f -> instruction(address, raw, Operation.FENCE, 0, 0, 0, 0, false);
+            case 0x0f -> decodeMiscMemory(address, raw);
             case 0x73 -> decodeSystem(address, raw);
             case 0x2f -> decodeAtomic(address, raw);
             default -> illegal(address, raw);
         };
+    }
+
+    /// Decodes memory-ordering instructions.
+    private static InstructionNode decodeMiscMemory(long address, int raw) {
+        int funct3 = funct3(raw);
+        if (funct3 == 0) {
+            return instruction(address, raw, Operation.FENCE, 0, 0, 0, 0, false);
+        }
+        if (funct3 == 1 && rd(raw) == 0 && rs1(raw) == 0 && (raw >>> 20) == 0) {
+            return instruction(address, raw, Operation.FENCE_I, 0, 0, 0, 0, false);
+        }
+        throw illegalException(address, raw);
     }
 
     /// Decodes `jalr`.
@@ -98,6 +112,16 @@ public final class RiscVDecoder {
         return instruction(address, raw, operation, rd(raw), rs1(raw), 0, iImmediate(raw), false);
     }
 
+    /// Decodes floating-point load instructions.
+    private static InstructionNode decodeFloatingPointLoad(long address, int raw) {
+        Operation operation = switch (funct3(raw)) {
+            case 2 -> Operation.FLW;
+            case 3 -> Operation.FLD;
+            default -> throw illegalException(address, raw);
+        };
+        return instruction(address, raw, operation, rd(raw), rs1(raw), 0, iImmediate(raw), false);
+    }
+
     /// Decodes store instructions.
     private static InstructionNode decodeStore(long address, int raw) {
         Operation operation = switch (funct3(raw)) {
@@ -105,6 +129,16 @@ public final class RiscVDecoder {
             case 1 -> Operation.SH;
             case 2 -> Operation.SW;
             case 3 -> Operation.SD;
+            default -> throw illegalException(address, raw);
+        };
+        return instruction(address, raw, operation, 0, rs1(raw), rs2(raw), storeImmediate(raw), false);
+    }
+
+    /// Decodes floating-point store instructions.
+    private static InstructionNode decodeFloatingPointStore(long address, int raw) {
+        Operation operation = switch (funct3(raw)) {
+            case 2 -> Operation.FSW;
+            case 3 -> Operation.FSD;
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, 0, rs1(raw), rs2(raw), storeImmediate(raw), false);
@@ -244,7 +278,17 @@ public final class RiscVDecoder {
         if (raw == 0x0010_0073) {
             return instruction(address, raw, Operation.EBREAK, 0, 0, 0, 0, true);
         }
-        throw illegalException(address, raw);
+
+        Operation operation = switch (funct3(raw)) {
+            case 1 -> Operation.CSRRW;
+            case 2 -> Operation.CSRRS;
+            case 3 -> Operation.CSRRC;
+            case 5 -> Operation.CSRRWI;
+            case 6 -> Operation.CSRRSI;
+            case 7 -> Operation.CSRRCI;
+            default -> throw illegalException(address, raw);
+        };
+        return instruction(address, raw, operation, rd(raw), rs1(raw), 0, raw >>> 20, false);
     }
 
     /// Decodes atomic memory instructions.
@@ -323,8 +367,10 @@ public final class RiscVDecoder {
                 }
                 yield compressed(address, raw, Operation.ADDI, rd, 2, 0, immediate, false);
             }
+            case 1 -> compressed(address, raw, Operation.FLD, rd, rs1, 0, cLdImmediate(raw), false);
             case 2 -> compressed(address, raw, Operation.LW, rd, rs1, 0, cLwImmediate(raw), false);
             case 3 -> compressed(address, raw, Operation.LD, rd, rs1, 0, cLdImmediate(raw), false);
+            case 5 -> compressed(address, raw, Operation.FSD, 0, rs1, rs2, cLdImmediate(raw), false);
             case 6 -> compressed(address, raw, Operation.SW, 0, rs1, rs2, cLwImmediate(raw), false);
             case 7 -> compressed(address, raw, Operation.SD, 0, rs1, rs2, cLdImmediate(raw), false);
             default -> throw illegalException(address, raw);
@@ -365,6 +411,7 @@ public final class RiscVDecoder {
             case 0 -> rd == 0
                     ? compressed(address, raw, Operation.NOP, 0, 0, 0, 0, false)
                     : compressed(address, raw, Operation.SLLI, rd, rd, 0, cShiftImmediate(raw), false);
+            case 1 -> compressed(address, raw, Operation.FLD, rd, 2, 0, cLdspImmediate(raw), false);
             case 2 -> {
                 if (rd == 0) {
                     throw illegalException(address, raw);
@@ -378,6 +425,7 @@ public final class RiscVDecoder {
                 yield compressed(address, raw, Operation.LD, rd, 2, 0, cLdspImmediate(raw), false);
             }
             case 4 -> decodeCompressedJumpMoveAdd(address, raw, rd, rs2);
+            case 5 -> compressed(address, raw, Operation.FSD, 0, 2, rs2, cSdspImmediate(raw), false);
             case 6 -> compressed(address, raw, Operation.SW, 0, 2, rs2, cSwspImmediate(raw), false);
             case 7 -> compressed(address, raw, Operation.SD, 0, 2, rs2, cSdspImmediate(raw), false);
             default -> throw illegalException(address, raw);

@@ -5,13 +5,8 @@
 ### 1. Implement user-mode RV64GC instruction support
 
 - Keep the current RV64IMAC behavior stable while adding the missing RV64GC pieces.
-- Add F and D floating-point register state, including 32 floating-point registers and `fcsr`, `frm`, and `fflags`.
-- Implement spec-compatible floating-point behavior for loads, stores, arithmetic, fused multiply-add, sign injection, min/max, compare, classify, and integer/floating conversions.
-- Implement CSR instructions required by user-mode code, including `csrrw`, `csrrs`, `csrrc`, and immediate variants.
-- Define supported user-visible CSR behavior for `fcsr`, `frm`, `fflags`, `cycle`, `time`, and `instret`.
-- Implement `fence.i` as a user-mode no-op that is decoded and executed successfully.
-- Add compressed floating-point instruction support needed for RV64GC, including `c.fld`, `c.fsd`, `c.fldsp`, and `c.fsdsp`.
-- Add focused decoder and execution tests for F, D, Zicsr, Zifencei, and compressed floating-point instruction streams.
+- Implement the remaining spec-compatible floating-point behavior for arithmetic, fused multiply-add, sign injection, min/max, compare, classify, and integer/floating conversions.
+- Add focused decoder and execution tests for the remaining F and D arithmetic, conversion, and floating-point exception behavior.
 
 ### 2. Support static Linux user-mode programs
 

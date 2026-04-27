@@ -5,7 +5,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.math.BigInteger;
 
-/// Executes one decoded RV64IMAC guest instruction.
+/// Executes one decoded RV64GC guest instruction subset.
 @NotNullByDefault
 public final class InstructionNode extends Node {
     /// The guest address of this instruction.
@@ -74,10 +74,13 @@ public final class InstructionNode extends Node {
         Memory memory = state.memory();
 
         switch (operation) {
-            case NOP, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU, FENCE, ECALL, EBREAK ->
+            case NOP, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU, FENCE, FENCE_I,
+                    ECALL, EBREAK, CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
                     executeControl(state, nextPc);
             case LB, LH, LW, LD, LBU, LHU, LWU -> executeLoad(state, memory, nextPc);
+            case FLW, FLD -> executeFloatingPointLoad(state, memory, nextPc);
             case SB, SH, SW, SD -> executeStore(state, memory, nextPc);
+            case FSW, FSD -> executeFloatingPointStore(state, memory, nextPc);
             case ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI, ADDIW, SLLIW, SRLIW, SRAIW ->
                     executeImmediateInteger(state, nextPc);
             case ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, ADDW, SUBW, SLLW, SRLW, SRAW ->
@@ -93,7 +96,7 @@ public final class InstructionNode extends Node {
     /// Executes control-flow and system operations.
     private void executeControl(MachineState state, long nextPc) {
         switch (operation) {
-            case NOP, FENCE -> state.setPc(nextPc);
+            case NOP, FENCE, FENCE_I -> state.setPc(nextPc);
             case LUI -> {
                 state.setRegister(rd, immediate);
                 state.setPc(nextPc);
@@ -117,6 +120,12 @@ public final class InstructionNode extends Node {
             case BGE -> branch(state, state.register(rs1) >= state.register(rs2), nextPc);
             case BLTU -> branch(state, Long.compareUnsigned(state.register(rs1), state.register(rs2)) < 0, nextPc);
             case BGEU -> branch(state, Long.compareUnsigned(state.register(rs1), state.register(rs2)) >= 0, nextPc);
+            case CSRRW -> writeControlStatusRegister(state, nextPc, state.register(rs1));
+            case CSRRS -> setClearControlStatusRegister(state, nextPc, state.register(rs1), true);
+            case CSRRC -> setClearControlStatusRegister(state, nextPc, state.register(rs1), false);
+            case CSRRWI -> writeControlStatusRegister(state, nextPc, rs1);
+            case CSRRSI -> setClearControlStatusRegister(state, nextPc, rs1, true);
+            case CSRRCI -> setClearControlStatusRegister(state, nextPc, rs1, false);
             case ECALL -> ecall(state);
             case EBREAK -> throw new ProgramExitException(0);
             default -> throw unexpectedOperationGroup("control");
@@ -137,6 +146,15 @@ public final class InstructionNode extends Node {
         }
     }
 
+    /// Executes floating-point load operations.
+    private void executeFloatingPointLoad(MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case FLW -> loadFloatWord(state, memory, nextPc);
+            case FLD -> loadFloatDouble(state, memory, nextPc);
+            default -> throw unexpectedOperationGroup("floating-point load");
+        }
+    }
+
     /// Executes store operations.
     private void executeStore(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
@@ -145,6 +163,15 @@ public final class InstructionNode extends Node {
             case SW -> storeInt(state, memory, nextPc);
             case SD -> storeLong(state, memory, nextPc);
             default -> throw unexpectedOperationGroup("store");
+        }
+    }
+
+    /// Executes floating-point store operations.
+    private void executeFloatingPointStore(MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case FSW -> storeFloatWord(state, memory, nextPc);
+            case FSD -> storeFloatDouble(state, memory, nextPc);
+            default -> throw unexpectedOperationGroup("floating-point store");
         }
     }
 
@@ -249,6 +276,24 @@ public final class InstructionNode extends Node {
         state.setPc(taken ? address + immediate : nextPc);
     }
 
+    /// Writes a CSR and returns its old value when the destination register is not `x0`.
+    private void writeControlStatusRegister(MachineState state, long nextPc, long value) {
+        long oldValue = rd == 0 ? 0 : state.readControlStatusRegister((int) immediate);
+        state.writeControlStatusRegister((int) immediate, value);
+        state.setRegister(rd, oldValue);
+        state.setPc(nextPc);
+    }
+
+    /// Sets or clears CSR bits using the supplied mask value.
+    private void setClearControlStatusRegister(MachineState state, long nextPc, long mask, boolean setBits) {
+        long oldValue = state.readControlStatusRegister((int) immediate);
+        if (mask != 0) {
+            state.writeControlStatusRegister((int) immediate, setBits ? oldValue | mask : oldValue & ~mask);
+        }
+        state.setRegister(rd, oldValue);
+        state.setPc(nextPc);
+    }
+
     /// Writes an immediate arithmetic result and advances the program counter.
     private void binaryImmediate(MachineState state, long nextPc, long value) {
         state.setRegister(rd, value);
@@ -315,6 +360,18 @@ public final class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Loads a 32-bit floating-point value and NaN-boxes it in a 64-bit FP register.
+    private void loadFloatWord(MachineState state, Memory memory, long nextPc) {
+        state.setFloatingPointRegister(rd, 0xffff_ffff_0000_0000L | memory.readUnsignedInt(state.register(rs1) + immediate));
+        state.setPc(nextPc);
+    }
+
+    /// Loads a 64-bit floating-point value as raw bits.
+    private void loadFloatDouble(MachineState state, Memory memory, long nextPc) {
+        state.setFloatingPointRegister(rd, memory.readLong(state.register(rs1) + immediate));
+        state.setPc(nextPc);
+    }
+
     /// Stores a byte value.
     private void storeByte(MachineState state, Memory memory, long nextPc) {
         long address = state.register(rs1) + immediate;
@@ -346,6 +403,24 @@ public final class InstructionNode extends Node {
     private void storeLong(MachineState state, Memory memory, long nextPc) {
         long address = state.register(rs1) + immediate;
         memory.writeLong(address, state.register(rs2));
+        state.afterStore(address, Long.BYTES);
+        state.clearReservation();
+        state.setPc(nextPc);
+    }
+
+    /// Stores the low 32 bits of a floating-point register.
+    private void storeFloatWord(MachineState state, Memory memory, long nextPc) {
+        long address = state.register(rs1) + immediate;
+        memory.writeInt(address, (int) state.floatingPointRegister(rs2));
+        state.afterStore(address, Integer.BYTES);
+        state.clearReservation();
+        state.setPc(nextPc);
+    }
+
+    /// Stores a 64-bit floating-point register as raw bits.
+    private void storeFloatDouble(MachineState state, Memory memory, long nextPc) {
+        long address = state.register(rs1) + immediate;
+        memory.writeLong(address, state.floatingPointRegister(rs2));
         state.afterStore(address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -562,6 +637,10 @@ public final class InstructionNode extends Node {
         LHU,
         /// Load unsigned word.
         LWU,
+        /// Load 32-bit floating-point value.
+        FLW,
+        /// Load 64-bit floating-point value.
+        FLD,
         /// Store byte.
         SB,
         /// Store halfword.
@@ -570,6 +649,10 @@ public final class InstructionNode extends Node {
         SW,
         /// Store doubleword.
         SD,
+        /// Store 32-bit floating-point value.
+        FSW,
+        /// Store 64-bit floating-point value.
+        FSD,
         /// Add immediate.
         ADDI,
         /// Set less than immediate signed.
@@ -654,10 +737,24 @@ public final class InstructionNode extends Node {
         REMUW,
         /// Memory fence no-op for the single-threaded MVP.
         FENCE,
+        /// Instruction-fetch fence no-op for the single-threaded MVP.
+        FENCE_I,
         /// Environment call.
         ECALL,
         /// Environment break.
         EBREAK,
+        /// Atomic read/write CSR.
+        CSRRW,
+        /// Atomic read and set bits in CSR.
+        CSRRS,
+        /// Atomic read and clear bits in CSR.
+        CSRRC,
+        /// Atomic write immediate CSR.
+        CSRRWI,
+        /// Atomic read and set immediate bits in CSR.
+        CSRRSI,
+        /// Atomic read and clear immediate bits in CSR.
+        CSRRCI,
         /// Load-reserved word.
         LR_W,
         /// Load-reserved doubleword.

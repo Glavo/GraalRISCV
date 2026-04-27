@@ -11,8 +11,41 @@ public final class MachineState {
     /// The number of integer registers in RV64I.
     private static final int REGISTER_COUNT = 32;
 
+    /// The number of floating-point registers in RV64GC.
+    private static final int FLOATING_POINT_REGISTER_COUNT = 32;
+
+    /// The `fflags` floating-point exception flags CSR address.
+    private static final int FFLAGS_CSR = 0x001;
+
+    /// The `frm` floating-point rounding mode CSR address.
+    private static final int FRM_CSR = 0x002;
+
+    /// The `fcsr` floating-point control and status CSR address.
+    private static final int FCSR_CSR = 0x003;
+
+    /// The `cycle` user counter CSR address.
+    private static final int CYCLE_CSR = 0xc00;
+
+    /// The `time` user counter CSR address.
+    private static final int TIME_CSR = 0xc01;
+
+    /// The `instret` user counter CSR address.
+    private static final int INSTRET_CSR = 0xc02;
+
+    /// The writable bit mask for `fflags`.
+    private static final int FFLAGS_MASK = 0x1f;
+
+    /// The writable bit mask for `frm`.
+    private static final int FRM_MASK = 0x7;
+
+    /// The writable bit mask for `fcsr`.
+    private static final int FCSR_MASK = 0xff;
+
     /// The mutable integer register file.
     private final long[] registers = new long[REGISTER_COUNT];
+
+    /// The mutable floating-point register file, stored as raw 64-bit values.
+    private final long[] floatingPointRegisters = new long[FLOATING_POINT_REGISTER_COUNT];
 
     /// The guest memory for this execution.
     private final Memory memory;
@@ -40,6 +73,9 @@ public final class MachineState {
 
     /// The number of retired guest instructions.
     private long instructionCount;
+
+    /// The low eight bits of the floating-point control and status register.
+    private int floatingPointControlStatus;
 
     /// The active LR/SC reservation address, or `ABSENT_ADDRESS` when none exists.
     private long reservationAddress = ElfImage.ABSENT_ADDRESS;
@@ -114,6 +150,18 @@ public final class MachineState {
         }
     }
 
+    /// Returns the raw 64-bit value of a floating-point register.
+    public long floatingPointRegister(int index) {
+        checkFloatingPointRegisterIndex(index);
+        return floatingPointRegisters[index];
+    }
+
+    /// Updates the raw 64-bit value of a floating-point register.
+    public void setFloatingPointRegister(int index, long value) {
+        checkFloatingPointRegisterIndex(index);
+        floatingPointRegisters[index] = value;
+    }
+
     /// Returns the optional `fromhost` symbol guest address.
     public long fromhostAddress() {
         return fromhostAddress;
@@ -122,6 +170,35 @@ public final class MachineState {
     /// Returns the syscall handler for guest environment calls.
     public GuestSyscalls syscalls() {
         return syscalls;
+    }
+
+    /// Reads a supported user-mode control and status register.
+    public long readControlStatusRegister(int csr) {
+        return switch (csr) {
+            case FFLAGS_CSR -> floatingPointControlStatus & FFLAGS_MASK;
+            case FRM_CSR -> (floatingPointControlStatus >>> 5) & FRM_MASK;
+            case FCSR_CSR -> floatingPointControlStatus & FCSR_MASK;
+            case CYCLE_CSR, TIME_CSR, INSTRET_CSR -> instructionCount;
+            default -> throw unsupportedControlStatusRegister(csr);
+        };
+    }
+
+    /// Writes a supported writable user-mode control and status register.
+    public void writeControlStatusRegister(int csr, long value) {
+        switch (csr) {
+            case FFLAGS_CSR -> {
+                floatingPointControlStatus = (floatingPointControlStatus & ~FFLAGS_MASK)
+                        | ((int) value & FFLAGS_MASK);
+            }
+            case FRM_CSR -> {
+                floatingPointControlStatus = (floatingPointControlStatus & ~(FRM_MASK << 5))
+                        | (((int) value & FRM_MASK) << 5);
+            }
+            case FCSR_CSR -> floatingPointControlStatus = (int) value & FCSR_MASK;
+            case CYCLE_CSR, TIME_CSR, INSTRET_CSR -> throw new RiscVException(
+                    "Control status register is read-only: 0x" + Integer.toUnsignedString(csr, 16));
+            default -> throw unsupportedControlStatusRegister(csr);
+        }
     }
 
     /// Records one guest instruction retirement and enforces the instruction budget.
@@ -168,6 +245,13 @@ public final class MachineState {
         }
     }
 
+    /// Validates a floating-point register index.
+    private static void checkFloatingPointRegisterIndex(int index) {
+        if (index < 0 || index >= FLOATING_POINT_REGISTER_COUNT) {
+            throw new RiscVException("Invalid floating-point register index: " + index);
+        }
+    }
+
     /// Writes a single trace line for a guest instruction.
     private static void traceInstruction(PrintStream stream, long address, int raw) {
         stream.println("pc=0x" + Long.toUnsignedString(address, 16) + " raw=0x" + Integer.toUnsignedString(raw, 16));
@@ -176,5 +260,10 @@ public final class MachineState {
     /// Adapts an output stream to a print stream without double-wrapping existing print streams.
     private static PrintStream asPrintStream(OutputStream stream) {
         return stream instanceof PrintStream printStream ? printStream : new PrintStream(stream, true);
+    }
+
+    /// Creates an unsupported CSR diagnostic.
+    private static RiscVException unsupportedControlStatusRegister(int csr) {
+        return new RiscVException("Unsupported control status register: 0x" + Integer.toUnsignedString(csr, 16));
     }
 }
