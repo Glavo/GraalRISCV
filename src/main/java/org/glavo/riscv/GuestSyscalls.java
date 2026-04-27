@@ -98,6 +98,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `mmap`.
     private static final long SYS_MMAP = 222;
 
+    /// The Linux RISC-V syscall number for `mprotect`.
+    private static final long SYS_MPROTECT = 226;
+
+    /// The Linux RISC-V syscall number for `madvise`.
+    private static final long SYS_MADVISE = 233;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -218,6 +224,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The bit mask for Linux `mmap` protection values accepted by this simulator.
     private static final long SUPPORTED_MMAP_PROTECTION_MASK = 0x7;
 
+    /// Linux `PROT_NONE`.
+    private static final long PROT_NONE = 0x0;
+
     /// Linux `MAP_SHARED`.
     private static final long MAP_SHARED = 0x01;
 
@@ -235,6 +244,72 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `MAP_FIXED_NOREPLACE`.
     private static final long MAP_FIXED_NOREPLACE = 0x100000;
+
+    /// Linux `MADV_NORMAL`.
+    private static final long MADV_NORMAL = 0;
+
+    /// Linux `MADV_RANDOM`.
+    private static final long MADV_RANDOM = 1;
+
+    /// Linux `MADV_SEQUENTIAL`.
+    private static final long MADV_SEQUENTIAL = 2;
+
+    /// Linux `MADV_WILLNEED`.
+    private static final long MADV_WILLNEED = 3;
+
+    /// Linux `MADV_DONTNEED`.
+    private static final long MADV_DONTNEED = 4;
+
+    /// Linux `MADV_FREE`.
+    private static final long MADV_FREE = 8;
+
+    /// Linux `MADV_DONTFORK`.
+    private static final long MADV_DONTFORK = 10;
+
+    /// Linux `MADV_DOFORK`.
+    private static final long MADV_DOFORK = 11;
+
+    /// Linux `MADV_MERGEABLE`.
+    private static final long MADV_MERGEABLE = 12;
+
+    /// Linux `MADV_UNMERGEABLE`.
+    private static final long MADV_UNMERGEABLE = 13;
+
+    /// Linux `MADV_HUGEPAGE`.
+    private static final long MADV_HUGEPAGE = 14;
+
+    /// Linux `MADV_NOHUGEPAGE`.
+    private static final long MADV_NOHUGEPAGE = 15;
+
+    /// Linux `MADV_DONTDUMP`.
+    private static final long MADV_DONTDUMP = 16;
+
+    /// Linux `MADV_DODUMP`.
+    private static final long MADV_DODUMP = 17;
+
+    /// Linux `MADV_WIPEONFORK`.
+    private static final long MADV_WIPEONFORK = 18;
+
+    /// Linux `MADV_KEEPONFORK`.
+    private static final long MADV_KEEPONFORK = 19;
+
+    /// Linux `MADV_COLD`.
+    private static final long MADV_COLD = 20;
+
+    /// Linux `MADV_PAGEOUT`.
+    private static final long MADV_PAGEOUT = 21;
+
+    /// Linux `MADV_POPULATE_READ`.
+    private static final long MADV_POPULATE_READ = 22;
+
+    /// Linux `MADV_POPULATE_WRITE`.
+    private static final long MADV_POPULATE_WRITE = 23;
+
+    /// Linux `MADV_DONTNEED_LOCKED`.
+    private static final long MADV_DONTNEED_LOCKED = 24;
+
+    /// Linux `MADV_COLLAPSE`.
+    private static final long MADV_COLLAPSE = 25;
 
     /// The byte size of Linux generic 64-bit kernel `sigset_t`.
     private static final long KERNEL_SIGSET_SIZE = 8;
@@ -686,6 +761,14 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(13),
                     state.register(14),
                     state.register(15)));
+            return;
+        }
+        if (callNumber == SYS_MPROTECT) {
+            state.setRegister(10, mprotect(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_MADVISE) {
+            state.setRegister(10, madvise(state.register(10), state.register(11), state.register(12)));
             return;
         }
         if (callNumber == SYS_GETRANDOM) {
@@ -1471,7 +1554,7 @@ public final class GuestSyscalls implements AutoCloseable {
         return programBreak;
     }
 
-    /// Implements anonymous `mmap` allocations inside the fixed guest memory window.
+    /// Implements anonymous `mmap` allocations and reservations in the guest address space.
     private long mmap(long address, long length, long protection, long flags, long fileDescriptor, long offset) {
         if (length <= 0 || offset < 0 || !isPageAligned(offset)) {
             return EINVAL;
@@ -1495,7 +1578,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
         long mappingAddress;
         if (requiresFixedMapping(flags)) {
-            if (!isPageAligned(address) || !fitsGuestMemory(address, alignedLength)) {
+            if (!isPageAligned(address) || !isValidGuestRange(address, alignedLength)) {
                 return ENOMEM;
             }
             if ((flags & MAP_FIXED_NOREPLACE) != 0 && overlapsMemoryMappings(address, alignedLength)) {
@@ -1510,8 +1593,13 @@ public final class GuestSyscalls implements AutoCloseable {
             }
         }
 
-        memory.clear(mappingAddress, alignedLength);
-        addMemoryMapping(mappingAddress, alignedLength);
+        if (isMemoryBackedProtection(protection)) {
+            if (!ensureMemoryBacking(mappingAddress, alignedLength)) {
+                return ENOMEM;
+            }
+            memory.clear(mappingAddress, alignedLength);
+        }
+        addMemoryMapping(mappingAddress, alignedLength, protection);
         return mappingAddress;
     }
 
@@ -1522,11 +1610,58 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         long alignedLength = alignUp(length, PAGE_SIZE);
-        if (alignedLength <= 0 || !fitsGuestMemory(address, alignedLength)) {
+        if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
             return EINVAL;
         }
 
         removeMemoryMappings(address, alignedLength);
+        return 0;
+    }
+
+    /// Implements `mprotect` for tracked anonymous mappings and the initial memory window.
+    private long mprotect(long address, long length, long protection) {
+        if (!isPageAligned(address) || length < 0 || (protection & ~SUPPORTED_MMAP_PROTECTION_MASK) != 0) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        long alignedLength = alignUp(length, PAGE_SIZE);
+        if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
+            return ENOMEM;
+        }
+        if (!isMappedRange(address, alignedLength)) {
+            return ENOMEM;
+        }
+        if (!prepareMemoryProtection(address, alignedLength, protection)) {
+            return ENOMEM;
+        }
+
+        updateMemoryMappingsProtection(address, alignedLength, protection);
+        return 0;
+    }
+
+    /// Implements Linux `madvise` hints that static runtimes commonly emit.
+    private long madvise(long address, long length, long advice) {
+        if (!isPageAligned(address) || length < 0 || !isSupportedMemoryAdvice(advice)) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        long alignedLength = alignUp(length, PAGE_SIZE);
+        if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
+            return ENOMEM;
+        }
+        if (!isMappedRange(address, alignedLength)) {
+            return ENOMEM;
+        }
+
+        if (advice == MADV_DONTNEED || advice == MADV_FREE || advice == MADV_DONTNEED_LOCKED) {
+            clearAdvisedMemory(address, alignedLength);
+        }
         return 0;
     }
 
@@ -1669,7 +1804,21 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         long candidateAddress = alignUp(programBreak, PAGE_SIZE);
-        while (candidateAddress > 0 && candidateAddress <= memory.endAddress() - length) {
+        while (candidateAddress > 0 && fitsGuestMemory(candidateAddress, length)) {
+            MemoryMapping overlap = overlappingMemoryMapping(candidateAddress, length);
+            if (overlap == null) {
+                return candidateAddress;
+            }
+            candidateAddress = alignUp(overlap.endAddress(), PAGE_SIZE);
+        }
+
+        return findSparseMmapAddress(length);
+    }
+
+    /// Finds the first free sparse range outside the initial memory window.
+    private long findSparseMmapAddress(long length) {
+        long candidateAddress = alignUp(Math.max(memory.endAddress(), programBreak), PAGE_SIZE);
+        while (candidateAddress > 0 && isValidGuestRange(candidateAddress, length)) {
             MemoryMapping overlap = overlappingMemoryMapping(candidateAddress, length);
             if (overlap == null) {
                 return candidateAddress;
@@ -1681,14 +1830,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns true when a guest range is suitable for a new anonymous mapping.
     private boolean isMmapRangeAvailable(long address, long length) {
-        return fitsGuestMemory(address, length)
+        return isValidGuestRange(address, length)
                 && address >= programBreak
-                && !overlapsMemoryMappings(address, length);
+                && !overlapsMemoryMappings(address, length)
+                && (fitsGuestMemory(address, length) || !overlapsInitialMemory(address, length));
     }
 
     /// Adds an active anonymous mapping in address order.
-    private void addMemoryMapping(long address, long length) {
-        MemoryMapping mapping = new MemoryMapping(address, length);
+    private void addMemoryMapping(long address, long length, long protection) {
+        MemoryMapping mapping = new MemoryMapping(address, length, protection);
         int insertionIndex = 0;
         while (insertionIndex < memoryMappings.size()
                 && Long.compareUnsigned(memoryMappings.get(insertionIndex).address(), address) < 0) {
@@ -1710,17 +1860,203 @@ public final class GuestSyscalls implements AutoCloseable {
             memoryMappings.remove(index);
             long clearStart = Math.max(address, mapping.address());
             long clearEnd = Math.min(endAddress, mapping.endAddress());
-            memory.clear(clearStart, clearEnd - clearStart);
+            releaseRemovedMappingMemory(mapping, clearStart, clearEnd - clearStart);
 
             if (mapping.address() < address) {
-                memoryMappings.add(index, new MemoryMapping(mapping.address(), address - mapping.address()));
+                memoryMappings.add(index, new MemoryMapping(
+                        mapping.address(),
+                        address - mapping.address(),
+                        mapping.protection()));
                 index++;
             }
             if (endAddress < mapping.endAddress()) {
-                memoryMappings.add(index, new MemoryMapping(endAddress, mapping.endAddress() - endAddress));
+                memoryMappings.add(index, new MemoryMapping(
+                        endAddress,
+                        mapping.endAddress() - endAddress,
+                        mapping.protection()));
                 index++;
             }
         }
+    }
+
+    /// Ensures that the supplied range has native backing for non-`PROT_NONE` access.
+    private boolean ensureMemoryBacking(long address, long length) {
+        if (fitsGuestMemory(address, length)) {
+            return true;
+        }
+        if (!isValidGuestRange(address, length) || overlapsInitialMemory(address, length)) {
+            return false;
+        }
+        return memory.map(address, length);
+    }
+
+    /// Releases or clears native backing for a removed mapping range.
+    private void releaseRemovedMappingMemory(MemoryMapping mapping, long address, long length) {
+        if (!mapping.isBacked()) {
+            return;
+        }
+        if (fitsGuestMemory(address, length)) {
+            memory.clear(address, length);
+        } else {
+            memory.unmap(address, length);
+        }
+    }
+
+    /// Releases native backing after a mapped range transitions to `PROT_NONE`.
+    private void releaseProtectedMemory(long address, long length) {
+        if (!fitsGuestMemory(address, length)) {
+            memory.unmap(address, length);
+        }
+    }
+
+    /// Allocates native backing needed before changing mappings to a backed protection.
+    private boolean prepareMemoryProtection(long address, long length, long protection) {
+        if (!isMemoryBackedProtection(protection)) {
+            return true;
+        }
+
+        ArrayList<MemoryRange> allocatedRanges = new ArrayList<>();
+        long endAddress = address + length;
+        for (MemoryMapping mapping : memoryMappings) {
+            if (!rangesOverlap(address, endAddress, mapping.address(), mapping.endAddress()) || mapping.isBacked()) {
+                continue;
+            }
+
+            long protectStart = Math.max(address, mapping.address());
+            long protectEnd = Math.min(endAddress, mapping.endAddress());
+            long protectLength = protectEnd - protectStart;
+            if (fitsGuestMemory(protectStart, protectLength)) {
+                memory.clear(protectStart, protectLength);
+                continue;
+            }
+            if (!memory.map(protectStart, protectLength)) {
+                rollbackAllocatedMemory(allocatedRanges);
+                return false;
+            }
+            allocatedRanges.add(new MemoryRange(protectStart, protectLength));
+            memory.clear(protectStart, protectLength);
+        }
+        return true;
+    }
+
+    /// Rolls back sparse memory backing allocated during a failed protection change.
+    private void rollbackAllocatedMemory(ArrayList<MemoryRange> ranges) {
+        for (MemoryRange range : ranges) {
+            memory.unmap(range.address(), range.length());
+        }
+    }
+
+    /// Updates tracked mapping protection metadata, splitting mappings as needed.
+    private void updateMemoryMappingsProtection(long address, long length, long protection) {
+        long endAddress = address + length;
+        for (int index = 0; index < memoryMappings.size(); ) {
+            MemoryMapping mapping = memoryMappings.get(index);
+            if (!rangesOverlap(address, endAddress, mapping.address(), mapping.endAddress())) {
+                index++;
+                continue;
+            }
+
+            memoryMappings.remove(index);
+            long protectStart = Math.max(address, mapping.address());
+            long protectEnd = Math.min(endAddress, mapping.endAddress());
+            long protectLength = protectEnd - protectStart;
+            if (mapping.isBacked() && !isMemoryBackedProtection(protection)) {
+                releaseProtectedMemory(protectStart, protectLength);
+            }
+
+            if (mapping.address() < protectStart) {
+                memoryMappings.add(index, new MemoryMapping(
+                        mapping.address(),
+                        protectStart - mapping.address(),
+                        mapping.protection()));
+                index++;
+            }
+            memoryMappings.add(index, new MemoryMapping(protectStart, protectLength, protection));
+            index++;
+            if (protectEnd < mapping.endAddress()) {
+                memoryMappings.add(index, new MemoryMapping(
+                        protectEnd,
+                        mapping.endAddress() - protectEnd,
+                        mapping.protection()));
+                index++;
+            }
+        }
+    }
+
+    /// Clears backed anonymous memory ranges covered by discard-style `madvise` hints.
+    private void clearAdvisedMemory(long address, long length) {
+        long endAddress = address + length;
+        for (MemoryMapping mapping : memoryMappings) {
+            if (!mapping.isBacked() || !rangesOverlap(address, endAddress, mapping.address(), mapping.endAddress())) {
+                continue;
+            }
+
+            long clearStart = Math.max(address, mapping.address());
+            long clearEnd = Math.min(endAddress, mapping.endAddress());
+            memory.clear(clearStart, clearEnd - clearStart);
+        }
+    }
+
+    /// Returns true when an advisory memory hint can be accepted by this simulator.
+    private static boolean isSupportedMemoryAdvice(long advice) {
+        return advice == MADV_NORMAL
+                || advice == MADV_RANDOM
+                || advice == MADV_SEQUENTIAL
+                || advice == MADV_WILLNEED
+                || advice == MADV_DONTNEED
+                || advice == MADV_FREE
+                || advice == MADV_DONTFORK
+                || advice == MADV_DOFORK
+                || advice == MADV_MERGEABLE
+                || advice == MADV_UNMERGEABLE
+                || advice == MADV_HUGEPAGE
+                || advice == MADV_NOHUGEPAGE
+                || advice == MADV_DONTDUMP
+                || advice == MADV_DODUMP
+                || advice == MADV_WIPEONFORK
+                || advice == MADV_KEEPONFORK
+                || advice == MADV_COLD
+                || advice == MADV_PAGEOUT
+                || advice == MADV_POPULATE_READ
+                || advice == MADV_POPULATE_WRITE
+                || advice == MADV_DONTNEED_LOCKED
+                || advice == MADV_COLLAPSE;
+    }
+
+    /// Returns true when a guest range is mapped by the initial window or anonymous mappings.
+    private boolean isMappedRange(long address, long length) {
+        if (!isValidGuestRange(address, length)) {
+            return false;
+        }
+
+        long endAddress = address + length;
+        long cursor = address;
+        while (cursor < endAddress) {
+            if (cursor >= memory.baseAddress() && cursor < memory.endAddress()) {
+                cursor = Math.min(endAddress, memory.endAddress());
+                continue;
+            }
+
+            @Nullable MemoryMapping mapping = memoryMappingCovering(cursor);
+            if (mapping == null) {
+                return false;
+            }
+            cursor = Math.min(endAddress, mapping.endAddress());
+        }
+        return true;
+    }
+
+    /// Returns the anonymous mapping covering a guest address, or null when absent.
+    private @Nullable MemoryMapping memoryMappingCovering(long address) {
+        for (MemoryMapping mapping : memoryMappings) {
+            if (address >= mapping.address() && address < mapping.endAddress()) {
+                return mapping;
+            }
+            if (address < mapping.address()) {
+                return null;
+            }
+        }
+        return null;
     }
 
     /// Returns true when a guest range overlaps an active anonymous mapping.
@@ -1744,6 +2080,11 @@ public final class GuestSyscalls implements AutoCloseable {
         return (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
     }
 
+    /// Returns true when a protection value requires guest memory to be backed.
+    private static boolean isMemoryBackedProtection(long protection) {
+        return protection != PROT_NONE;
+    }
+
     /// Returns true when an address is aligned to the guest page size.
     private static boolean isPageAligned(long address) {
         return (address & (PAGE_SIZE - 1L)) == 0;
@@ -1758,12 +2099,22 @@ public final class GuestSyscalls implements AutoCloseable {
         return (value + mask) & ~mask;
     }
 
+    /// Returns true when the supplied range is non-negative and does not overflow.
+    private static boolean isValidGuestRange(long address, long length) {
+        return address >= 0 && length >= 0 && address <= Long.MAX_VALUE - length;
+    }
+
     /// Returns true when the supplied guest range fits in the memory window.
     private boolean fitsGuestMemory(long address, long length) {
         return address >= memory.baseAddress()
                 && length >= 0
                 && address <= memory.endAddress()
                 && length <= memory.endAddress() - address;
+    }
+
+    /// Returns true when the supplied guest range overlaps the initial memory window.
+    private boolean overlapsInitialMemory(long address, long length) {
+        return rangesOverlap(address, address + length, memory.baseAddress(), memory.endAddress());
     }
 
     /// Returns true when two half-open address ranges overlap.
@@ -1799,11 +2150,28 @@ public final class GuestSyscalls implements AutoCloseable {
             long address,
 
             /// The byte length of the mapping.
-            long length) {
+            long length,
+
+            /// The Linux protection flags currently tracked for the mapping.
+            long protection) {
         /// Returns the exclusive guest end address of the mapping.
         long endAddress() {
             return address + length;
         }
+
+        /// Returns true when this mapping should have host memory backing.
+        boolean isBacked() {
+            return isMemoryBackedProtection(protection);
+        }
+    }
+
+    /// Describes a guest memory range allocated while changing protections.
+    private record MemoryRange(
+            /// The inclusive guest start address of the range.
+            long address,
+
+            /// The byte length of the range.
+            long length) {
     }
 
     /// Describes a host file opened through a guest file descriptor.

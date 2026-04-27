@@ -136,6 +136,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `mmap`.
     private static final long SYS_MMAP = 222;
 
+    /// The Linux RISC-V syscall number for `mprotect`.
+    private static final long SYS_MPROTECT = 226;
+
+    /// The Linux RISC-V syscall number for `madvise`.
+    private static final long SYS_MADVISE = 233;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -205,11 +211,17 @@ public final class GuestSyscallsTest {
     /// The guest page size used by `mmap` and `munmap`.
     private static final long PAGE_SIZE = 4096;
 
+    /// Linux `PROT_NONE`.
+    private static final long PROT_NONE = 0x0;
+
     /// Linux `PROT_READ`.
     private static final long PROT_READ = 0x1;
 
     /// Linux `PROT_WRITE`.
     private static final long PROT_WRITE = 0x2;
+
+    /// Linux `PROT_EXEC`.
+    private static final long PROT_EXEC = 0x4;
 
     /// Linux `MAP_PRIVATE`.
     private static final long MAP_PRIVATE = 0x02;
@@ -222,6 +234,18 @@ public final class GuestSyscallsTest {
 
     /// Linux `MAP_FIXED_NOREPLACE`.
     private static final long MAP_FIXED_NOREPLACE = 0x100000;
+
+    /// Linux `MAP_NORESERVE`.
+    private static final long MAP_NORESERVE = 0x4000;
+
+    /// Linux `MADV_DONTNEED`.
+    private static final long MADV_DONTNEED = 4;
+
+    /// Linux `MADV_REMOVE`.
+    private static final long MADV_REMOVE = 9;
+
+    /// Linux `MADV_HUGEPAGE`.
+    private static final long MADV_HUGEPAGE = 14;
 
     /// Linux `CLOCK_REALTIME`.
     private static final long CLOCK_REALTIME = 0;
@@ -1313,6 +1337,137 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EEXIST, state.register(10));
+        }
+    }
+
+    /// Verifies that `PROT_NONE` reservations can be activated by fixed `mmap` calls.
+    @Test
+    public void mmapReservesProtNoneAndMapsFixedSparsePages() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    8 * PAGE_SIZE,
+                    PROT_NONE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long reservedAddress = state.register(10);
+            assertEquals(memory.endAddress(), reservedAddress);
+            assertThrows(RiscVException.class, () -> memory.readByte(reservedAddress));
+
+            long mappedAddress = reservedAddress + PAGE_SIZE;
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    mappedAddress,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(mappedAddress, state.register(10));
+            memory.writeLong(mappedAddress, 0x1020_3040_5060_7080L);
+            assertEquals(0x1020_3040_5060_7080L, memory.readLong(mappedAddress));
+        }
+    }
+
+    /// Verifies that `mprotect` can activate and deactivate reserved sparse mappings.
+    @Test
+    public void mprotectUpdatesReservedSparseMappings() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    8 * PAGE_SIZE,
+                    PROT_NONE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long reservedAddress = state.register(10);
+
+            setSyscall(state, SYS_MPROTECT, reservedAddress, PAGE_SIZE, PROT_READ | PROT_WRITE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            memory.writeLong(reservedAddress, 0x0102_0304_0506_0708L);
+            assertEquals(0x0102_0304_0506_0708L, memory.readLong(reservedAddress));
+
+            setSyscall(state, SYS_MPROTECT, reservedAddress, PAGE_SIZE, PROT_NONE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertThrows(RiscVException.class, () -> memory.readLong(reservedAddress));
+
+            setSyscall(state, SYS_MPROTECT, reservedAddress + 16 * PAGE_SIZE, PAGE_SIZE, PROT_READ);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+
+            setSyscall(state, SYS_MPROTECT, reservedAddress, PAGE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC | 0x8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies that `madvise` accepts common hints and discards backed anonymous pages.
+    @Test
+    public void madviseClearsDiscardedAnonymousPages() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+            memory.writeByte(mappedAddress, (byte) 0x7f);
+
+            setSyscall(state, SYS_MADVISE, mappedAddress, PAGE_SIZE, MADV_DONTNEED);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readUnsignedByte(mappedAddress));
+
+            memory.writeByte(mappedAddress, (byte) 0x45);
+            setSyscall(state, SYS_MADVISE, mappedAddress, PAGE_SIZE, MADV_HUGEPAGE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0x45, memory.readUnsignedByte(mappedAddress));
+
+            setSyscall(state, SYS_MADVISE, mappedAddress, PAGE_SIZE, MADV_REMOVE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 
