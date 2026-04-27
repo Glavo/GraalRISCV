@@ -90,6 +90,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
 
+    /// The Linux RISC-V syscall number for `sched_yield`.
+    private static final long SYS_SCHED_YIELD = 124;
+
     /// The Linux RISC-V syscall number for `sigaltstack`.
     private static final long SYS_SIGALTSTACK = 132;
 
@@ -99,11 +102,20 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `times`.
+    private static final long SYS_TIMES = 153;
+
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
 
+    /// The Linux RISC-V syscall number for `getrusage`.
+    private static final long SYS_GETRUSAGE = 165;
+
     /// The Linux RISC-V syscall number for `prctl`.
     private static final long SYS_PRCTL = 167;
+
+    /// The Linux RISC-V syscall number for `getcpu`.
+    private static final long SYS_GETCPU = 168;
 
     /// The Linux RISC-V syscall number for `gettimeofday`.
     private static final long SYS_GETTIMEOFDAY = 169;
@@ -353,6 +365,39 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte offset of `tz_dsttime` inside Linux `struct timezone`.
     private static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_SIZE = 4 * Long.BYTES;
+
+    /// The byte offset of `tms_utime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_USER_TIME_OFFSET = 0;
+
+    /// The byte offset of `tms_stime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_SYSTEM_TIME_OFFSET = Long.BYTES;
+
+    /// The byte offset of `tms_cutime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_CHILD_USER_TIME_OFFSET = 2 * Long.BYTES;
+
+    /// The byte offset of `tms_cstime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_CHILD_SYSTEM_TIME_OFFSET = 3 * Long.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `struct rusage`.
+    private static final int RUSAGE_SIZE = 144;
+
+    /// The byte offset of `ru_utime` inside Linux RISC-V 64-bit `struct rusage`.
+    private static final int RUSAGE_USER_TIME_OFFSET = 0;
+
+    /// The byte offset of `ru_stime` inside Linux RISC-V 64-bit `struct rusage`.
+    private static final int RUSAGE_SYSTEM_TIME_OFFSET = 2 * Long.BYTES;
+
+    /// Linux `RUSAGE_CHILDREN`.
+    private static final long RUSAGE_CHILDREN = -1;
+
+    /// Linux `RUSAGE_SELF`.
+    private static final long RUSAGE_SELF = 0;
+
+    /// Linux `RUSAGE_THREAD`.
+    private static final long RUSAGE_THREAD = 1;
 
     /// The byte offset of `rlim_cur` inside Linux RISC-V 64-bit `struct rlimit64`.
     private static final int RLIMIT_CURRENT_OFFSET = 0;
@@ -700,6 +745,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The number of nanoseconds in one second.
     private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
+
+    /// The Linux user-space clock ticks per second value used by `times`.
+    private static final long CLOCK_TICKS_PER_SECOND = 100L;
 
     /// The number of nanoseconds in one millisecond.
     private static final long NANOSECONDS_PER_MILLISECOND = 1_000_000L;
@@ -1152,6 +1200,10 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, schedGetaffinity(state.register(10), state.register(11), state.register(12)));
             return;
         }
+        if (callNumber == SYS_SCHED_YIELD) {
+            state.setRegister(10, schedYield());
+            return;
+        }
         if (callNumber == SYS_SIGALTSTACK) {
             state.setRegister(10, sigaltstack(state.register(10), state.register(11)));
             return;
@@ -1172,8 +1224,16 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(13)));
             return;
         }
+        if (callNumber == SYS_TIMES) {
+            state.setRegister(10, times(state.register(10)));
+            return;
+        }
         if (callNumber == SYS_UNAME) {
             state.setRegister(10, uname(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_GETRUSAGE) {
+            state.setRegister(10, getrusage(state.register(10), state.register(11)));
             return;
         }
         if (callNumber == SYS_PRCTL) {
@@ -1183,6 +1243,10 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            return;
+        }
+        if (callNumber == SYS_GETCPU) {
+            state.setRegister(10, getcpu(state.register(10), state.register(11)));
             return;
         }
         if (callNumber == SYS_GETTIMEOFDAY) {
@@ -2085,6 +2149,12 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Yields the host thread for the Linux `sched_yield` syscall.
+    private static long schedYield() {
+        Thread.yield();
+        return 0;
+    }
+
     /// Reports deterministic RISC-V hardware probe values for the single simulated CPU.
     private long riscvHwprobe(long pairsAddress, long pairCount, long cpuSetSize, long cpuSetAddress, long flags) {
         if (pairCount < 0
@@ -2210,6 +2280,44 @@ public final class GuestSyscalls implements AutoCloseable {
         return true;
     }
 
+    /// Writes deterministic process CPU times and returns elapsed clock ticks.
+    private long times(long tmsAddress) {
+        long elapsedTicks = elapsedClockTicks();
+        if (tmsAddress != 0) {
+            memory.clear(tmsAddress, TMS_SIZE);
+            memory.writeLong(tmsAddress + TMS_USER_TIME_OFFSET, elapsedTicks);
+            memory.writeLong(tmsAddress + TMS_SYSTEM_TIME_OFFSET, 0);
+            memory.writeLong(tmsAddress + TMS_CHILD_USER_TIME_OFFSET, 0);
+            memory.writeLong(tmsAddress + TMS_CHILD_SYSTEM_TIME_OFFSET, 0);
+        }
+        return elapsedTicks;
+    }
+
+    /// Writes deterministic Linux `struct rusage` values for the supported `who` selectors.
+    private long getrusage(long who, long rusageAddress) {
+        if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN && who != RUSAGE_THREAD) {
+            return EINVAL;
+        }
+
+        memory.clear(rusageAddress, RUSAGE_SIZE);
+        if (who != RUSAGE_CHILDREN) {
+            writeTimevalFromDuration(rusageAddress + RUSAGE_USER_TIME_OFFSET, elapsedDuration());
+            writeTimevalFromDuration(rusageAddress + RUSAGE_SYSTEM_TIME_OFFSET, Duration.ZERO);
+        }
+        return 0;
+    }
+
+    /// Reports the simulated single CPU and NUMA node.
+    private long getcpu(long cpuAddress, long nodeAddress) {
+        if (cpuAddress != 0) {
+            memory.writeInt(cpuAddress, 0);
+        }
+        if (nodeAddress != 0) {
+            memory.writeInt(nodeAddress, 0);
+        }
+        return 0;
+    }
+
     /// Writes a deterministic Linux `struct utsname` for the simulated guest.
     private long uname(long utsnameAddress) {
         memory.clear(utsnameAddress, UTSNAME_SIZE);
@@ -2243,6 +2351,17 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Returns the non-negative elapsed duration since the syscall handler was created.
+    private Duration elapsedDuration() {
+        Duration duration = Duration.between(clockStartInstant, clock.instant());
+        return duration.isNegative() ? Duration.ZERO : duration;
+    }
+
+    /// Returns elapsed Linux clock ticks since the syscall handler was created.
+    private long elapsedClockTicks() {
+        return durationToClockTicks(elapsedDuration());
+    }
+
     /// Writes a Linux RISC-V 64-bit `struct timespec` for common clock ids.
     private long clockGettime(long clockId, long timespecAddress) {
         if (!isSupportedClock(clockId)) {
@@ -2252,9 +2371,15 @@ public final class GuestSyscalls implements AutoCloseable {
         if (isRealtimeClock(clockId)) {
             writeTimespecFromInstant(timespecAddress, clock.instant());
         } else {
-            writeTimespecFromDuration(timespecAddress, Duration.between(clockStartInstant, clock.instant()));
+            writeTimespecFromDuration(timespecAddress, elapsedDuration());
         }
         return 0;
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct timeval` from a non-negative elapsed duration.
+    private void writeTimevalFromDuration(long timevalAddress, Duration duration) {
+        memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, duration.getSeconds());
+        memory.writeLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET, duration.getNano() / 1000L);
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timespec` from a clock instant.
@@ -2292,6 +2417,18 @@ public final class GuestSyscalls implements AutoCloseable {
             return Long.MAX_VALUE;
         }
         return seconds * NANOSECONDS_PER_SECOND + nanoseconds;
+    }
+
+    /// Converts a non-negative duration to Linux clock ticks, saturating very large values.
+    private static long durationToClockTicks(Duration duration) {
+        long seconds = duration.getSeconds();
+        long nanoseconds = duration.getNano();
+        if (seconds > (Long.MAX_VALUE - CLOCK_TICKS_PER_SECOND) / CLOCK_TICKS_PER_SECOND) {
+            return Long.MAX_VALUE;
+        }
+        long secondTicks = seconds * CLOCK_TICKS_PER_SECOND;
+        long fractionalTicks = nanoseconds * CLOCK_TICKS_PER_SECOND / NANOSECONDS_PER_SECOND;
+        return secondTicks > Long.MAX_VALUE - fractionalTicks ? Long.MAX_VALUE : secondTicks + fractionalTicks;
     }
 
     /// Returns true when `clock_gettime` accepts the supplied Linux clock id.

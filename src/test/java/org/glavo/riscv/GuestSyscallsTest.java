@@ -146,6 +146,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
 
+    /// The Linux RISC-V syscall number for `sched_yield`.
+    private static final long SYS_SCHED_YIELD = 124;
+
     /// The Linux RISC-V syscall number for `sigaltstack`.
     private static final long SYS_SIGALTSTACK = 132;
 
@@ -155,11 +158,20 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `times`.
+    private static final long SYS_TIMES = 153;
+
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
 
+    /// The Linux RISC-V syscall number for `getrusage`.
+    private static final long SYS_GETRUSAGE = 165;
+
     /// The Linux RISC-V syscall number for `prctl`.
     private static final long SYS_PRCTL = 167;
+
+    /// The Linux RISC-V syscall number for `getcpu`.
+    private static final long SYS_GETCPU = 168;
 
     /// The Linux RISC-V syscall number for `gettimeofday`.
     private static final long SYS_GETTIMEOFDAY = 169;
@@ -292,6 +304,33 @@ public final class GuestSyscallsTest {
 
     /// The byte offset of `tz_dsttime` inside Linux `struct timezone`.
     private static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `tms_utime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_USER_TIME_OFFSET = 0;
+
+    /// The byte offset of `tms_stime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_SYSTEM_TIME_OFFSET = Long.BYTES;
+
+    /// The byte offset of `tms_cutime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_CHILD_USER_TIME_OFFSET = 2 * Long.BYTES;
+
+    /// The byte offset of `tms_cstime` inside Linux RISC-V 64-bit `struct tms`.
+    private static final int TMS_CHILD_SYSTEM_TIME_OFFSET = 3 * Long.BYTES;
+
+    /// The byte offset of `ru_utime` inside Linux RISC-V 64-bit `struct rusage`.
+    private static final int RUSAGE_USER_TIME_OFFSET = 0;
+
+    /// The byte offset of `ru_stime` inside Linux RISC-V 64-bit `struct rusage`.
+    private static final int RUSAGE_SYSTEM_TIME_OFFSET = 2 * Long.BYTES;
+
+    /// Linux `RUSAGE_CHILDREN`.
+    private static final long RUSAGE_CHILDREN = -1;
+
+    /// Linux `RUSAGE_SELF`.
+    private static final long RUSAGE_SELF = 0;
+
+    /// Linux `RUSAGE_THREAD`.
+    private static final long RUSAGE_THREAD = 1;
 
     /// The byte offset of `rlim_cur` inside Linux RISC-V 64-bit `struct rlimit64`.
     private static final int RLIMIT_CURRENT_OFFSET = 0;
@@ -1507,6 +1546,32 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies deterministic single-CPU scheduling helper syscalls.
+    @Test
+    public void schedulingHelpersReportSingleCpu() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long cpuAddress = memory.baseAddress() + 64;
+            long nodeAddress = memory.baseAddress() + 72;
+
+            setSyscall(state, SYS_SCHED_YIELD, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeInt(cpuAddress, -1);
+            memory.writeInt(nodeAddress, -1);
+            setSyscall(state, SYS_GETCPU, cpuAddress, nodeAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readInt(cpuAddress));
+            assertEquals(0, memory.readInt(nodeAddress));
+
+            setSyscall(state, SYS_GETCPU, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
     /// Verifies deterministic RISC-V hardware probe values for the simulated CPU.
     @Test
     public void riscvHwprobeReportsSupportedCapabilities() {
@@ -1689,6 +1754,67 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETTIMEOFDAY, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies `times` reports deterministic process CPU ticks.
+    @Test
+    public void timesUsesConfiguredClock() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            Clock fixedClock = Clock.fixed(Instant.ofEpochSecond(1_700_000_000L), ZoneOffset.UTC);
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            long tmsAddress = memory.baseAddress() + 64;
+
+            memory.writeLong(tmsAddress + TMS_USER_TIME_OFFSET, -1);
+            memory.writeLong(tmsAddress + TMS_SYSTEM_TIME_OFFSET, -1);
+            memory.writeLong(tmsAddress + TMS_CHILD_USER_TIME_OFFSET, -1);
+            memory.writeLong(tmsAddress + TMS_CHILD_SYSTEM_TIME_OFFSET, -1);
+            setSyscall(state, SYS_TIMES, tmsAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(tmsAddress + TMS_USER_TIME_OFFSET));
+            assertEquals(0, memory.readLong(tmsAddress + TMS_SYSTEM_TIME_OFFSET));
+            assertEquals(0, memory.readLong(tmsAddress + TMS_CHILD_USER_TIME_OFFSET));
+            assertEquals(0, memory.readLong(tmsAddress + TMS_CHILD_SYSTEM_TIME_OFFSET));
+
+            setSyscall(state, SYS_TIMES, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies `getrusage` reports deterministic zero usage for a fixed clock.
+    @Test
+    public void getrusageUsesConfiguredClock() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            Clock fixedClock = Clock.fixed(Instant.ofEpochSecond(1_700_000_000L), ZoneOffset.UTC);
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            long rusageAddress = memory.baseAddress() + 64;
+
+            memory.writeLong(rusageAddress + RUSAGE_USER_TIME_OFFSET, -1);
+            memory.writeLong(rusageAddress + RUSAGE_SYSTEM_TIME_OFFSET, -1);
+            setSyscall(state, SYS_GETRUSAGE, RUSAGE_SELF, rusageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(rusageAddress + RUSAGE_USER_TIME_OFFSET + TIMEVAL_SECONDS_OFFSET));
+            assertEquals(0, memory.readLong(rusageAddress + RUSAGE_USER_TIME_OFFSET + TIMEVAL_MICROSECONDS_OFFSET));
+            assertEquals(0, memory.readLong(rusageAddress + RUSAGE_SYSTEM_TIME_OFFSET + TIMEVAL_SECONDS_OFFSET));
+            assertEquals(0, memory.readLong(rusageAddress + RUSAGE_SYSTEM_TIME_OFFSET + TIMEVAL_MICROSECONDS_OFFSET));
+
+            memory.writeLong(rusageAddress + RUSAGE_USER_TIME_OFFSET, -1);
+            setSyscall(state, SYS_GETRUSAGE, RUSAGE_CHILDREN, rusageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(rusageAddress + RUSAGE_USER_TIME_OFFSET + TIMEVAL_SECONDS_OFFSET));
+
+            setSyscall(state, SYS_GETRUSAGE, RUSAGE_THREAD, rusageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETRUSAGE, 99, rusageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 
