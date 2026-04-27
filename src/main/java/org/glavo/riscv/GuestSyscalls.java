@@ -46,6 +46,12 @@ public final class GuestSyscalls {
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
 
+    /// The Linux RISC-V syscall number for `rt_sigaction`.
+    private static final long SYS_RT_SIGACTION = 134;
+
+    /// The Linux RISC-V syscall number for `rt_sigprocmask`.
+    private static final long SYS_RT_SIGPROCMASK = 135;
+
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
 
@@ -102,6 +108,27 @@ public final class GuestSyscalls {
 
     /// The byte size of Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE = 128;
+
+    /// The byte size of Linux generic 64-bit kernel `sigset_t`.
+    private static final long KERNEL_SIGSET_SIZE = 8;
+
+    /// The byte size of Linux generic 64-bit kernel `struct sigaction`.
+    private static final long KERNEL_SIGACTION_SIZE = 32;
+
+    /// The lowest regular Linux signal number accepted by signal syscalls.
+    private static final long MIN_SIGNAL_NUMBER = 1;
+
+    /// The highest regular Linux signal number accepted by signal syscalls.
+    private static final long MAX_SIGNAL_NUMBER = 64;
+
+    /// Linux `SIG_BLOCK` signal-mask operation.
+    private static final long SIG_BLOCK = 0;
+
+    /// Linux `SIG_UNBLOCK` signal-mask operation.
+    private static final long SIG_UNBLOCK = 1;
+
+    /// Linux `SIG_SETMASK` signal-mask operation.
+    private static final long SIG_SETMASK = 2;
 
     /// The `st_ino` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_INODE_OFFSET = 8;
@@ -236,6 +263,22 @@ public final class GuestSyscalls {
         }
         if (callNumber == SYS_SET_ROBUST_LIST) {
             state.setRegister(10, setRobustList(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_RT_SIGACTION) {
+            state.setRegister(10, rtSigaction(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_RT_SIGPROCMASK) {
+            state.setRegister(10, rtSigprocmask(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             return;
         }
         if (callNumber == SYS_GETPID || callNumber == SYS_GETTID) {
@@ -461,6 +504,36 @@ public final class GuestSyscalls {
         }
         robustListHeadAddress = headAddress;
         robustListLength = length;
+        return 0;
+    }
+
+    /// Accepts signal action setup for a guest that never delivers host signals.
+    private long rtSigaction(long signalNumber, long actionAddress, long oldActionAddress, long sigsetSize) {
+        if (sigsetSize != KERNEL_SIGSET_SIZE) {
+            return EINVAL;
+        }
+        if (signalNumber < MIN_SIGNAL_NUMBER || signalNumber > MAX_SIGNAL_NUMBER) {
+            return EINVAL;
+        }
+
+        if (oldActionAddress != 0) {
+            memory.clear(oldActionAddress, KERNEL_SIGACTION_SIZE);
+        }
+        return 0;
+    }
+
+    /// Accepts signal-mask queries and no-op updates for a single-threaded guest.
+    private long rtSigprocmask(long how, long setAddress, long oldSetAddress, long sigsetSize) {
+        if (sigsetSize != KERNEL_SIGSET_SIZE) {
+            return EINVAL;
+        }
+        if (setAddress != 0 && how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK) {
+            return EINVAL;
+        }
+
+        if (oldSetAddress != 0) {
+            memory.writeLong(oldSetAddress, 0);
+        }
         return 0;
     }
 

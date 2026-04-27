@@ -62,6 +62,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
 
+    /// The Linux RISC-V syscall number for `rt_sigaction`.
+    private static final long SYS_RT_SIGACTION = 134;
+
+    /// The Linux RISC-V syscall number for `rt_sigprocmask`.
+    private static final long SYS_RT_SIGPROCMASK = 135;
+
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
 
@@ -91,6 +97,9 @@ public final class GuestSyscallsTest {
 
     /// The expected `st_mode` value for simulator standard streams.
     private static final int STANDARD_STREAM_STAT_MODE = 0020000 | 0666;
+
+    /// The Linux generic kernel `sigset_t` size accepted by signal syscalls.
+    private static final long KERNEL_SIGSET_SIZE = 8;
 
     /// Verifies that stdin EOF is reported as a zero-byte read.
     @Test
@@ -400,6 +409,55 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies deterministic signal action handling for runtimes that initialize signal handlers.
+    @Test
+    public void rtSigactionAcceptsRuntimeSetup() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long actionAddress = memory.baseAddress() + 64;
+            long oldActionAddress = memory.baseAddress() + 128;
+            memory.writeLong(oldActionAddress, -1);
+
+            setSyscall(state, SYS_RT_SIGACTION, 2, actionAddress, oldActionAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(oldActionAddress));
+
+            setSyscall(state, SYS_RT_SIGACTION, 0, 0, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGACTION, 2, 0, 0, KERNEL_SIGSET_SIZE - 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies deterministic signal-mask handling for single-threaded guests.
+    @Test
+    public void rtSigprocmaskReportsEmptyMask() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long newSetAddress = memory.baseAddress() + 64;
+            long oldSetAddress = memory.baseAddress() + 128;
+            memory.writeLong(newSetAddress, 1);
+            memory.writeLong(oldSetAddress, -1);
+
+            setSyscall(state, SYS_RT_SIGPROCMASK, 2, newSetAddress, oldSetAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(oldSetAddress));
+
+            setSyscall(state, SYS_RT_SIGPROCMASK, 9, newSetAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGPROCMASK, 0, 0, 0, KERNEL_SIGSET_SIZE - 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies that `brk` reports and updates the program break inside guest memory.
     @Test
     public void brkTracksProgramBreakWithinGuestMemory() {
@@ -455,9 +513,15 @@ public final class GuestSyscallsTest {
 
     /// Populates the syscall number and the first three argument registers.
     private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2) {
+        setSyscall(state, callNumber, a0, a1, a2, 0);
+    }
+
+    /// Populates the syscall number and the first four argument registers.
+    private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2, long a3) {
         state.setRegister(10, a0);
         state.setRegister(11, a1);
         state.setRegister(12, a2);
+        state.setRegister(13, a3);
         state.setRegister(17, callNumber);
     }
 

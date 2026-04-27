@@ -9,12 +9,11 @@
 
 ### 2. Harden ELF loading and diagnostics
 
-- Improve diagnostics for common runtime memory layout mistakes, especially images whose load address falls outside the selected guest memory range.
 - Preserve the current `jelf`-based parser unless a specific compatibility or maintenance issue proves it inadequate.
 
 ### 3. Strengthen syscall and host I/O behavior
 
-- Decide which additional Linux RISC-V ABI calls are required for the next useful C workload, such as `openat`, `mmap`, `munmap`, or signal-mask stubs.
+- Decide which additional Linux RISC-V ABI calls are required for the next useful C workload, such as `openat`, `mmap`, or `munmap`.
 - Keep host I/O behavior deterministic enough for tests while still mapping stdout and stderr to the CLI process.
 
 ### 4. Expand ISA coverage and execution tests

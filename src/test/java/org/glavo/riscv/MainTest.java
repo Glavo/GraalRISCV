@@ -86,6 +86,66 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that an explicit memory base above the ELF load address reports a useful layout error.
+    @Test
+    public void reportsElfSegmentBelowMemoryBase() throws Exception {
+        Path elfPath = tempDirectory.resolve("segment-below-memory-base.elf");
+        Files.write(elfPath, ElfTestImages.executable(ElfTestImages.ecall()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--memory-base", "0x80001000",
+                        "--max-instructions", "1000",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        String diagnostics = err.toString(StandardCharsets.UTF_8);
+        assertEquals(1, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(diagnostics.contains("Execution failed:"));
+        assertTrue(diagnostics.contains("ELF segment is outside guest memory"));
+        assertTrue(diagnostics.contains("segment=[0x80000000,"));
+        assertTrue(diagnostics.contains("memory=[0x80001000,"));
+        assertTrue(diagnostics.contains("--memory-base auto"));
+        assertTrue(diagnostics.contains("--memory-base 0x80000000"));
+    }
+
+    /// Verifies that too little guest memory reports the minimum required memory size.
+    @Test
+    public void reportsElfSegmentAboveMemoryEnd() throws Exception {
+        Path elfPath = tempDirectory.resolve("segment-above-memory-end.elf");
+        byte[] segment = new byte[64];
+        ByteBuffer.wrap(segment).order(ByteOrder.LITTLE_ENDIAN).putInt(ElfTestImages.ecall());
+        Files.write(elfPath, ElfTestImages.executable(segment));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--memory-size", "16",
+                        "--max-instructions", "1000",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        String diagnostics = err.toString(StandardCharsets.UTF_8);
+        assertEquals(1, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(diagnostics.contains("Execution failed:"));
+        assertTrue(diagnostics.contains("ELF segment is outside guest memory"));
+        assertTrue(diagnostics.contains("segment=[0x80000000,0x80000040)"));
+        assertTrue(diagnostics.contains("memory=[0x80000000,0x80000010)"));
+        assertTrue(diagnostics.contains("Increase --memory-size"));
+        assertTrue(diagnostics.contains("at least 64 bytes"));
+    }
+
     /// Verifies that the CLI reports missing program paths as usage errors.
     @Test
     public void reportsMissingProgramPath() {

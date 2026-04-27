@@ -41,9 +41,10 @@ Options:
 
 The simulator currently supports the Linux RISC-V ABI calls `read`, `write`, `readv`, `writev`,
 `close`, `fstat`, `lseek`, `ioctl`, `exit`, `exit_group`, `set_tid_address`,
-`set_robust_list`, `getpid`, `gettid`, `brk`, and `getrandom`.
+`set_robust_list`, `rt_sigaction`, `rt_sigprocmask`, `getpid`, `gettid`, `brk`, and `getrandom`.
 The `ioctl` support is limited to the tty queries `TCGETS` and `TIOCGWINSZ`.
 The `getrandom` implementation returns deterministic pseudo-random bytes for reproducible runs.
+Signal actions and masks are accepted as deterministic single-threaded stubs; host signals are not delivered to guests.
 Unsupported `ecall` failures include the syscall number, program counter, and argument registers.
 
 ## Supported ELF Inputs

@@ -100,12 +100,95 @@ public final class RiscVRootNode extends RootNode {
 
     /// Ensures a loaded ELF segment fits in guest memory.
     private static void validateGuestRange(Memory memory, long address, long length) {
-        if (address < memory.baseAddress()
-                || length < 0
-                || address - memory.baseAddress() > memory.size() - length) {
-            throw new RiscVException("ELF segment is outside guest memory: address=0x"
-                    + Long.toUnsignedString(address, 16) + ", length=" + length);
+        if (length < 0) {
+            throw new RiscVException(memoryLayoutError(
+                    memory,
+                    "segment length is negative",
+                    address,
+                    address,
+                    length));
         }
+
+        if (address > Long.MAX_VALUE - length) {
+            throw new RiscVException("ELF segment is outside guest memory: reason=segment range overflows, "
+                    + "segmentStart=" + formatHex(address)
+                    + ", length=" + length
+                    + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress())
+                    + ", memorySize=" + memory.size()
+                    + "; use --memory-base auto or choose a lower --memory-base value");
+        }
+
+        long endAddress = address + length;
+        if (address < memory.baseAddress() || endAddress > memory.endAddress()) {
+            throw new RiscVException(memoryLayoutError(
+                    memory,
+                    memoryLayoutReason(memory, address, endAddress),
+                    address,
+                    endAddress,
+                    length));
+        }
+    }
+
+    /// Builds a guest memory layout error with range details and CLI hints.
+    private static String memoryLayoutError(
+            Memory memory,
+            String reason,
+            long segmentAddress,
+            long segmentEndAddress,
+            long segmentLength) {
+        return "ELF segment is outside guest memory: reason=" + reason
+                + ", segment=" + formatRange(segmentAddress, segmentEndAddress)
+                + ", length=" + segmentLength
+                + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress())
+                + ", memorySize=" + memory.size()
+                + memoryLayoutHint(memory, segmentAddress, segmentEndAddress);
+    }
+
+    /// Describes which side of the guest memory range rejected a segment.
+    private static String memoryLayoutReason(Memory memory, long segmentAddress, long segmentEndAddress) {
+        boolean startsBeforeMemory = segmentAddress < memory.baseAddress();
+        boolean exceedsMemoryEnd = segmentEndAddress > memory.endAddress();
+        if (startsBeforeMemory && exceedsMemoryEnd) {
+            return "segment starts before guest memory and exceeds guest memory end";
+        }
+        if (startsBeforeMemory) {
+            return "segment starts before guest memory";
+        }
+        return "segment exceeds guest memory end";
+    }
+
+    /// Builds an actionable CLI hint for an invalid guest memory layout.
+    private static String memoryLayoutHint(Memory memory, long segmentAddress, long segmentEndAddress) {
+        StringBuilder hint = new StringBuilder();
+        if (segmentAddress < memory.baseAddress()) {
+            hint.append("; Use --memory-base auto or set --memory-base ").append(formatHex(segmentAddress));
+        }
+
+        if (segmentEndAddress > memory.endAddress()) {
+            if (hint.length() == 0) {
+                hint.append("; Increase --memory-size");
+            } else {
+                hint.append("; with that base, use --memory-size");
+            }
+
+            long requiredBaseAddress = segmentAddress < memory.baseAddress()
+                    ? segmentAddress
+                    : memory.baseAddress();
+            long requiredSize = segmentEndAddress - requiredBaseAddress;
+            hint.append(" to at least ").append(requiredSize).append(" bytes");
+        }
+
+        return hint.toString();
+    }
+
+    /// Formats an unsigned guest address as a lowercase hexadecimal string.
+    private static String formatHex(long value) {
+        return "0x" + Long.toUnsignedString(value, 16);
+    }
+
+    /// Formats an address range with an inclusive start and exclusive end.
+    private static String formatRange(long startAddress, long endAddress) {
+        return "[" + formatHex(startAddress) + "," + formatHex(endAddress) + ")";
     }
 
     /// Rounds an address up to the requested power-of-two alignment.
