@@ -147,6 +147,76 @@ public final class RiscVDecoderEdgeTest {
         }
     }
 
+    /// Verifies mixed compressed and wide integer instructions in one decoded stream.
+    @Test
+    public void decodedCompressedIntegerStreamMixesInstructionWidths() {
+        try (TestMachine machine = TestMachine.create()) {
+            ByteBuffer code = ByteBuffer.allocate((5 * Short.BYTES) + (3 * Integer.BYTES))
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            putCompressed(code, cLi(8, 6));
+            putCompressed(code, cAddi(8, -1));
+            putCompressed(code, cMv(RESULT_REGISTER, 8));
+            putCompressed(code, cSlli(RESULT_REGISTER, 1));
+            ElfTestImages.putInt(code, ElfTestImages.addi(9, 0, 32));
+            putCompressed(code, cAdd(RESULT_REGISTER, 9));
+            ElfTestImages.putInt(code, ElfTestImages.addi(SYSCALL_REGISTER, 0, (int) EXIT_SYSCALL));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+            loadCode(machine.memory(), code.array());
+
+            runDecodedProgram(machine);
+
+            assertEquals(42, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies mixed compressed memory instructions with 32-bit instructions at 16-bit-aligned addresses.
+    @Test
+    public void decodedCompressedMemoryStreamMixesInstructionWidths() {
+        try (TestMachine machine = TestMachine.create()) {
+            ByteBuffer code = ByteBuffer.allocate((3 * Short.BYTES) + (3 * Integer.BYTES))
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            putCompressed(code, cAddi4spn(8, 16));
+            ElfTestImages.putInt(code, ElfTestImages.addi(9, 0, 42));
+            putCompressed(code, cSd(8, 9, 0));
+            putCompressed(code, cLd(RESULT_REGISTER, 8, 0));
+            ElfTestImages.putInt(code, ElfTestImages.addi(SYSCALL_REGISTER, 0, (int) EXIT_SYSCALL));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+            loadCode(machine.memory(), code.array());
+            machine.state().setRegister(2, TEST_PC + 128);
+
+            runDecodedProgram(machine);
+
+            assertEquals(42, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies compressed branch and jump targets inside a mixed-width instruction stream.
+    @Test
+    public void decodedCompressedControlFlowStreamMixesInstructionWidths() {
+        try (TestMachine machine = TestMachine.create()) {
+            ByteBuffer code = ByteBuffer.allocate((4 * Short.BYTES) + (5 * Integer.BYTES))
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            putCompressed(code, cLi(8, 0));
+            putCompressed(code, cBeqz(8, 10));
+            ElfTestImages.putInt(code, ElfTestImages.addi(RESULT_REGISTER, 0, 1));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+            putCompressed(code, cLi(RESULT_REGISTER, 2));
+            putCompressed(code, cJ(6));
+            ElfTestImages.putInt(code, ElfTestImages.addi(RESULT_REGISTER, 0, 3));
+            ElfTestImages.putInt(code, ElfTestImages.addi(SYSCALL_REGISTER, 0, (int) EXIT_SYSCALL));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+            loadCode(machine.memory(), code.array());
+            prepareExit(machine.state());
+
+            runDecodedProgram(machine);
+
+            assertEquals(2, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
     /// Executes one decoded instruction and asserts the destination register result.
     private static void assertDecodedResult(long expected, int instruction) {
         try (TestMachine machine = TestMachine.create()) {
@@ -207,6 +277,11 @@ public final class RiscVDecoderEdgeTest {
     /// Loads raw instruction bytes at the decoder test address.
     private static void loadCode(Memory memory, byte[] code) {
         memory.load(TEST_PC, code, 0, code.length);
+    }
+
+    /// Writes a little-endian compressed instruction into a code buffer.
+    private static void putCompressed(ByteBuffer buffer, int instruction) {
+        ElfTestImages.putShort(buffer, instruction);
     }
 
     /// Encodes `addiw`.
@@ -279,6 +354,107 @@ public final class RiscVDecoderEdgeTest {
     /// Encodes `jalr`.
     private static int jalr(int rd, int rs1, int offset) {
         return ElfTestImages.iType(0x67, rd, 0, rs1, offset);
+    }
+
+    /// Encodes `c.li`.
+    private static int cLi(int rd, int immediate) {
+        return compressedImmediate(0b010, rd, immediate);
+    }
+
+    /// Encodes `c.addi`.
+    private static int cAddi(int rd, int immediate) {
+        return compressedImmediate(0b000, rd, immediate);
+    }
+
+    /// Encodes `c.slli`.
+    private static int cSlli(int rd, int shiftAmount) {
+        return (rd << 7)
+                | (((shiftAmount >>> 5) & 0x1) << 12)
+                | ((shiftAmount & 0x1f) << 2)
+                | 0b10;
+    }
+
+    /// Encodes `c.mv`.
+    private static int cMv(int rd, int rs2) {
+        return (0b100 << 13) | (rd << 7) | (rs2 << 2) | 0b10;
+    }
+
+    /// Encodes `c.add`.
+    private static int cAdd(int rd, int rs2) {
+        return (0b100 << 13) | (1 << 12) | (rd << 7) | (rs2 << 2) | 0b10;
+    }
+
+    /// Encodes `c.addi4spn`.
+    private static int cAddi4spn(int rd, int immediate) {
+        return (((immediate >>> 6) & 0xf) << 7)
+                | (((immediate >>> 4) & 0x3) << 11)
+                | (((immediate >>> 3) & 0x1) << 5)
+                | (((immediate >>> 2) & 0x1) << 6)
+                | ((compressedRegister(rd)) << 2);
+    }
+
+    /// Encodes `c.ld`.
+    private static int cLd(int rd, int rs1, int offset) {
+        return compressedLoadStore(0b011, rd, rs1, offset);
+    }
+
+    /// Encodes `c.sd`.
+    private static int cSd(int rs1, int rs2, int offset) {
+        return compressedLoadStore(0b111, rs2, rs1, offset);
+    }
+
+    /// Encodes `c.beqz`.
+    private static int cBeqz(int rs1, int offset) {
+        return compressedBranch(0b110, rs1, offset);
+    }
+
+    /// Encodes `c.j`.
+    private static int cJ(int offset) {
+        return (0b101 << 13)
+                | (((offset >>> 11) & 0x1) << 12)
+                | (((offset >>> 4) & 0x1) << 11)
+                | (((offset >>> 8) & 0x3) << 9)
+                | (((offset >>> 10) & 0x1) << 8)
+                | (((offset >>> 6) & 0x1) << 7)
+                | (((offset >>> 7) & 0x1) << 6)
+                | (((offset >>> 1) & 0x7) << 3)
+                | (((offset >>> 5) & 0x1) << 2)
+                | 0b01;
+    }
+
+    /// Encodes a compressed CI-format immediate instruction.
+    private static int compressedImmediate(int funct3, int rd, int immediate) {
+        return (funct3 << 13)
+                | (((immediate >>> 5) & 0x1) << 12)
+                | (rd << 7)
+                | ((immediate & 0x1f) << 2)
+                | 0b01;
+    }
+
+    /// Encodes a compressed CL or CS-format instruction.
+    private static int compressedLoadStore(int funct3, int dataRegister, int baseRegister, int offset) {
+        return (funct3 << 13)
+                | (((offset >>> 3) & 0x7) << 10)
+                | (compressedRegister(baseRegister) << 7)
+                | (((offset >>> 6) & 0x3) << 5)
+                | (compressedRegister(dataRegister) << 2);
+    }
+
+    /// Encodes a compressed CB-format branch instruction.
+    private static int compressedBranch(int funct3, int rs1, int offset) {
+        return (funct3 << 13)
+                | (((offset >>> 8) & 0x1) << 12)
+                | (((offset >>> 3) & 0x3) << 10)
+                | (compressedRegister(rs1) << 7)
+                | (((offset >>> 6) & 0x3) << 5)
+                | (((offset >>> 1) & 0x3) << 3)
+                | (((offset >>> 5) & 0x1) << 2)
+                | 0b01;
+    }
+
+    /// Converts a full register index to a compressed register field.
+    private static int compressedRegister(int register) {
+        return register - 8;
     }
 
     /// Owns a decoder-test machine and its closeable resources.
