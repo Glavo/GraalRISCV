@@ -20,6 +20,10 @@ java {
 }
 
 val mainClassName = "org.glavo.riscv.Main"
+val graalVmVersion = "25.0.3"
+val polyglotResourceCacheDirectory = layout.buildDirectory.dir("polyglot-resource-cache")
+val polyglotResourceCacheJvmArg =
+    "-Dpolyglot.engine.userResourceCache=${polyglotResourceCacheDirectory.get().asFile.absolutePath}"
 
 application {
     applicationName = "graalriscv"
@@ -27,7 +31,8 @@ application {
 
     applicationDefaultJvmArgs = listOf(
         "--enable-native-access=ALL-UNNAMED",
-        "--sun-misc-unsafe-memory-access=allow"
+        "--sun-misc-unsafe-memory-access=allow",
+        polyglotResourceCacheJvmArg
     )
 }
 
@@ -39,28 +44,36 @@ tasks.shadowJar {
 }
 
 dependencies {
-    implementation("org.graalvm.truffle:truffle-api:25.0.2")
+    implementation("org.graalvm.truffle:truffle-api:$graalVmVersion")
     implementation("net.fornwall:jelf:0.11.0")
-    runtimeOnly("org.graalvm.truffle:truffle-runtime:25.0.2")
+    runtimeOnly("org.graalvm.truffle:truffle-runtime:$graalVmVersion")
 
     compileOnly("org.jetbrains:annotations:26.1.0")
     testCompileOnly("org.jetbrains:annotations:26.1.0")
 
-    annotationProcessor("org.graalvm.truffle:truffle-dsl-processor:25.0.2")
-    testAnnotationProcessor("org.graalvm.truffle:truffle-dsl-processor:25.0.2")
+    annotationProcessor("org.graalvm.truffle:truffle-dsl-processor:$graalVmVersion")
+    testAnnotationProcessor("org.graalvm.truffle:truffle-dsl-processor:$graalVmVersion")
 
     testImplementation(platform("org.junit:junit-bom:6.0.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
-    testImplementation("org.graalvm.polyglot:polyglot:25.0.2")
+    testImplementation("org.graalvm.polyglot:polyglot:$graalVmVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test {
     useJUnitPlatform()
     timeout.set(Duration.ofMinutes(10))
+    systemProperty("polyglot.engine.userResourceCache", polyglotResourceCacheDirectory.get().asFile.absolutePath)
     systemProperty("java.io.tmpdir", layout.buildDirectory.dir("tmp/test-temp").get().asFile.absolutePath)
     doFirst {
+        polyglotResourceCacheDirectory.get().asFile.mkdirs()
         layout.buildDirectory.dir("tmp/test-temp").get().asFile.mkdirs()
+    }
+}
+
+tasks.withType<JavaExec>().configureEach {
+    doFirst {
+        polyglotResourceCacheDirectory.get().asFile.mkdirs()
     }
 }
 

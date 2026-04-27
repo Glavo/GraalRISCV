@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.nodes.Node;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -63,30 +64,39 @@ public final class InstructionNode extends Node {
     private static final int ROUND_DYNAMIC = 7;
 
     /// The guest address of this instruction.
+    @CompilationFinal
     private final long address;
 
     /// The original 16-bit or 32-bit instruction bits.
+    @CompilationFinal
     private final int raw;
 
     /// The instruction length in bytes.
+    @CompilationFinal
     private final int length;
 
     /// The decoded operation.
+    @CompilationFinal
     private final Operation operation;
 
     /// The destination register index, or zero when unused.
+    @CompilationFinal
     private final int rd;
 
     /// The first source register index, or zero when unused.
+    @CompilationFinal
     private final int rs1;
 
     /// The second source register index, or zero when unused.
+    @CompilationFinal
     private final int rs2;
 
     /// The decoded immediate or operation-specific small integer.
+    @CompilationFinal
     private final long immediate;
 
     /// Whether this instruction ends the current basic block.
+    @CompilationFinal
     private final boolean terminator;
 
     /// Creates a decoded instruction node.

@@ -1,10 +1,13 @@
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
+import org.gradle.api.plugins.JavaApplication
 import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 import org.glavo.RiscVSmokeElfTask
 
+val applicationExtension = extensions.getByType<JavaApplication>()
+val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val smokeElfFile = layout.buildDirectory.file("fixtures/smoke/smoke.elf")
 val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
@@ -81,12 +84,13 @@ tasks.register<Exec>("runShadowJarSmoke") {
         stderr.reset()
 
         commandLine(
-            javaLauncher.get().executablePath.asFile.absolutePath,
-            "--enable-native-access=ALL-UNNAMED",
-            "--sun-misc-unsafe-memory-access=allow",
-            "-jar",
-            shadowJarFile.get().asFile.absolutePath,
-            smokeElfFile.get().asFile.absolutePath
+            listOf(javaLauncher.get().executablePath.asFile.absolutePath) +
+                    applicationDefaultJvmArgs +
+                    listOf(
+                        "-jar",
+                        shadowJarFile.get().asFile.absolutePath,
+                        smokeElfFile.get().asFile.absolutePath
+                    )
         )
     }
 

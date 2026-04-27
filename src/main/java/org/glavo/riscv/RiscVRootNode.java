@@ -2,8 +2,13 @@ package org.glavo.riscv;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.Truffle;
+import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.LoopNode;
+import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -12,8 +17,14 @@ import java.util.HashMap;
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
-    /// The guest block dispatch count reported to Truffle loop infrastructure at one time.
-    private static final int LOOP_REPORT_STRIDE = 1024;
+    /// The frame slot that stores the guest memory for the active execution.
+    private static final int MEMORY_FRAME_SLOT = 0;
+
+    /// The frame slot that stores the architectural state for the active execution.
+    private static final int STATE_FRAME_SLOT = 1;
+
+    /// The number of static frame slots used by the root execution loop.
+    private static final int EXECUTION_FRAME_SLOT_COUNT = 2;
 
     /// Resolves the current RISC-V context for this root node.
     private static final TruffleLanguage.ContextReference<RiscVContext> CONTEXT_REFERENCE =
@@ -25,13 +36,13 @@ public final class RiscVRootNode extends RootNode {
     /// The lazily populated block cache for this execution root.
     private final HashMap<Long, BlockNode> blocks = new HashMap<>();
 
-    /// The self-specializing dispatch cache for hot guest basic blocks.
+    /// The Truffle loop node that repeatedly dispatches guest basic blocks.
     @Child
-    private BlockDispatchNode dispatch = new BlockDispatchNode();
+    private LoopNode executionLoop = Truffle.getRuntime().createLoopNode(new GuestExecutionRepeatingNode());
 
     /// Creates a root node for a parsed ELF image.
     public RiscVRootNode(RiscVLanguage language, ElfImage image) {
-        super(language);
+        super(language, createFrameDescriptor());
         this.image = image;
     }
 
@@ -41,18 +52,15 @@ public final class RiscVRootNode extends RootNode {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
         try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
             MachineState state = createState(context, memory);
+            frame.setObjectStatic(MEMORY_FRAME_SLOT, memory);
+            frame.setObjectStatic(STATE_FRAME_SLOT, state);
             try {
-                int loopCount = 0;
-                while (true) {
-                    dispatch.execute(this, memory, state);
-                    loopCount++;
-                    if (loopCount == LOOP_REPORT_STRIDE) {
-                        LoopNode.reportLoopCount(this, LOOP_REPORT_STRIDE);
-                        loopCount = 0;
-                    }
-                }
+                executionLoop.execute(frame);
+                throw new RiscVException("Guest execution loop terminated unexpectedly");
             } finally {
                 state.syscalls().close();
+                frame.clearObjectStatic(MEMORY_FRAME_SLOT);
+                frame.clearObjectStatic(STATE_FRAME_SLOT);
             }
         } catch (ProgramExitException exit) {
             return exit.exitCode();
@@ -113,7 +121,7 @@ public final class RiscVRootNode extends RootNode {
     BlockNode blockForUncached(Memory memory, long pc) {
         BlockNode block = blocks.get(pc);
         if (block == null) {
-            block = RiscVDecoder.decodeBlock(memory, pc);
+            block = insert(RiscVDecoder.decodeBlock(memory, pc));
             blocks.put(pc, block);
         }
         return block;
@@ -219,5 +227,29 @@ public final class RiscVRootNode extends RootNode {
             return address;
         }
         return (address + mask) & ~mask;
+    }
+
+    /// Creates the static frame slots used by the root execution loop.
+    private static FrameDescriptor createFrameDescriptor() {
+        FrameDescriptor.Builder builder = FrameDescriptor.newBuilder(EXECUTION_FRAME_SLOT_COUNT);
+        builder.addSlots(EXECUTION_FRAME_SLOT_COUNT, FrameSlotKind.Static);
+        return builder.build();
+    }
+
+    /// Repeats guest basic-block dispatch for the root Truffle loop node.
+    @NotNullByDefault
+    private static final class GuestExecutionRepeatingNode extends Node implements RepeatingNode {
+        /// The self-specializing dispatch cache for hot guest basic blocks.
+        @Child
+        private BlockDispatchNode dispatch = new BlockDispatchNode();
+
+        /// Executes one guest basic block and continues the enclosing loop.
+        @Override
+        public boolean executeRepeating(VirtualFrame frame) {
+            Memory memory = (Memory) frame.getObjectStatic(MEMORY_FRAME_SLOT);
+            MachineState state = (MachineState) frame.getObjectStatic(STATE_FRAME_SLOT);
+            dispatch.execute((RiscVRootNode) getRootNode(), memory, state);
+            return true;
+        }
     }
 }

@@ -33,6 +33,7 @@ public final class Main {
               --host-root <path>         Host directory exposed to sandboxed guest file syscalls.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
+              --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
               --trace                    Print guest instruction trace lines.
               -h, --help                 Print this help message.
             """;
@@ -114,6 +115,14 @@ public final class Main {
         if (options.debugFixedClockNanos() != null) {
             builder.option("riscv.debugFixedClockNanos", options.debugFixedClockNanos());
         }
+        if (options.debugTraceCompilation()) {
+            builder.allowExperimentalOptions(true)
+                    .option("engine.Compilation", "true")
+                    .option("engine.BackgroundCompilation", "false")
+                    .option("engine.FirstTierCompilationThreshold", "10000")
+                    .option("engine.OSRCompilationThreshold", "10000")
+                    .option("engine.TraceCompilation", "true");
+        }
         builder.option("riscv.hostRoot", options.hostRoot().toString());
         if (options.trace()) {
             builder.option("riscv.trace", "true");
@@ -136,6 +145,7 @@ public final class Main {
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
         @Nullable Path hostRoot = null;
+        boolean debugTraceCompilation = false;
         boolean trace = false;
         @Nullable Path programPath = null;
         ArrayList<String> programArguments = new ArrayList<>();
@@ -153,6 +163,10 @@ public final class Main {
             }
             if (parseOptions && "--trace".equals(argument)) {
                 trace = true;
+                continue;
+            }
+            if (parseOptions && "--debug-trace-compilation".equals(argument)) {
+                debugTraceCompilation = true;
                 continue;
             }
             if (parseOptions && "--memory-base".equals(argument)) {
@@ -252,6 +266,7 @@ public final class Main {
                 maxInstructions,
                 debugFixedClockNanos,
                 resolvedHostRoot,
+                debugTraceCompilation,
                 trace);
     }
 
@@ -344,6 +359,9 @@ public final class Main {
             /// The host directory exposed through sandboxed guest file syscalls.
             Path hostRoot,
 
+            /// Whether Truffle compilation diagnostics should be enabled.
+            boolean debugTraceCompilation,
+
             /// Whether instruction tracing is enabled.
             boolean trace) {
         /// Creates parsed command-line options.
@@ -368,6 +386,7 @@ public final class Main {
                     null,
                     null,
                     Path.of("."),
+                    false,
                     false);
         }
 
@@ -382,6 +401,7 @@ public final class Main {
                     null,
                     null,
                     Path.of("."),
+                    false,
                     false);
         }
 
@@ -394,6 +414,7 @@ public final class Main {
                 @Nullable String maxInstructions,
                 @Nullable String debugFixedClockNanos,
                 Path hostRoot,
+                boolean debugTraceCompilation,
                 boolean trace) {
             return new CliOptions(
                     CliMode.EXECUTE,
@@ -404,6 +425,7 @@ public final class Main {
                     maxInstructions,
                     debugFixedClockNanos,
                     hostRoot,
+                    debugTraceCompilation,
                     trace);
         }
 

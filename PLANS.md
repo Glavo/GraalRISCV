@@ -36,6 +36,8 @@
 - Run `./gradlew -g .gradle-user-home checkHelloWorldExample` on Linux and macOS after Zig download and extraction are available.
 - Record any non-Windows Zig download, extraction, or linker troubleshooting that is needed after real-toolchain verification.
 - Keep `ciCheck` covering compile, tests, package artifacts, no-toolchain smoke checks, and the new static Linux C acceptance checks when Zig is available.
-- Continue profiling after the current basic-block inline cache, loop-count reporting, and initial-memory fast paths to keep interpreter state, memory access, block caching, and instruction dispatch compatible with Truffle partial evaluation expectations as execution state grows.
+- Continue profiling now that Gradle uses a project-local Polyglot resource cache and the root execution loop uses a Truffle `LoopNode`.
+- Reduce remaining OSR code size and invalidations around block-cache installation and the large instruction operation switch.
+- Keep the hot-loop compilation trace task as the current performance regression probe and expand it when broader Linux workloads become stable.
 - Keep CLI behavior stable while internal execution nodes evolve.
 - Track release notes for supported ISA subsets, ELF limitations, syscall coverage, and known unsupported workloads.

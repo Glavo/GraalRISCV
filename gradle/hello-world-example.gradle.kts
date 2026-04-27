@@ -18,6 +18,7 @@ val mainClassName = applicationExtension.mainClass.get()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val helloWorldExampleElf = layout.buildDirectory.file("examples/hello/hello.elf")
+val hotLoopExampleElf = layout.buildDirectory.file("examples/hello/hot-loop.elf")
 val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-static/printf-hello.elf")
 val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-static/argv-echo.elf")
 val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
@@ -93,6 +94,20 @@ tasks.register<RiscVZigCcTask>("buildHelloWorldExample") {
     outputFile.set(helloWorldExampleElf)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+}
+
+tasks.register<RiscVZigCcTask>("buildHotLoopExample") {
+    group = "verification"
+    description = "Builds examples/hello/HotLoop.c for RISC-V with the Gradle-managed Zig toolchain."
+
+    dependsOn(extractZig)
+    zigExecutable.set(zigExecutableFile)
+    sourceFile.set(layout.projectDirectory.file("examples/hello/HotLoop.c"))
+    linkerScript.set(layout.projectDirectory.file("examples/hello/linker.ld"))
+    outputFile.set(hotLoopExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(listOf("-O2", "-g0", "-DHOT_LOOP_ITERATIONS=1000000UL"))
 }
 
 tasks.register<RiscVZigCcTask>("buildLinuxStaticPrintfExample") {
@@ -276,6 +291,67 @@ tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     }
 }
 
+tasks.register<JavaExec>("testHotLoopExample") {
+    group = "verification"
+    description = "Runs the freestanding hot-loop example and verifies its checksum shape."
+
+    dependsOn("classes", "buildHotLoopExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(hotLoopExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (!Regex("checksum=0x[0-9a-f]{16}\\n").matches(actualOutput)) {
+            throw GradleException("Unexpected hot-loop output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Hot-loop example wrote to stderr: $actualError")
+        }
+    }
+}
+
+tasks.register<JavaExec>("runHotLoopExample") {
+    group = "verification"
+    description = "Runs the freestanding hot-loop example with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildHotLoopExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(hotLoopExampleElf.get().asFile.absolutePath))
+    }
+}
+
+tasks.register<JavaExec>("runHotLoopCompilationTrace") {
+    group = "verification"
+    description = "Runs the freestanding hot-loop example with Truffle compilation diagnostics enabled."
+
+    dependsOn("classes", "buildHotLoopExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf("--debug-trace-compilation", hotLoopExampleElf.get().asFile.absolutePath))
+    }
+}
+
 tasks.register("buildZigHelloWorldExample") {
     group = "verification"
     description = "Alias for buildHelloWorldExample."
@@ -336,12 +412,13 @@ tasks.register<Exec>("runHelloWorldShadowJarExample") {
 
     doFirst {
         commandLine(
-            javaLauncher.get().executablePath.asFile.absolutePath,
-            "--enable-native-access=ALL-UNNAMED",
-            "--sun-misc-unsafe-memory-access=allow",
-            "-jar",
-            shadowJarFile.get().asFile.absolutePath,
-            helloWorldExampleElf.get().asFile.absolutePath
+            listOf(javaLauncher.get().executablePath.asFile.absolutePath) +
+                    applicationDefaultJvmArgs +
+                    listOf(
+                        "-jar",
+                        shadowJarFile.get().asFile.absolutePath,
+                        helloWorldExampleElf.get().asFile.absolutePath
+                    )
         )
     }
 }
