@@ -11,12 +11,19 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
 
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
+    /// The number of interpreted block executions before a PC is installed into the dispatch AST.
+    private static final int INLINE_CACHE_PROMOTION_THRESHOLD = 2;
+
+    /// The maximum cold blocks interpreted after compiled dispatch misses before returning to the loop.
+    private static final int COLD_BLOCK_BATCH_LIMIT = 1024;
+
     /// The frame slot that stores the guest memory for the active execution.
     private static final int MEMORY_FRAME_SLOT = 0;
 
@@ -34,7 +41,7 @@ public final class RiscVRootNode extends RootNode {
     private final ElfImage image;
 
     /// The lazily populated block cache for this execution root.
-    private final HashMap<Long, BlockNode> blocks = new HashMap<>();
+    private final HashMap<Long, CachedBlock> blocks = new HashMap<>();
 
     /// The Truffle loop node that repeatedly dispatches guest basic blocks.
     @Child
@@ -116,15 +123,47 @@ public final class RiscVRootNode extends RootNode {
         return baseAddress == Long.MAX_VALUE ? Memory.DEFAULT_BASE_ADDRESS : baseAddress;
     }
 
-    /// Returns a cached block for program counters outside the dispatch inline cache.
+    /// Returns a block to install into the dispatch inline cache after it becomes hot.
     @CompilerDirectives.TruffleBoundary
-    BlockNode blockForUncached(Memory memory, long pc) {
-        BlockNode block = blocks.get(pc);
-        if (block == null) {
-            block = insert(RiscVDecoder.decodeBlock(memory, pc));
-            blocks.put(pc, block);
+    @Nullable BlockNode promoteBlockForDispatch(Memory memory, long pc) {
+        CachedBlock cachedBlock = cachedBlock(memory, pc);
+        if (cachedBlock.promoted()) {
+            return null;
         }
-        return block;
+
+        cachedBlock.incrementExecutions();
+        if (cachedBlock.executions() < INLINE_CACHE_PROMOTION_THRESHOLD) {
+            return null;
+        }
+
+        cachedBlock.setPromoted();
+        return cachedBlock.block();
+    }
+
+    /// Executes a cached cold block without changing the Truffle AST.
+    @CompilerDirectives.TruffleBoundary
+    void executeColdBlock(Memory memory, MachineState state, long pc) {
+        cachedBlock(memory, pc).block().execute(state);
+    }
+
+    /// Executes cold blocks in the interpreter until execution returns to an installed dispatch entry.
+    @CompilerDirectives.TruffleBoundary
+    void executeColdBlocksUntilCached(Memory memory, MachineState state, BlockDispatchNode dispatch) {
+        int executedBlocks = 0;
+        do {
+            executeColdBlock(memory, state, state.pc());
+            executedBlocks++;
+        } while (executedBlocks < COLD_BLOCK_BATCH_LIMIT && !dispatch.contains(state.pc()));
+    }
+
+    /// Returns a decoded block cache entry, creating it on first use.
+    private CachedBlock cachedBlock(Memory memory, long pc) {
+        CachedBlock cachedBlock = blocks.get(pc);
+        if (cachedBlock == null) {
+            cachedBlock = new CachedBlock(RiscVDecoder.decodeBlock(memory, pc));
+            blocks.put(pc, cachedBlock);
+        }
+        return cachedBlock;
     }
 
     /// Ensures a loaded ELF segment fits in guest memory.
@@ -234,6 +273,49 @@ public final class RiscVRootNode extends RootNode {
         FrameDescriptor.Builder builder = FrameDescriptor.newBuilder(EXECUTION_FRAME_SLOT_COUNT);
         builder.addSlots(EXECUTION_FRAME_SLOT_COUNT, FrameSlotKind.Static);
         return builder.build();
+    }
+
+    /// Stores execution metadata for one decoded block cache entry.
+    @NotNullByDefault
+    private static final class CachedBlock {
+        /// The decoded block for this program counter.
+        private final BlockNode block;
+
+        /// The interpreted executions observed before promotion.
+        private int executions;
+
+        /// Whether this block has already been installed into the Truffle dispatch AST.
+        private boolean promoted;
+
+        /// Creates a cache entry for a decoded block.
+        private CachedBlock(BlockNode block) {
+            this.block = block;
+        }
+
+        /// Returns the decoded block.
+        private BlockNode block() {
+            return block;
+        }
+
+        /// Returns the interpreted execution count used for inline-cache promotion.
+        private int executions() {
+            return executions;
+        }
+
+        /// Records one interpreted execution for promotion accounting.
+        private void incrementExecutions() {
+            executions++;
+        }
+
+        /// Returns true when this entry has already been promoted into the AST.
+        private boolean promoted() {
+            return promoted;
+        }
+
+        /// Marks this entry as promoted into the AST.
+        private void setPromoted() {
+            promoted = true;
+        }
     }
 
     /// Repeats guest basic-block dispatch for the root Truffle loop node.

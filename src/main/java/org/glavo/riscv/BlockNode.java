@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -9,6 +10,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 public final class BlockNode extends Node {
     /// The decoded instruction nodes in execution order.
     @Children
+    @CompilationFinal(dimensions = 1)
     private final InstructionNode[] instructions;
 
     /// Creates a decoded basic block.

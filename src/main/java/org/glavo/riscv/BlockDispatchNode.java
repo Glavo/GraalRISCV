@@ -10,7 +10,7 @@ import org.jetbrains.annotations.Nullable;
 @NotNullByDefault
 public final class BlockDispatchNode extends Node {
     /// The maximum number of decoded blocks installed directly under this dispatch chain.
-    private static final int INLINE_CACHE_LIMIT = 64;
+    private static final int INLINE_CACHE_LIMIT = 24;
 
     /// The cache depth of this dispatch node.
     private final int depth;
@@ -50,6 +50,12 @@ public final class BlockDispatchNode extends Node {
             return;
         }
 
+        if (CompilerDirectives.inCompiledCode()) {
+            CompilerDirectives.transferToInterpreter();
+            root.executeColdBlocksUntilCached(memory, state, this);
+            return;
+        }
+
         CompilerDirectives.transferToInterpreterAndInvalidate();
         executeMiss(root, memory, state, pc);
     }
@@ -57,13 +63,24 @@ public final class BlockDispatchNode extends Node {
     /// Handles a dispatch miss by extending the inline cache or using the root fallback cache.
     private void executeMiss(RiscVRootNode root, Memory memory, MachineState state, long pc) {
         if (depth < INLINE_CACHE_LIMIT) {
-            cachedPc = pc;
-            cachedBlock = insert(RiscVDecoder.decodeBlock(memory, pc));
-            next = insert(new BlockDispatchNode(depth + 1));
-            cachedBlock.execute(state);
-            return;
+            BlockNode promotedBlock = root.promoteBlockForDispatch(memory, pc);
+            if (promotedBlock != null) {
+                cachedPc = pc;
+                cachedBlock = insert(promotedBlock);
+                next = insert(new BlockDispatchNode(depth + 1));
+                cachedBlock.execute(state);
+                return;
+            }
         }
 
-        root.blockForUncached(memory, pc).execute(state);
+        root.executeColdBlock(memory, state, pc);
+    }
+
+    /// Returns true when this dispatch chain has an installed block for the supplied program counter.
+    boolean contains(long pc) {
+        if (cachedBlock != null && cachedPc == pc) {
+            return true;
+        }
+        return next != null && next.contains(pc);
     }
 }
