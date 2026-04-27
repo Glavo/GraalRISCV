@@ -98,6 +98,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `munmap`.
     private static final long SYS_MUNMAP = 215;
 
+    /// The Linux RISC-V syscall number for `clone`.
+    private static final long SYS_CLONE = 220;
+
     /// The Linux RISC-V syscall number for `mmap`.
     private static final long SYS_MMAP = 222;
 
@@ -316,6 +319,55 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `MADV_COLLAPSE`.
     private static final long MADV_COLLAPSE = 25;
+
+    /// Linux `CLONE_VM`.
+    private static final long CLONE_VM = 0x00000100L;
+
+    /// Linux `CLONE_FS`.
+    private static final long CLONE_FS = 0x00000200L;
+
+    /// Linux `CLONE_FILES`.
+    private static final long CLONE_FILES = 0x00000400L;
+
+    /// Linux `CLONE_SIGHAND`.
+    private static final long CLONE_SIGHAND = 0x00000800L;
+
+    /// Linux `CLONE_THREAD`.
+    private static final long CLONE_THREAD = 0x00010000L;
+
+    /// Linux `CLONE_SYSVSEM`.
+    private static final long CLONE_SYSVSEM = 0x00040000L;
+
+    /// Linux `CLONE_SETTLS`.
+    private static final long CLONE_SETTLS = 0x00080000L;
+
+    /// Linux `CLONE_PARENT_SETTID`.
+    private static final long CLONE_PARENT_SETTID = 0x00100000L;
+
+    /// Linux `CLONE_CHILD_CLEARTID`.
+    private static final long CLONE_CHILD_CLEARTID = 0x00200000L;
+
+    /// Linux `CLONE_DETACHED`.
+    private static final long CLONE_DETACHED = 0x00400000L;
+
+    /// Linux `CLONE_CHILD_SETTID`.
+    private static final long CLONE_CHILD_SETTID = 0x01000000L;
+
+    /// Linux clone flags required for the supported thread-style parent return path.
+    private static final long REQUIRED_THREAD_CLONE_FLAGS =
+            CLONE_VM | CLONE_SIGHAND | CLONE_THREAD;
+
+    /// Linux clone flags accepted by the supported thread-style parent return path.
+    private static final long SUPPORTED_THREAD_CLONE_FLAGS =
+            REQUIRED_THREAD_CLONE_FLAGS
+                    | CLONE_FS
+                    | CLONE_FILES
+                    | CLONE_SYSVSEM
+                    | CLONE_SETTLS
+                    | CLONE_PARENT_SETTID
+                    | CLONE_CHILD_CLEARTID
+                    | CLONE_DETACHED
+                    | CLONE_CHILD_SETTID;
 
     /// The byte size of Linux generic 64-bit kernel `sigset_t`.
     private static final long KERNEL_SIGSET_SIZE = 8;
@@ -627,6 +679,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The address supplied by `set_tid_address`, or zero when unset.
     private long clearChildTidAddress;
 
+    /// The next synthetic guest thread id returned by accepted `clone` calls.
+    private long nextGuestThreadId = GUEST_PROCESS_ID + 1;
+
     /// The robust futex list head address supplied by `set_robust_list`.
     private long robustListHeadAddress;
 
@@ -868,6 +923,15 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_GETPID || callNumber == SYS_GETTID) {
             state.setRegister(10, GUEST_PROCESS_ID);
+            return;
+        }
+        if (callNumber == SYS_CLONE) {
+            state.setRegister(10, clone(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             return;
         }
         if (callNumber == SYS_BRK) {
@@ -1341,6 +1405,30 @@ public final class GuestSyscalls implements AutoCloseable {
     private long setTidAddress(long address) {
         clearChildTidAddress = address;
         return GUEST_PROCESS_ID;
+    }
+
+    /// Handles the parent return path for Linux thread-style `clone` requests.
+    private long clone(long flags, long stackAddress, long parentTidAddress, long tlsAddress, long childTidAddress) {
+        if (stackAddress == 0
+                || (flags & REQUIRED_THREAD_CLONE_FLAGS) != REQUIRED_THREAD_CLONE_FLAGS
+                || (flags & ~SUPPORTED_THREAD_CLONE_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        long threadId = nextGuestThreadId;
+        if (threadId <= GUEST_PROCESS_ID || threadId > Integer.MAX_VALUE) {
+            return ENOMEM;
+        }
+        nextGuestThreadId++;
+
+        if ((flags & CLONE_PARENT_SETTID) != 0) {
+            memory.writeInt(parentTidAddress, (int) threadId);
+        }
+        if ((flags & CLONE_CHILD_SETTID) != 0) {
+            memory.writeInt(childTidAddress, (int) threadId);
+        }
+
+        return threadId;
     }
 
     /// Accepts a single-threaded robust futex list registration.

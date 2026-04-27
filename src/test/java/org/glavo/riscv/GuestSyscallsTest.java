@@ -136,6 +136,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `munmap`.
     private static final long SYS_MUNMAP = 215;
 
+    /// The Linux RISC-V syscall number for `clone`.
+    private static final long SYS_CLONE = 220;
+
     /// The Linux RISC-V syscall number for `mmap`.
     private static final long SYS_MMAP = 222;
 
@@ -318,6 +321,55 @@ public final class GuestSyscallsTest {
 
     /// Linux `MAP_NORESERVE`.
     private static final long MAP_NORESERVE = 0x4000;
+
+    /// Linux `CLONE_VM`.
+    private static final long CLONE_VM = 0x00000100L;
+
+    /// Linux `CLONE_FS`.
+    private static final long CLONE_FS = 0x00000200L;
+
+    /// Linux `CLONE_FILES`.
+    private static final long CLONE_FILES = 0x00000400L;
+
+    /// Linux `CLONE_SIGHAND`.
+    private static final long CLONE_SIGHAND = 0x00000800L;
+
+    /// Linux `CLONE_THREAD`.
+    private static final long CLONE_THREAD = 0x00010000L;
+
+    /// Linux `CLONE_SYSVSEM`.
+    private static final long CLONE_SYSVSEM = 0x00040000L;
+
+    /// Linux `CLONE_SETTLS`.
+    private static final long CLONE_SETTLS = 0x00080000L;
+
+    /// Linux `CLONE_PARENT_SETTID`.
+    private static final long CLONE_PARENT_SETTID = 0x00100000L;
+
+    /// Linux `CLONE_CHILD_CLEARTID`.
+    private static final long CLONE_CHILD_CLEARTID = 0x00200000L;
+
+    /// Linux `CLONE_DETACHED`.
+    private static final long CLONE_DETACHED = 0x00400000L;
+
+    /// Linux `CLONE_CHILD_SETTID`.
+    private static final long CLONE_CHILD_SETTID = 0x01000000L;
+
+    /// Linux clone flags required by the syscall layer's thread-style path.
+    private static final long REQUIRED_THREAD_CLONE_FLAGS =
+            CLONE_VM | CLONE_SIGHAND | CLONE_THREAD;
+
+    /// Linux clone flags accepted by the syscall layer's thread-style path.
+    private static final long THREAD_CLONE_FLAGS =
+            REQUIRED_THREAD_CLONE_FLAGS
+                    | CLONE_FS
+                    | CLONE_FILES
+                    | CLONE_SYSVSEM
+                    | CLONE_SETTLS
+                    | CLONE_PARENT_SETTID
+                    | CLONE_CHILD_CLEARTID
+                    | CLONE_DETACHED
+                    | CLONE_CHILD_SETTID;
 
     /// Linux `MADV_DONTNEED`.
     private static final long MADV_DONTNEED = 4;
@@ -853,6 +905,76 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SET_TID_ADDRESS, memory.baseAddress() + 32, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
+        }
+    }
+
+    /// Verifies the supported parent return path for thread-style `clone` calls.
+    @Test
+    public void cloneReportsSyntheticThreadIdsForThreadStyleRequests() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long stackAddress = memory.baseAddress() + 512;
+            long parentTidAddress = memory.baseAddress() + 32;
+            long childTidAddress = memory.baseAddress() + 40;
+            long tlsAddress = memory.baseAddress() + 96;
+
+            setSyscall(
+                    state,
+                    SYS_CLONE,
+                    THREAD_CLONE_FLAGS,
+                    stackAddress,
+                    parentTidAddress,
+                    tlsAddress,
+                    childTidAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(2, state.register(10));
+            assertEquals(2, memory.readInt(parentTidAddress));
+            assertEquals(2, memory.readInt(childTidAddress));
+
+            setSyscall(
+                    state,
+                    SYS_CLONE,
+                    THREAD_CLONE_FLAGS,
+                    stackAddress,
+                    parentTidAddress,
+                    tlsAddress,
+                    childTidAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(3, state.register(10));
+            assertEquals(3, memory.readInt(parentTidAddress));
+            assertEquals(3, memory.readInt(childTidAddress));
+
+            setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS, stackAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(4, state.register(10));
+            assertEquals(3, memory.readInt(parentTidAddress));
+            assertEquals(3, memory.readInt(childTidAddress));
+        }
+    }
+
+    /// Verifies that unsupported `clone` forms remain explicit errors.
+    @Test
+    public void cloneRejectsUnsupportedProcessCreationForms() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long stackAddress = memory.baseAddress() + 512;
+
+            setSyscall(state, SYS_CLONE, 17, stackAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS & ~CLONE_THREAD, stackAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 
