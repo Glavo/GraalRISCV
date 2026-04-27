@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 
 /// Provides the command-line entry point for executing RISC-V ELF programs.
@@ -25,6 +26,7 @@ public final class Main {
               --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
               --memory-size <bytes>      Guest memory size in bytes.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
+              --host-root <path>         Host directory exposed to guest read-only openat calls.
               --trace                    Print guest instruction trace lines.
               -h, --help                 Print this help message.
             """;
@@ -101,6 +103,7 @@ public final class Main {
         if (options.maxInstructions() != null) {
             builder.option("riscv.maxInstructions", options.maxInstructions());
         }
+        builder.option("riscv.hostRoot", options.hostRoot().toString());
         if (options.trace()) {
             builder.option("riscv.trace", "true");
         }
@@ -120,6 +123,7 @@ public final class Main {
         @Nullable String memoryBase = null;
         @Nullable String memorySize = null;
         @Nullable String maxInstructions = null;
+        @Nullable Path hostRoot = null;
         boolean trace = false;
         @Nullable Path programPath = null;
         boolean parseOptions = true;
@@ -180,6 +184,20 @@ public final class Main {
                 }
                 continue;
             }
+            if (parseOptions && "--host-root".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --host-root.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                hostRoot = parsePathOption("--host-root", args[index], err);
+                if (hostRoot == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
             if (parseOptions && argument.startsWith("-")) {
                 err.println("Unknown option: " + argument);
                 printUsage(err);
@@ -199,7 +217,8 @@ public final class Main {
             return CliOptions.error();
         }
 
-        return CliOptions.execute(programPath, memoryBase, memorySize, maxInstructions, trace);
+        Path resolvedHostRoot = hostRoot != null ? hostRoot : defaultHostRoot(programPath);
+        return CliOptions.execute(programPath, memoryBase, memorySize, maxInstructions, resolvedHostRoot, trace);
     }
 
     /// Parses a signed long option and returns its normalized decimal string value.
@@ -214,6 +233,23 @@ public final class Main {
             err.println("Invalid value for " + optionName + ": " + value);
             return null;
         }
+    }
+
+    /// Parses a path option and returns its normalized absolute path.
+    private static @Nullable Path parsePathOption(String optionName, String value, PrintStream err) {
+        try {
+            return Path.of(value).toAbsolutePath().normalize();
+        } catch (InvalidPathException exception) {
+            err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
+    }
+
+    /// Returns the default host root for a guest program.
+    private static Path defaultHostRoot(Path programPath) {
+        Path absoluteProgramPath = programPath.toAbsolutePath().normalize();
+        Path parent = absoluteProgramPath.getParent();
+        return parent != null ? parent : Path.of(".").toAbsolutePath().normalize();
     }
 
     /// Prints command-line usage.
@@ -265,16 +301,19 @@ public final class Main {
             /// The optional maximum instruction count option value.
             @Nullable String maxInstructions,
 
+            /// The host directory exposed through read-only guest file syscalls.
+            Path hostRoot,
+
             /// Whether instruction tracing is enabled.
             boolean trace) {
         /// Creates options for printing help.
         static CliOptions help() {
-            return new CliOptions(CliMode.HELP, Path.of("."), null, null, null, false);
+            return new CliOptions(CliMode.HELP, Path.of("."), null, null, null, Path.of("."), false);
         }
 
         /// Creates options for a usage error.
         static CliOptions error() {
-            return new CliOptions(CliMode.ERROR, Path.of("."), null, null, null, false);
+            return new CliOptions(CliMode.ERROR, Path.of("."), null, null, null, Path.of("."), false);
         }
 
         /// Creates options for executing a guest ELF program.
@@ -283,8 +322,16 @@ public final class Main {
                 @Nullable String memoryBase,
                 @Nullable String memorySize,
                 @Nullable String maxInstructions,
+                Path hostRoot,
                 boolean trace) {
-            return new CliOptions(CliMode.EXECUTE, programPath, memoryBase, memorySize, maxInstructions, trace);
+            return new CliOptions(
+                    CliMode.EXECUTE,
+                    programPath,
+                    memoryBase,
+                    memorySize,
+                    maxInstructions,
+                    hostRoot,
+                    trace);
         }
     }
 }

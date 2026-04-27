@@ -6,13 +6,23 @@ import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 
 /// Handles the small Linux-compatible syscall subset exposed by the simulator.
 @NotNullByDefault
-public final class GuestSyscalls {
+public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `openat`.
+    private static final long SYS_OPENAT = 56;
 
     /// The Linux RISC-V syscall number for `close`.
     private static final long SYS_CLOSE = 57;
@@ -74,6 +84,12 @@ public final class GuestSyscalls {
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
 
+    /// Linux `ENOENT` as a raw negative syscall result.
+    private static final long ENOENT = -2;
+
+    /// Linux `EACCES` as a raw negative syscall result.
+    private static final long EACCES = -13;
+
     /// Linux `ENOMEM` as a raw negative syscall result.
     private static final long ENOMEM = -12;
 
@@ -83,11 +99,17 @@ public final class GuestSyscalls {
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
 
+    /// Linux `EISDIR` as a raw negative syscall result.
+    private static final long EISDIR = -21;
+
     /// Linux `EINVAL` as a raw negative syscall result.
     private static final long EINVAL = -22;
 
     /// Linux `ENOTTY` as a raw negative syscall result.
     private static final long ENOTTY = -25;
+
+    /// Linux `ENAMETOOLONG` as a raw negative syscall result.
+    private static final long ENAMETOOLONG = -36;
 
     /// Linux `ESPIPE` as a raw negative syscall result.
     private static final long ESPIPE = -29;
@@ -103,6 +125,24 @@ public final class GuestSyscalls {
 
     /// The byte offset of `iov_len` inside `struct iovec`.
     private static final int IOVEC_LENGTH_OFFSET = 8;
+
+    /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
+    private static final long AT_FDCWD = -100;
+
+    /// Linux `O_ACCMODE`.
+    private static final long O_ACCMODE = 0x3;
+
+    /// Linux `O_RDONLY`.
+    private static final long O_RDONLY = 0;
+
+    /// Linux `O_CREAT`.
+    private static final long O_CREAT = 00000100L;
+
+    /// Linux `O_TRUNC`.
+    private static final long O_TRUNC = 00001000L;
+
+    /// The maximum guest path length accepted by `openat`, including the terminator.
+    private static final int PATH_MAX = 4096;
 
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
@@ -179,14 +219,26 @@ public final class GuestSyscalls {
     /// The `st_nlink` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_LINK_COUNT_OFFSET = 20;
 
+    /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
+    private static final int STAT_SIZE_OFFSET = 48;
+
     /// The `st_blksize` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_BLOCK_SIZE_OFFSET = 56;
+
+    /// The `st_blocks` byte offset inside Linux generic 64-bit `struct stat`.
+    private static final int STAT_BLOCK_COUNT_OFFSET = 64;
 
     /// The Linux `S_IFCHR` file type bit used for character devices.
     private static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
 
+    /// The Linux `S_IFREG` file type bit used for regular files.
+    private static final int STAT_MODE_REGULAR_FILE = 0100000;
+
     /// The file permission bits exposed for standard streams.
     private static final int STAT_MODE_READ_WRITE_ALL = 0666;
+
+    /// The file permission bits exposed for read-only host files.
+    private static final int STAT_MODE_READ_ALL = 0444;
 
     /// The `st_mode` value exposed for the simulator standard streams.
     private static final int STANDARD_STREAM_STAT_MODE = STAT_MODE_CHARACTER_DEVICE | STAT_MODE_READ_WRITE_ALL;
@@ -221,6 +273,9 @@ public final class GuestSyscalls {
     /// The host output stream used for guest stderr writes.
     private final OutputStream err;
 
+    /// The host root directory exposed through read-only `openat`.
+    private final Path hostRoot;
+
     /// The lowest program break accepted by the `brk` syscall.
     private final long initialProgramBreak;
 
@@ -229,6 +284,9 @@ public final class GuestSyscalls {
 
     /// The active anonymous mappings created by `mmap`.
     private final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
+
+    /// The guest file descriptor table for host files opened by `openat`.
+    private final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
 
     /// The address supplied by `set_tid_address`, or zero when unset.
     private long clearChildTidAddress;
@@ -249,6 +307,17 @@ public final class GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
+        this(memory, in, out, err, initialProgramBreak, Path.of("."));
+    }
+
+    /// Creates a syscall handler backed by the supplied host streams, heap boundary, and host file root.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            Path hostRoot) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
                     + Long.toUnsignedString(initialProgramBreak, 16));
@@ -258,6 +327,7 @@ public final class GuestSyscalls {
         this.in = in;
         this.out = out;
         this.err = err;
+        this.hostRoot = hostRoot.toAbsolutePath().normalize();
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
     }
@@ -267,6 +337,14 @@ public final class GuestSyscalls {
         long callNumber = state.register(17);
         if (callNumber == SYS_IOCTL) {
             state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_OPENAT) {
+            state.setRegister(10, openat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             return;
         }
         if (callNumber == SYS_CLOSE) {
@@ -353,6 +431,24 @@ public final class GuestSyscalls {
         throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
     }
 
+    /// Closes all host files opened by guest file descriptors.
+    @Override
+    public void close() {
+        for (int index = 0; index < openFiles.size(); index++) {
+            @Nullable OpenFile openFile = openFiles.get(index);
+            if (openFile == null) {
+                continue;
+            }
+
+            try {
+                openFile.channel().close();
+                openFiles.set(index, null);
+            } catch (IOException exception) {
+                throw new RiscVException("Failed to close guest host file", exception);
+            }
+        }
+    }
+
     /// Builds a diagnostic message for a syscall that is not implemented by the simulator.
     private static String unsupportedEcallMessage(MachineState state, long pc, long callNumber) {
         return "Unsupported ecall number: " + callNumber
@@ -372,11 +468,56 @@ public final class GuestSyscalls {
         return Long.toUnsignedString(value, 16);
     }
 
-    /// Reads bytes from guest stdin into guest memory and returns the guest syscall result.
-    private long read(int fileDescriptor, long address, long length) {
-        if (fileDescriptor != 0) {
+    /// Opens a read-only host file below the configured host root.
+    private long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
+        if (directoryFileDescriptor != AT_FDCWD) {
             return EBADF;
         }
+        if ((flags & O_ACCMODE) != O_RDONLY || (flags & (O_CREAT | O_TRUNC)) != 0) {
+            return EACCES;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        @Nullable Path hostPath = resolveHostPath(guestPath);
+        if (hostPath == null) {
+            return EACCES;
+        }
+        if (!Files.exists(hostPath)) {
+            return ENOENT;
+        }
+        try {
+            if (!hostPath.toRealPath().startsWith(hostRoot.toRealPath())) {
+                return EACCES;
+            }
+        } catch (IOException exception) {
+            return EACCES;
+        }
+        if (Files.isDirectory(hostPath)) {
+            return EISDIR;
+        }
+        if (!Files.isRegularFile(hostPath)) {
+            return ENODEV;
+        }
+        if (!Files.isReadable(hostPath)) {
+            return EACCES;
+        }
+
+        try {
+            return addOpenFile(new OpenFile(hostPath, Files.newByteChannel(hostPath, StandardOpenOption.READ)));
+        } catch (IOException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Reads bytes from guest stdin or an open host file into guest memory.
+    private long read(int fileDescriptor, long address, long length) {
         if (length < 0) {
             return EINVAL;
         }
@@ -387,9 +528,16 @@ public final class GuestSyscalls {
             return 0;
         }
 
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (fileDescriptor != 0 && openFile == null) {
+            return EBADF;
+        }
+
         try {
             byte[] buffer = new byte[(int) length];
-            int count = in.read(buffer);
+            int count = fileDescriptor == 0
+                    ? in.read(buffer)
+                    : openFile.channel().read(ByteBuffer.wrap(buffer));
             if (count < 0) {
                 return 0;
             }
@@ -422,9 +570,9 @@ public final class GuestSyscalls {
         }
     }
 
-    /// Reads bytes from guest stdin into a guest `struct iovec` array.
+    /// Reads bytes from guest stdin or an open host file into a guest `struct iovec` array.
     private long readv(int fileDescriptor, long iovecAddress, long iovecCount) {
-        if (fileDescriptor != 0) {
+        if (fileDescriptor != 0 && openFile(fileDescriptor) == null) {
             return EBADF;
         }
         if (iovecCount < 0 || iovecCount > IOV_MAX) {
@@ -432,37 +580,31 @@ public final class GuestSyscalls {
         }
 
         long total = 0;
-        try {
-            for (long index = 0; index < iovecCount; index++) {
-                long entryAddress = iovecAddress + index * IOVEC_SIZE;
-                long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
-                long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
-                if (length < 0) {
-                    return EINVAL;
-                }
-                if (length > Integer.MAX_VALUE) {
-                    throw new RiscVException("Guest readv syscall buffer is too large: " + length);
-                }
-                if (length == 0) {
-                    continue;
-                }
-
-                byte[] buffer = new byte[(int) length];
-                int count = in.read(buffer);
-                if (count < 0) {
-                    return total;
-                }
-
-                memory.writeBytes(baseAddress, buffer, 0, count);
-                total += count;
-                if (count < length) {
-                    return total;
-                }
+        for (long index = 0; index < iovecCount; index++) {
+            long entryAddress = iovecAddress + index * IOVEC_SIZE;
+            long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+            long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+            if (length < 0) {
+                return EINVAL;
             }
-            return total;
-        } catch (IOException exception) {
-            throw new RiscVException("Guest readv syscall failed", exception);
+            if (length > Integer.MAX_VALUE) {
+                throw new RiscVException("Guest readv syscall buffer is too large: " + length);
+            }
+            if (length == 0) {
+                continue;
+            }
+
+            long count = read(fileDescriptor, baseAddress, length);
+            if (count < 0) {
+                return count;
+            }
+
+            total += count;
+            if (count < length) {
+                return total;
+            }
         }
+        return total;
     }
 
     /// Writes buffers from a guest `struct iovec` array to stdout or stderr.
@@ -500,34 +642,99 @@ public final class GuestSyscalls {
         }
     }
 
-    /// Handles `close` for the simulator standard streams without closing host streams.
-    private static long close(int fileDescriptor) {
-        return isStandardFileDescriptor(fileDescriptor) ? 0 : EBADF;
-    }
+    /// Handles `close` for standard streams and guest-opened read-only host files.
+    private long close(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return 0;
+        }
 
-    /// Handles `lseek` for standard streams, which are not seekable.
-    private static long lseek(int fileDescriptor, long offset, int whence) {
-        if (!isStandardFileDescriptor(fileDescriptor)) {
+        int index = openFileIndex(fileDescriptor);
+        if (index < 0 || index >= openFiles.size()) {
             return EBADF;
         }
+
+        @Nullable OpenFile openFile = openFiles.get(index);
+        if (openFile == null) {
+            return EBADF;
+        }
+
+        try {
+            openFile.channel().close();
+            openFiles.set(index, null);
+            return 0;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest close syscall failed", exception);
+        }
+    }
+
+    /// Handles `lseek` for guest-opened host files while rejecting standard streams.
+    private long lseek(int fileDescriptor, long offset, int whence) {
         if (whence < 0 || whence > 2) {
             return EINVAL;
         }
-        return ESPIPE;
-    }
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return ESPIPE;
+        }
 
-    /// Writes a minimal Linux generic 64-bit `struct stat` for standard streams.
-    private long fstat(int fileDescriptor, long statAddress) {
-        if (!isStandardFileDescriptor(fileDescriptor)) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
             return EBADF;
         }
 
-        memory.clear(statAddress, STAT_SIZE);
-        memory.writeLong(statAddress + STAT_INODE_OFFSET, fileDescriptor + 1L);
-        memory.writeInt(statAddress + STAT_MODE_OFFSET, STANDARD_STREAM_STAT_MODE);
-        memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
-        memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
-        return 0;
+        try {
+            long basePosition = switch (whence) {
+                case 0 -> 0;
+                case 1 -> openFile.channel().position();
+                case 2 -> openFile.channel().size();
+                default -> throw new AssertionError("validated whence");
+            };
+            if (offset > 0 && basePosition > Long.MAX_VALUE - offset) {
+                return EINVAL;
+            }
+            if (offset < 0 && basePosition < Long.MIN_VALUE - offset) {
+                return EINVAL;
+            }
+
+            long position = basePosition + offset;
+            if (position < 0) {
+                return EINVAL;
+            }
+            openFile.channel().position(position);
+            return position;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest lseek syscall failed", exception);
+        }
+    }
+
+    /// Writes a minimal Linux generic 64-bit `struct stat`.
+    private long fstat(int fileDescriptor, long statAddress) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            memory.clear(statAddress, STAT_SIZE);
+            memory.writeLong(statAddress + STAT_INODE_OFFSET, fileDescriptor + 1L);
+            memory.writeInt(statAddress + STAT_MODE_OFFSET, STANDARD_STREAM_STAT_MODE);
+            memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
+            memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
+            return 0;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+
+        try {
+            long size = openFile.channel().size();
+            memory.clear(statAddress, STAT_SIZE);
+            memory.writeLong(statAddress + STAT_INODE_OFFSET, fileDescriptor + 1L);
+            memory.writeInt(statAddress + STAT_MODE_OFFSET, STAT_MODE_REGULAR_FILE | STAT_MODE_READ_ALL);
+            memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
+            memory.writeLong(statAddress + STAT_SIZE_OFFSET, size);
+            memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
+            memory.writeLong(statAddress + STAT_BLOCK_COUNT_OFFSET, (size + 511L) / 512L);
+            return 0;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest fstat syscall failed", exception);
+        }
     }
 
     /// Handles tty-related ioctls used by common `isatty` and stdio setup paths.
@@ -689,6 +896,65 @@ public final class GuestSyscalls {
         return bytes.length;
     }
 
+    /// Reads a null-terminated UTF-8 path string from guest memory.
+    private @Nullable String readGuestPath(long address) {
+        byte[] bytes = new byte[PATH_MAX];
+        for (int index = 0; index < bytes.length; index++) {
+            int value = memory.readUnsignedByte(address + index);
+            if (value == 0) {
+                return new String(bytes, 0, index, StandardCharsets.UTF_8);
+            }
+            bytes[index] = (byte) value;
+        }
+        return null;
+    }
+
+    /// Resolves a guest path below the configured host root or returns null for escapes.
+    private @Nullable Path resolveHostPath(String guestPath) {
+        if (guestPath.indexOf('\\') >= 0 || guestPath.indexOf(':') >= 0) {
+            return null;
+        }
+
+        String relativePath = guestPath;
+        while (relativePath.startsWith("/")) {
+            relativePath = relativePath.substring(1);
+        }
+
+        try {
+            Path hostPath = hostRoot.resolve(relativePath).normalize();
+            return hostPath.startsWith(hostRoot) ? hostPath : null;
+        } catch (InvalidPathException exception) {
+            return null;
+        }
+    }
+
+    /// Adds an open host file to the guest file descriptor table.
+    private long addOpenFile(OpenFile openFile) {
+        for (int index = 0; index < openFiles.size(); index++) {
+            if (openFiles.get(index) == null) {
+                openFiles.set(index, openFile);
+                return index + 3L;
+            }
+        }
+
+        openFiles.add(openFile);
+        return openFiles.size() + 2L;
+    }
+
+    /// Returns an open host file for a guest file descriptor.
+    private @Nullable OpenFile openFile(int fileDescriptor) {
+        int index = openFileIndex(fileDescriptor);
+        if (index < 0 || index >= openFiles.size()) {
+            return null;
+        }
+        return openFiles.get(index);
+    }
+
+    /// Converts a guest file descriptor to an open-file table index.
+    private static int openFileIndex(int fileDescriptor) {
+        return fileDescriptor - 3;
+    }
+
     /// Finds the first free page range for a new anonymous mapping.
     private long findMmapAddress(long requestedAddress, long length) {
         if (requestedAddress != 0) {
@@ -834,5 +1100,14 @@ public final class GuestSyscalls {
         long endAddress() {
             return address + length;
         }
+    }
+
+    /// Describes a host file opened through a guest file descriptor.
+    private record OpenFile(
+            /// The resolved host path backing the guest file descriptor.
+            Path path,
+
+            /// The read-only host file channel.
+            SeekableByteChannel channel) {
     }
 }

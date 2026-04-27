@@ -64,6 +64,14 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             stability = OptionStability.STABLE)
     static final OptionKey<Boolean> TRACE = new OptionKey<>(false);
 
+    /// The `riscv.hostRoot` language option.
+    @Option(
+            name = "hostRoot",
+            help = "Host directory exposed to guest read-only openat calls. Default: current directory.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<String> HOST_ROOT = new OptionKey<>(".");
+
     /// Creates a RISC-V Truffle language instance.
     public RiscVLanguage() {
     }
@@ -76,7 +84,8 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(MEMORY_BASE),
                 env.getOptions().get(MEMORY_SIZE),
                 env.getOptions().get(MAX_INSTRUCTIONS),
-                env.getOptions().get(TRACE));
+                env.getOptions().get(TRACE),
+                env.getOptions().get(HOST_ROOT));
     }
 
     /// Parses an ELF byte source into a root call target.

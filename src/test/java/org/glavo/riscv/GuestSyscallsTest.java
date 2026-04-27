@@ -2,6 +2,7 @@ package org.glavo.riscv;
 
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -9,6 +10,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -17,11 +20,21 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /// Tests guest syscall behavior directly against architectural state.
 @NotNullByDefault
 public final class GuestSyscallsTest {
+    /// A temporary host root for file syscall tests.
+    @TempDir
+    private Path tempDirectory;
+
     /// The guest program counter supplied to direct syscall tests.
     private static final long TEST_PC = Memory.DEFAULT_BASE_ADDRESS;
 
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
+
+    /// Linux `ENOENT` as a raw negative syscall result.
+    private static final long ENOENT = -2;
+
+    /// Linux `EACCES` as a raw negative syscall result.
+    private static final long EACCES = -13;
 
     /// Linux `ENOMEM` as a raw negative syscall result.
     private static final long ENOMEM = -12;
@@ -31,6 +44,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
+
+    /// Linux `EISDIR` as a raw negative syscall result.
+    private static final long EISDIR = -21;
 
     /// Linux `EINVAL` as a raw negative syscall result.
     private static final long EINVAL = -22;
@@ -43,6 +59,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `openat`.
+    private static final long SYS_OPENAT = 56;
 
     /// The Linux RISC-V syscall number for `close`.
     private static final long SYS_CLOSE = 57;
@@ -112,6 +131,27 @@ public final class GuestSyscallsTest {
 
     /// The expected `st_mode` value for simulator standard streams.
     private static final int STANDARD_STREAM_STAT_MODE = 0020000 | 0666;
+
+    /// The expected `st_mode` value for read-only regular host files.
+    private static final int REGULAR_FILE_STAT_MODE = 0100000 | 0444;
+
+    /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
+    private static final int STAT_SIZE_OFFSET = 48;
+
+    /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
+    private static final long AT_FDCWD = -100;
+
+    /// Linux `O_RDONLY`.
+    private static final long O_RDONLY = 0;
+
+    /// Linux `O_WRONLY`.
+    private static final long O_WRONLY = 1;
+
+    /// Linux `O_CREAT`.
+    private static final long O_CREAT = 00000100L;
+
+    /// Linux `O_CLOEXEC`.
+    private static final long O_CLOEXEC = 02000000L;
 
     /// The Linux generic kernel `sigset_t` size accepted by signal syscalls.
     private static final long KERNEL_SIGSET_SIZE = 8;
@@ -239,6 +279,107 @@ public final class GuestSyscallsTest {
             assertEquals(4096, memory.readInt(memory.baseAddress() + STAT_BLOCK_SIZE_OFFSET));
 
             setSyscall(state, SYS_FSTAT, 9, memory.baseAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `openat` exposes read-only host files below the configured host root.
+    @Test
+    public void openatReadsHostFileBelowRoot() throws Exception {
+        Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 128;
+            long statAddress = memory.baseAddress() + 256;
+            writeGuestString(memory, pathAddress, "/message.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_CLOEXEC, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertArrayEquals("file".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 4));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 9);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(9, state.register(10));
+            assertArrayEquals("file-data".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 9));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(1, memory.readInt(statAddress + STAT_LINK_COUNT_OFFSET));
+            assertEquals(9, memory.readLong(statAddress + STAT_SIZE_OFFSET));
+            assertEquals(4096, memory.readInt(statAddress + STAT_BLOCK_SIZE_OFFSET));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `openat` keeps host access read-only and below the configured root.
+    @Test
+    public void openatRejectsUnsupportedHostAccess() throws Exception {
+        Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
+        Files.createDirectory(tempDirectory.resolve("directory"));
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+
+            writeGuestString(memory, pathAddress, "../message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "directory");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EISDIR, state.register(10));
+
+            writeGuestString(memory, pathAddress, "message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_CREAT, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, 3, pathAddress, O_RDONLY, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
         }
@@ -721,7 +862,18 @@ public final class GuestSyscallsTest {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
-        GuestSyscalls syscalls = new GuestSyscalls(memory, in, out, err, initialProgramBreak);
+        return state(memory, in, out, err, initialProgramBreak, Path.of("."));
+    }
+
+    /// Creates test machine state with a syscall handler and host file root.
+    private static MachineState state(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            Path hostRoot) {
+        GuestSyscalls syscalls = new GuestSyscalls(memory, in, out, err, initialProgramBreak, hostRoot);
         return new MachineState(
                 memory,
                 0,
@@ -729,6 +881,13 @@ public final class GuestSyscallsTest {
                 ElfImage.ABSENT_ADDRESS,
                 ElfImage.ABSENT_ADDRESS,
                 syscalls);
+    }
+
+    /// Writes a null-terminated UTF-8 string into guest memory.
+    private static void writeGuestString(Memory memory, long address, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        memory.writeBytes(address, bytes, 0, bytes.length);
+        memory.writeByte(address + bytes.length, (byte) 0);
     }
 
     /// Populates the syscall number and the first three argument registers.

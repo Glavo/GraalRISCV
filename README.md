@@ -35,15 +35,18 @@ Options:
   --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
   --memory-size <bytes>      Guest memory size in bytes.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
+  --host-root <path>         Host directory exposed to guest read-only openat calls.
   --trace                    Print guest instruction trace lines.
   -h, --help                 Print this help message.
 ```
 
 The simulator currently supports the Linux RISC-V ABI calls `read`, `write`, `readv`, `writev`,
-`close`, `fstat`, `lseek`, `ioctl`, `exit`, `exit_group`, `set_tid_address`,
+`openat`, `close`, `fstat`, `lseek`, `ioctl`, `exit`, `exit_group`, `set_tid_address`,
 `set_robust_list`, `rt_sigaction`, `rt_sigprocmask`, `getpid`, `gettid`, `brk`,
 `mmap`, `munmap`, and `getrandom`.
 The `ioctl` support is limited to the tty queries `TCGETS` and `TIOCGWINSZ`.
+The `openat` support is limited to read-only regular files under `--host-root`, which defaults to
+the ELF file's parent directory.
 The `mmap` support is limited to anonymous mappings inside the configured guest memory window.
 The `getrandom` implementation returns deterministic pseudo-random bytes for reproducible runs.
 Signal actions and masks are accepted as deterministic single-threaded stubs; host signals are not delivered to guests.

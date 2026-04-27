@@ -3,6 +3,9 @@ package org.glavo.riscv;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
 
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+
 /// Stores per-context simulator configuration derived from Truffle language options.
 @NotNullByDefault
 public final class RiscVContext {
@@ -21,8 +24,17 @@ public final class RiscVContext {
     /// Whether guest instruction tracing is enabled.
     private final boolean trace;
 
+    /// The normalized host directory exposed through read-only guest file syscalls.
+    private final Path hostRoot;
+
     /// Creates a simulator context.
-    public RiscVContext(TruffleLanguage.Env env, long memoryBase, long memorySize, long maxInstructions, boolean trace) {
+    public RiscVContext(
+            TruffleLanguage.Env env,
+            long memoryBase,
+            long memorySize,
+            long maxInstructions,
+            boolean trace,
+            String hostRoot) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
@@ -34,6 +46,12 @@ public final class RiscVContext {
         }
         if (maxInstructions < 0) {
             throw new RiscVException("riscv.maxInstructions must be non-negative: " + maxInstructions);
+        }
+
+        try {
+            this.hostRoot = Path.of(hostRoot).toAbsolutePath().normalize();
+        } catch (InvalidPathException exception) {
+            throw new RiscVException("riscv.hostRoot is invalid: " + hostRoot, exception);
         }
 
         this.env = env;
@@ -66,5 +84,10 @@ public final class RiscVContext {
     /// Returns whether guest instruction tracing is enabled.
     public boolean trace() {
         return trace;
+    }
+
+    /// Returns the host directory exposed through read-only guest file syscalls.
+    public Path hostRoot() {
+        return hostRoot;
     }
 }

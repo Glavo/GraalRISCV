@@ -33,8 +33,12 @@ public final class RiscVRootNode extends RootNode {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
         try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
             MachineState state = createState(context, memory);
-            while (true) {
-                blockFor(memory, state.pc()).execute(state);
+            try {
+                while (true) {
+                    blockFor(memory, state.pc()).execute(state);
+                }
+            } finally {
+                state.syscalls().close();
             }
         } catch (ProgramExitException exit) {
             return exit.exitCode();
@@ -67,7 +71,8 @@ public final class RiscVRootNode extends RootNode {
                         context.env().in(),
                         context.env().out(),
                         context.env().err(),
-                        initialProgramBreak));
+                        initialProgramBreak,
+                        context.hostRoot()));
         state.setPc(image.entryPoint());
         state.setRegister(2, memory.endAddress() & ~0xfL);
         return state;
