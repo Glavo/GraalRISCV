@@ -17,7 +17,6 @@
 
 ### 4. Expand ISA coverage and execution tests
 
-- Add table-driven decoder tests for RV64I edge cases, including sign extension, shift masks, branches, jumps, and misaligned control-flow targets.
 - Add more RVC fixtures for mixed 16-bit and 32-bit instruction streams.
 - Define the intended behavior for RV64A atomics and either implement the missing pieces or reject unsupported instructions with clear diagnostics.
 

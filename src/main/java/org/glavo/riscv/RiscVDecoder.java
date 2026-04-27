@@ -45,8 +45,8 @@ public final class RiscVDecoder {
     private static InstructionNode decodeInt(long address, int raw) {
         int opcode = raw & 0x7f;
         return switch (opcode) {
-            case 0x37 -> instruction(address, raw, Operation.LUI, rd(raw), 0, 0, raw & 0xffff_f000L, false);
-            case 0x17 -> instruction(address, raw, Operation.AUIPC, rd(raw), 0, 0, raw & 0xffff_f000L, false);
+            case 0x37 -> instruction(address, raw, Operation.LUI, rd(raw), 0, 0, uImmediate(raw), false);
+            case 0x17 -> instruction(address, raw, Operation.AUIPC, rd(raw), 0, 0, uImmediate(raw), false);
             case 0x6f -> instruction(address, raw, Operation.JAL, rd(raw), 0, 0, jalImmediate(raw), true);
             case 0x67 -> decodeJalr(address, raw);
             case 0x63 -> decodeBranch(address, raw);
@@ -515,6 +515,11 @@ public final class RiscVDecoder {
     /// Extracts and sign-extends an I-format immediate.
     private static long iImmediate(int raw) {
         return signExtend(raw >>> 20, 12);
+    }
+
+    /// Extracts and sign-extends a U-format immediate.
+    private static long uImmediate(int raw) {
+        return signExtend(raw & 0xffff_f000L, 32);
     }
 
     /// Extracts and sign-extends an S-format immediate.
