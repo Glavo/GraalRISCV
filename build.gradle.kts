@@ -79,3 +79,4 @@ tasks.withType<JavaExec>().configureEach {
 
 apply(from = "gradle/hello-world-example.gradle.kts")
 apply(from = "gradle/packaging-smoke.gradle.kts")
+apply(from = "gradle/native-image.gradle.kts")
