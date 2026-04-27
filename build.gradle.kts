@@ -21,6 +21,11 @@ java {
 application {
     applicationName = "graalriscv"
     mainClass = "org.glavo.riscv.Main"
+
+    applicationDefaultJvmArgs = listOf(
+        "--enable-native-access=ALL-UNNAMED",
+        "--sun-misc-unsafe-memory-access=allow"
+    )
 }
 
 dependencies {
