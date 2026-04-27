@@ -22,7 +22,7 @@
 - Keep syscall handling deterministic and single-process unless a later plan explicitly expands that boundary.
 - Preserve `--host-root` as the TruffleFile-backed filesystem sandbox root and reject path escapes.
 - Broaden file descriptor support beyond the current regular-file read/write/create/truncate/append and minimal `fcntl` baseline, including directory fds and additional Linux flags when needed.
-- Add syscall implementations as broader static Linux workloads require beyond the current `clone` parent-return compatibility, `fcntl`, `futex` single-thread compatibility, `gettimeofday`, `madvise`, `mprotect`, `nanosleep`, `newfstatat`, `prctl`, `prlimit64`, `readlinkat`, `riscv_hwprobe`, `sched_getaffinity`, `sigaltstack`, `uname`, and user/group identity syscall baseline.
+- Add syscall implementations as broader static Linux workloads require beyond the current `clone` parent-return compatibility, `faccessat`/`faccessat2`, `fcntl`, `futex` single-thread compatibility, `getcwd`, `getppid`, `gettimeofday`, `madvise`, `mprotect`, `nanosleep`, `newfstatat`, `prctl`, `prlimit64`, `readlinkat`, `riscv_hwprobe`, `sched_getaffinity`, `sigaltstack`, `uname`, and user/group identity syscall baseline.
 - Keep unsupported syscall diagnostics actionable by including the syscall number, guest PC, and argument registers.
 - Add direct syscall tests for success paths, Linux-compatible error returns, filesystem sandboxing, configurable time, and deterministic random behavior.
 

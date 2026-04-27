@@ -24,11 +24,17 @@ import java.util.Set;
 /// Handles the small Linux-compatible syscall subset exposed by the simulator.
 @NotNullByDefault
 public final class GuestSyscalls implements AutoCloseable {
+    /// The Linux RISC-V syscall number for `getcwd`.
+    private static final long SYS_GETCWD = 17;
+
     /// The Linux RISC-V syscall number for `fcntl`.
     private static final long SYS_FCNTL = 25;
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `faccessat`.
+    private static final long SYS_FACCESSAT = 48;
 
     /// The Linux RISC-V syscall number for `openat`.
     private static final long SYS_OPENAT = 56;
@@ -105,6 +111,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
 
+    /// The Linux RISC-V syscall number for `getppid`.
+    private static final long SYS_GETPPID = 173;
+
     /// The Linux RISC-V syscall number for `getuid`.
     private static final long SYS_GETUID = 174;
 
@@ -147,6 +156,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
+    /// The Linux RISC-V syscall number for `faccessat2`.
+    private static final long SYS_FACCESSAT2 = 439;
+
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
 
@@ -186,6 +198,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `ENOTTY` as a raw negative syscall result.
     private static final long ENOTTY = -25;
 
+    /// Linux `ERANGE` as a raw negative syscall result.
+    private static final long ERANGE = -34;
+
     /// Linux `ENAMETOOLONG` as a raw negative syscall result.
     private static final long ENAMETOOLONG = -36;
 
@@ -210,17 +225,38 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The byte offset of `iov_len` inside `struct iovec`.
     private static final int IOVEC_LENGTH_OFFSET = 8;
 
+    /// Linux `F_OK` access mode.
+    private static final long F_OK = 0;
+
+    /// Linux `X_OK` access mode bit.
+    private static final long X_OK = 1;
+
+    /// Linux `W_OK` access mode bit.
+    private static final long W_OK = 2;
+
+    /// Linux `R_OK` access mode bit.
+    private static final long R_OK = 4;
+
+    /// Linux access mode bit mask accepted by `faccessat`.
+    private static final long ACCESS_MODE_MASK = R_OK | W_OK | X_OK;
+
     /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
     private static final long AT_FDCWD = -100;
 
     /// Linux `AT_SYMLINK_NOFOLLOW`.
     private static final long AT_SYMLINK_NOFOLLOW = 0x100;
 
+    /// Linux `AT_EACCESS`.
+    private static final long AT_EACCESS = 0x200;
+
     /// Linux `AT_EMPTY_PATH`.
     private static final long AT_EMPTY_PATH = 0x1000;
 
     /// Linux `newfstatat` flags accepted by this simulator.
     private static final long SUPPORTED_NEWFSTATAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+
+    /// Linux `faccessat2` flags accepted by this simulator.
+    private static final long SUPPORTED_FACCESSAT2_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH;
 
     /// Linux `O_ACCMODE`.
     private static final long O_ACCMODE = 0x3;
@@ -785,6 +821,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The fixed guest process id returned by process identity syscalls.
     private static final long GUEST_PROCESS_ID = 1;
 
+    /// The fixed guest parent process id returned by `getppid`.
+    private static final long GUEST_PARENT_PROCESS_ID = 0;
+
     /// The deterministic guest user id exposed by identity syscalls.
     private static final long GUEST_USER_ID = 1000;
 
@@ -1012,12 +1051,20 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
     public void handle(MachineState state, long pc) {
         long callNumber = state.register(17);
+        if (callNumber == SYS_GETCWD) {
+            state.setRegister(10, getcwd(state.register(10), state.register(11)));
+            return;
+        }
         if (callNumber == SYS_FCNTL) {
             state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
             return;
         }
         if (callNumber == SYS_IOCTL) {
             state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_FACCESSAT) {
+            state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
             return;
         }
         if (callNumber == SYS_OPENAT) {
@@ -1146,6 +1193,10 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, GUEST_PROCESS_ID);
             return;
         }
+        if (callNumber == SYS_GETPPID) {
+            state.setRegister(10, GUEST_PARENT_PROCESS_ID);
+            return;
+        }
         if (callNumber == SYS_GETUID || callNumber == SYS_GETEUID) {
             state.setRegister(10, GUEST_USER_ID);
             return;
@@ -1210,6 +1261,14 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
             return;
         }
+        if (callNumber == SYS_FACCESSAT2) {
+            state.setRegister(10, faccessat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            return;
+        }
         throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
     }
 
@@ -1248,6 +1307,101 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Formats a guest register value as an unsigned hexadecimal string.
     private static String unsignedHex(long value) {
         return Long.toUnsignedString(value, 16);
+    }
+
+    /// Writes the deterministic guest working directory path.
+    private long getcwd(long bufferAddress, long bufferSize) {
+        byte[] currentDirectory = {'/', 0};
+        if (bufferSize < currentDirectory.length) {
+            return ERANGE;
+        }
+        memory.writeBytes(bufferAddress, currentDirectory, 0, currentDirectory.length);
+        return currentDirectory.length;
+    }
+
+    /// Checks access to a sandboxed host path or open file descriptor.
+    private long faccessat(long directoryFileDescriptor, long pathAddress, long mode, long flags) {
+        if ((mode & ~ACCESS_MODE_MASK) != 0 || (flags & ~SUPPORTED_FACCESSAT2_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+
+        if (guestPath.isEmpty()) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return ENOENT;
+            }
+            if (directoryFileDescriptor == AT_FDCWD) {
+                @Nullable TruffleFile root = currentHostRoot();
+                return root == null ? EACCES : accessHostFile(root, mode);
+            }
+            return accessFileDescriptor((int) directoryFileDescriptor, mode);
+        }
+
+        if (directoryFileDescriptor != AT_FDCWD) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+        return accessHostFile(hostFile, mode);
+    }
+
+    /// Checks access bits on an open guest file descriptor.
+    private long accessFileDescriptor(int fileDescriptor, long mode) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            if ((mode & W_OK) != 0 && fileDescriptor == 0) {
+                return EACCES;
+            }
+            if ((mode & R_OK) != 0 && fileDescriptor != 0) {
+                return EACCES;
+            }
+            return 0;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if ((mode & R_OK) != 0 && !openFile.readable()) {
+            return EACCES;
+        }
+        if ((mode & W_OK) != 0 && !openFile.writable()) {
+            return EACCES;
+        }
+        if ((mode & X_OK) != 0) {
+            return EACCES;
+        }
+        return 0;
+    }
+
+    /// Checks access bits on a sandboxed host file.
+    private long accessHostFile(TruffleFile hostFile, long mode) {
+        try {
+            if (!hostFile.exists()) {
+                return ENOENT;
+            }
+            if (!canonicalFileStaysBelowHostRoot(hostFile)) {
+                return EACCES;
+            }
+            if ((mode & R_OK) != 0 && !hostFile.isReadable()) {
+                return EACCES;
+            }
+            if ((mode & W_OK) != 0 && !hostFile.isWritable()) {
+                return EACCES;
+            }
+            if ((mode & X_OK) != 0 && !hostFile.isExecutable()) {
+                return EACCES;
+            }
+            return 0;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
     }
 
     /// Opens a host file below the configured host root.

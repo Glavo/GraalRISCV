@@ -74,6 +74,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENOTTY` as a raw negative syscall result.
     private static final long ENOTTY = -25;
 
+    /// Linux `ERANGE` as a raw negative syscall result.
+    private static final long ERANGE = -34;
+
     /// Linux `ENOSYS` as a raw negative syscall result.
     private static final long ENOSYS = -38;
 
@@ -83,11 +86,17 @@ public final class GuestSyscallsTest {
     /// Linux `ETIMEDOUT` as a raw negative syscall result.
     private static final long ETIMEDOUT = -110;
 
-    /// The Linux RISC-V syscall number for `ioctl`.
-    private static final long SYS_IOCTL = 29;
+    /// The Linux RISC-V syscall number for `getcwd`.
+    private static final long SYS_GETCWD = 17;
 
     /// The Linux RISC-V syscall number for `fcntl`.
     private static final long SYS_FCNTL = 25;
+
+    /// The Linux RISC-V syscall number for `ioctl`.
+    private static final long SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `faccessat`.
+    private static final long SYS_FACCESSAT = 48;
 
     /// The Linux RISC-V syscall number for `openat`.
     private static final long SYS_OPENAT = 56;
@@ -158,6 +167,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
 
+    /// The Linux RISC-V syscall number for `getppid`.
+    private static final long SYS_GETPPID = 173;
+
     /// The Linux RISC-V syscall number for `getuid`.
     private static final long SYS_GETUID = 174;
 
@@ -200,6 +212,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
+    /// The Linux RISC-V syscall number for `faccessat2`.
+    private static final long SYS_FACCESSAT2 = 439;
+
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
 
@@ -236,8 +251,23 @@ public final class GuestSyscallsTest {
     /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
     private static final long AT_FDCWD = -100;
 
+    /// Linux `AT_EACCESS`.
+    private static final long AT_EACCESS = 0x200;
+
     /// Linux `AT_EMPTY_PATH`.
     private static final long AT_EMPTY_PATH = 0x1000;
+
+    /// Linux `F_OK` access mode.
+    private static final long F_OK = 0;
+
+    /// Linux `X_OK` access mode bit.
+    private static final long X_OK = 1;
+
+    /// Linux `W_OK` access mode bit.
+    private static final long W_OK = 2;
+
+    /// Linux `R_OK` access mode bit.
+    private static final long R_OK = 4;
 
     /// The byte size of one Linux `struct utsname` field.
     private static final int UTSNAME_FIELD_SIZE = 65;
@@ -685,6 +715,24 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that the guest working directory is exposed as the sandbox root.
+    @Test
+    public void getcwdReportsSandboxRoot() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long bufferAddress = memory.baseAddress() + 64;
+
+            setSyscall(state, SYS_GETCWD, bufferAddress, 16, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertArrayEquals(new byte[]{'/', 0}, memory.readBytes(bufferAddress, 2));
+
+            setSyscall(state, SYS_GETCWD, bufferAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ERANGE, state.register(10));
+        }
+    }
+
     /// Verifies that `newfstatat` reports sandboxed host files and directories.
     @Test
     public void newfstatatReportsSandboxedHostPaths() throws Exception {
@@ -728,6 +776,81 @@ public final class GuestSyscallsTest {
 
             writeGuestString(memory, pathAddress, "../message.txt");
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+        }
+    }
+
+    /// Verifies access checks for sandboxed paths and open file descriptors.
+    @Test
+    public void faccessatChecksSandboxedPaths() throws Exception {
+        Files.writeString(tempDirectory.resolve("readable.txt"), "data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            writeGuestString(memory, pathAddress, "readable.txt");
+
+            setSyscall(state, SYS_FACCESSAT, AT_FDCWD, pathAddress, F_OK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK, AT_EACCESS, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_FACCESSAT, AT_FDCWD, pathAddress, F_OK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "../readable.txt");
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, F_OK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK | 8, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `faccessat2` access checks on `AT_EMPTY_PATH` file descriptors.
+    @Test
+    public void faccessat2ChecksEmptyPathFileDescriptors() throws Exception {
+        Files.writeString(tempDirectory.resolve("output.txt"), "data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            writeGuestString(memory, pathAddress, "output.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, W_OK, AT_EMPTY_PATH, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, R_OK, AT_EMPTY_PATH, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, X_OK, AT_EMPTY_PATH, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EACCES, state.register(10));
         }
@@ -1099,6 +1222,10 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETPID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_GETPPID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
 
             setSyscall(state, SYS_GETTID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
