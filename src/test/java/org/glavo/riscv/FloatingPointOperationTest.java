@@ -50,6 +50,12 @@ public final class FloatingPointOperationTest {
     /// The `fflags` CSR address.
     private static final int FFLAGS_CSR = 0x001;
 
+    /// The `frm` CSR address.
+    private static final int FRM_CSR = 0x002;
+
+    /// The canonical double-precision quiet NaN bit pattern.
+    private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
+
     /// The Linux syscall register.
     private static final int SYSCALL_REGISTER = 17;
 
@@ -190,6 +196,80 @@ public final class FloatingPointOperationTest {
         }
     }
 
+    /// Verifies canonical NaN results and invalid flags for indeterminate floating-point operations.
+    @Test
+    public void invalidFloatingPointOperationsSetFlagAndCanonicalNaN() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fmulD(10, 1, 2),
+                    fdivD(11, 3, 4),
+                    fsqrtD(12, 5),
+                    faddD(13, 6, 7),
+                    csrrs(RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeDouble(machine.state(), 1, Double.POSITIVE_INFINITY);
+            writeDouble(machine.state(), 2, 0.0d);
+            writeDouble(machine.state(), 3, 0.0d);
+            writeDouble(machine.state(), 4, 0.0d);
+            writeDouble(machine.state(), 5, -1.0d);
+            writeDoubleBits(machine.state(), 6, 0x7ff0_0000_0000_0001L);
+            writeDouble(machine.state(), 7, 1.0d);
+
+            runDecodedProgram(machine);
+
+            assertEquals(CANONICAL_DOUBLE_NAN, machine.state().floatingPointRegister(10));
+            assertEquals(CANONICAL_DOUBLE_NAN, machine.state().floatingPointRegister(11));
+            assertEquals(CANONICAL_DOUBLE_NAN, machine.state().floatingPointRegister(12));
+            assertEquals(CANONICAL_DOUBLE_NAN, machine.state().floatingPointRegister(13));
+            assertEquals(0x10, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies floating-point to integer conversion boundaries and inexact flag accumulation.
+    @Test
+    public void floatingPointToIntegerConversionSetsInvalidAndInexactFlags() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fcvtWD(RESULT_REGISTER, 1),
+                    fcvtWUD(SECOND_RESULT_REGISTER, 2),
+                    fcvtLD(THIRD_RESULT_REGISTER, 3),
+                    csrrs(FOURTH_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeDouble(machine.state(), 1, 1.5d);
+            writeDouble(machine.state(), 2, -1.0d);
+            writeDouble(machine.state(), 3, 0x1.0p63);
+
+            runDecodedProgram(machine);
+
+            assertEquals(2, machine.state().register(RESULT_REGISTER));
+            assertEquals(0, machine.state().register(SECOND_RESULT_REGISTER));
+            assertEquals(Long.MAX_VALUE, machine.state().register(THIRD_RESULT_REGISTER));
+            assertEquals(0x11, machine.state().register(FOURTH_RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies that dynamic rounding uses the current `frm` value for conversion instructions.
+    @Test
+    public void dynamicRoundingModeControlsFloatingPointToIntegerConversion() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    csrrwi(0, FRM_CSR, 1),
+                    fcvtWDynamic(RESULT_REGISTER, 1),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeDouble(machine.state(), 1, 1.9d);
+
+            runDecodedProgram(machine);
+
+            assertEquals(1, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
     private static void prepareExit(MachineState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
@@ -224,6 +304,11 @@ public final class FloatingPointOperationTest {
     /// Writes a double-precision value to a floating-point register.
     private static void writeDouble(MachineState state, int register, double value) {
         state.setFloatingPointRegister(register, Double.doubleToRawLongBits(value));
+    }
+
+    /// Writes raw double-precision bits to a floating-point register.
+    private static void writeDoubleBits(MachineState state, int register, long bits) {
+        state.setFloatingPointRegister(register, bits);
     }
 
     /// Writes raw single-precision bits to a NaN-boxed floating-point register.
@@ -326,6 +411,21 @@ public final class FloatingPointOperationTest {
         return opFp(0x61, rd, 0, rs1, 2);
     }
 
+    /// Encodes `fcvt.w.d`.
+    private static int fcvtWD(int rd, int rs1) {
+        return opFp(0x61, rd, 0, rs1, 0);
+    }
+
+    /// Encodes `fcvt.w.d` with dynamic rounding mode.
+    private static int fcvtWDynamic(int rd, int rs1) {
+        return opFp(0x61, rd, 7, rs1, 0);
+    }
+
+    /// Encodes `fcvt.wu.d`.
+    private static int fcvtWUD(int rd, int rs1) {
+        return opFp(0x61, rd, 0, rs1, 1);
+    }
+
     /// Encodes `fcvt.w.s`.
     private static int fcvtWS(int rd, int rs1) {
         return opFp(0x60, rd, 0, rs1, 0);
@@ -364,6 +464,11 @@ public final class FloatingPointOperationTest {
     /// Encodes a CSR read-set instruction.
     private static int csrrs(int rd, int csr, int rs1) {
         return (csr << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x73;
+    }
+
+    /// Encodes a CSR immediate write instruction.
+    private static int csrrwi(int rd, int csr, int immediate) {
+        return (csr << 20) | (immediate << 15) | (5 << 12) | (rd << 7) | 0x73;
     }
 
     /// Encodes an OP-FP instruction.

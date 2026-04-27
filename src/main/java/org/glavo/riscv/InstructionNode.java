@@ -29,6 +29,9 @@ public final class InstructionNode extends Node {
     /// The canonical double-precision quiet NaN bit pattern.
     private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
 
+    /// The floating-point inexact exception flag.
+    private static final int FLOATING_POINT_INEXACT = 0x01;
+
     /// The floating-point invalid-operation exception flag.
     private static final int FLOATING_POINT_INVALID_OPERATION = 0x10;
 
@@ -304,12 +307,20 @@ public final class InstructionNode extends Node {
             case FMAX -> floatingPointMinimumMaximum(state, nextPc, false);
             case FCVT_S_D -> {
                 checkEffectiveRoundingMode(state);
-                writeSingleBits(state, rd, canonicalizeSingleBits((float) readDouble(state, rs1)));
+                long bits = state.floatingPointRegister(rs1);
+                if (isSignalingDoubleNaN(bits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                writeSingleBits(state, rd, canonicalizeSingleBits((float) Double.longBitsToDouble(bits)));
                 state.setPc(nextPc);
             }
             case FCVT_D_S -> {
                 checkEffectiveRoundingMode(state);
-                writeDoubleBits(state, rd, canonicalizeDoubleBits(readSingle(state, rs1)));
+                int bits = readSingleBits(state, rs1);
+                if (isSignalingSingleNaN(bits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                writeDoubleBits(state, rd, canonicalizeDoubleBits(Float.intBitsToFloat(bits)));
                 state.setPc(nextPc);
             }
             case FEQ -> floatingPointCompare(state, nextPc, CompareKind.EQUAL);
@@ -631,14 +642,30 @@ public final class InstructionNode extends Node {
         checkEffectiveRoundingMode(state);
         int rs3 = thirdFloatingPointSource();
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
-            float left = negateProduct ? -readSingle(state, rs1) : readSingle(state, rs1);
-            float addend = readSingle(state, rs3);
-            float result = Math.fma(left, readSingle(state, rs2), subtractAddend ? -addend : addend);
+            int leftBits = readSingleBits(state, rs1);
+            int rightBits = readSingleBits(state, rs2);
+            int addendBits = readSingleBits(state, rs3);
+            updateInvalidFlagForSignalingSingleNaNs(state, leftBits, rightBits, addendBits);
+            float left = Float.intBitsToFloat(leftBits);
+            float right = Float.intBitsToFloat(rightBits);
+            float addend = Float.intBitsToFloat(addendBits);
+            float effectiveLeft = negateProduct ? -left : left;
+            float effectiveAddend = subtractAddend ? -addend : addend;
+            updateInvalidFlagForFusedMultiplyAdd(state, effectiveLeft, right, effectiveAddend);
+            float result = Math.fma(effectiveLeft, right, effectiveAddend);
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
-            double left = negateProduct ? -readDouble(state, rs1) : readDouble(state, rs1);
-            double addend = readDouble(state, rs3);
-            double result = Math.fma(left, readDouble(state, rs2), subtractAddend ? -addend : addend);
+            long leftBits = state.floatingPointRegister(rs1);
+            long rightBits = state.floatingPointRegister(rs2);
+            long addendBits = state.floatingPointRegister(rs3);
+            updateInvalidFlagForSignalingDoubleNaNs(state, leftBits, rightBits, addendBits);
+            double left = Double.longBitsToDouble(leftBits);
+            double right = Double.longBitsToDouble(rightBits);
+            double addend = Double.longBitsToDouble(addendBits);
+            double effectiveLeft = negateProduct ? -left : left;
+            double effectiveAddend = subtractAddend ? -addend : addend;
+            updateInvalidFlagForFusedMultiplyAdd(state, effectiveLeft, right, effectiveAddend);
+            double result = Math.fma(effectiveLeft, right, effectiveAddend);
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
@@ -648,8 +675,12 @@ public final class InstructionNode extends Node {
     private void floatingPointArithmetic(MachineState state, long nextPc, char operator) {
         checkEffectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
-            float left = readSingle(state, rs1);
-            float right = readSingle(state, rs2);
+            int leftBits = readSingleBits(state, rs1);
+            int rightBits = readSingleBits(state, rs2);
+            updateInvalidFlagForSignalingSingleNaNs(state, leftBits, rightBits);
+            float left = Float.intBitsToFloat(leftBits);
+            float right = Float.intBitsToFloat(rightBits);
+            updateInvalidFlagForArithmetic(state, left, right, operator);
             if (operator == '/') {
                 updateDivideByZeroFlag(state, left, right);
             }
@@ -662,8 +693,12 @@ public final class InstructionNode extends Node {
             };
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
-            double left = readDouble(state, rs1);
-            double right = readDouble(state, rs2);
+            long leftBits = state.floatingPointRegister(rs1);
+            long rightBits = state.floatingPointRegister(rs2);
+            updateInvalidFlagForSignalingDoubleNaNs(state, leftBits, rightBits);
+            double left = Double.longBitsToDouble(leftBits);
+            double right = Double.longBitsToDouble(rightBits);
+            updateInvalidFlagForArithmetic(state, left, right, operator);
             if (operator == '/') {
                 updateDivideByZeroFlag(state, left, right);
             }
@@ -683,13 +718,21 @@ public final class InstructionNode extends Node {
     private void floatingPointSquareRoot(MachineState state, long nextPc) {
         checkEffectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
-            float value = readSingle(state, rs1);
+            int bits = readSingleBits(state, rs1);
+            if (isSignalingSingleNaN(bits)) {
+                state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            }
+            float value = Float.intBitsToFloat(bits);
             if (value < 0.0f) {
                 state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             }
             writeSingleBits(state, rd, canonicalizeSingleBits((float) Math.sqrt(value)));
         } else {
-            double value = readDouble(state, rs1);
+            long bits = state.floatingPointRegister(rs1);
+            if (isSignalingDoubleNaN(bits)) {
+                state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            }
+            double value = Double.longBitsToDouble(bits);
             if (value < 0.0d) {
                 state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             }
@@ -806,6 +849,86 @@ public final class InstructionNode extends Node {
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
+    }
+
+    /// Updates invalid-operation flags for signaling single-precision NaN inputs.
+    private static void updateInvalidFlagForSignalingSingleNaNs(MachineState state, int first, int second) {
+        if (isSignalingSingleNaN(first) || isSignalingSingleNaN(second)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Updates invalid-operation flags for signaling single-precision NaN inputs.
+    private static void updateInvalidFlagForSignalingSingleNaNs(MachineState state, int first, int second, int third) {
+        if (isSignalingSingleNaN(first) || isSignalingSingleNaN(second) || isSignalingSingleNaN(third)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Updates invalid-operation flags for signaling double-precision NaN inputs.
+    private static void updateInvalidFlagForSignalingDoubleNaNs(MachineState state, long first, long second) {
+        if (isSignalingDoubleNaN(first) || isSignalingDoubleNaN(second)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Updates invalid-operation flags for signaling double-precision NaN inputs.
+    private static void updateInvalidFlagForSignalingDoubleNaNs(MachineState state, long first, long second, long third) {
+        if (isSignalingDoubleNaN(first) || isSignalingDoubleNaN(second) || isSignalingDoubleNaN(third)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Updates invalid-operation flags for arithmetic indeterminate forms.
+    private static void updateInvalidFlagForArithmetic(MachineState state, float left, float right, char operator) {
+        if (switch (operator) {
+            case '+', '-' -> Float.isInfinite(left) && Float.isInfinite(right)
+                    && Math.copySign(1.0f, left) != Math.copySign(1.0f, operator == '-' ? -right : right);
+            case '*' -> (left == 0.0f && Float.isInfinite(right)) || (Float.isInfinite(left) && right == 0.0f);
+            case '/' -> (left == 0.0f && right == 0.0f) || (Float.isInfinite(left) && Float.isInfinite(right));
+            default -> throw new AssertionError("Unexpected floating-point operator: " + operator);
+        }) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Updates invalid-operation flags for arithmetic indeterminate forms.
+    private static void updateInvalidFlagForArithmetic(MachineState state, double left, double right, char operator) {
+        if (switch (operator) {
+            case '+', '-' -> Double.isInfinite(left) && Double.isInfinite(right)
+                    && Math.copySign(1.0d, left) != Math.copySign(1.0d, operator == '-' ? -right : right);
+            case '*' -> (left == 0.0d && Double.isInfinite(right)) || (Double.isInfinite(left) && right == 0.0d);
+            case '/' -> (left == 0.0d && right == 0.0d) || (Double.isInfinite(left) && Double.isInfinite(right));
+            default -> throw new AssertionError("Unexpected floating-point operator: " + operator);
+        }) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Updates invalid-operation flags for fused multiply-add indeterminate forms.
+    private static void updateInvalidFlagForFusedMultiplyAdd(MachineState state, float left, float right, float addend) {
+        if ((left == 0.0f && Float.isInfinite(right)) || (Float.isInfinite(left) && right == 0.0f)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            return;
+        }
+        float product = left * right;
+        if (Float.isInfinite(product) && Float.isInfinite(addend)
+                && Math.copySign(1.0f, product) != Math.copySign(1.0f, addend)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+    }
+
+    /// Updates invalid-operation flags for fused multiply-add indeterminate forms.
+    private static void updateInvalidFlagForFusedMultiplyAdd(MachineState state, double left, double right, double addend) {
+        if ((left == 0.0d && Double.isInfinite(right)) || (Double.isInfinite(left) && right == 0.0d)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            return;
+        }
+        double product = left * right;
+        if (Double.isInfinite(product) && Double.isInfinite(addend)
+                && Math.copySign(1.0d, product) != Math.copySign(1.0d, addend)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
     }
 
     /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
@@ -1025,6 +1148,9 @@ public final class InstructionNode extends Node {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             return minimum;
         }
+        if (rounded != value) {
+            state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        }
         return (long) rounded;
     }
 
@@ -1038,6 +1164,9 @@ public final class InstructionNode extends Node {
         if (rounded < 0.0d) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             return 0;
+        }
+        if (rounded != value) {
+            state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
         }
         if (rounded >= 0x1.0p63) {
             return ((long) (rounded - 0x1.0p63)) | Long.MIN_VALUE;

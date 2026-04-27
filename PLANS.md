@@ -5,9 +5,9 @@
 ### 1. Implement user-mode RV64GC instruction support
 
 - Keep the current RV64IMAC behavior stable while adding the missing RV64GC pieces.
-- Tighten floating-point rounding-mode behavior beyond the default Java IEEE operations, especially non-default `rm` and dynamic `frm` cases.
-- Complete floating-point exception-flag behavior for inexact, overflow, underflow, invalid-operation edge cases, NaN payload handling, and conversion saturation boundaries.
-- Add focused decoder and execution tests for floating-point rounding modes, exception flags, NaN-boxing edge cases, and conversion boundary values.
+- Tighten floating-point rounding-mode behavior beyond the default Java IEEE operations for arithmetic and floating-point format conversions.
+- Complete floating-point exception-flag behavior for arithmetic inexact, overflow, underflow, and NaN payload handling.
+- Add focused decoder and execution tests for remaining arithmetic rounding modes, arithmetic exception flags, and NaN-boxing edge cases.
 
 ### 2. Support static Linux user-mode programs
 
