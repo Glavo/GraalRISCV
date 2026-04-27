@@ -37,7 +37,9 @@ Options:
   -h, --help                 Print this help message.
 ```
 
-The simulator currently supports the Linux RISC-V ABI calls `read`, `write`, `exit`, and `brk`.
+The simulator currently supports the Linux RISC-V ABI calls `read`, `write`, `readv`, `writev`, `close`,
+`fstat`, `lseek`, `ioctl`, `exit`, `exit_group`, and `brk`.
+The `ioctl` support is limited to the tty queries `TCGETS` and `TIOCGWINSZ`.
 Unsupported `ecall` failures include the syscall number, program counter, and argument registers.
 
 ## Build The C Hello World Example
