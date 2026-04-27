@@ -89,6 +89,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final long SYS_GETCWD = 17;
 
+    /// The Linux RISC-V syscall number for `dup`.
+    private static final long SYS_DUP = 23;
+
+    /// The Linux RISC-V syscall number for `dup3`.
+    private static final long SYS_DUP3 = 24;
+
     /// The Linux RISC-V syscall number for `fcntl`.
     private static final long SYS_FCNTL = 25;
 
@@ -103,6 +109,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `close`.
     private static final long SYS_CLOSE = 57;
+
+    /// The Linux RISC-V syscall number for `pipe2`.
+    private static final long SYS_PIPE2 = 59;
 
     /// The Linux RISC-V syscall number for `lseek`.
     private static final long SYS_LSEEK = 62;
@@ -260,6 +269,9 @@ public final class GuestSyscallsTest {
     /// The expected `st_mode` value for simulator standard streams.
     private static final int STANDARD_STREAM_STAT_MODE = 0020000 | 0666;
 
+    /// The expected `st_mode` value for pipe endpoints.
+    private static final int PIPE_STAT_MODE = 0010000 | 0444;
+
     /// The expected `st_mode` value for read-only regular host files.
     private static final int REGULAR_FILE_STAT_MODE = 0100000 | 0444;
 
@@ -388,6 +400,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `O_APPEND`.
     private static final long O_APPEND = 00002000L;
+
+    /// Linux `O_NONBLOCK`.
+    private static final long O_NONBLOCK = 00004000L;
 
     /// Linux `F_GETFL`.
     private static final long F_GETFL = 3;
@@ -998,6 +1013,196 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 1);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `dup` shares host file offsets and keeps the file open until every descriptor is closed.
+    @Test
+    public void dupSharesHostFileOffsetAndLifetime() throws Exception {
+        Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 128;
+            writeGuestString(memory, pathAddress, "message.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_DUP, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicateFileDescriptor = (int) state.register(10);
+            assertEquals(4, duplicateFileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertArrayEquals("file".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 4));
+
+            setSyscall(state, SYS_READ, duplicateFileDescriptor, bufferAddress, 5);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5, state.register(10));
+            assertArrayEquals("-data".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 5));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, duplicateFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, duplicateFileDescriptor, bufferAddress, 9);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(9, state.register(10));
+            assertArrayEquals("file-data".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 9));
+        }
+    }
+
+    /// Verifies that `dup` can duplicate standard streams.
+    @Test
+    public void dupDuplicatesStandardStreams() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream("input".getBytes(StandardCharsets.UTF_8)),
+                    out,
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            long bufferAddress = memory.baseAddress();
+
+            setSyscall(state, SYS_DUP, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicateOutput = (int) state.register(10);
+            assertEquals(3, duplicateOutput);
+
+            memory.writeBytes(bufferAddress, "Hi".getBytes(StandardCharsets.UTF_8), 0, 2);
+            setSyscall(state, SYS_WRITE, duplicateOutput, bufferAddress, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals("Hi", out.toString(StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_DUP, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicateInput = (int) state.register(10);
+            assertEquals(4, duplicateInput);
+
+            setSyscall(state, SYS_READ, duplicateInput, bufferAddress, 5);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5, state.register(10));
+            assertArrayEquals("input".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 5));
+        }
+    }
+
+    /// Verifies explicit `dup3` replacement and flag validation.
+    @Test
+    public void dup3ReplacesTargetDescriptor() throws Exception {
+        Files.writeString(tempDirectory.resolve("first.txt"), "first", StandardCharsets.UTF_8);
+        Files.writeString(tempDirectory.resolve("second.txt"), "second", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 128;
+
+            writeGuestString(memory, pathAddress, "first.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int firstFileDescriptor = (int) state.register(10);
+            assertEquals(3, firstFileDescriptor);
+
+            writeGuestString(memory, pathAddress, "second.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int secondFileDescriptor = (int) state.register(10);
+            assertEquals(4, secondFileDescriptor);
+
+            setSyscall(state, SYS_DUP3, firstFileDescriptor, secondFileDescriptor, O_CLOEXEC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(secondFileDescriptor, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, firstFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, secondFileDescriptor, bufferAddress, 5);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5, state.register(10));
+            assertArrayEquals("first".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 5));
+
+            setSyscall(state, SYS_DUP3, secondFileDescriptor, secondFileDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_DUP3, secondFileDescriptor, 5, O_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_DUP3, 9, 5, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies in-memory `pipe2` descriptors for static single-process programs.
+    @Test
+    public void pipe2TransfersBytesBetweenDescriptors() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pipeAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 32;
+            long statAddress = memory.baseAddress() + 128;
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
+            assertEquals(3, readFileDescriptor);
+            assertEquals(4, writeFileDescriptor);
+
+            setSyscall(state, SYS_READ, readFileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, readFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, readFileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(PIPE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            memory.writeBytes(bufferAddress, "pipe".getBytes(StandardCharsets.UTF_8), 0, 4);
+            setSyscall(state, SYS_WRITE, writeFileDescriptor, bufferAddress, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+
+            setSyscall(state, SYS_READ, readFileDescriptor, bufferAddress, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertArrayEquals("pipe".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 4));
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, O_APPEND, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 

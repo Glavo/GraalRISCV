@@ -27,6 +27,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final long SYS_GETCWD = 17;
 
+    /// The Linux RISC-V syscall number for `dup`.
+    private static final long SYS_DUP = 23;
+
+    /// The Linux RISC-V syscall number for `dup3`.
+    private static final long SYS_DUP3 = 24;
+
     /// The Linux RISC-V syscall number for `fcntl`.
     private static final long SYS_FCNTL = 25;
 
@@ -41,6 +47,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `close`.
     private static final long SYS_CLOSE = 57;
+
+    /// The Linux RISC-V syscall number for `pipe2`.
+    private static final long SYS_PIPE2 = 59;
 
     /// The Linux RISC-V syscall number for `lseek`.
     private static final long SYS_LSEEK = 62;
@@ -237,6 +246,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `ESPIPE` as a raw negative syscall result.
     private static final long ESPIPE = -29;
 
+    /// Linux `EPIPE` as a raw negative syscall result.
+    private static final long EPIPE = -32;
+
     /// Linux `ETIMEDOUT` as a raw negative syscall result.
     private static final long ETIMEDOUT = -110;
 
@@ -308,6 +320,18 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `O_APPEND`.
     private static final long O_APPEND = 00002000L;
+
+    /// Linux `O_NONBLOCK`.
+    private static final long O_NONBLOCK = 00004000L;
+
+    /// Linux `O_CLOEXEC`.
+    private static final long O_CLOEXEC = 02000000L;
+
+    /// Linux flags accepted by `pipe2`.
+    private static final long SUPPORTED_PIPE2_FLAGS = O_NONBLOCK | O_CLOEXEC;
+
+    /// Linux flags accepted by `dup3`.
+    private static final long SUPPORTED_DUP3_FLAGS = O_CLOEXEC;
 
     /// Linux `F_GETFD`.
     private static final long F_GETFD = 1;
@@ -860,6 +884,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux `S_IFCHR` file type bit used for character devices.
     private static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
 
+    /// The Linux `S_IFIFO` file type bit used for pipe endpoints.
+    private static final int STAT_MODE_FIFO = 0010000;
+
     /// The Linux `S_IFDIR` file type bit used for directories.
     private static final int STAT_MODE_DIRECTORY = 0040000;
 
@@ -1121,6 +1148,14 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, getcwd(state.register(10), state.register(11)));
             return;
         }
+        if (callNumber == SYS_DUP) {
+            state.setRegister(10, dup((int) state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_DUP3) {
+            state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
+            return;
+        }
         if (callNumber == SYS_FCNTL) {
             state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
             return;
@@ -1143,6 +1178,10 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_CLOSE) {
             state.setRegister(10, close((int) state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_PIPE2) {
+            state.setRegister(10, pipe2(state.register(10), state.register(11)));
             return;
         }
         if (callNumber == SYS_LSEEK) {
@@ -1384,10 +1423,10 @@ public final class GuestSyscalls implements AutoCloseable {
             }
 
             try {
-                openFile.channel().close();
                 openFiles.set(index, null);
+                releaseOpenFile(openFile);
             } catch (IOException exception) {
-                throw new RiscVException("Failed to close guest host file", exception);
+                throw new RiscVException("Failed to close guest file descriptor", exception);
             }
         }
     }
@@ -1419,6 +1458,66 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         memory.writeBytes(bufferAddress, currentDirectory, 0, currentDirectory.length);
         return currentDirectory.length;
+    }
+
+    /// Duplicates a file descriptor to the lowest available non-standard descriptor.
+    private long dup(int fileDescriptor) {
+        @Nullable OpenFile duplicate = duplicateOpenFile(fileDescriptor);
+        if (duplicate == null) {
+            return EBADF;
+        }
+
+        return addOpenFile(duplicate);
+    }
+
+    /// Duplicates a file descriptor to an explicit non-standard descriptor.
+    private long dup3(int oldFileDescriptor, int newFileDescriptor, long flags) {
+        if ((flags & ~SUPPORTED_DUP3_FLAGS) != 0 || oldFileDescriptor == newFileDescriptor) {
+            return EINVAL;
+        }
+        if (newFileDescriptor < 3) {
+            return EBADF;
+        }
+
+        @Nullable OpenFile source = duplicateOpenFile(oldFileDescriptor);
+        if (source == null) {
+            return EBADF;
+        }
+
+        int index = openFileIndex(newFileDescriptor);
+        try {
+            if (index < openFiles.size()) {
+                @Nullable OpenFile previous = openFiles.get(index);
+                if (previous != null) {
+                    openFiles.set(index, null);
+                    releaseOpenFile(previous);
+                }
+            }
+            setOpenFile(newFileDescriptor, source);
+            return newFileDescriptor;
+        } catch (IOException exception) {
+            try {
+                releaseOpenFile(source);
+            } catch (IOException cleanupException) {
+                exception.addSuppressed(cleanupException);
+            }
+            throw new RiscVException("Guest dup3 syscall failed", exception);
+        }
+    }
+
+    /// Creates an in-memory pipe and writes its read and write descriptors to guest memory.
+    private long pipe2(long pipeAddress, long flags) {
+        if ((flags & ~SUPPORTED_PIPE2_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        boolean nonblocking = (flags & O_NONBLOCK) != 0;
+        PipeBuffer pipe = new PipeBuffer();
+        long readFileDescriptor = addOpenFile(OpenFile.pipeReader(pipe, nonblocking));
+        long writeFileDescriptor = addOpenFile(OpenFile.pipeWriter(pipe, nonblocking));
+        memory.writeInt(pipeAddress, (int) readFileDescriptor);
+        memory.writeInt(pipeAddress + Integer.BYTES, (int) writeFileDescriptor);
+        return 0;
     }
 
     /// Checks access to a sandboxed host path or open file descriptor.
@@ -1456,11 +1555,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Checks access bits on an open guest file descriptor.
     private long accessFileDescriptor(int fileDescriptor, long mode) {
-        if (isStandardFileDescriptor(fileDescriptor)) {
-            if ((mode & W_OK) != 0 && fileDescriptor == 0) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor >= 0) {
+            if ((mode & W_OK) != 0 && standardFileDescriptor == 0) {
                 return EACCES;
             }
-            if ((mode & R_OK) != 0 && fileDescriptor != 0) {
+            if ((mode & R_OK) != 0 && standardFileDescriptor != 0) {
                 return EACCES;
             }
             return 0;
@@ -1604,13 +1704,13 @@ public final class GuestSyscalls implements AutoCloseable {
             }
 
             SeekableByteChannel channel = hostFile.newByteChannel(options);
-            return addOpenFile(new OpenFile(hostFile, channel, readable, writable, append));
+            return addOpenFile(OpenFile.hostFile(hostFile, channel, readable, writable, append));
         } catch (IOException | SecurityException exception) {
             return EACCES;
         }
     }
 
-    /// Reads bytes from guest stdin or an open host file into guest memory.
+    /// Reads bytes from guest stdin, an open host file, or a pipe endpoint into guest memory.
     private long read(int fileDescriptor, long address, long length) {
         if (length < 0) {
             return EINVAL;
@@ -1622,16 +1722,28 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
 
-        @Nullable OpenFile openFile = openFile(fileDescriptor);
-        if (fileDescriptor != 0 && (openFile == null || !openFile.readable())) {
-            return EBADF;
-        }
-
         try {
             byte[] buffer = new byte[(int) length];
-            int count = fileDescriptor == 0
-                    ? in.read(buffer)
-                    : openFile.channel().read(ByteBuffer.wrap(buffer));
+            int count;
+            @Nullable InputStream stream = inputStreamFor(fileDescriptor);
+            if (stream != null) {
+                count = stream.read(buffer);
+            } else {
+                @Nullable OpenFile openFile = openFile(fileDescriptor);
+                if (openFile == null || !openFile.readable()) {
+                    return EBADF;
+                }
+                if (openFile.isPipeReader()) {
+                    count = openFile.pipe().read(buffer, buffer.length, openFile.nonblocking());
+                    if (count < 0) {
+                        return EAGAIN;
+                    }
+                } else if (openFile.isHostFile()) {
+                    count = openFile.channel().read(ByteBuffer.wrap(buffer));
+                } else {
+                    return EBADF;
+                }
+            }
             if (count < 0) {
                 return 0;
             }
@@ -1643,7 +1755,7 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Writes guest memory bytes to stdout, stderr, or an open host file.
+    /// Writes guest memory bytes to stdout, stderr, an open host file, or a pipe endpoint.
     private long write(int fileDescriptor, long address, long length) {
         if (length < 0) {
             return EINVAL;
@@ -1663,7 +1775,10 @@ public final class GuestSyscalls implements AutoCloseable {
                 if (openFile == null || !openFile.writable()) {
                     return EBADF;
                 }
-                writeOpenFile(openFile, bytes);
+                long count = writeOpenFile(openFile, bytes);
+                if (count < 0) {
+                    return count;
+                }
             }
             return bytes.length;
         } catch (IOException exception) {
@@ -1671,14 +1786,16 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Reads bytes from guest stdin or an open host file into a guest `struct iovec` array.
+    /// Reads bytes from guest stdin, an open host file, or a pipe endpoint into a guest `struct iovec` array.
     private long readv(int fileDescriptor, long iovecAddress, long iovecCount) {
-        @Nullable OpenFile openFile = openFile(fileDescriptor);
-        if (fileDescriptor != 0 && (openFile == null || !openFile.readable())) {
-            return EBADF;
-        }
         if (iovecCount < 0 || iovecCount > IOV_MAX) {
             return EINVAL;
+        }
+        if (inputStreamFor(fileDescriptor) == null) {
+            @Nullable OpenFile openFile = openFile(fileDescriptor);
+            if (openFile == null || !openFile.readable()) {
+                return EBADF;
+            }
         }
 
         long total = 0;
@@ -1709,7 +1826,7 @@ public final class GuestSyscalls implements AutoCloseable {
         return total;
     }
 
-    /// Writes buffers from a guest `struct iovec` array to stdout, stderr, or an open host file.
+    /// Writes buffers from a guest `struct iovec` array to stdout, stderr, an open host file, or a pipe endpoint.
     private long writev(int fileDescriptor, long iovecAddress, long iovecCount) {
         if (iovecCount < 0 || iovecCount > IOV_MAX) {
             return EINVAL;
@@ -1746,8 +1863,11 @@ public final class GuestSyscalls implements AutoCloseable {
         return total;
     }
 
-    /// Writes all bytes to an open host file.
-    private static void writeOpenFile(OpenFile openFile, byte[] bytes) throws IOException {
+    /// Writes all bytes to an open host file or pipe endpoint.
+    private static long writeOpenFile(OpenFile openFile, byte[] bytes) throws IOException {
+        if (openFile.isPipeWriter()) {
+            return openFile.pipe().write(bytes);
+        }
         if (openFile.append()) {
             openFile.channel().position(openFile.channel().size());
         }
@@ -1756,9 +1876,10 @@ public final class GuestSyscalls implements AutoCloseable {
         while (buffer.hasRemaining()) {
             openFile.channel().write(buffer);
         }
+        return bytes.length;
     }
 
-    /// Handles `close` for standard streams and guest-opened host files.
+    /// Handles `close` for standard streams and guest-opened file descriptors.
     private long close(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             return 0;
@@ -1775,8 +1896,8 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         try {
-            openFile.channel().close();
             openFiles.set(index, null);
+            releaseOpenFile(openFile);
             return 0;
         } catch (IOException exception) {
             throw new RiscVException("Guest close syscall failed", exception);
@@ -1788,13 +1909,16 @@ public final class GuestSyscalls implements AutoCloseable {
         if (whence < 0 || whence > 2) {
             return EINVAL;
         }
-        if (isStandardFileDescriptor(fileDescriptor)) {
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
             return ESPIPE;
         }
 
         @Nullable OpenFile openFile = openFile(fileDescriptor);
         if (openFile == null) {
             return EBADF;
+        }
+        if (!openFile.isHostFile()) {
+            return ESPIPE;
         }
 
         try {
@@ -1900,14 +2024,21 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Writes a minimal Linux generic 64-bit `struct stat` for a file descriptor.
     private long fstat(int fileDescriptor, long statAddress) {
-        if (isStandardFileDescriptor(fileDescriptor)) {
-            writeStat(statAddress, fileDescriptor + 1L, STANDARD_STREAM_STAT_MODE, 0);
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor >= 0) {
+            writeStat(statAddress, standardFileDescriptor + 1L, STANDARD_STREAM_STAT_MODE, 0);
             return 0;
         }
 
         @Nullable OpenFile openFile = openFile(fileDescriptor);
         if (openFile == null) {
             return EBADF;
+        }
+        if (openFile.isPipe()) {
+            int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
+                    | (openFile.writable() ? 0222 : 0);
+            writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_FIFO | permissions, 0);
+            return 0;
         }
 
         try {
@@ -1967,7 +2098,11 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Handles tty-related ioctls used by common `isatty` and stdio setup paths.
     private long ioctl(int fileDescriptor, long request, long argument) {
-        if (!isStandardFileDescriptor(fileDescriptor)) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor < 0) {
+            if (isOpenFileDescriptor(fileDescriptor)) {
+                return ENOTTY;
+            }
             return EBADF;
         }
         if (request == TCGETS) {
@@ -2998,7 +3133,7 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Adds an open host file to the guest file descriptor table.
+    /// Adds an open file description to the guest descriptor table.
     private long addOpenFile(OpenFile openFile) {
         for (int index = 0; index < openFiles.size(); index++) {
             if (openFiles.get(index) == null) {
@@ -3011,7 +3146,37 @@ public final class GuestSyscalls implements AutoCloseable {
         return openFiles.size() + 2L;
     }
 
-    /// Returns an open host file for a guest file descriptor.
+    /// Stores an open file description at an explicit non-standard descriptor.
+    private void setOpenFile(int fileDescriptor, OpenFile openFile) {
+        int index = openFileIndex(fileDescriptor);
+        while (openFiles.size() <= index) {
+            openFiles.add(null);
+        }
+        openFiles.set(index, openFile);
+    }
+
+    /// Returns a new descriptor entry that duplicates the supplied file descriptor.
+    private @Nullable OpenFile duplicateOpenFile(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return OpenFile.standardFileDescriptor(fileDescriptor);
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return null;
+        }
+        openFile.retain();
+        return openFile;
+    }
+
+    /// Releases a descriptor table entry and closes its backing object when it was the last reference.
+    private static void releaseOpenFile(OpenFile openFile) throws IOException {
+        if (openFile.release()) {
+            openFile.close();
+        }
+    }
+
+    /// Returns an open file description for a guest file descriptor.
     private @Nullable OpenFile openFile(int fileDescriptor) {
         int index = openFileIndex(fileDescriptor);
         if (index < 0 || index >= openFiles.size()) {
@@ -3020,17 +3185,18 @@ public final class GuestSyscalls implements AutoCloseable {
         return openFiles.get(index);
     }
 
-    /// Returns true when a file descriptor refers to a standard stream or open host file.
+    /// Returns true when a file descriptor refers to a standard stream or open guest descriptor.
     private boolean isOpenFileDescriptor(int fileDescriptor) {
         return isStandardFileDescriptor(fileDescriptor) || openFile(fileDescriptor) != null;
     }
 
-    /// Returns Linux status flags for a standard stream or open host file.
+    /// Returns Linux status flags for a standard stream or open guest descriptor.
     private long statusFlagsFor(int fileDescriptor) {
-        if (fileDescriptor == 0) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor == 0) {
             return O_RDONLY;
         }
-        if (fileDescriptor == 1 || fileDescriptor == 2) {
+        if (standardFileDescriptor == 1 || standardFileDescriptor == 2) {
             return O_WRONLY;
         }
 
@@ -3042,6 +3208,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 : openFile.writable() ? O_WRONLY : O_RDONLY;
         if (openFile.append()) {
             flags |= O_APPEND;
+        }
+        if (openFile.nonblocking()) {
+            flags |= O_NONBLOCK;
         }
         return flags;
     }
@@ -3387,13 +3556,32 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns the host output stream mapped to a guest file descriptor.
     private @Nullable OutputStream outputStreamFor(int fileDescriptor) {
-        if (fileDescriptor == 1) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor == 1) {
             return out;
         }
-        if (fileDescriptor == 2) {
+        if (standardFileDescriptor == 2) {
             return err;
         }
         return null;
+    }
+
+    /// Returns the host input stream mapped to a guest file descriptor.
+    private @Nullable InputStream inputStreamFor(int fileDescriptor) {
+        return standardFileDescriptorFor(fileDescriptor) == 0 ? in : null;
+    }
+
+    /// Returns the underlying standard descriptor number, or `-1` for non-standard descriptors.
+    private int standardFileDescriptorFor(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return fileDescriptor;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile != null && openFile.isStandardFileDescriptor()) {
+            return openFile.standardFileDescriptor();
+        }
+        return -1;
     }
 
     /// Returns true when the file descriptor is one of stdin, stdout, or stderr.
@@ -3431,21 +3619,284 @@ public final class GuestSyscalls implements AutoCloseable {
             long length) {
     }
 
-    /// Describes a host file opened through a guest file descriptor.
-    private record OpenFile(
-            /// The resolved host path backing the guest file descriptor.
-            TruffleFile path,
+    /// Stores buffered bytes for a single in-memory pipe.
+    private static final class PipeBuffer {
+        /// The initial pipe buffer capacity used before the first expansion.
+        private static final int INITIAL_CAPACITY = 64;
 
-            /// The host file channel.
-            SeekableByteChannel channel,
+        /// The circular byte buffer containing unread pipe bytes.
+        private byte[] buffer = new byte[INITIAL_CAPACITY];
 
-            /// Whether the guest file descriptor permits reads.
-            boolean readable,
+        /// The index of the first unread byte in `buffer`.
+        private int start;
 
-            /// Whether the guest file descriptor permits writes.
-            boolean writable,
+        /// The number of unread bytes currently stored in `buffer`.
+        private int length;
 
-            /// Whether writes append to the current end of file.
-            boolean append) {
+        /// Whether at least one read endpoint is still open.
+        private boolean readerOpen = true;
+
+        /// Whether at least one write endpoint is still open.
+        private boolean writerOpen = true;
+
+        /// Reads up to the requested byte count into the supplied destination.
+        int read(byte[] destination, int maximumLength, boolean nonblocking) {
+            if (length == 0) {
+                return writerOpen && nonblocking ? (int) EAGAIN : 0;
+            }
+
+            int count = Math.min(maximumLength, length);
+            int firstCount = Math.min(count, buffer.length - start);
+            System.arraycopy(buffer, start, destination, 0, firstCount);
+            int secondCount = count - firstCount;
+            if (secondCount > 0) {
+                System.arraycopy(buffer, 0, destination, firstCount, secondCount);
+            }
+
+            start = (start + count) % buffer.length;
+            length -= count;
+            if (length == 0) {
+                start = 0;
+            }
+            return count;
+        }
+
+        /// Writes all supplied bytes to the pipe buffer.
+        long write(byte[] source) {
+            if (!readerOpen) {
+                return EPIPE;
+            }
+
+            ensureCapacity(length + source.length);
+            int writeIndex = (start + length) % buffer.length;
+            int firstCount = Math.min(source.length, buffer.length - writeIndex);
+            System.arraycopy(source, 0, buffer, writeIndex, firstCount);
+            int secondCount = source.length - firstCount;
+            if (secondCount > 0) {
+                System.arraycopy(source, firstCount, buffer, 0, secondCount);
+            }
+            length += source.length;
+            return source.length;
+        }
+
+        /// Marks the read endpoint as closed.
+        void closeReader() {
+            readerOpen = false;
+        }
+
+        /// Marks the write endpoint as closed.
+        void closeWriter() {
+            writerOpen = false;
+        }
+
+        /// Expands the circular buffer while preserving unread byte order.
+        private void ensureCapacity(int requestedCapacity) {
+            if (requestedCapacity <= buffer.length) {
+                return;
+            }
+
+            int newCapacity = buffer.length;
+            while (newCapacity < requestedCapacity) {
+                newCapacity *= 2;
+            }
+
+            byte[] newBuffer = new byte[newCapacity];
+            int firstCount = Math.min(length, buffer.length - start);
+            System.arraycopy(buffer, start, newBuffer, 0, firstCount);
+            int secondCount = length - firstCount;
+            if (secondCount > 0) {
+                System.arraycopy(buffer, 0, newBuffer, firstCount, secondCount);
+            }
+
+            buffer = newBuffer;
+            start = 0;
+        }
+    }
+
+    /// Describes an open file description referenced by one or more guest file descriptors.
+    private static final class OpenFile {
+        /// The original standard descriptor number, or `-1` for non-standard entries.
+        private final int standardFileDescriptor;
+
+        /// The resolved host path backing the guest file descriptor.
+        private final @Nullable TruffleFile path;
+
+        /// The host file channel backing a regular host file descriptor.
+        private final @Nullable SeekableByteChannel channel;
+
+        /// The pipe buffer backing a pipe endpoint.
+        private final @Nullable PipeBuffer pipe;
+
+        /// Whether this descriptor is the read endpoint of a pipe.
+        private final boolean pipeReader;
+
+        /// Whether this descriptor is the write endpoint of a pipe.
+        private final boolean pipeWriter;
+
+        /// Whether the guest file descriptor permits reads.
+        private final boolean readable;
+
+        /// Whether the guest file descriptor permits writes.
+        private final boolean writable;
+
+        /// Whether writes append to the current end of a host file.
+        private final boolean append;
+
+        /// Whether empty pipe reads should return `EAGAIN`.
+        private final boolean nonblocking;
+
+        /// The number of guest descriptor table slots sharing this entry.
+        private int references = 1;
+
+        /// Creates a file descriptor entry.
+        private OpenFile(
+                int standardFileDescriptor,
+                @Nullable TruffleFile path,
+                @Nullable SeekableByteChannel channel,
+                @Nullable PipeBuffer pipe,
+                boolean pipeReader,
+                boolean pipeWriter,
+                boolean readable,
+                boolean writable,
+                boolean append,
+                boolean nonblocking) {
+            this.standardFileDescriptor = standardFileDescriptor;
+            this.path = path;
+            this.channel = channel;
+            this.pipe = pipe;
+            this.pipeReader = pipeReader;
+            this.pipeWriter = pipeWriter;
+            this.readable = readable;
+            this.writable = writable;
+            this.append = append;
+            this.nonblocking = nonblocking;
+        }
+
+        /// Creates an entry backed by a host file channel.
+        static OpenFile hostFile(
+                TruffleFile path,
+                SeekableByteChannel channel,
+                boolean readable,
+                boolean writable,
+                boolean append) {
+            return new OpenFile(-1, path, channel, null, false, false, readable, writable, append, false);
+        }
+
+        /// Creates an entry that duplicates a standard stream descriptor.
+        static OpenFile standardFileDescriptor(int fileDescriptor) {
+            return new OpenFile(
+                    fileDescriptor,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    fileDescriptor == 0,
+                    fileDescriptor == 1 || fileDescriptor == 2,
+                    false,
+                    false);
+        }
+
+        /// Creates the read endpoint of a pipe.
+        static OpenFile pipeReader(PipeBuffer pipe, boolean nonblocking) {
+            return new OpenFile(-1, null, null, pipe, true, false, true, false, false, nonblocking);
+        }
+
+        /// Creates the write endpoint of a pipe.
+        static OpenFile pipeWriter(PipeBuffer pipe, boolean nonblocking) {
+            return new OpenFile(-1, null, null, pipe, false, true, false, true, false, nonblocking);
+        }
+
+        /// Returns true when this entry duplicates one of the original standard streams.
+        boolean isStandardFileDescriptor() {
+            return standardFileDescriptor >= 0;
+        }
+
+        /// Returns the original standard descriptor number.
+        int standardFileDescriptor() {
+            return standardFileDescriptor;
+        }
+
+        /// Returns true when this entry is backed by a host file channel.
+        boolean isHostFile() {
+            return channel != null;
+        }
+
+        /// Returns true when this entry is backed by a pipe endpoint.
+        boolean isPipe() {
+            return pipe != null;
+        }
+
+        /// Returns true when this entry is a pipe read endpoint.
+        boolean isPipeReader() {
+            return pipeReader;
+        }
+
+        /// Returns true when this entry is a pipe write endpoint.
+        boolean isPipeWriter() {
+            return pipeWriter;
+        }
+
+        /// Returns the host file channel backing this descriptor.
+        SeekableByteChannel channel() {
+            assert channel != null;
+            return channel;
+        }
+
+        /// Returns the pipe buffer backing this descriptor.
+        PipeBuffer pipe() {
+            assert pipe != null;
+            return pipe;
+        }
+
+        /// Returns true when reads are permitted.
+        boolean readable() {
+            return readable;
+        }
+
+        /// Returns true when writes are permitted.
+        boolean writable() {
+            return writable;
+        }
+
+        /// Returns true when host file writes append to the end of file.
+        boolean append() {
+            return append;
+        }
+
+        /// Returns true when pipe reads are nonblocking.
+        boolean nonblocking() {
+            return nonblocking;
+        }
+
+        /// Adds one guest descriptor reference to this entry.
+        void retain() {
+            references++;
+        }
+
+        /// Removes one guest descriptor reference and returns true when this entry is no longer referenced.
+        boolean release() {
+            references--;
+            if (references < 0) {
+                throw new AssertionError("open file reference count became negative");
+            }
+            return references == 0;
+        }
+
+        /// Closes the backing object after the last guest descriptor reference is released.
+        void close() throws IOException {
+            if (channel != null) {
+                channel.close();
+                return;
+            }
+            if (pipe != null) {
+                if (pipeReader) {
+                    pipe.closeReader();
+                }
+                if (pipeWriter) {
+                    pipe.closeWriter();
+                }
+            }
+        }
     }
 }
