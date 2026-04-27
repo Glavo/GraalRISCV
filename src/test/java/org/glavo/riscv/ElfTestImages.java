@@ -85,6 +85,11 @@ public final class ElfTestImages {
         return iType(0x13, rd, 0, rs1, immediate);
     }
 
+    /// Encodes `auipc`.
+    public static int auipc(int rd, int immediate) {
+        return (immediate & 0xffff_f000) | (rd << 7) | 0x17;
+    }
+
     /// Encodes `mul`.
     public static int mul(int rd, int rs1, int rs2) {
         return rType(0x33, rd, 0, rs1, rs2, 0x01);

@@ -100,6 +100,17 @@ public final class Memory implements AutoCloseable {
         return readInt(address) & 0xffff_ffffL;
     }
 
+    /// Copies guest memory bytes into a new host byte array.
+    public byte[] readBytes(long address, long length) {
+        if (length > Integer.MAX_VALUE) {
+            throw new RiscVException("Guest memory read range is too large: " + length);
+        }
+
+        byte[] result = new byte[(int) length];
+        MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, index(address, length), result, 0, (int) length);
+        return result;
+    }
+
     /// Reads a little-endian 32-bit instruction from a 16-bit-aligned guest address.
     public int readInstructionInt(long address) {
         requireAligned(address, Short.BYTES);

@@ -7,6 +7,8 @@ import org.graalvm.polyglot.io.ByteSequence;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
@@ -51,10 +53,38 @@ public final class RiscVPolyglotTest {
         assertEquals(7, evaluate(ElfTestImages.executable(code.array())));
     }
 
+    /// Verifies that a guest program can write `Hello World!` to stdout.
+    @Test
+    public void printsHelloWorld() throws Exception {
+        byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
+        int messageOffset = Integer.BYTES * 9;
+        ByteBuffer code = ByteBuffer.allocate(messageOffset + message.length).order(ByteOrder.LITTLE_ENDIAN);
+        ElfTestImages.putInt(code, ElfTestImages.auipc(11, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 11, messageOffset));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, message.length));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 64));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        code.put(message);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        assertEquals(0, evaluate(ElfTestImages.executable(code.array()), out));
+        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+    }
+
     /// Evaluates a RISC-V ELF through the registered Truffle language.
     private static long evaluate(byte[] elf) throws Exception {
+        return evaluate(elf, new ByteArrayOutputStream());
+    }
+
+    /// Evaluates a RISC-V ELF with a captured stdout stream.
+    private static long evaluate(byte[] elf, ByteArrayOutputStream out) throws Exception {
         try (Context context = Context.newBuilder(RiscVLanguage.ID)
                 .option("riscv.maxInstructions", "1000")
+                .out(out)
                 .build()) {
             Source source = Source.newBuilder(
                             RiscVLanguage.ID,
