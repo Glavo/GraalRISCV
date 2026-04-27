@@ -4,6 +4,7 @@ import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.ByteSequence;
+import org.graalvm.polyglot.io.IOAccess;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -95,6 +96,7 @@ public final class Main {
                 .in(in)
                 .out(out)
                 .err(err)
+                .allowIO(IOAccess.ALL)
                 .arguments(RiscVLanguage.ID, options.applicationArguments())
                 .option("engine.WarnInterpreterOnly", "false");
 

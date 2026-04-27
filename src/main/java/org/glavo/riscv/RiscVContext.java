@@ -4,9 +4,6 @@ import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
-import java.nio.file.InvalidPathException;
-import java.nio.file.Path;
-
 /// Stores per-context simulator configuration derived from Truffle language options.
 @NotNullByDefault
 public final class RiscVContext {
@@ -25,8 +22,8 @@ public final class RiscVContext {
     /// Whether guest instruction tracing is enabled.
     private final boolean trace;
 
-    /// The normalized host directory exposed through read-only guest file syscalls.
-    private final Path hostRoot;
+    /// The configured host directory exposed through sandboxed guest file syscalls.
+    private final String hostRoot;
 
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
@@ -53,8 +50,8 @@ public final class RiscVContext {
         }
 
         try {
-            this.hostRoot = Path.of(hostRoot).toAbsolutePath().normalize();
-        } catch (InvalidPathException exception) {
+            env.getPublicTruffleFile(hostRoot);
+        } catch (IllegalArgumentException exception) {
             throw new RiscVException("riscv.hostRoot is invalid: " + hostRoot, exception);
         }
 
@@ -63,6 +60,7 @@ public final class RiscVContext {
         this.memorySize = memorySize;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
+        this.hostRoot = hostRoot;
         this.programArguments = env.getApplicationArguments().clone();
     }
 
@@ -91,8 +89,8 @@ public final class RiscVContext {
         return trace;
     }
 
-    /// Returns the host directory exposed through read-only guest file syscalls.
-    public Path hostRoot() {
+    /// Returns the configured host directory exposed through sandboxed guest file syscalls.
+    public String hostRoot() {
         return hostRoot;
     }
 

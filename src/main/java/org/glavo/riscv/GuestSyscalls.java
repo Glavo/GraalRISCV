@@ -1,5 +1,7 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.TruffleFile;
+import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -9,11 +11,11 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
-import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.Set;
 
 /// Handles the small Linux-compatible syscall subset exposed by the simulator.
 @NotNullByDefault
@@ -306,8 +308,14 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The host output stream used for guest stderr writes.
     private final OutputStream err;
 
-    /// The host root directory exposed through sandboxed `openat`.
-    private final Path hostRoot;
+    /// The Truffle environment used to resolve the configured host root lazily.
+    private final @Nullable TruffleLanguage.Env env;
+
+    /// The configured host root path exposed through sandboxed `openat`.
+    private final @Nullable String hostRootPath;
+
+    /// The resolved host root directory exposed through sandboxed `openat`.
+    private @Nullable TruffleFile hostRoot;
 
     /// The lowest program break accepted by the `brk` syscall.
     private final long initialProgramBreak;
@@ -340,17 +348,17 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
-        this(memory, in, out, err, initialProgramBreak, Path.of("."));
+        this(memory, in, out, err, initialProgramBreak, null);
     }
 
-    /// Creates a syscall handler backed by the supplied host streams, heap boundary, and host file root.
+    /// Creates a syscall handler backed by the supplied host streams, heap boundary, and resolved host file root.
     public GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            Path hostRoot) {
+            @Nullable TruffleFile hostRoot) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
                     + Long.toUnsignedString(initialProgramBreak, 16));
@@ -360,7 +368,34 @@ public final class GuestSyscalls implements AutoCloseable {
         this.in = in;
         this.out = out;
         this.err = err;
-        this.hostRoot = hostRoot.toAbsolutePath().normalize();
+        this.env = null;
+        this.hostRootPath = null;
+        this.hostRoot = hostRoot == null ? null : hostRoot.getAbsoluteFile().normalize();
+        this.initialProgramBreak = initialProgramBreak;
+        this.programBreak = initialProgramBreak;
+    }
+
+    /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy host file root.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            TruffleLanguage.Env env,
+            String hostRootPath) {
+        if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
+            throw new RiscVException("Initial program break is outside guest memory: address=0x"
+                    + Long.toUnsignedString(initialProgramBreak, 16));
+        }
+
+        this.memory = memory;
+        this.in = in;
+        this.out = out;
+        this.err = err;
+        this.env = env;
+        this.hostRootPath = hostRootPath;
+        this.hostRoot = null;
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
     }
@@ -527,8 +562,8 @@ public final class GuestSyscalls implements AutoCloseable {
             return ENOENT;
         }
 
-        @Nullable Path hostPath = resolveHostPath(guestPath);
-        if (hostPath == null) {
+        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        if (hostFile == null) {
             return EACCES;
         }
 
@@ -537,7 +572,12 @@ public final class GuestSyscalls implements AutoCloseable {
         boolean create = (flags & O_CREAT) != 0;
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
-        boolean exists = Files.exists(hostPath);
+        boolean exists;
+        try {
+            exists = hostFile.exists();
+        } catch (SecurityException exception) {
+            return EACCES;
+        }
         if (!exists && !create) {
             return ENOENT;
         }
@@ -548,37 +588,46 @@ public final class GuestSyscalls implements AutoCloseable {
             return EACCES;
         }
         try {
-            Path realHostRoot = hostRoot.toRealPath();
+            @Nullable TruffleFile root = currentHostRoot();
+            if (root == null) {
+                return EACCES;
+            }
+            TruffleFile realHostRoot = root.getCanonicalFile();
             if (exists) {
-                if (!hostPath.toRealPath().startsWith(realHostRoot)) {
+                if (!hostFile.getCanonicalFile().startsWith(realHostRoot)) {
                     return EACCES;
                 }
             } else {
-                Path parent = hostPath.getParent();
-                if (parent == null || !Files.isDirectory(parent) || !parent.toRealPath().startsWith(realHostRoot)) {
+                @Nullable TruffleFile parent = hostFile.getParent();
+                if (parent == null
+                        || !parent.isDirectory()
+                        || !parent.getCanonicalFile().startsWith(realHostRoot)) {
                     return EACCES;
                 }
             }
-        } catch (IOException exception) {
+        } catch (IOException | SecurityException exception) {
             return EACCES;
         }
-        if (Files.exists(hostPath)) {
-            if (Files.isDirectory(hostPath)) {
+        try {
+            exists = hostFile.exists();
+            if (exists && hostFile.isDirectory()) {
                 return EISDIR;
             }
-            if (!Files.isRegularFile(hostPath)) {
+            if (exists && !hostFile.isRegularFile()) {
                 return ENODEV;
             }
-            if (readable && !Files.isReadable(hostPath)) {
+            if (exists && readable && !hostFile.isReadable()) {
                 return EACCES;
             }
-            if (writable && !Files.isWritable(hostPath)) {
+            if (exists && writable && !hostFile.isWritable()) {
                 return EACCES;
             }
+        } catch (SecurityException exception) {
+            return EACCES;
         }
 
         try {
-            ArrayList<StandardOpenOption> options = new ArrayList<>();
+            Set<StandardOpenOption> options = EnumSet.noneOf(StandardOpenOption.class);
             if (readable) {
                 options.add(StandardOpenOption.READ);
             }
@@ -592,9 +641,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 options.add(StandardOpenOption.TRUNCATE_EXISTING);
             }
 
-            SeekableByteChannel channel = Files.newByteChannel(hostPath, options.toArray(StandardOpenOption[]::new));
-            return addOpenFile(new OpenFile(hostPath, channel, readable, writable, append));
-        } catch (IOException exception) {
+            SeekableByteChannel channel = hostFile.newByteChannel(options);
+            return addOpenFile(new OpenFile(hostFile, channel, readable, writable, append));
+        } catch (IOException | SecurityException exception) {
             return EACCES;
         }
     }
@@ -1049,7 +1098,11 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Resolves a guest path below the configured host root or returns null for escapes.
-    private @Nullable Path resolveHostPath(String guestPath) {
+    private @Nullable TruffleFile resolveHostFile(String guestPath) {
+        @Nullable TruffleFile root = currentHostRoot();
+        if (root == null) {
+            return null;
+        }
         if (guestPath.indexOf('\\') >= 0 || guestPath.indexOf(':') >= 0) {
             return null;
         }
@@ -1060,9 +1113,26 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         try {
-            Path hostPath = hostRoot.resolve(relativePath).normalize();
-            return hostPath.startsWith(hostRoot) ? hostPath : null;
+            TruffleFile hostFile = root.resolve(relativePath).normalize();
+            return hostFile.startsWith(root) ? hostFile : null;
         } catch (InvalidPathException exception) {
+            return null;
+        }
+    }
+
+    /// Returns the resolved host root, creating it through the Truffle environment on first use.
+    private @Nullable TruffleFile currentHostRoot() {
+        if (hostRoot != null) {
+            return hostRoot;
+        }
+        if (env == null || hostRootPath == null) {
+            return null;
+        }
+
+        try {
+            hostRoot = env.getPublicTruffleFile(hostRootPath).getAbsoluteFile().normalize();
+            return hostRoot;
+        } catch (IllegalArgumentException | SecurityException exception) {
             return null;
         }
     }
@@ -1270,7 +1340,7 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Describes a host file opened through a guest file descriptor.
     private record OpenFile(
             /// The resolved host path backing the guest file descriptor.
-            Path path,
+            TruffleFile path,
 
             /// The host file channel.
             SeekableByteChannel channel,

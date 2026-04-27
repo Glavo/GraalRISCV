@@ -67,7 +67,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The `riscv.hostRoot` language option.
     @Option(
             name = "hostRoot",
-            help = "Host directory exposed to guest read-only openat calls. Default: current directory.",
+            help = "Host directory exposed to sandboxed guest file syscalls. Default: current directory.",
             category = OptionCategory.USER,
             stability = OptionStability.STABLE)
     static final OptionKey<String> HOST_ROOT = new OptionKey<>(".");
