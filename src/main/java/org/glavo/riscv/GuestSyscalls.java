@@ -93,6 +93,15 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `sched_yield`.
     private static final long SYS_SCHED_YIELD = 124;
 
+    /// The Linux RISC-V syscall number for `kill`.
+    private static final long SYS_KILL = 129;
+
+    /// The Linux RISC-V syscall number for `tkill`.
+    private static final long SYS_TKILL = 130;
+
+    /// The Linux RISC-V syscall number for `tgkill`.
+    private static final long SYS_TGKILL = 131;
+
     /// The Linux RISC-V syscall number for `sigaltstack`.
     private static final long SYS_SIGALTSTACK = 132;
 
@@ -104,6 +113,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `times`.
     private static final long SYS_TIMES = 153;
+
+    /// The Linux RISC-V syscall number for `getpgid`.
+    private static final long SYS_GETPGID = 155;
+
+    /// The Linux RISC-V syscall number for `setsid`.
+    private static final long SYS_SETSID = 157;
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
@@ -872,6 +887,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The fixed guest parent process id returned by `getppid`.
     private static final long GUEST_PARENT_PROCESS_ID = 0;
 
+    /// The fixed guest process group id used by process-group syscalls.
+    private static final long GUEST_PROCESS_GROUP_ID = GUEST_PROCESS_ID;
+
     /// The deterministic guest user id exposed by identity syscalls.
     private static final long GUEST_USER_ID = 1000;
 
@@ -1204,6 +1222,18 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, schedYield());
             return;
         }
+        if (callNumber == SYS_KILL) {
+            state.setRegister(10, kill(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_TKILL) {
+            state.setRegister(10, tkill(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_TGKILL) {
+            state.setRegister(10, tgkill(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
         if (callNumber == SYS_SIGALTSTACK) {
             state.setRegister(10, sigaltstack(state.register(10), state.register(11)));
             return;
@@ -1226,6 +1256,14 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_TIMES) {
             state.setRegister(10, times(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_GETPGID) {
+            state.setRegister(10, getpgid(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_SETSID) {
+            state.setRegister(10, setsid());
             return;
         }
         if (callNumber == SYS_UNAME) {
@@ -2278,6 +2316,59 @@ public final class GuestSyscalls implements AutoCloseable {
             }
         }
         return true;
+    }
+
+    /// Accepts signal sends that target the single guest process.
+    private long kill(long processId, long signalNumber) {
+        if (!isValidSignalNumber(signalNumber)) {
+            return EINVAL;
+        }
+        if (processId == 0 || processId == -1 || processId == GUEST_PROCESS_ID || processId == -GUEST_PROCESS_GROUP_ID) {
+            return 0;
+        }
+        return ESRCH;
+    }
+
+    /// Accepts signal sends that target known guest thread ids.
+    private long tkill(long threadId, long signalNumber) {
+        if (!isValidSignalNumber(signalNumber)) {
+            return EINVAL;
+        }
+        return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
+    }
+
+    /// Accepts signal sends that target known guest thread ids in the single process.
+    private long tgkill(long processId, long threadId, long signalNumber) {
+        if (!isValidSignalNumber(signalNumber)) {
+            return EINVAL;
+        }
+        if (processId != GUEST_PROCESS_ID) {
+            return ESRCH;
+        }
+        return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
+    }
+
+    /// Returns the deterministic process group id for the guest process.
+    private long getpgid(long processId) {
+        if (processId == 0 || processId == GUEST_PROCESS_ID) {
+            return GUEST_PROCESS_GROUP_ID;
+        }
+        return ESRCH;
+    }
+
+    /// Accepts session creation as a deterministic no-op for the single guest process.
+    private static long setsid() {
+        return GUEST_PROCESS_GROUP_ID;
+    }
+
+    /// Returns true when a signal number is zero or a regular Linux signal.
+    private static boolean isValidSignalNumber(long signalNumber) {
+        return signalNumber == 0 || (signalNumber >= MIN_SIGNAL_NUMBER && signalNumber <= MAX_SIGNAL_NUMBER);
+    }
+
+    /// Returns true when a thread id belongs to the current process or a synthetic clone result.
+    private boolean isKnownGuestThreadId(long threadId) {
+        return threadId == GUEST_PROCESS_ID || (threadId > GUEST_PROCESS_ID && threadId < nextGuestThreadId);
     }
 
     /// Writes deterministic process CPU times and returns elapsed clock ticks.

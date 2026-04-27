@@ -149,6 +149,15 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `sched_yield`.
     private static final long SYS_SCHED_YIELD = 124;
 
+    /// The Linux RISC-V syscall number for `kill`.
+    private static final long SYS_KILL = 129;
+
+    /// The Linux RISC-V syscall number for `tkill`.
+    private static final long SYS_TKILL = 130;
+
+    /// The Linux RISC-V syscall number for `tgkill`.
+    private static final long SYS_TGKILL = 131;
+
     /// The Linux RISC-V syscall number for `sigaltstack`.
     private static final long SYS_SIGALTSTACK = 132;
 
@@ -160,6 +169,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `times`.
     private static final long SYS_TIMES = 153;
+
+    /// The Linux RISC-V syscall number for `getpgid`.
+    private static final long SYS_GETPGID = 155;
+
+    /// The Linux RISC-V syscall number for `setsid`.
+    private static final long SYS_SETSID = 157;
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
@@ -1266,6 +1281,14 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
 
+            setSyscall(state, SYS_GETPGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_SETSID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
             setSyscall(state, SYS_GETTID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
@@ -1289,6 +1312,60 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETEGID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1000, state.register(10));
+
+            setSyscall(state, SYS_GETPGID, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+        }
+    }
+
+    /// Verifies signal-send syscalls use deterministic single-process validation.
+    @Test
+    public void signalSendSyscallsValidateSingleProcessTargets() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long stackAddress = memory.baseAddress() + 512;
+
+            setSyscall(state, SYS_KILL, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_KILL, 0, 15, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_KILL, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_KILL, 1, 65, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TKILL, 1, 10, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_TKILL, 99, 10, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_TGKILL, 1, 1, 10);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_TGKILL, 99, 1, 10);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS, stackAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long syntheticThreadId = state.register(10);
+            assertEquals(2, syntheticThreadId);
+
+            setSyscall(state, SYS_TGKILL, 1, syntheticThreadId, 10);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
         }
     }
 
