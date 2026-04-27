@@ -21,16 +21,15 @@
 
 - Keep syscall handling deterministic and single-process unless a later plan explicitly expands that boundary.
 - Preserve `--host-root` as the filesystem sandbox root and reject path escapes.
-- Extend `openat` and file descriptor handling to support sandboxed writes for regular files, including `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_TRUNC`, and `O_APPEND`.
-- Add syscall implementations commonly needed by static musl programs: `mprotect`, `madvise`, `prlimit64`, `uname`, `clock_gettime`, `gettimeofday`, `newfstatat`, `readlinkat`, `fcntl`, `getuid`, `geteuid`, `getgid`, `getegid`, and single-threaded `futex` behavior.
+- Broaden file descriptor support beyond the current regular-file read/write/create/truncate/append and minimal `fcntl` baseline, including directory fds and additional Linux flags when needed.
+- Add syscall implementations commonly needed by static musl programs beyond the current `fcntl` and `sched_getaffinity` baseline: `mprotect`, `madvise`, `prlimit64`, `uname`, `clock_gettime`, `gettimeofday`, `newfstatat`, `readlinkat`, `getuid`, `geteuid`, `getgid`, `getegid`, and single-threaded `futex` behavior.
 - Keep unsupported syscall diagnostics actionable by including the syscall number, guest PC, and argument registers.
 - Add direct syscall tests for success paths, Linux-compatible error returns, filesystem sandboxing, and deterministic time/random behavior.
 
 ### 4. Add static Linux C acceptance examples
 
-- Add an argument-passing example that verifies `argc` and `argv` from the generated Linux initial stack.
-- Add a sandboxed file I/O example that verifies regular file reads and writes under `--host-root`.
 - Keep no-toolchain package smoke tests available so basic CI remains possible without Zig.
+- Add broader static Linux acceptance examples as syscall coverage grows beyond the current `printf`, `argc`/`argv`, and sandboxed file I/O smoke paths.
 
 ### 5. Keep build, CI, and documentation current
 

@@ -1,6 +1,8 @@
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
+import org.gradle.api.file.RegularFile
 import org.gradle.api.plugins.JavaApplication
+import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
@@ -17,6 +19,9 @@ val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.t
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val helloWorldExampleElf = layout.buildDirectory.file("examples/hello/hello.elf")
 val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-static/printf-hello.elf")
+val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-static/argv-echo.elf")
+val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
+val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -26,6 +31,22 @@ val zigExecutableFile = zigInstallDirectory.map {
 val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
 val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
+}
+
+fun RiscVZigCcTask.configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
+    dependsOn(extractZig)
+    zigExecutable.set(zigExecutableFile)
+    sourceFile.set(layout.projectDirectory.file("examples/linux-static/$sourceFileName"))
+    outputFile.set(elfFile)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    target.set("riscv64-linux-musl")
+    enabledTargetFeatures.set(listOf("m", "a", "f", "d", "c", "zicsr", "zifencei"))
+    abi.set("lp64d")
+    codeModel.set("medany")
+    freestanding.set(false)
+    staticLinking.set(true)
+    additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie"))
 }
 
 val downloadZig by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
@@ -78,19 +99,21 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticPrintfExample") {
     group = "verification"
     description = "Builds examples/linux-static/PrintfHelloWorld.c as a static riscv64-linux-musl executable."
 
-    dependsOn(extractZig)
-    zigExecutable.set(zigExecutableFile)
-    sourceFile.set(layout.projectDirectory.file("examples/linux-static/PrintfHelloWorld.c"))
-    outputFile.set(linuxStaticPrintfExampleElf)
-    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
-    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
-    target.set("riscv64-linux-musl")
-    enabledTargetFeatures.set(listOf("m", "a", "f", "d", "c", "zicsr", "zifencei"))
-    abi.set("lp64d")
-    codeModel.set("medany")
-    freestanding.set(false)
-    staticLinking.set(true)
-    additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie"))
+    configureLinuxStaticExample("PrintfHelloWorld.c", linuxStaticPrintfExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticArgvExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/ArgvEcho.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("ArgvEcho.c", linuxStaticArgvExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticFileIoExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/FileIo.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("FileIo.c", linuxStaticFileIoExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -155,6 +178,86 @@ tasks.register<JavaExec>("testLinuxStaticPrintfExample") {
         val actualError = stderr.toString(StandardCharsets.UTF_8)
         if (actualError.isNotEmpty()) {
             throw GradleException("Static printf Hello World wrote to stderr: $actualError")
+        }
+    }
+}
+
+tasks.register<JavaExec>("testLinuxStaticArgvExample") {
+    group = "verification"
+    description = "Compiles a static musl argv example and verifies the GraalRISCV CLI output."
+
+    dependsOn("classes", "buildLinuxStaticArgvExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticArgvExampleElf.get().asFile.absolutePath, "alpha", "--beta"))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val expectedOutput = "argc=3\nargv1=alpha\nargv2=--beta\n"
+        if (actualOutput != expectedOutput) {
+            throw GradleException("Unexpected static argv output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static argv example wrote to stderr: $actualError")
+        }
+    }
+}
+
+tasks.register<JavaExec>("testLinuxStaticFileIoExample") {
+    group = "verification"
+    description = "Compiles a static musl file I/O example and verifies sandboxed host-root output."
+
+    dependsOn("classes", "buildLinuxStaticFileIoExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticFileIoRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileIoExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "file-data\n") {
+            throw GradleException("Unexpected static file I/O output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static file I/O example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticFileIoRoot.get().file("output.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "file-data\n") {
+            throw GradleException("Unexpected static file I/O host output: ${fileOutput.trim()}")
         }
     }
 }
@@ -250,6 +353,8 @@ tasks.register("checkHelloWorldExample") {
     dependsOn(
         "testHelloWorldExample",
         "testLinuxStaticPrintfExample",
+        "testLinuxStaticArgvExample",
+        "testLinuxStaticFileIoExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -259,4 +364,6 @@ tasks.register("checkHelloWorldExample") {
 tasks.named("check") {
     dependsOn("testHelloWorldExample")
     dependsOn("testLinuxStaticPrintfExample")
+    dependsOn("testLinuxStaticArgvExample")
+    dependsOn("testLinuxStaticFileIoExample")
 }

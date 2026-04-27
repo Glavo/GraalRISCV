@@ -60,6 +60,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
 
+    /// The Linux RISC-V syscall number for `fcntl`.
+    private static final long SYS_FCNTL = 25;
+
     /// The Linux RISC-V syscall number for `openat`.
     private static final long SYS_OPENAT = 56;
 
@@ -89,6 +92,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
+
+    /// The Linux RISC-V syscall number for `sched_getaffinity`.
+    private static final long SYS_SCHED_GETAFFINITY = 123;
 
     /// The Linux RISC-V syscall number for `rt_sigaction`.
     private static final long SYS_RT_SIGACTION = 134;
@@ -135,6 +141,12 @@ public final class GuestSyscallsTest {
     /// The expected `st_mode` value for read-only regular host files.
     private static final int REGULAR_FILE_STAT_MODE = 0100000 | 0444;
 
+    /// The expected `st_mode` value for write-only regular host files.
+    private static final int WRITABLE_REGULAR_FILE_STAT_MODE = 0100000 | 0222;
+
+    /// The expected `st_mode` value for read-write regular host files.
+    private static final int READ_WRITE_REGULAR_FILE_STAT_MODE = 0100000 | 0666;
+
     /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE_OFFSET = 48;
 
@@ -147,8 +159,23 @@ public final class GuestSyscallsTest {
     /// Linux `O_WRONLY`.
     private static final long O_WRONLY = 1;
 
+    /// Linux `O_RDWR`.
+    private static final long O_RDWR = 2;
+
     /// Linux `O_CREAT`.
     private static final long O_CREAT = 00000100L;
+
+    /// Linux `O_EXCL`.
+    private static final long O_EXCL = 00000200L;
+
+    /// Linux `O_TRUNC`.
+    private static final long O_TRUNC = 00001000L;
+
+    /// Linux `O_APPEND`.
+    private static final long O_APPEND = 00002000L;
+
+    /// Linux `F_GETFL`.
+    private static final long F_GETFL = 3;
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
@@ -187,6 +214,26 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
 
             assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies that zero-length writes succeed without touching the guest address.
+    @Test
+    public void writeAcceptsZeroLengthInvalidAddress() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    out,
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+
+            setSyscall(state, SYS_WRITE, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(0, state.register(10));
+            assertEquals("", out.toString(StandardCharsets.UTF_8));
         }
     }
 
@@ -339,7 +386,111 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that `openat` keeps host access read-only and below the configured root.
+    /// Verifies that `openat` exposes writable host files below the configured host root.
+    @Test
+    public void openatWritesHostFilesBelowRoot() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 128;
+            long statAddress = memory.baseAddress() + 256;
+            long iovecAddress = memory.baseAddress() + 384;
+            long firstIovecBuffer = memory.baseAddress() + 448;
+            long secondIovecBuffer = memory.baseAddress() + 456;
+            writeGuestString(memory, pathAddress, "/output.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            memory.writeBytes(bufferAddress, "file".getBytes(StandardCharsets.UTF_8), 0, 4);
+            setSyscall(state, SYS_WRITE, fileDescriptor, bufferAddress, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(WRITABLE_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(4, memory.readLong(statAddress + STAT_SIZE_OFFSET));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals("file", Files.readString(tempDirectory.resolve("output.txt"), StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_APPEND, 0);
+            state.syscalls().handle(state, TEST_PC);
+            fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_WRONLY | O_APPEND, state.register(10));
+
+            memory.writeBytes(bufferAddress, "-".getBytes(StandardCharsets.UTF_8), 0, 1);
+            setSyscall(state, SYS_WRITE, fileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            memory.writeBytes(firstIovecBuffer, "data".getBytes(StandardCharsets.UTF_8), 0, 4);
+            memory.writeBytes(secondIovecBuffer, "\n".getBytes(StandardCharsets.UTF_8), 0, 1);
+            memory.writeLong(iovecAddress, firstIovecBuffer);
+            memory.writeLong(iovecAddress + Long.BYTES, 4);
+            memory.writeLong(iovecAddress + 2L * Long.BYTES, secondIovecBuffer);
+            memory.writeLong(iovecAddress + 3L * Long.BYTES, 1);
+            setSyscall(state, SYS_WRITEV, fileDescriptor, iovecAddress, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals("file-data\n", Files.readString(tempDirectory.resolve("output.txt"), StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 10);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(10, state.register(10));
+            assertArrayEquals("file-data\n".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 10));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 4, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+
+            memory.writeBytes(bufferAddress, "!".getBytes(StandardCharsets.UTF_8), 0, 1);
+            setSyscall(state, SYS_WRITE, fileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READ_WRITE_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals("file!data\n", Files.readString(tempDirectory.resolve("output.txt"), StandardCharsets.UTF_8));
+        }
+    }
+
+    /// Verifies that `openat` keeps host access sandboxed and rejects unsupported modes.
     @Test
     public void openatRejectsUnsupportedHostAccess() throws Exception {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
@@ -371,13 +522,21 @@ public final class GuestSyscallsTest {
             assertEquals(EISDIR, state.register(10));
 
             writeGuestString(memory, pathAddress, "message.txt");
-            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_EXCL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EEXIST, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_TRUNC, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EACCES, state.register(10));
 
-            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_CREAT, 0);
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_APPEND, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EACCES, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_WRONLY | O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
 
             setSyscall(state, SYS_OPENAT, 3, pathAddress, O_RDONLY, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -524,6 +683,26 @@ public final class GuestSyscallsTest {
             assertEquals(0, state.register(10));
 
             setSyscall(state, SYS_SET_ROBUST_LIST, memory.baseAddress() + 64, -1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies deterministic single-CPU affinity for static libc sysconf queries.
+    @Test
+    public void schedGetaffinityReportsSingleCpu() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long maskAddress = memory.baseAddress() + 64;
+
+            memory.writeByte(maskAddress + Long.BYTES, (byte) 0x7f);
+            setSyscall(state, SYS_SCHED_GETAFFINITY, 0, 16, maskAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1, memory.readLong(maskAddress));
+            assertEquals(0, memory.readUnsignedByte(maskAddress + Long.BYTES));
+
+            setSyscall(state, SYS_SCHED_GETAFFINITY, 0, Long.BYTES - 1, maskAddress);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
         }

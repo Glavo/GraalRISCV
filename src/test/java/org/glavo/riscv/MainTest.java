@@ -220,7 +220,7 @@ public final class MainTest {
         String diagnostics = err.toString(StandardCharsets.UTF_8);
         assertEquals(1, exitCode);
         assertEquals("", out.toString(StandardCharsets.UTF_8));
-        assertTrue(diagnostics.contains("Unsupported ecall number: 123"));
+        assertTrue(diagnostics.contains("Unsupported ecall number: 2047"));
         assertTrue(diagnostics.contains("pc=0x80000020"));
         assertTrue(diagnostics.contains("a0=0x1"));
         assertTrue(diagnostics.contains("a1=0x2"));
@@ -229,7 +229,7 @@ public final class MainTest {
         assertTrue(diagnostics.contains("a4=0x5"));
         assertTrue(diagnostics.contains("a5=0x6"));
         assertTrue(diagnostics.contains("a6=0x7"));
-        assertTrue(diagnostics.contains("a7=0x7b"));
+        assertTrue(diagnostics.contains("a7=0x7ff"));
     }
 
     /// Verifies that CLI tracing writes instruction lines to the configured error stream.
@@ -319,7 +319,7 @@ public final class MainTest {
                 ElfTestImages.addi(14, 0, 5),
                 ElfTestImages.addi(15, 0, 6),
                 ElfTestImages.addi(16, 0, 7),
-                ElfTestImages.addi(17, 0, 123),
+                ElfTestImages.addi(17, 0, 2047),
                 ElfTestImages.ecall());
     }
 

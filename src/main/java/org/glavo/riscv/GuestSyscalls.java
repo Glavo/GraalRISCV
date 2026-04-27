@@ -18,6 +18,9 @@ import java.util.ArrayList;
 /// Handles the small Linux-compatible syscall subset exposed by the simulator.
 @NotNullByDefault
 public final class GuestSyscalls implements AutoCloseable {
+    /// The Linux RISC-V syscall number for `fcntl`.
+    private static final long SYS_FCNTL = 25;
+
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
 
@@ -56,6 +59,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
+
+    /// The Linux RISC-V syscall number for `sched_getaffinity`.
+    private static final long SYS_SCHED_GETAFFINITY = 123;
 
     /// The Linux RISC-V syscall number for `rt_sigaction`.
     private static final long SYS_RT_SIGACTION = 134;
@@ -135,11 +141,35 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `O_RDONLY`.
     private static final long O_RDONLY = 0;
 
+    /// Linux `O_WRONLY`.
+    private static final long O_WRONLY = 1;
+
+    /// Linux `O_RDWR`.
+    private static final long O_RDWR = 2;
+
     /// Linux `O_CREAT`.
     private static final long O_CREAT = 00000100L;
 
+    /// Linux `O_EXCL`.
+    private static final long O_EXCL = 00000200L;
+
     /// Linux `O_TRUNC`.
     private static final long O_TRUNC = 00001000L;
+
+    /// Linux `O_APPEND`.
+    private static final long O_APPEND = 00002000L;
+
+    /// Linux `F_GETFD`.
+    private static final long F_GETFD = 1;
+
+    /// Linux `F_SETFD`.
+    private static final long F_SETFD = 2;
+
+    /// Linux `F_GETFL`.
+    private static final long F_GETFL = 3;
+
+    /// Linux `F_SETFL`.
+    private static final long F_SETFL = 4;
 
     /// The maximum guest path length accepted by `openat`, including the terminator.
     private static final int PATH_MAX = 4096;
@@ -194,6 +224,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of Linux generic 64-bit kernel `struct sigaction`.
     private static final long KERNEL_SIGACTION_SIZE = 32;
+
+    /// The byte size of the minimal CPU affinity mask exposed to the guest.
+    private static final long MINIMUM_CPU_AFFINITY_MASK_SIZE = Long.BYTES;
 
     /// The lowest regular Linux signal number accepted by signal syscalls.
     private static final long MIN_SIGNAL_NUMBER = 1;
@@ -273,7 +306,7 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The host output stream used for guest stderr writes.
     private final OutputStream err;
 
-    /// The host root directory exposed through read-only `openat`.
+    /// The host root directory exposed through sandboxed `openat`.
     private final Path hostRoot;
 
     /// The lowest program break accepted by the `brk` syscall.
@@ -335,6 +368,10 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
     public void handle(MachineState state, long pc) {
         long callNumber = state.register(17);
+        if (callNumber == SYS_FCNTL) {
+            state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
+            return;
+        }
         if (callNumber == SYS_IOCTL) {
             state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
             return;
@@ -384,6 +421,10 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_SET_ROBUST_LIST) {
             state.setRegister(10, setRobustList(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_SCHED_GETAFFINITY) {
+            state.setRegister(10, schedGetaffinity(state.register(10), state.register(11), state.register(12)));
             return;
         }
         if (callNumber == SYS_RT_SIGACTION) {
@@ -468,13 +509,14 @@ public final class GuestSyscalls implements AutoCloseable {
         return Long.toUnsignedString(value, 16);
     }
 
-    /// Opens a read-only host file below the configured host root.
+    /// Opens a host file below the configured host root.
     private long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
         if (directoryFileDescriptor != AT_FDCWD) {
             return EBADF;
         }
-        if ((flags & O_ACCMODE) != O_RDONLY || (flags & (O_CREAT | O_TRUNC)) != 0) {
-            return EACCES;
+        long accessMode = flags & O_ACCMODE;
+        if (accessMode != O_RDONLY && accessMode != O_WRONLY && accessMode != O_RDWR) {
+            return EINVAL;
         }
 
         @Nullable String guestPath = readGuestPath(pathAddress);
@@ -489,28 +531,69 @@ public final class GuestSyscalls implements AutoCloseable {
         if (hostPath == null) {
             return EACCES;
         }
-        if (!Files.exists(hostPath)) {
+
+        boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
+        boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
+        boolean create = (flags & O_CREAT) != 0;
+        boolean truncate = (flags & O_TRUNC) != 0;
+        boolean append = (flags & O_APPEND) != 0;
+        boolean exists = Files.exists(hostPath);
+        if (!exists && !create) {
             return ENOENT;
         }
+        if (exists && create && (flags & O_EXCL) != 0) {
+            return EEXIST;
+        }
+        if ((truncate || append) && !writable) {
+            return EACCES;
+        }
         try {
-            if (!hostPath.toRealPath().startsWith(hostRoot.toRealPath())) {
-                return EACCES;
+            Path realHostRoot = hostRoot.toRealPath();
+            if (exists) {
+                if (!hostPath.toRealPath().startsWith(realHostRoot)) {
+                    return EACCES;
+                }
+            } else {
+                Path parent = hostPath.getParent();
+                if (parent == null || !Files.isDirectory(parent) || !parent.toRealPath().startsWith(realHostRoot)) {
+                    return EACCES;
+                }
             }
         } catch (IOException exception) {
             return EACCES;
         }
-        if (Files.isDirectory(hostPath)) {
-            return EISDIR;
-        }
-        if (!Files.isRegularFile(hostPath)) {
-            return ENODEV;
-        }
-        if (!Files.isReadable(hostPath)) {
-            return EACCES;
+        if (Files.exists(hostPath)) {
+            if (Files.isDirectory(hostPath)) {
+                return EISDIR;
+            }
+            if (!Files.isRegularFile(hostPath)) {
+                return ENODEV;
+            }
+            if (readable && !Files.isReadable(hostPath)) {
+                return EACCES;
+            }
+            if (writable && !Files.isWritable(hostPath)) {
+                return EACCES;
+            }
         }
 
         try {
-            return addOpenFile(new OpenFile(hostPath, Files.newByteChannel(hostPath, StandardOpenOption.READ)));
+            ArrayList<StandardOpenOption> options = new ArrayList<>();
+            if (readable) {
+                options.add(StandardOpenOption.READ);
+            }
+            if (writable) {
+                options.add(StandardOpenOption.WRITE);
+            }
+            if (create) {
+                options.add(StandardOpenOption.CREATE);
+            }
+            if (truncate) {
+                options.add(StandardOpenOption.TRUNCATE_EXISTING);
+            }
+
+            SeekableByteChannel channel = Files.newByteChannel(hostPath, options.toArray(StandardOpenOption[]::new));
+            return addOpenFile(new OpenFile(hostPath, channel, readable, writable, append));
         } catch (IOException exception) {
             return EACCES;
         }
@@ -529,7 +612,7 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         @Nullable OpenFile openFile = openFile(fileDescriptor);
-        if (fileDescriptor != 0 && openFile == null) {
+        if (fileDescriptor != 0 && (openFile == null || !openFile.readable())) {
             return EBADF;
         }
 
@@ -549,21 +632,28 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Writes guest memory bytes to stdout or stderr and returns the guest syscall result.
+    /// Writes guest memory bytes to stdout, stderr, or an open host file.
     private long write(int fileDescriptor, long address, long length) {
         if (length < 0) {
             return EINVAL;
         }
-
-        OutputStream stream = outputStreamFor(fileDescriptor);
-        if (stream == null) {
-            return EBADF;
+        if (length == 0) {
+            return 0;
         }
 
+        OutputStream stream = outputStreamFor(fileDescriptor);
         try {
             byte[] bytes = memory.readBytes(address, length);
-            stream.write(bytes);
-            stream.flush();
+            if (stream != null) {
+                stream.write(bytes);
+                stream.flush();
+            } else {
+                @Nullable OpenFile openFile = openFile(fileDescriptor);
+                if (openFile == null || !openFile.writable()) {
+                    return EBADF;
+                }
+                writeOpenFile(openFile, bytes);
+            }
             return bytes.length;
         } catch (IOException exception) {
             throw new RiscVException("Guest write syscall failed", exception);
@@ -572,7 +662,8 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Reads bytes from guest stdin or an open host file into a guest `struct iovec` array.
     private long readv(int fileDescriptor, long iovecAddress, long iovecCount) {
-        if (fileDescriptor != 0 && openFile(fileDescriptor) == null) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (fileDescriptor != 0 && (openFile == null || !openFile.readable())) {
             return EBADF;
         }
         if (iovecCount < 0 || iovecCount > IOV_MAX) {
@@ -607,42 +698,56 @@ public final class GuestSyscalls implements AutoCloseable {
         return total;
     }
 
-    /// Writes buffers from a guest `struct iovec` array to stdout or stderr.
+    /// Writes buffers from a guest `struct iovec` array to stdout, stderr, or an open host file.
     private long writev(int fileDescriptor, long iovecAddress, long iovecCount) {
         if (iovecCount < 0 || iovecCount > IOV_MAX) {
             return EINVAL;
         }
 
-        OutputStream stream = outputStreamFor(fileDescriptor);
-        if (stream == null) {
-            return EBADF;
+        if (outputStreamFor(fileDescriptor) == null) {
+            @Nullable OpenFile openFile = openFile(fileDescriptor);
+            if (openFile == null || !openFile.writable()) {
+                return EBADF;
+            }
         }
 
         long total = 0;
-        try {
-            for (long index = 0; index < iovecCount; index++) {
-                long entryAddress = iovecAddress + index * IOVEC_SIZE;
-                long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
-                long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
-                if (length < 0) {
-                    return EINVAL;
-                }
-                if (length > Integer.MAX_VALUE) {
-                    throw new RiscVException("Guest writev syscall buffer is too large: " + length);
-                }
-
-                byte[] bytes = memory.readBytes(baseAddress, length);
-                stream.write(bytes);
-                total += bytes.length;
+        for (long index = 0; index < iovecCount; index++) {
+            long entryAddress = iovecAddress + index * IOVEC_SIZE;
+            long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+            long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+            if (length < 0) {
+                return EINVAL;
             }
-            stream.flush();
-            return total;
-        } catch (IOException exception) {
-            throw new RiscVException("Guest writev syscall failed", exception);
+            if (length > Integer.MAX_VALUE) {
+                throw new RiscVException("Guest writev syscall buffer is too large: " + length);
+            }
+
+            long count = write(fileDescriptor, baseAddress, length);
+            if (count < 0) {
+                return total == 0 ? count : total;
+            }
+            total += count;
+            if (count < length) {
+                return total;
+            }
+        }
+        return total;
+    }
+
+    /// Writes all bytes to an open host file.
+    private static void writeOpenFile(OpenFile openFile, byte[] bytes) throws IOException {
+        if (openFile.append()) {
+            openFile.channel().position(openFile.channel().size());
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+        while (buffer.hasRemaining()) {
+            openFile.channel().write(buffer);
         }
     }
 
-    /// Handles `close` for standard streams and guest-opened read-only host files.
+    /// Handles `close` for standard streams and guest-opened host files.
     private long close(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             return 0;
@@ -724,9 +829,11 @@ public final class GuestSyscalls implements AutoCloseable {
 
         try {
             long size = openFile.channel().size();
+            int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
+                    | (openFile.writable() ? 0222 : 0);
             memory.clear(statAddress, STAT_SIZE);
             memory.writeLong(statAddress + STAT_INODE_OFFSET, fileDescriptor + 1L);
-            memory.writeInt(statAddress + STAT_MODE_OFFSET, STAT_MODE_REGULAR_FILE | STAT_MODE_READ_ALL);
+            memory.writeInt(statAddress + STAT_MODE_OFFSET, STAT_MODE_REGULAR_FILE | permissions);
             memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
             memory.writeLong(statAddress + STAT_SIZE_OFFSET, size);
             memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
@@ -755,6 +862,27 @@ public final class GuestSyscalls implements AutoCloseable {
         return ENOTTY;
     }
 
+    /// Handles the minimal `fcntl` subset used by static single-process libc code.
+    private long fcntl(int fileDescriptor, long command, long argument) {
+        if (!isOpenFileDescriptor(fileDescriptor)) {
+            return EBADF;
+        }
+
+        if (command == F_GETFD) {
+            return 0;
+        }
+        if (command == F_SETFD) {
+            return 0;
+        }
+        if (command == F_GETFL) {
+            return statusFlagsFor(fileDescriptor);
+        }
+        if (command == F_SETFL) {
+            return 0;
+        }
+        return EINVAL;
+    }
+
     /// Stores the guest clear-child-TID pointer and returns the fixed guest thread id.
     private long setTidAddress(long address) {
         clearChildTidAddress = address;
@@ -768,6 +896,17 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         robustListHeadAddress = headAddress;
         robustListLength = length;
+        return 0;
+    }
+
+    /// Reports a deterministic single-CPU affinity mask for static libc queries.
+    private long schedGetaffinity(long processId, long cpuSetSize, long cpuSetAddress) {
+        if (cpuSetSize < MINIMUM_CPU_AFFINITY_MASK_SIZE) {
+            return EINVAL;
+        }
+
+        memory.clear(cpuSetAddress, cpuSetSize);
+        memory.writeLong(cpuSetAddress, 1);
         return 0;
     }
 
@@ -950,6 +1089,32 @@ public final class GuestSyscalls implements AutoCloseable {
         return openFiles.get(index);
     }
 
+    /// Returns true when a file descriptor refers to a standard stream or open host file.
+    private boolean isOpenFileDescriptor(int fileDescriptor) {
+        return isStandardFileDescriptor(fileDescriptor) || openFile(fileDescriptor) != null;
+    }
+
+    /// Returns Linux status flags for a standard stream or open host file.
+    private long statusFlagsFor(int fileDescriptor) {
+        if (fileDescriptor == 0) {
+            return O_RDONLY;
+        }
+        if (fileDescriptor == 1 || fileDescriptor == 2) {
+            return O_WRONLY;
+        }
+
+        OpenFile openFile = openFile(fileDescriptor);
+        assert openFile != null;
+
+        long flags = openFile.readable() && openFile.writable()
+                ? O_RDWR
+                : openFile.writable() ? O_WRONLY : O_RDONLY;
+        if (openFile.append()) {
+            flags |= O_APPEND;
+        }
+        return flags;
+    }
+
     /// Converts a guest file descriptor to an open-file table index.
     private static int openFileIndex(int fileDescriptor) {
         return fileDescriptor - 3;
@@ -1107,7 +1272,16 @@ public final class GuestSyscalls implements AutoCloseable {
             /// The resolved host path backing the guest file descriptor.
             Path path,
 
-            /// The read-only host file channel.
-            SeekableByteChannel channel) {
+            /// The host file channel.
+            SeekableByteChannel channel,
+
+            /// Whether the guest file descriptor permits reads.
+            boolean readable,
+
+            /// Whether the guest file descriptor permits writes.
+            boolean writable,
+
+            /// Whether writes append to the current end of file.
+            boolean append) {
     }
 }

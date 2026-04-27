@@ -29,7 +29,7 @@ public final class Main {
               --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
               --memory-size <bytes>      Guest memory size in bytes.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-              --host-root <path>         Host directory exposed to guest read-only openat calls.
+              --host-root <path>         Host directory exposed to sandboxed guest file syscalls.
               --trace                    Print guest instruction trace lines.
               -h, --help                 Print this help message.
             """;
@@ -308,7 +308,7 @@ public final class Main {
             /// The optional maximum instruction count option value.
             @Nullable String maxInstructions,
 
-            /// The host directory exposed through read-only guest file syscalls.
+            /// The host directory exposed through sandboxed guest file syscalls.
             Path hostRoot,
 
             /// Whether instruction tracing is enabled.
