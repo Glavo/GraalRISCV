@@ -6,6 +6,7 @@ build/
 !**/src/test/**/build/
 .kotlin
 /external/
+/playground/
 
 ### IntelliJ IDEA ###
 .idea/

@@ -2,6 +2,7 @@ import java.time.Duration
 
 plugins {
     id("java")
+    id("application")
 }
 
 group = "org.glavo"
@@ -15,6 +16,11 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
     }
+}
+
+application {
+    applicationName = "graalriscv"
+    mainClass = "org.glavo.riscv.Main"
 }
 
 dependencies {
