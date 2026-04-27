@@ -2,25 +2,16 @@
 
 ## Active Work
 
-### 1. Verify the C example workflow with the Gradle-managed Zig toolchain
+### 1. Verify the Gradle-managed Zig workflow on non-Windows hosts
 
 - Run `./gradlew -g .gradle-user-home checkHelloWorldExample` on Linux and macOS after Zig download and extraction are available.
 - Record any non-Windows Zig download, extraction, or linker troubleshooting that is needed after real-toolchain verification.
 
-### 2. Harden ELF loading and diagnostics
+### 2. Review Truffle execution compatibility
 
-- Preserve the current `jelf`-based parser unless a specific compatibility or maintenance issue proves it inadequate.
+- Check that interpreter state, memory access, block caching, and instruction dispatch remain compatible with Truffle partial evaluation expectations.
+- Keep CLI behavior stable while internal execution nodes evolve.
 
-### 3. Strengthen syscall and host I/O behavior
+### 3. Document supported runtime surface
 
-- Keep host I/O behavior deterministic enough for tests while still mapping stdout and stderr to the CLI process.
-
-### 4. Improve Truffle integration and execution structure
-
-- Check that interpreter state, memory access, and block execution remain compatible with Truffle partial evaluation expectations.
-- Keep the public CLI stable while internal execution nodes evolve.
-
-### 5. Prepare packaging and CI workflow
-
-- Keep the Gradle-managed Zig setup cacheable and CI-friendly so contributors do not need a separately installed RISC-V toolchain.
 - Track release notes for supported ISA subsets, ELF limitations, syscall coverage, and known unsupported workloads.
