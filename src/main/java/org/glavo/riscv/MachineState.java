@@ -2,8 +2,6 @@ package org.glavo.riscv;
 
 import org.jetbrains.annotations.NotNullByDefault;
 
-import java.io.IOException;
-import java.io.OutputStream;
 import java.io.PrintStream;
 
 /// Stores mutable architectural state for one guest execution.
@@ -30,11 +28,8 @@ public final class MachineState {
     /// The optional `fromhost` symbol guest address.
     private final long fromhostAddress;
 
-    /// The host stream used for guest stdout writes.
-    private final OutputStream out;
-
-    /// The host stream used for guest stderr writes.
-    private final OutputStream err;
+    /// The syscall handler for guest environment calls.
+    private final GuestSyscalls syscalls;
 
     /// The current guest program counter.
     private long pc;
@@ -52,15 +47,13 @@ public final class MachineState {
             boolean trace,
             long tohostAddress,
             long fromhostAddress,
-            OutputStream out,
-            OutputStream err) {
+            GuestSyscalls syscalls) {
         this.memory = memory;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
-        this.out = out;
-        this.err = err;
+        this.syscalls = syscalls;
     }
 
     /// Returns the guest memory for this execution.
@@ -97,6 +90,11 @@ public final class MachineState {
         return fromhostAddress;
     }
 
+    /// Returns the syscall handler for guest environment calls.
+    public GuestSyscalls syscalls() {
+        return syscalls;
+    }
+
     /// Records one guest instruction retirement and enforces the instruction budget.
     public void beforeInstruction(long address, int raw) {
         if (maxInstructions > 0 && instructionCount >= maxInstructions) {
@@ -131,31 +129,6 @@ public final class MachineState {
             if (value != 0) {
                 throw new ProgramExitException(value == 1 ? 0 : value >>> 1);
             }
-        }
-    }
-
-    /// Writes guest memory bytes to stdout or stderr and returns the guest syscall result.
-    public long write(int fileDescriptor, long address, long length) {
-        if (length < 0) {
-            return -1;
-        }
-
-        OutputStream stream;
-        if (fileDescriptor == 1) {
-            stream = out;
-        } else if (fileDescriptor == 2) {
-            stream = err;
-        } else {
-            return -1;
-        }
-
-        try {
-            byte[] bytes = memory.readBytes(address, length);
-            stream.write(bytes);
-            stream.flush();
-            return bytes.length;
-        } catch (IOException exception) {
-            throw new RiscVException("Guest write syscall failed", exception);
         }
     }
 

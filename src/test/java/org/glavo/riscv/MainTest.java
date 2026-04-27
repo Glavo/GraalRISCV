@@ -99,6 +99,25 @@ public final class MainTest {
         assertEquals(2, exitCode);
     }
 
+    /// Verifies that guest stdin is exposed through the `read` syscall.
+    @Test
+    public void readsFromStdinAndWritesToStdout() throws Exception {
+        Path elfPath = tempDirectory.resolve("echo.elf");
+        Files.write(elfPath, ElfTestImages.executable(echoOneByteCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--max-instructions", "1000", elfPath.toString()},
+                new ByteArrayInputStream("Z".getBytes(StandardCharsets.UTF_8)),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Z", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
     private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
@@ -128,5 +147,26 @@ public final class MainTest {
                 ElfTestImages.BASE_ADDRESS - padding,
                 ElfTestImages.BASE_ADDRESS,
                 segment.array());
+    }
+
+    /// Builds a freestanding program that reads one byte from stdin and writes it to stdout.
+    private static byte[] echoOneByteCode() {
+        int bufferOffset = Integer.BYTES * 13;
+        ByteBuffer code = ByteBuffer.allocate(bufferOffset + 1).order(ByteOrder.LITTLE_ENDIAN);
+        ElfTestImages.putInt(code, ElfTestImages.auipc(11, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 11, bufferOffset));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 63));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 64));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        code.put((byte) 0);
+        return code.array();
     }
 }

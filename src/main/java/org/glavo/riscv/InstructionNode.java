@@ -291,18 +291,8 @@ public final class InstructionNode extends Node {
 
     /// Implements the bare-metal MVP ecall convention.
     private void ecall(MachineState state) {
-        long callNumber = state.register(17);
-        if (callNumber == 64) {
-            state.setRegister(
-                    10,
-                    state.write((int) state.register(10), state.register(11), state.register(12)));
-            state.setPc(address + length);
-            return;
-        }
-        if (callNumber == 93) {
-            throw new ProgramExitException(state.register(10));
-        }
-        throw new RiscVException("Unsupported ecall number: " + callNumber);
+        state.syscalls().handle(state);
+        state.setPc(address + length);
     }
 
     /// Loads and reserves a 32-bit memory word.

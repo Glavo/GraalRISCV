@@ -117,6 +117,12 @@ public final class Memory implements AutoCloseable {
         return result;
     }
 
+    /// Copies host bytes into guest memory.
+    public void writeBytes(long address, byte[] source, int offset, int length) {
+        long index = index(address, length);
+        MemorySegment.copy(source, offset, segment, ValueLayout.JAVA_BYTE, index, length);
+    }
+
     /// Reads a little-endian 32-bit instruction from a 16-bit-aligned guest address.
     public int readInstructionInt(long address) {
         requireAligned(address, Short.BYTES);
