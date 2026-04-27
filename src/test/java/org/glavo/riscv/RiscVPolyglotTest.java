@@ -41,6 +41,23 @@ public final class RiscVPolyglotTest {
         assertEquals(42, evaluate(elf));
     }
 
+    /// Verifies that a guest program can query and grow the program break.
+    @Test
+    public void executesBrkProgram() throws Exception {
+        byte[] elf = ElfTestImages.executable(
+                ElfTestImages.addi(10, 0, 0),
+                ElfTestImages.addi(17, 0, 214),
+                ElfTestImages.ecall(),
+                ElfTestImages.addi(10, 10, 16),
+                ElfTestImages.addi(17, 0, 214),
+                ElfTestImages.ecall(),
+                ElfTestImages.andi(10, 10, 0xff),
+                ElfTestImages.addi(17, 0, 93),
+                ElfTestImages.ecall());
+
+        assertEquals(64, evaluate(elf));
+    }
+
     /// Verifies that a 32-bit instruction can be fetched from a 16-bit-aligned address after a compressed instruction.
     @Test
     public void executesCompressedThenUnalignedWideInstruction() throws Exception {

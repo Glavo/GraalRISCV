@@ -37,6 +37,9 @@ Options:
   -h, --help                 Print this help message.
 ```
 
+The simulator currently supports the Linux RISC-V ABI calls `read`, `write`, `exit`, and `brk`.
+Unsupported `ecall` failures include the syscall number, program counter, and argument registers.
+
 ## Build The C Hello World Example
 
 Install a RISC-V bare-metal GCC toolchain that provides `riscv64-unknown-elf-gcc`, then run:

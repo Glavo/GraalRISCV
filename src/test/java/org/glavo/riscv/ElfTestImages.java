@@ -90,6 +90,11 @@ public final class ElfTestImages {
         return iType(0x13, rd, 0, rs1, immediate);
     }
 
+    /// Encodes `andi`.
+    public static int andi(int rd, int rs1, int immediate) {
+        return iType(0x13, rd, 7, rs1, immediate);
+    }
+
     /// Encodes `auipc`.
     public static int auipc(int rd, int immediate) {
         return (immediate & 0xffff_f000) | (rd << 7) | 0x17;

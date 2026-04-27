@@ -43,6 +43,7 @@ public final class RiscVRootNode extends RootNode {
 
     /// Creates and initializes architectural state for a guest run.
     private MachineState createState(RiscVContext context, Memory memory) {
+        long initialProgramBreak = memory.baseAddress();
         for (ElfImage.LoadSegment segment : image.loadSegments()) {
             long contentsLength = segment.contents().length;
             validateGuestRange(memory, segment.virtualAddress(), segment.memorySize());
@@ -50,6 +51,9 @@ public final class RiscVRootNode extends RootNode {
             if (segment.memorySize() > contentsLength) {
                 memory.clear(segment.virtualAddress() + contentsLength, segment.memorySize() - contentsLength);
             }
+            initialProgramBreak = Math.max(
+                    initialProgramBreak,
+                    Math.min(alignUp(segment.virtualAddress() + segment.memorySize(), 16), memory.endAddress()));
         }
 
         MachineState state = new MachineState(
@@ -58,7 +62,12 @@ public final class RiscVRootNode extends RootNode {
                 context.trace(),
                 image.tohostAddress(),
                 image.fromhostAddress(),
-                new GuestSyscalls(memory, context.env().in(), context.env().out(), context.env().err()));
+                new GuestSyscalls(
+                        memory,
+                        context.env().in(),
+                        context.env().out(),
+                        context.env().err(),
+                        initialProgramBreak));
         state.setPc(image.entryPoint());
         state.setRegister(2, memory.endAddress() & ~0xfL);
         return state;
@@ -97,5 +106,14 @@ public final class RiscVRootNode extends RootNode {
             throw new RiscVException("ELF segment is outside guest memory: address=0x"
                     + Long.toUnsignedString(address, 16) + ", length=" + length);
         }
+    }
+
+    /// Rounds an address up to the requested power-of-two alignment.
+    private static long alignUp(long address, long alignment) {
+        long mask = alignment - 1;
+        if (address > Long.MAX_VALUE - mask) {
+            return address;
+        }
+        return (address + mask) & ~mask;
     }
 }

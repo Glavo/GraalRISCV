@@ -18,6 +18,9 @@ public final class GuestSyscalls {
     /// The Linux RISC-V syscall number for `exit`.
     private static final long SYS_EXIT = 93;
 
+    /// The Linux RISC-V syscall number for `brk`.
+    private static final long SYS_BRK = 214;
+
     /// The guest memory accessed by syscall buffers.
     private final Memory memory;
 
@@ -30,12 +33,30 @@ public final class GuestSyscalls {
     /// The host output stream used for guest stderr writes.
     private final OutputStream err;
 
-    /// Creates a syscall handler backed by the supplied host streams.
-    public GuestSyscalls(Memory memory, InputStream in, OutputStream out, OutputStream err) {
+    /// The lowest program break accepted by the `brk` syscall.
+    private final long initialProgramBreak;
+
+    /// The current guest program break returned by `brk`.
+    private long programBreak;
+
+    /// Creates a syscall handler backed by the supplied host streams and heap boundary.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak) {
+        if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
+            throw new RiscVException("Initial program break is outside guest memory: address=0x"
+                    + Long.toUnsignedString(initialProgramBreak, 16));
+        }
+
         this.memory = memory;
         this.in = in;
         this.out = out;
         this.err = err;
+        this.initialProgramBreak = initialProgramBreak;
+        this.programBreak = initialProgramBreak;
     }
 
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
@@ -51,6 +72,10 @@ public final class GuestSyscalls {
         }
         if (callNumber == SYS_EXIT) {
             throw new ProgramExitException(state.register(10));
+        }
+        if (callNumber == SYS_BRK) {
+            state.setRegister(10, brk(state.register(10)));
+            return;
         }
         throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
     }
@@ -126,5 +151,16 @@ public final class GuestSyscalls {
         } catch (IOException exception) {
             throw new RiscVException("Guest write syscall failed", exception);
         }
+    }
+
+    /// Implements the Linux `brk` syscall within the simulator memory window.
+    private long brk(long requestedAddress) {
+        if (requestedAddress == 0) {
+            return programBreak;
+        }
+        if (requestedAddress >= initialProgramBreak && requestedAddress <= memory.endAddress()) {
+            programBreak = requestedAddress;
+        }
+        return programBreak;
     }
 }

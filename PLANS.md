@@ -16,8 +16,8 @@
 
 ### 3. Strengthen syscall and host I/O behavior
 
-- Keep `read`, `write`, and `exit` as the initial stable syscall surface and add focused tests for stdin EOF, partial writes, invalid file descriptors, and guest memory bounds.
-- Decide which additional Linux RISC-V ABI calls are required for the next useful C workload, such as `brk`, `close`, `fstat`, `lseek`, or `isatty`.
+- Add remaining syscall tests for stderr mapping and host I/O failure propagation as new cases appear.
+- Decide which additional Linux RISC-V ABI calls are required for the next useful C workload, such as `close`, `fstat`, `lseek`, or `isatty`.
 - Keep host I/O behavior deterministic enough for tests while still mapping stdout and stderr to the CLI process.
 
 ### 4. Expand ISA coverage and execution tests
