@@ -23,6 +23,15 @@ public final class GuestSyscallsTest {
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
 
+    /// Linux `ENOMEM` as a raw negative syscall result.
+    private static final long ENOMEM = -12;
+
+    /// Linux `EEXIST` as a raw negative syscall result.
+    private static final long EEXIST = -17;
+
+    /// Linux `ENODEV` as a raw negative syscall result.
+    private static final long ENODEV = -19;
+
     /// Linux `EINVAL` as a raw negative syscall result.
     private static final long EINVAL = -22;
 
@@ -77,6 +86,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `brk`.
     private static final long SYS_BRK = 214;
 
+    /// The Linux RISC-V syscall number for `munmap`.
+    private static final long SYS_MUNMAP = 215;
+
+    /// The Linux RISC-V syscall number for `mmap`.
+    private static final long SYS_MMAP = 222;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -100,6 +115,27 @@ public final class GuestSyscallsTest {
 
     /// The Linux generic kernel `sigset_t` size accepted by signal syscalls.
     private static final long KERNEL_SIGSET_SIZE = 8;
+
+    /// The guest page size used by `mmap` and `munmap`.
+    private static final long PAGE_SIZE = 4096;
+
+    /// Linux `PROT_READ`.
+    private static final long PROT_READ = 0x1;
+
+    /// Linux `PROT_WRITE`.
+    private static final long PROT_WRITE = 0x2;
+
+    /// Linux `MAP_PRIVATE`.
+    private static final long MAP_PRIVATE = 0x02;
+
+    /// Linux `MAP_FIXED`.
+    private static final long MAP_FIXED = 0x10;
+
+    /// Linux `MAP_ANONYMOUS`.
+    private static final long MAP_ANONYMOUS = 0x20;
+
+    /// Linux `MAP_FIXED_NOREPLACE`.
+    private static final long MAP_FIXED_NOREPLACE = 0x100000;
 
     /// Verifies that stdin EOF is reported as a zero-byte read.
     @Test
@@ -458,6 +494,190 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that anonymous `mmap` returns zero-filled page-aligned guest memory.
+    @Test
+    public void mmapAllocatesAnonymousGuestPages() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+            long expectedAddress = memory.baseAddress() + PAGE_SIZE;
+            memory.writeByte(expectedAddress, (byte) 0x7f);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    128,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(expectedAddress, state.register(10));
+            assertEquals(0, memory.readUnsignedByte(expectedAddress));
+            memory.writeLong(expectedAddress, 0x1020_3040_5060_7080L);
+            assertEquals(0x1020_3040_5060_7080L, memory.readLong(expectedAddress));
+        }
+    }
+
+    /// Verifies that released anonymous mappings can be reused by later `mmap` calls.
+    @Test
+    public void munmapReleasesAnonymousGuestPages() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 5 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long firstAddress = state.register(10);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(firstAddress + PAGE_SIZE, state.register(10));
+
+            memory.writeByte(firstAddress, (byte) 0x7f);
+            setSyscall(state, SYS_MUNMAP, firstAddress, PAGE_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readUnsignedByte(firstAddress));
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(firstAddress, state.register(10));
+        }
+    }
+
+    /// Verifies validation and collision behavior for unsupported `mmap` requests.
+    @Test
+    public void mmapRejectsUnsupportedRequests() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 3 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    0,
+                    PROT_READ,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MMAP, 0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENODEV, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    initialBreak + 1,
+                    PAGE_SIZE,
+                    PROT_READ,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    initialBreak,
+                    PAGE_SIZE,
+                    PROT_READ,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(initialBreak, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    initialBreak,
+                    PAGE_SIZE,
+                    PROT_READ,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EEXIST, state.register(10));
+        }
+    }
+
+    /// Verifies that `brk` does not grow into active anonymous mappings.
+    @Test
+    public void brkDoesNotOverlapAnonymousMappings() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(initialBreak, state.register(10));
+
+            setSyscall(state, SYS_BRK, initialBreak + PAGE_SIZE, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(initialBreak, state.register(10));
+        }
+    }
+
     /// Verifies that `brk` reports and updates the program break inside guest memory.
     @Test
     public void brkTracksProgramBreakWithinGuestMemory() {
@@ -518,10 +738,25 @@ public final class GuestSyscallsTest {
 
     /// Populates the syscall number and the first four argument registers.
     private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2, long a3) {
+        setSyscall(state, callNumber, a0, a1, a2, a3, 0, 0);
+    }
+
+    /// Populates the syscall number and the first six argument registers.
+    private static void setSyscall(
+            MachineState state,
+            long callNumber,
+            long a0,
+            long a1,
+            long a2,
+            long a3,
+            long a4,
+            long a5) {
         state.setRegister(10, a0);
         state.setRegister(11, a1);
         state.setRegister(12, a2);
         state.setRegister(13, a3);
+        state.setRegister(14, a4);
+        state.setRegister(15, a5);
         state.setRegister(17, callNumber);
     }
 

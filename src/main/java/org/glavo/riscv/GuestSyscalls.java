@@ -6,6 +6,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
 
 /// Handles the small Linux-compatible syscall subset exposed by the simulator.
 @NotNullByDefault
@@ -61,11 +62,26 @@ public final class GuestSyscalls {
     /// The Linux RISC-V syscall number for `brk`.
     private static final long SYS_BRK = 214;
 
+    /// The Linux RISC-V syscall number for `munmap`.
+    private static final long SYS_MUNMAP = 215;
+
+    /// The Linux RISC-V syscall number for `mmap`.
+    private static final long SYS_MMAP = 222;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
+
+    /// Linux `ENOMEM` as a raw negative syscall result.
+    private static final long ENOMEM = -12;
+
+    /// Linux `EEXIST` as a raw negative syscall result.
+    private static final long EEXIST = -17;
+
+    /// Linux `ENODEV` as a raw negative syscall result.
+    private static final long ENODEV = -19;
 
     /// Linux `EINVAL` as a raw negative syscall result.
     private static final long EINVAL = -22;
@@ -108,6 +124,30 @@ public final class GuestSyscalls {
 
     /// The byte size of Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE = 128;
+
+    /// The guest page size used for page-based Linux memory syscalls.
+    private static final long PAGE_SIZE = 4096;
+
+    /// The bit mask for Linux `mmap` protection values accepted by this simulator.
+    private static final long SUPPORTED_MMAP_PROTECTION_MASK = 0x7;
+
+    /// Linux `MAP_SHARED`.
+    private static final long MAP_SHARED = 0x01;
+
+    /// Linux `MAP_PRIVATE`.
+    private static final long MAP_PRIVATE = 0x02;
+
+    /// Linux `MAP_TYPE`.
+    private static final long MAP_TYPE = 0x0f;
+
+    /// Linux `MAP_FIXED`.
+    private static final long MAP_FIXED = 0x10;
+
+    /// Linux `MAP_ANONYMOUS`.
+    private static final long MAP_ANONYMOUS = 0x20;
+
+    /// Linux `MAP_FIXED_NOREPLACE`.
+    private static final long MAP_FIXED_NOREPLACE = 0x100000;
 
     /// The byte size of Linux generic 64-bit kernel `sigset_t`.
     private static final long KERNEL_SIGSET_SIZE = 8;
@@ -186,6 +226,9 @@ public final class GuestSyscalls {
 
     /// The current guest program break returned by `brk`.
     private long programBreak;
+
+    /// The active anonymous mappings created by `mmap`.
+    private final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
 
     /// The address supplied by `set_tid_address`, or zero when unset.
     private long clearChildTidAddress;
@@ -287,6 +330,20 @@ public final class GuestSyscalls {
         }
         if (callNumber == SYS_BRK) {
             state.setRegister(10, brk(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_MUNMAP) {
+            state.setRegister(10, munmap(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_MMAP) {
+            state.setRegister(10, mmap(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
             return;
         }
         if (callNumber == SYS_GETRANDOM) {
@@ -542,10 +599,71 @@ public final class GuestSyscalls {
         if (requestedAddress == 0) {
             return programBreak;
         }
-        if (requestedAddress >= initialProgramBreak && requestedAddress <= memory.endAddress()) {
+        if (requestedAddress >= initialProgramBreak
+                && requestedAddress <= memory.endAddress()
+                && !overlapsMemoryMappings(initialProgramBreak, requestedAddress - initialProgramBreak)) {
             programBreak = requestedAddress;
         }
         return programBreak;
+    }
+
+    /// Implements anonymous `mmap` allocations inside the fixed guest memory window.
+    private long mmap(long address, long length, long protection, long flags, long fileDescriptor, long offset) {
+        if (length <= 0 || offset < 0 || !isPageAligned(offset)) {
+            return EINVAL;
+        }
+        if ((protection & ~SUPPORTED_MMAP_PROTECTION_MASK) != 0) {
+            return EINVAL;
+        }
+
+        long mappingType = flags & MAP_TYPE;
+        if (mappingType != MAP_PRIVATE && mappingType != MAP_SHARED) {
+            return EINVAL;
+        }
+        if ((flags & MAP_ANONYMOUS) == 0) {
+            return fileDescriptor < 0 ? EBADF : ENODEV;
+        }
+
+        long alignedLength = alignUp(length, PAGE_SIZE);
+        if (alignedLength <= 0) {
+            return ENOMEM;
+        }
+
+        long mappingAddress;
+        if (requiresFixedMapping(flags)) {
+            if (!isPageAligned(address) || !fitsGuestMemory(address, alignedLength)) {
+                return ENOMEM;
+            }
+            if ((flags & MAP_FIXED_NOREPLACE) != 0 && overlapsMemoryMappings(address, alignedLength)) {
+                return EEXIST;
+            }
+            removeMemoryMappings(address, alignedLength);
+            mappingAddress = address;
+        } else {
+            mappingAddress = findMmapAddress(address, alignedLength);
+            if (mappingAddress == 0) {
+                return ENOMEM;
+            }
+        }
+
+        memory.clear(mappingAddress, alignedLength);
+        addMemoryMapping(mappingAddress, alignedLength);
+        return mappingAddress;
+    }
+
+    /// Implements `munmap` by releasing tracked anonymous mappings.
+    private long munmap(long address, long length) {
+        if (length <= 0 || !isPageAligned(address)) {
+            return EINVAL;
+        }
+
+        long alignedLength = alignUp(length, PAGE_SIZE);
+        if (alignedLength <= 0 || !fitsGuestMemory(address, alignedLength)) {
+            return EINVAL;
+        }
+
+        removeMemoryMappings(address, alignedLength);
+        return 0;
     }
 
     /// Fills a guest buffer with deterministic bytes for the Linux `getrandom` syscall.
@@ -571,6 +689,118 @@ public final class GuestSyscalls {
         return bytes.length;
     }
 
+    /// Finds the first free page range for a new anonymous mapping.
+    private long findMmapAddress(long requestedAddress, long length) {
+        if (requestedAddress != 0) {
+            long alignedAddress = alignUp(requestedAddress, PAGE_SIZE);
+            if (alignedAddress > 0 && isMmapRangeAvailable(alignedAddress, length)) {
+                return alignedAddress;
+            }
+        }
+
+        long candidateAddress = alignUp(programBreak, PAGE_SIZE);
+        while (candidateAddress > 0 && candidateAddress <= memory.endAddress() - length) {
+            MemoryMapping overlap = overlappingMemoryMapping(candidateAddress, length);
+            if (overlap == null) {
+                return candidateAddress;
+            }
+            candidateAddress = alignUp(overlap.endAddress(), PAGE_SIZE);
+        }
+        return 0;
+    }
+
+    /// Returns true when a guest range is suitable for a new anonymous mapping.
+    private boolean isMmapRangeAvailable(long address, long length) {
+        return fitsGuestMemory(address, length)
+                && address >= programBreak
+                && !overlapsMemoryMappings(address, length);
+    }
+
+    /// Adds an active anonymous mapping in address order.
+    private void addMemoryMapping(long address, long length) {
+        MemoryMapping mapping = new MemoryMapping(address, length);
+        int insertionIndex = 0;
+        while (insertionIndex < memoryMappings.size()
+                && Long.compareUnsigned(memoryMappings.get(insertionIndex).address(), address) < 0) {
+            insertionIndex++;
+        }
+        memoryMappings.add(insertionIndex, mapping);
+    }
+
+    /// Removes or splits active anonymous mappings overlapped by a guest range.
+    private void removeMemoryMappings(long address, long length) {
+        long endAddress = address + length;
+        for (int index = 0; index < memoryMappings.size(); ) {
+            MemoryMapping mapping = memoryMappings.get(index);
+            if (!rangesOverlap(address, endAddress, mapping.address(), mapping.endAddress())) {
+                index++;
+                continue;
+            }
+
+            memoryMappings.remove(index);
+            long clearStart = Math.max(address, mapping.address());
+            long clearEnd = Math.min(endAddress, mapping.endAddress());
+            memory.clear(clearStart, clearEnd - clearStart);
+
+            if (mapping.address() < address) {
+                memoryMappings.add(index, new MemoryMapping(mapping.address(), address - mapping.address()));
+                index++;
+            }
+            if (endAddress < mapping.endAddress()) {
+                memoryMappings.add(index, new MemoryMapping(endAddress, mapping.endAddress() - endAddress));
+                index++;
+            }
+        }
+    }
+
+    /// Returns true when a guest range overlaps an active anonymous mapping.
+    private boolean overlapsMemoryMappings(long address, long length) {
+        return overlappingMemoryMapping(address, length) != null;
+    }
+
+    /// Returns the first active anonymous mapping overlapped by a guest range.
+    private @Nullable MemoryMapping overlappingMemoryMapping(long address, long length) {
+        long endAddress = address + length;
+        for (MemoryMapping mapping : memoryMappings) {
+            if (rangesOverlap(address, endAddress, mapping.address(), mapping.endAddress())) {
+                return mapping;
+            }
+        }
+        return null;
+    }
+
+    /// Returns true when a mapping flag combination requires an exact address.
+    private static boolean requiresFixedMapping(long flags) {
+        return (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
+    }
+
+    /// Returns true when an address is aligned to the guest page size.
+    private static boolean isPageAligned(long address) {
+        return (address & (PAGE_SIZE - 1L)) == 0;
+    }
+
+    /// Rounds a positive guest size or address up to a power-of-two alignment.
+    private static long alignUp(long value, long alignment) {
+        long mask = alignment - 1;
+        if (value > Long.MAX_VALUE - mask) {
+            return -1;
+        }
+        return (value + mask) & ~mask;
+    }
+
+    /// Returns true when the supplied guest range fits in the memory window.
+    private boolean fitsGuestMemory(long address, long length) {
+        return address >= memory.baseAddress()
+                && length >= 0
+                && address <= memory.endAddress()
+                && length <= memory.endAddress() - address;
+    }
+
+    /// Returns true when two half-open address ranges overlap.
+    private static boolean rangesOverlap(long firstStart, long firstEnd, long secondStart, long secondEnd) {
+        return firstStart < secondEnd && secondStart < firstEnd;
+    }
+
     /// Returns the next deterministic pseudo-random byte.
     private byte nextRandomByte() {
         randomState = randomState * 6364136223846793005L + 1442695040888963407L;
@@ -591,5 +821,18 @@ public final class GuestSyscalls {
     /// Returns true when the file descriptor is one of stdin, stdout, or stderr.
     private static boolean isStandardFileDescriptor(int fileDescriptor) {
         return fileDescriptor >= 0 && fileDescriptor <= 2;
+    }
+
+    /// Describes an anonymous guest memory mapping tracked by the syscall layer.
+    private record MemoryMapping(
+            /// The inclusive guest start address of the mapping.
+            long address,
+
+            /// The byte length of the mapping.
+            long length) {
+        /// Returns the exclusive guest end address of the mapping.
+        long endAddress() {
+            return address + length;
+        }
     }
 }

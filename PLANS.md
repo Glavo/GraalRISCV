@@ -13,7 +13,7 @@
 
 ### 3. Strengthen syscall and host I/O behavior
 
-- Decide which additional Linux RISC-V ABI calls are required for the next useful C workload, such as `openat`, `mmap`, or `munmap`.
+- Decide which additional Linux RISC-V ABI calls are required for the next useful C workload, such as `openat`.
 - Keep host I/O behavior deterministic enough for tests while still mapping stdout and stderr to the CLI process.
 
 ### 4. Expand ISA coverage and execution tests
