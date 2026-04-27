@@ -8,6 +8,51 @@ import java.math.BigInteger;
 /// Executes one decoded RV64GC guest instruction subset.
 @NotNullByDefault
 public final class InstructionNode extends Node {
+    /// The immediate bit offset used for the packed floating-point format field.
+    private static final int FLOATING_POINT_FORMAT_SHIFT = 3;
+
+    /// The immediate bit offset used for the packed third floating-point source register.
+    private static final int THIRD_FLOATING_POINT_SOURCE_SHIFT = 5;
+
+    /// The packed format value for single-precision floating-point operations.
+    private static final int SINGLE_FLOAT_FORMAT = 0;
+
+    /// The packed format value for double-precision floating-point operations.
+    private static final int DOUBLE_FLOAT_FORMAT = 1;
+
+    /// The mask for a NaN-boxed single-precision value in an RV64 floating-point register.
+    private static final long SINGLE_NAN_BOX_MASK = 0xffff_ffff_0000_0000L;
+
+    /// The canonical single-precision quiet NaN bit pattern.
+    private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
+
+    /// The canonical double-precision quiet NaN bit pattern.
+    private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
+
+    /// The floating-point invalid-operation exception flag.
+    private static final int FLOATING_POINT_INVALID_OPERATION = 0x10;
+
+    /// The floating-point divide-by-zero exception flag.
+    private static final int FLOATING_POINT_DIVIDE_BY_ZERO = 0x08;
+
+    /// Round to nearest, ties to even.
+    private static final int ROUND_NEAREST_EVEN = 0;
+
+    /// Round toward zero.
+    private static final int ROUND_TOWARD_ZERO = 1;
+
+    /// Round down.
+    private static final int ROUND_DOWN = 2;
+
+    /// Round up.
+    private static final int ROUND_UP = 3;
+
+    /// Round to nearest, ties to maximum magnitude.
+    private static final int ROUND_NEAREST_MAX_MAGNITUDE = 4;
+
+    /// Use the dynamic rounding mode from `frm`.
+    private static final int ROUND_DYNAMIC = 7;
+
     /// The guest address of this instruction.
     private final long address;
 
@@ -87,6 +132,9 @@ public final class InstructionNode extends Node {
                     executeRegisterInteger(state, nextPc);
             case MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, MULW, DIVW, DIVUW, REMW, REMUW ->
                     executeMultiplyDivide(state, nextPc);
+            case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
+                    FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
+                    FMV_X_FP, FMV_FP_X -> executeFloatingPointOperation(state, nextPc);
             case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
                     AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
                     AMOMIN_D, AMOMAX_D, AMOMINU_D, AMOMAXU_D -> executeAtomic(state, memory, nextPc);
@@ -234,6 +282,62 @@ public final class InstructionNode extends Node {
             case REMW -> wordRegister(state, nextPc, remainderSignedWord((int) state.register(rs1), (int) state.register(rs2)));
             case REMUW -> wordRegister(state, nextPc, remainderUnsignedWord((int) state.register(rs1), (int) state.register(rs2)));
             default -> throw unexpectedOperationGroup("multiply/divide");
+        }
+    }
+
+    /// Executes floating-point arithmetic, conversion, move, compare, and classify operations.
+    private void executeFloatingPointOperation(MachineState state, long nextPc) {
+        switch (operation) {
+            case FMADD -> fusedMultiplyAdd(state, nextPc, false, false);
+            case FMSUB -> fusedMultiplyAdd(state, nextPc, false, true);
+            case FNMSUB -> fusedMultiplyAdd(state, nextPc, true, false);
+            case FNMADD -> fusedMultiplyAdd(state, nextPc, true, true);
+            case FADD -> floatingPointArithmetic(state, nextPc, '+');
+            case FSUB -> floatingPointArithmetic(state, nextPc, '-');
+            case FMUL -> floatingPointArithmetic(state, nextPc, '*');
+            case FDIV -> floatingPointArithmetic(state, nextPc, '/');
+            case FSQRT -> floatingPointSquareRoot(state, nextPc);
+            case FSGNJ -> floatingPointSignInjection(state, nextPc, SignInjectionKind.COPY);
+            case FSGNJN -> floatingPointSignInjection(state, nextPc, SignInjectionKind.NEGATE);
+            case FSGNJX -> floatingPointSignInjection(state, nextPc, SignInjectionKind.XOR);
+            case FMIN -> floatingPointMinimumMaximum(state, nextPc, true);
+            case FMAX -> floatingPointMinimumMaximum(state, nextPc, false);
+            case FCVT_S_D -> {
+                checkEffectiveRoundingMode(state);
+                writeSingleBits(state, rd, canonicalizeSingleBits((float) readDouble(state, rs1)));
+                state.setPc(nextPc);
+            }
+            case FCVT_D_S -> {
+                checkEffectiveRoundingMode(state);
+                writeDoubleBits(state, rd, canonicalizeDoubleBits(readSingle(state, rs1)));
+                state.setPc(nextPc);
+            }
+            case FEQ -> floatingPointCompare(state, nextPc, CompareKind.EQUAL);
+            case FLT -> floatingPointCompare(state, nextPc, CompareKind.LESS_THAN);
+            case FLE -> floatingPointCompare(state, nextPc, CompareKind.LESS_THAN_OR_EQUAL);
+            case FCLASS -> {
+                state.setRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
+                        ? classifySingle(readSingleBits(state, rs1))
+                        : classifyDouble(state.floatingPointRegister(rs1)));
+                state.setPc(nextPc);
+            }
+            case FCVT_INT_FP -> convertFloatingPointToInteger(state, nextPc);
+            case FCVT_FP_INT -> convertIntegerToFloatingPoint(state, nextPc);
+            case FMV_X_FP -> {
+                state.setRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
+                        ? (int) readSingleBits(state, rs1)
+                        : state.floatingPointRegister(rs1));
+                state.setPc(nextPc);
+            }
+            case FMV_FP_X -> {
+                if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+                    writeSingleBits(state, rd, (int) state.register(rs1));
+                } else {
+                    writeDoubleBits(state, rd, state.register(rs1));
+                }
+                state.setPc(nextPc);
+            }
+            default -> throw unexpectedOperationGroup("floating point");
         }
     }
 
@@ -522,6 +626,474 @@ public final class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Executes an F or D fused multiply-add operation.
+    private void fusedMultiplyAdd(MachineState state, long nextPc, boolean negateProduct, boolean subtractAddend) {
+        checkEffectiveRoundingMode(state);
+        int rs3 = thirdFloatingPointSource();
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            float left = negateProduct ? -readSingle(state, rs1) : readSingle(state, rs1);
+            float addend = readSingle(state, rs3);
+            float result = Math.fma(left, readSingle(state, rs2), subtractAddend ? -addend : addend);
+            writeSingleBits(state, rd, canonicalizeSingleBits(result));
+        } else {
+            double left = negateProduct ? -readDouble(state, rs1) : readDouble(state, rs1);
+            double addend = readDouble(state, rs3);
+            double result = Math.fma(left, readDouble(state, rs2), subtractAddend ? -addend : addend);
+            writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Executes a basic binary floating-point arithmetic operation.
+    private void floatingPointArithmetic(MachineState state, long nextPc, char operator) {
+        checkEffectiveRoundingMode(state);
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            float left = readSingle(state, rs1);
+            float right = readSingle(state, rs2);
+            if (operator == '/') {
+                updateDivideByZeroFlag(state, left, right);
+            }
+            float result = switch (operator) {
+                case '+' -> left + right;
+                case '-' -> left - right;
+                case '*' -> left * right;
+                case '/' -> left / right;
+                default -> throw unexpectedFloatingPointOperator(operator);
+            };
+            writeSingleBits(state, rd, canonicalizeSingleBits(result));
+        } else {
+            double left = readDouble(state, rs1);
+            double right = readDouble(state, rs2);
+            if (operator == '/') {
+                updateDivideByZeroFlag(state, left, right);
+            }
+            double result = switch (operator) {
+                case '+' -> left + right;
+                case '-' -> left - right;
+                case '*' -> left * right;
+                case '/' -> left / right;
+                default -> throw unexpectedFloatingPointOperator(operator);
+            };
+            writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Executes a floating-point square-root operation.
+    private void floatingPointSquareRoot(MachineState state, long nextPc) {
+        checkEffectiveRoundingMode(state);
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            float value = readSingle(state, rs1);
+            if (value < 0.0f) {
+                state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            }
+            writeSingleBits(state, rd, canonicalizeSingleBits((float) Math.sqrt(value)));
+        } else {
+            double value = readDouble(state, rs1);
+            if (value < 0.0d) {
+                state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            }
+            writeDoubleBits(state, rd, canonicalizeDoubleBits(Math.sqrt(value)));
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Executes a floating-point sign-injection operation.
+    private void floatingPointSignInjection(MachineState state, long nextPc, SignInjectionKind kind) {
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            int left = readSingleBits(state, rs1);
+            int right = readSingleBits(state, rs2);
+            int sign = switch (kind) {
+                case COPY -> right & 0x8000_0000;
+                case NEGATE -> ~right & 0x8000_0000;
+                case XOR -> (left ^ right) & 0x8000_0000;
+            };
+            writeSingleBits(state, rd, (left & 0x7fff_ffff) | sign);
+        } else {
+            long left = state.floatingPointRegister(rs1);
+            long right = state.floatingPointRegister(rs2);
+            long sign = switch (kind) {
+                case COPY -> right & Long.MIN_VALUE;
+                case NEGATE -> ~right & Long.MIN_VALUE;
+                case XOR -> (left ^ right) & Long.MIN_VALUE;
+            };
+            writeDoubleBits(state, rd, (left & Long.MAX_VALUE) | sign);
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Executes a floating-point minimum or maximum operation.
+    private void floatingPointMinimumMaximum(MachineState state, long nextPc, boolean minimum) {
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            writeSingleBits(state, rd, minimum
+                    ? minimumSingleBits(state, readSingleBits(state, rs1), readSingleBits(state, rs2))
+                    : maximumSingleBits(state, readSingleBits(state, rs1), readSingleBits(state, rs2)));
+        } else {
+            writeDoubleBits(state, rd, minimum
+                    ? minimumDoubleBits(state, state.floatingPointRegister(rs1), state.floatingPointRegister(rs2))
+                    : maximumDoubleBits(state, state.floatingPointRegister(rs1), state.floatingPointRegister(rs2)));
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Executes a floating-point comparison operation.
+    private void floatingPointCompare(MachineState state, long nextPc, CompareKind kind) {
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            int leftBits = readSingleBits(state, rs1);
+            int rightBits = readSingleBits(state, rs2);
+            float left = Float.intBitsToFloat(leftBits);
+            float right = Float.intBitsToFloat(rightBits);
+            if (Float.isNaN(left) || Float.isNaN(right)) {
+                if (kind != CompareKind.EQUAL || isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                state.setRegister(rd, 0);
+            } else {
+                state.setRegister(rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
+            }
+        } else {
+            long leftBits = state.floatingPointRegister(rs1);
+            long rightBits = state.floatingPointRegister(rs2);
+            double left = Double.longBitsToDouble(leftBits);
+            double right = Double.longBitsToDouble(rightBits);
+            if (Double.isNaN(left) || Double.isNaN(right)) {
+                if (kind != CompareKind.EQUAL || isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                state.setRegister(rd, 0);
+            } else {
+                state.setRegister(rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
+            }
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Converts a floating-point value to an integer register.
+    private void convertFloatingPointToInteger(MachineState state, long nextPc) {
+        int roundingMode = effectiveRoundingMode(state);
+        double value = floatingPointFormat() == SINGLE_FLOAT_FORMAT ? readSingle(state, rs1) : readDouble(state, rs1);
+        switch (rs2) {
+            case 0 -> state.setRegister(rd, (int) convertToSignedInteger(state, value, roundingMode, Integer.MIN_VALUE, 0x1.0p31));
+            case 1 -> state.setRegister(rd, (int) convertToUnsignedInteger(state, value, roundingMode, 0x1.0p32));
+            case 2 -> state.setRegister(rd, convertToSignedInteger(state, value, roundingMode, Long.MIN_VALUE, 0x1.0p63));
+            case 3 -> state.setRegister(rd, convertToUnsignedInteger(state, value, roundingMode, 0x1.0p64));
+            default -> throw unexpectedConversionSelector();
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Converts an integer register value to a floating-point register.
+    private void convertIntegerToFloatingPoint(MachineState state, long nextPc) {
+        checkEffectiveRoundingMode(state);
+        long value = state.register(rs1);
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            float result = switch (rs2) {
+                case 0 -> (float) (int) value;
+                case 1 -> (float) (value & 0xffff_ffffL);
+                case 2 -> (float) value;
+                case 3 -> unsignedLongToBigInteger(value).floatValue();
+                default -> throw unexpectedConversionSelector();
+            };
+            writeSingleBits(state, rd, canonicalizeSingleBits(result));
+        } else {
+            double result = switch (rs2) {
+                case 0 -> (double) (int) value;
+                case 1 -> (double) (value & 0xffff_ffffL);
+                case 2 -> (double) value;
+                case 3 -> unsignedLongToBigInteger(value).doubleValue();
+                default -> throw unexpectedConversionSelector();
+            };
+            writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
+    private static int readSingleBits(MachineState state, int register) {
+        long value = state.floatingPointRegister(register);
+        return (value & SINGLE_NAN_BOX_MASK) == SINGLE_NAN_BOX_MASK ? (int) value : CANONICAL_SINGLE_NAN;
+    }
+
+    /// Reads a single-precision register as a Java float.
+    private static float readSingle(MachineState state, int register) {
+        return Float.intBitsToFloat(readSingleBits(state, register));
+    }
+
+    /// Reads a double-precision register as a Java double.
+    private static double readDouble(MachineState state, int register) {
+        return Double.longBitsToDouble(state.floatingPointRegister(register));
+    }
+
+    /// Writes raw single-precision bits to a NaN-boxed floating-point register.
+    private static void writeSingleBits(MachineState state, int register, int bits) {
+        state.setFloatingPointRegister(register, SINGLE_NAN_BOX_MASK | (bits & 0xffff_ffffL));
+    }
+
+    /// Writes raw double-precision bits to a floating-point register.
+    private static void writeDoubleBits(MachineState state, int register, long bits) {
+        state.setFloatingPointRegister(register, bits);
+    }
+
+    /// Canonicalizes a single-precision NaN result.
+    private static int canonicalizeSingleBits(float value) {
+        return Float.isNaN(value) ? CANONICAL_SINGLE_NAN : Float.floatToRawIntBits(value);
+    }
+
+    /// Canonicalizes a double-precision NaN result.
+    private static long canonicalizeDoubleBits(double value) {
+        return Double.isNaN(value) ? CANONICAL_DOUBLE_NAN : Double.doubleToRawLongBits(value);
+    }
+
+    /// Computes RISC-V single-precision minimum bits.
+    private static int minimumSingleBits(MachineState state, int leftBits, int rightBits) {
+        if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        float left = Float.intBitsToFloat(leftBits);
+        float right = Float.intBitsToFloat(rightBits);
+        if (Float.isNaN(left) && Float.isNaN(right)) {
+            return CANONICAL_SINGLE_NAN;
+        }
+        if (Float.isNaN(left)) {
+            return rightBits;
+        }
+        if (Float.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0f && right == 0.0f) {
+            return (leftBits < 0 || rightBits < 0) ? 0x8000_0000 : 0;
+        }
+        return left <= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V single-precision maximum bits.
+    private static int maximumSingleBits(MachineState state, int leftBits, int rightBits) {
+        if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        float left = Float.intBitsToFloat(leftBits);
+        float right = Float.intBitsToFloat(rightBits);
+        if (Float.isNaN(left) && Float.isNaN(right)) {
+            return CANONICAL_SINGLE_NAN;
+        }
+        if (Float.isNaN(left)) {
+            return rightBits;
+        }
+        if (Float.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0f && right == 0.0f) {
+            return (leftBits >= 0 || rightBits >= 0) ? 0 : 0x8000_0000;
+        }
+        return left >= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V double-precision minimum bits.
+    private static long minimumDoubleBits(MachineState state, long leftBits, long rightBits) {
+        if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        if (Double.isNaN(left) && Double.isNaN(right)) {
+            return CANONICAL_DOUBLE_NAN;
+        }
+        if (Double.isNaN(left)) {
+            return rightBits;
+        }
+        if (Double.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0d && right == 0.0d) {
+            return (leftBits < 0 || rightBits < 0) ? Long.MIN_VALUE : 0;
+        }
+        return left <= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V double-precision maximum bits.
+    private static long maximumDoubleBits(MachineState state, long leftBits, long rightBits) {
+        if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        if (Double.isNaN(left) && Double.isNaN(right)) {
+            return CANONICAL_DOUBLE_NAN;
+        }
+        if (Double.isNaN(left)) {
+            return rightBits;
+        }
+        if (Double.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0d && right == 0.0d) {
+            return (leftBits >= 0 || rightBits >= 0) ? 0 : Long.MIN_VALUE;
+        }
+        return left >= right ? leftBits : rightBits;
+    }
+
+    /// Compares two finite-or-infinite floating-point values.
+    private static boolean compareFloatingPoint(double left, double right, CompareKind kind) {
+        return switch (kind) {
+            case EQUAL -> left == right;
+            case LESS_THAN -> left < right;
+            case LESS_THAN_OR_EQUAL -> left <= right;
+        };
+    }
+
+    /// Classifies raw single-precision bits.
+    private static int classifySingle(int bits) {
+        int exponent = bits & 0x7f80_0000;
+        int fraction = bits & 0x007f_ffff;
+        boolean negative = bits < 0;
+        if (exponent == 0x7f80_0000) {
+            if (fraction == 0) {
+                return negative ? 1 : 1 << 7;
+            }
+            return (fraction & 0x0040_0000) == 0 ? 1 << 8 : 1 << 9;
+        }
+        if (exponent == 0) {
+            if (fraction == 0) {
+                return negative ? 1 << 3 : 1 << 4;
+            }
+            return negative ? 1 << 2 : 1 << 5;
+        }
+        return negative ? 1 << 1 : 1 << 6;
+    }
+
+    /// Classifies raw double-precision bits.
+    private static int classifyDouble(long bits) {
+        long exponent = bits & 0x7ff0_0000_0000_0000L;
+        long fraction = bits & 0x000f_ffff_ffff_ffffL;
+        boolean negative = bits < 0;
+        if (exponent == 0x7ff0_0000_0000_0000L) {
+            if (fraction == 0) {
+                return negative ? 1 : 1 << 7;
+            }
+            return (fraction & 0x0008_0000_0000_0000L) == 0 ? 1 << 8 : 1 << 9;
+        }
+        if (exponent == 0) {
+            if (fraction == 0) {
+                return negative ? 1 << 3 : 1 << 4;
+            }
+            return negative ? 1 << 2 : 1 << 5;
+        }
+        return negative ? 1 << 1 : 1 << 6;
+    }
+
+    /// Returns true for a signaling single-precision NaN bit pattern.
+    private static boolean isSignalingSingleNaN(int bits) {
+        return (bits & 0x7f80_0000) == 0x7f80_0000
+                && (bits & 0x007f_ffff) != 0
+                && (bits & 0x0040_0000) == 0;
+    }
+
+    /// Returns true for a signaling double-precision NaN bit pattern.
+    private static boolean isSignalingDoubleNaN(long bits) {
+        return (bits & 0x7ff0_0000_0000_0000L) == 0x7ff0_0000_0000_0000L
+                && (bits & 0x000f_ffff_ffff_ffffL) != 0
+                && (bits & 0x0008_0000_0000_0000L) == 0;
+    }
+
+    /// Updates divide-by-zero flags for single-precision division.
+    private static void updateDivideByZeroFlag(MachineState state, float dividend, float divisor) {
+        if (divisor == 0.0f && !Float.isNaN(dividend) && !Float.isInfinite(dividend) && dividend != 0.0f) {
+            state.addFloatingPointFlags(FLOATING_POINT_DIVIDE_BY_ZERO);
+        }
+    }
+
+    /// Updates divide-by-zero flags for double-precision division.
+    private static void updateDivideByZeroFlag(MachineState state, double dividend, double divisor) {
+        if (divisor == 0.0d && !Double.isNaN(dividend) && !Double.isInfinite(dividend) && dividend != 0.0d) {
+            state.addFloatingPointFlags(FLOATING_POINT_DIVIDE_BY_ZERO);
+        }
+    }
+
+    /// Converts a floating-point value to a signed integer with saturation.
+    private static long convertToSignedInteger(
+            MachineState state,
+            double value,
+            int roundingMode,
+            long minimum,
+            double exclusiveUpperBound) {
+        double rounded = roundToInteger(value, roundingMode);
+        if (Double.isNaN(value) || rounded >= exclusiveUpperBound) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            return exclusiveUpperBound == 0x1.0p63 ? Long.MAX_VALUE : (long) exclusiveUpperBound - 1;
+        }
+        if (rounded < minimum) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            return minimum;
+        }
+        return (long) rounded;
+    }
+
+    /// Converts a floating-point value to an unsigned integer with saturation.
+    private static long convertToUnsignedInteger(MachineState state, double value, int roundingMode, double exclusiveUpperBound) {
+        double rounded = roundToInteger(value, roundingMode);
+        if (Double.isNaN(value) || rounded >= exclusiveUpperBound) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            return -1L;
+        }
+        if (rounded < 0.0d) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            return 0;
+        }
+        if (rounded >= 0x1.0p63) {
+            return ((long) (rounded - 0x1.0p63)) | Long.MIN_VALUE;
+        }
+        return (long) rounded;
+    }
+
+    /// Rounds a floating-point value to an integral double using an RISC-V rounding mode.
+    private static double roundToInteger(double value, int roundingMode) {
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> Math.rint(value);
+            case ROUND_TOWARD_ZERO -> value < 0.0d ? Math.ceil(value) : Math.floor(value);
+            case ROUND_DOWN -> Math.floor(value);
+            case ROUND_UP -> Math.ceil(value);
+            case ROUND_NEAREST_MAX_MAGNITUDE -> Math.copySign(Math.floor(Math.abs(value) + 0.5d), value);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Returns the effective rounding mode for this instruction.
+    private int effectiveRoundingMode(MachineState state) {
+        int roundingMode = (int) (immediate & 0x7);
+        if (roundingMode == ROUND_DYNAMIC) {
+            roundingMode = state.floatingPointRoundingMode();
+        }
+        if (roundingMode > ROUND_NEAREST_MAX_MAGNITUDE) {
+            throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        }
+        return roundingMode;
+    }
+
+    /// Validates and discards the effective rounding mode.
+    private void checkEffectiveRoundingMode(MachineState state) {
+        effectiveRoundingMode(state);
+    }
+
+    /// Returns the packed floating-point format.
+    private int floatingPointFormat() {
+        return (int) ((immediate >>> FLOATING_POINT_FORMAT_SHIFT) & 0x3);
+    }
+
+    /// Returns the packed third floating-point source register.
+    private int thirdFloatingPointSource() {
+        return (int) ((immediate >>> THIRD_FLOATING_POINT_SOURCE_SHIFT) & 0x1f);
+    }
+
+    /// Creates an assertion error for an impossible conversion selector.
+    private AssertionError unexpectedConversionSelector() {
+        return new AssertionError("Unexpected conversion selector: " + rs2);
+    }
+
+    /// Creates an assertion error for an impossible floating-point operator.
+    private AssertionError unexpectedFloatingPointOperator(char operator) {
+        return new AssertionError("Unexpected floating-point operator: " + operator);
+    }
+
     /// Computes RV64 signed division.
     private static long divideSigned(long dividend, long divisor) {
         if (divisor == 0) {
@@ -653,6 +1225,54 @@ public final class InstructionNode extends Node {
         FSW,
         /// Store 64-bit floating-point value.
         FSD,
+        /// Fused floating-point multiply-add.
+        FMADD,
+        /// Fused floating-point multiply-subtract.
+        FMSUB,
+        /// Fused negated floating-point multiply-subtract.
+        FNMSUB,
+        /// Fused negated floating-point multiply-add.
+        FNMADD,
+        /// Floating-point add.
+        FADD,
+        /// Floating-point subtract.
+        FSUB,
+        /// Floating-point multiply.
+        FMUL,
+        /// Floating-point divide.
+        FDIV,
+        /// Floating-point square root.
+        FSQRT,
+        /// Floating-point sign injection.
+        FSGNJ,
+        /// Floating-point negated sign injection.
+        FSGNJN,
+        /// Floating-point xor sign injection.
+        FSGNJX,
+        /// Floating-point minimum.
+        FMIN,
+        /// Floating-point maximum.
+        FMAX,
+        /// Convert double-precision value to single-precision value.
+        FCVT_S_D,
+        /// Convert single-precision value to double-precision value.
+        FCVT_D_S,
+        /// Floating-point equal comparison.
+        FEQ,
+        /// Floating-point less-than comparison.
+        FLT,
+        /// Floating-point less-than-or-equal comparison.
+        FLE,
+        /// Floating-point classify.
+        FCLASS,
+        /// Convert floating-point value to integer register value.
+        FCVT_INT_FP,
+        /// Convert integer register value to floating-point value.
+        FCVT_FP_INT,
+        /// Move floating-point bits to integer register.
+        FMV_X_FP,
+        /// Move integer register bits to floating-point register.
+        FMV_FP_X,
         /// Add immediate.
         ADDI,
         /// Set less than immediate signed.
@@ -822,5 +1442,27 @@ public final class InstructionNode extends Node {
         MINU,
         /// Atomic unsigned maximum.
         MAXU
+    }
+
+    /// The sign-selection variants used by floating-point sign-injection instructions.
+    @NotNullByDefault
+    private enum SignInjectionKind {
+        /// Copy the second operand sign.
+        COPY,
+        /// Copy the inverted second operand sign.
+        NEGATE,
+        /// Xor both operand signs.
+        XOR
+    }
+
+    /// The comparison variants used by floating-point compare instructions.
+    @NotNullByDefault
+    private enum CompareKind {
+        /// Equality comparison.
+        EQUAL,
+        /// Less-than comparison.
+        LESS_THAN,
+        /// Less-than-or-equal comparison.
+        LESS_THAN_OR_EQUAL
     }
 }

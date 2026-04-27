@@ -58,6 +58,11 @@ public final class RiscVDecoder {
             case 0x1b -> decodeOpImmediateWord(address, raw);
             case 0x33 -> decodeOp(address, raw);
             case 0x3b -> decodeOpWord(address, raw);
+            case 0x43 -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FMADD);
+            case 0x47 -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FMSUB);
+            case 0x4b -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FNMSUB);
+            case 0x4f -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FNMADD);
+            case 0x53 -> decodeFloatingPointOperation(address, raw);
             case 0x0f -> decodeMiscMemory(address, raw);
             case 0x73 -> decodeSystem(address, raw);
             case 0x2f -> decodeAtomic(address, raw);
@@ -142,6 +147,115 @@ public final class RiscVDecoder {
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, 0, rs1(raw), rs2(raw), storeImmediate(raw), false);
+    }
+
+    /// Decodes floating-point fused multiply-add instructions.
+    private static InstructionNode decodeFloatingPointFusedMultiplyAdd(long address, int raw, Operation operation) {
+        int format = requireFloatingPointFormat(address, raw, (raw >>> 25) & 0x3);
+        int roundingMode = requireFloatingPointRoundingMode(address, raw, funct3(raw));
+        return instruction(
+                address,
+                raw,
+                operation,
+                rd(raw),
+                rs1(raw),
+                rs2(raw),
+                floatingPointImmediate(format, roundingMode, (raw >>> 27) & 0x1f),
+                false);
+    }
+
+    /// Decodes floating-point arithmetic, conversion, move, compare, and classify instructions.
+    private static InstructionNode decodeFloatingPointOperation(long address, int raw) {
+        int funct7 = (raw >>> 25) & 0x7f;
+        int format = requireFloatingPointFormat(address, raw, funct7 & 0x1);
+        int roundingMode = funct3(raw);
+        return switch (funct7) {
+            case 0x00, 0x01 -> roundedFloatingPointInstruction(address, raw, Operation.FADD, format, roundingMode);
+            case 0x04, 0x05 -> roundedFloatingPointInstruction(address, raw, Operation.FSUB, format, roundingMode);
+            case 0x08, 0x09 -> roundedFloatingPointInstruction(address, raw, Operation.FMUL, format, roundingMode);
+            case 0x0c, 0x0d -> roundedFloatingPointInstruction(address, raw, Operation.FDIV, format, roundingMode);
+            case 0x2c, 0x2d -> {
+                if (rs2(raw) != 0) {
+                    throw illegalException(address, raw);
+                }
+                yield roundedFloatingPointInstruction(address, raw, Operation.FSQRT, format, roundingMode);
+            }
+            case 0x10, 0x11 -> {
+                Operation operation = switch (funct3(raw)) {
+                    case 0 -> Operation.FSGNJ;
+                    case 1 -> Operation.FSGNJN;
+                    case 2 -> Operation.FSGNJX;
+                    default -> throw illegalException(address, raw);
+                };
+                yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
+            }
+            case 0x14, 0x15 -> {
+                Operation operation = switch (funct3(raw)) {
+                    case 0 -> Operation.FMIN;
+                    case 1 -> Operation.FMAX;
+                    default -> throw illegalException(address, raw);
+                };
+                yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
+            }
+            case 0x20 -> {
+                if (rs2(raw) != 1) {
+                    throw illegalException(address, raw);
+                }
+                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_S_D, 0, roundingMode);
+            }
+            case 0x21 -> {
+                if (rs2(raw) != 0) {
+                    throw illegalException(address, raw);
+                }
+                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_D_S, 1, roundingMode);
+            }
+            case 0x50, 0x51 -> {
+                Operation operation = switch (funct3(raw)) {
+                    case 0 -> Operation.FLE;
+                    case 1 -> Operation.FLT;
+                    case 2 -> Operation.FEQ;
+                    default -> throw illegalException(address, raw);
+                };
+                yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
+            }
+            case 0x60, 0x61 -> {
+                requireConversionSelector(address, raw, rs2(raw));
+                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_INT_FP, format, roundingMode);
+            }
+            case 0x68, 0x69 -> {
+                requireConversionSelector(address, raw, rs2(raw));
+                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_FP_INT, format, roundingMode);
+            }
+            case 0x70, 0x71 -> {
+                if (rs2(raw) != 0) {
+                    throw illegalException(address, raw);
+                }
+                Operation operation = switch (funct3(raw)) {
+                    case 0 -> Operation.FMV_X_FP;
+                    case 1 -> Operation.FCLASS;
+                    default -> throw illegalException(address, raw);
+                };
+                yield instruction(address, raw, operation, rd(raw), rs1(raw), 0, floatingPointImmediate(format), false);
+            }
+            case 0x78, 0x79 -> {
+                if (funct3(raw) != 0 || rs2(raw) != 0) {
+                    throw illegalException(address, raw);
+                }
+                yield instruction(address, raw, Operation.FMV_FP_X, rd(raw), rs1(raw), 0, floatingPointImmediate(format), false);
+            }
+            default -> throw illegalException(address, raw);
+        };
+    }
+
+    /// Creates a rounded floating-point decoded instruction.
+    private static InstructionNode roundedFloatingPointInstruction(
+            long address,
+            int raw,
+            Operation operation,
+            int format,
+            int roundingMode) {
+        requireFloatingPointRoundingMode(address, raw, roundingMode);
+        return instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format, roundingMode), false);
     }
 
     /// Decodes integer immediate arithmetic instructions.
@@ -553,6 +667,44 @@ public final class RiscVDecoder {
     /// Extracts the funct3 field.
     private static int funct3(int raw) {
         return (raw >>> 12) & 0x7;
+    }
+
+    /// Validates an F or D floating-point format field.
+    private static int requireFloatingPointFormat(long address, int raw, int format) {
+        if (format == 0 || format == 1) {
+            return format;
+        }
+        throw illegalException(address, raw);
+    }
+
+    /// Validates a static floating-point rounding mode field.
+    private static int requireFloatingPointRoundingMode(long address, int raw, int roundingMode) {
+        if (roundingMode <= 4 || roundingMode == 7) {
+            return roundingMode;
+        }
+        throw illegalException(address, raw);
+    }
+
+    /// Validates an integer/floating-point conversion selector.
+    private static void requireConversionSelector(long address, int raw, int selector) {
+        if (selector > 3) {
+            throw illegalException(address, raw);
+        }
+    }
+
+    /// Packs a floating-point format with the default rounding-mode slot.
+    private static long floatingPointImmediate(int format) {
+        return floatingPointImmediate(format, 0);
+    }
+
+    /// Packs a floating-point format and rounding mode.
+    private static long floatingPointImmediate(int format, int roundingMode) {
+        return ((long) format << 3) | roundingMode;
+    }
+
+    /// Packs a floating-point format, rounding mode, and third source register.
+    private static long floatingPointImmediate(int format, int roundingMode, int thirdSource) {
+        return floatingPointImmediate(format, roundingMode) | ((long) thirdSource << 5);
     }
 
     /// Maps a compressed register field to its full register index.

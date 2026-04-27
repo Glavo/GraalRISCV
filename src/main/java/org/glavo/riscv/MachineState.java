@@ -201,6 +201,16 @@ public final class MachineState {
         }
     }
 
+    /// Returns the current floating-point dynamic rounding mode.
+    public int floatingPointRoundingMode() {
+        return (floatingPointControlStatus >>> 5) & FRM_MASK;
+    }
+
+    /// ORs floating-point exception flags into `fflags`.
+    public void addFloatingPointFlags(int flags) {
+        floatingPointControlStatus |= flags & FFLAGS_MASK;
+    }
+
     /// Records one guest instruction retirement and enforces the instruction budget.
     public void beforeInstruction(long address, int raw) {
         if (maxInstructions > 0 && instructionCount >= maxInstructions) {
