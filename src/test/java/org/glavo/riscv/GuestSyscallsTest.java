@@ -15,10 +15,14 @@ import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// Tests guest syscall behavior directly against architectural state.
 @NotNullByDefault
@@ -95,6 +99,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
+
+    /// The Linux RISC-V syscall number for `clock_gettime`.
+    private static final long SYS_CLOCK_GETTIME = 113;
 
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
@@ -206,6 +213,15 @@ public final class GuestSyscallsTest {
 
     /// Linux `MAP_FIXED_NOREPLACE`.
     private static final long MAP_FIXED_NOREPLACE = 0x100000;
+
+    /// Linux `CLOCK_REALTIME`.
+    private static final long CLOCK_REALTIME = 0;
+
+    /// Linux `CLOCK_MONOTONIC`.
+    private static final long CLOCK_MONOTONIC = 1;
+
+    /// Linux `CLOCK_BOOTTIME`.
+    private static final long CLOCK_BOOTTIME = 7;
 
     /// Verifies that stdin EOF is reported as a zero-byte read.
     @Test
@@ -711,6 +727,74 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that `clock_gettime` uses host clocks by default.
+    @Test
+    public void clockGettimeUsesHostTimeByDefault() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long timespecAddress = memory.baseAddress() + 64;
+
+            long beforeMillis = System.currentTimeMillis();
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long afterMillis = System.currentTimeMillis();
+
+            assertEquals(0, state.register(10));
+            long realtimeSeconds = memory.readLong(timespecAddress);
+            long realtimeNanoseconds = memory.readLong(timespecAddress + Long.BYTES);
+            assertTrue(realtimeNanoseconds >= 0);
+            assertTrue(realtimeNanoseconds < 1_000_000_000L);
+            long realtimeMillis = realtimeSeconds * 1000L + realtimeNanoseconds / 1_000_000L;
+            assertTrue(realtimeMillis >= beforeMillis - 1000L);
+            assertTrue(realtimeMillis <= afterMillis + 1000L);
+
+            memory.writeLong(timespecAddress, -1);
+            memory.writeLong(timespecAddress + Long.BYTES, -1);
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_MONOTONIC, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(memory.readLong(timespecAddress) >= 0);
+            assertTrue(memory.readLong(timespecAddress + Long.BYTES) >= 0);
+            assertTrue(memory.readLong(timespecAddress + Long.BYTES) < 1_000_000_000L);
+        }
+    }
+
+    /// Verifies that a configured fixed clock makes `clock_gettime` deterministic.
+    @Test
+    public void clockGettimeUsesConfiguredClock() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            Clock fixedClock = Clock.fixed(
+                    Instant.ofEpochSecond(1_700_000_000L, 123_456_789L),
+                    ZoneOffset.UTC);
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            long timespecAddress = memory.baseAddress() + 64;
+
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1_700_000_000L, memory.readLong(timespecAddress));
+            assertEquals(123_456_789L, memory.readLong(timespecAddress + Long.BYTES));
+
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_MONOTONIC, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(timespecAddress));
+            assertEquals(0, memory.readLong(timespecAddress + Long.BYTES));
+
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_BOOTTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(timespecAddress));
+            assertEquals(0, memory.readLong(timespecAddress + Long.BYTES));
+
+            memory.writeLong(timespecAddress, -1);
+            setSyscall(state, SYS_CLOCK_GETTIME, 99, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+            assertEquals(-1, memory.readLong(timespecAddress));
+        }
+    }
+
     /// Verifies deterministic `getrandom` bytes and flag validation.
     @Test
     public void getrandomFillsDeterministicBytes() {
@@ -1037,6 +1121,18 @@ public final class GuestSyscallsTest {
         return state(memory, in, new ByteArrayOutputStream(), new ByteArrayOutputStream(), memory.baseAddress());
     }
 
+    /// Creates test machine state with a configured guest clock.
+    private static MachineState state(Memory memory, ByteArrayInputStream in, Clock clock) {
+        return state(
+                memory,
+                in,
+                new ByteArrayOutputStream(),
+                new ByteArrayOutputStream(),
+                memory.baseAddress(),
+                Path.of("."),
+                clock);
+    }
+
     /// Creates test machine state with a syscall handler.
     private static MachineState state(
             Memory memory,
@@ -1055,7 +1151,26 @@ public final class GuestSyscallsTest {
             OutputStream err,
             long initialProgramBreak,
             Path hostRoot) {
-        GuestSyscalls syscalls = new GuestSyscalls(memory, in, out, err, initialProgramBreak, testTruffleFile(hostRoot));
+        return state(memory, in, out, err, initialProgramBreak, hostRoot, Clock.systemUTC());
+    }
+
+    /// Creates test machine state with a syscall handler, host file root, and guest clock.
+    private static MachineState state(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            Path hostRoot,
+            Clock clock) {
+        GuestSyscalls syscalls = new GuestSyscalls(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                testTruffleFile(hostRoot),
+                clock);
         return new MachineState(
                 memory,
                 0,

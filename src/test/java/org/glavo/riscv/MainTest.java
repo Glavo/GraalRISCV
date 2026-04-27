@@ -257,6 +257,29 @@ public final class MainTest {
         assertTrue(diagnostics.contains("pc=0x80000008 raw=0x"));
     }
 
+    /// Verifies that the CLI debug clock option is exposed to guest `clock_gettime`.
+    @Test
+    public void usesDebugFixedClockNanosOption() throws Exception {
+        Path elfPath = tempDirectory.resolve("clock.elf");
+        Files.write(elfPath, ElfTestImages.executable(clockRealtimeExitCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--debug-fixed-clock-nanos", "42000000123",
+                        "--max-instructions", "1000",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(42, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
     private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
@@ -272,6 +295,21 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put(message);
+        return code.array();
+    }
+
+    /// Builds a program that exits with the `CLOCK_REALTIME` seconds value.
+    private static byte[] clockRealtimeExitCode() {
+        int timespecOffset = Integer.BYTES * 8;
+        ByteBuffer code = ByteBuffer.allocate(timespecOffset + Long.BYTES * 2).order(ByteOrder.LITTLE_ENDIAN);
+        ElfTestImages.putInt(code, ElfTestImages.auipc(11, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 11, timespecOffset));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 113));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.iType(0x03, 10, 3, 11, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
         return code.array();
     }
 

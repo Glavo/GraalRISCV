@@ -10,6 +10,10 @@ import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
 import org.jetbrains.annotations.NotNullByDefault;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+
 /// Registers the RISC-V ELF simulator as a Truffle language.
 @TruffleLanguage.Registration(
         id = RiscVLanguage.ID,
@@ -31,6 +35,12 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
 
     /// The sentinel value that asks the runtime to infer the memory base from ELF load segments.
     public static final long AUTO_MEMORY_BASE = -1L;
+
+    /// The sentinel `riscv.debugFixedClockNanos` value that asks the runtime to use the host clock.
+    public static final long HOST_CLOCK_NANOS = -1L;
+
+    /// The number of nanoseconds in one second.
+    private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
 
     /// The `riscv.memoryBase` language option.
     @Option(
@@ -64,6 +74,14 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             stability = OptionStability.STABLE)
     static final OptionKey<Boolean> TRACE = new OptionKey<>(false);
 
+    /// The `riscv.debugFixedClockNanos` language option.
+    @Option(
+            name = "debugFixedClockNanos",
+            help = "Fixed epoch nanoseconds for the guest clock used by clock_gettime. Use -1 to use the host clock. Default: -1.",
+            category = OptionCategory.EXPERT,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> DEBUG_FIXED_CLOCK_NANOS = new OptionKey<>(HOST_CLOCK_NANOS);
+
     /// The `riscv.hostRoot` language option.
     @Option(
             name = "hostRoot",
@@ -85,7 +103,25 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(MEMORY_SIZE),
                 env.getOptions().get(MAX_INSTRUCTIONS),
                 env.getOptions().get(TRACE),
+                clockFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),
                 env.getOptions().get(HOST_ROOT));
+    }
+
+    /// Creates the guest clock from the fixed-clock debug option.
+    static Clock clockFromDebugFixedClockNanos(long debugFixedClockNanos) {
+        if (debugFixedClockNanos == HOST_CLOCK_NANOS) {
+            return Clock.systemUTC();
+        }
+        if (debugFixedClockNanos < HOST_CLOCK_NANOS) {
+            throw new RiscVException("riscv.debugFixedClockNanos must be non-negative or -1 for host clocks: "
+                    + debugFixedClockNanos);
+        }
+
+        return Clock.fixed(
+                Instant.ofEpochSecond(
+                        debugFixedClockNanos / NANOSECONDS_PER_SECOND,
+                        debugFixedClockNanos % NANOSECONDS_PER_SECOND),
+                ZoneOffset.UTC);
     }
 
     /// Parses an ELF byte source into a root call target.

@@ -31,6 +31,8 @@ public final class Main {
               --memory-size <bytes>      Guest memory size in bytes.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --host-root <path>         Host directory exposed to sandboxed guest file syscalls.
+              --debug-fixed-clock-nanos <nanos>
+                                          Fixed epoch nanoseconds for deterministic guest time.
               --trace                    Print guest instruction trace lines.
               -h, --help                 Print this help message.
             """;
@@ -109,6 +111,9 @@ public final class Main {
         if (options.maxInstructions() != null) {
             builder.option("riscv.maxInstructions", options.maxInstructions());
         }
+        if (options.debugFixedClockNanos() != null) {
+            builder.option("riscv.debugFixedClockNanos", options.debugFixedClockNanos());
+        }
         builder.option("riscv.hostRoot", options.hostRoot().toString());
         if (options.trace()) {
             builder.option("riscv.trace", "true");
@@ -129,6 +134,7 @@ public final class Main {
         @Nullable String memoryBase = null;
         @Nullable String memorySize = null;
         @Nullable String maxInstructions = null;
+        @Nullable String debugFixedClockNanos = null;
         @Nullable Path hostRoot = null;
         boolean trace = false;
         @Nullable Path programPath = null;
@@ -191,6 +197,20 @@ public final class Main {
                 }
                 continue;
             }
+            if (parseOptions && "--debug-fixed-clock-nanos".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --debug-fixed-clock-nanos.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                debugFixedClockNanos = parseLongOption("--debug-fixed-clock-nanos", args[index], err);
+                if (debugFixedClockNanos == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
             if (parseOptions && "--host-root".equals(argument)) {
                 index++;
                 if (index >= args.length) {
@@ -224,7 +244,15 @@ public final class Main {
         }
 
         Path resolvedHostRoot = hostRoot != null ? hostRoot : defaultHostRoot(programPath);
-        return CliOptions.execute(programPath, programArguments, memoryBase, memorySize, maxInstructions, resolvedHostRoot, trace);
+        return CliOptions.execute(
+                programPath,
+                programArguments,
+                memoryBase,
+                memorySize,
+                maxInstructions,
+                debugFixedClockNanos,
+                resolvedHostRoot,
+                trace);
     }
 
     /// Parses a signed long option and returns its normalized decimal string value.
@@ -310,6 +338,9 @@ public final class Main {
             /// The optional maximum instruction count option value.
             @Nullable String maxInstructions,
 
+            /// The optional fixed debug `clock_gettime` nanosecond option value.
+            @Nullable String debugFixedClockNanos,
+
             /// The host directory exposed through sandboxed guest file syscalls.
             Path hostRoot,
 
@@ -328,12 +359,30 @@ public final class Main {
 
         /// Creates options for printing help.
         static CliOptions help() {
-            return new CliOptions(CliMode.HELP, Path.of("."), new String[0], null, null, null, Path.of("."), false);
+            return new CliOptions(
+                    CliMode.HELP,
+                    Path.of("."),
+                    new String[0],
+                    null,
+                    null,
+                    null,
+                    null,
+                    Path.of("."),
+                    false);
         }
 
         /// Creates options for a usage error.
         static CliOptions error() {
-            return new CliOptions(CliMode.ERROR, Path.of("."), new String[0], null, null, null, Path.of("."), false);
+            return new CliOptions(
+                    CliMode.ERROR,
+                    Path.of("."),
+                    new String[0],
+                    null,
+                    null,
+                    null,
+                    null,
+                    Path.of("."),
+                    false);
         }
 
         /// Creates options for executing a guest ELF program.
@@ -343,6 +392,7 @@ public final class Main {
                 @Nullable String memoryBase,
                 @Nullable String memorySize,
                 @Nullable String maxInstructions,
+                @Nullable String debugFixedClockNanos,
                 Path hostRoot,
                 boolean trace) {
             return new CliOptions(
@@ -352,6 +402,7 @@ public final class Main {
                     memoryBase,
                     memorySize,
                     maxInstructions,
+                    debugFixedClockNanos,
                     hostRoot,
                     trace);
         }

@@ -4,6 +4,8 @@ import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
+import java.time.Clock;
+
 /// Stores per-context simulator configuration derived from Truffle language options.
 @NotNullByDefault
 public final class RiscVContext {
@@ -22,6 +24,9 @@ public final class RiscVContext {
     /// Whether guest instruction tracing is enabled.
     private final boolean trace;
 
+    /// The clock exposed to guest time syscalls.
+    private final Clock clock;
+
     /// The configured host directory exposed through sandboxed guest file syscalls.
     private final String hostRoot;
 
@@ -35,6 +40,7 @@ public final class RiscVContext {
             long memorySize,
             long maxInstructions,
             boolean trace,
+            Clock clock,
             String hostRoot) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
@@ -60,6 +66,7 @@ public final class RiscVContext {
         this.memorySize = memorySize;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
+        this.clock = clock;
         this.hostRoot = hostRoot;
         this.programArguments = env.getApplicationArguments().clone();
     }
@@ -87,6 +94,11 @@ public final class RiscVContext {
     /// Returns whether guest instruction tracing is enabled.
     public boolean trace() {
         return trace;
+    }
+
+    /// Returns the clock exposed to guest time syscalls.
+    public Clock clock() {
+        return clock;
     }
 
     /// Returns the configured host directory exposed through sandboxed guest file syscalls.

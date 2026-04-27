@@ -13,6 +13,9 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.InvalidPathException;
 import java.nio.file.StandardOpenOption;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.Set;
@@ -61,6 +64,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
+
+    /// The Linux RISC-V syscall number for `clock_gettime`.
+    private static final long SYS_CLOCK_GETTIME = 113;
 
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
@@ -230,6 +236,36 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The byte size of the minimal CPU affinity mask exposed to the guest.
     private static final long MINIMUM_CPU_AFFINITY_MASK_SIZE = Long.BYTES;
 
+    /// Linux `CLOCK_REALTIME`.
+    private static final long CLOCK_REALTIME = 0;
+
+    /// Linux `CLOCK_MONOTONIC`.
+    private static final long CLOCK_MONOTONIC = 1;
+
+    /// Linux `CLOCK_PROCESS_CPUTIME_ID`.
+    private static final long CLOCK_PROCESS_CPUTIME_ID = 2;
+
+    /// Linux `CLOCK_THREAD_CPUTIME_ID`.
+    private static final long CLOCK_THREAD_CPUTIME_ID = 3;
+
+    /// Linux `CLOCK_MONOTONIC_RAW`.
+    private static final long CLOCK_MONOTONIC_RAW = 4;
+
+    /// Linux `CLOCK_REALTIME_COARSE`.
+    private static final long CLOCK_REALTIME_COARSE = 5;
+
+    /// Linux `CLOCK_MONOTONIC_COARSE`.
+    private static final long CLOCK_MONOTONIC_COARSE = 6;
+
+    /// Linux `CLOCK_BOOTTIME`.
+    private static final long CLOCK_BOOTTIME = 7;
+
+    /// The `tv_sec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
+    private static final int TIMESPEC_SECONDS_OFFSET = 0;
+
+    /// The `tv_nsec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
+    private static final int TIMESPEC_NANOSECONDS_OFFSET = Long.BYTES;
+
     /// The lowest regular Linux signal number accepted by signal syscalls.
     private static final long MIN_SIGNAL_NUMBER = 1;
 
@@ -341,6 +377,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The next deterministic random state used by `getrandom`.
     private long randomState = RANDOM_SEED;
 
+    /// The clock exposed to guest time syscalls.
+    private final Clock clock;
+
+    /// The guest clock instant captured when the syscall handler was created.
+    private final Instant clockStartInstant;
+
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
     public GuestSyscalls(
             Memory memory,
@@ -348,7 +390,7 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
-        this(memory, in, out, err, initialProgramBreak, null);
+        this(memory, in, out, err, initialProgramBreak, null, null, null, Clock.systemUTC());
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and resolved host file root.
@@ -359,20 +401,19 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream err,
             long initialProgramBreak,
             @Nullable TruffleFile hostRoot) {
-        if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
-            throw new RiscVException("Initial program break is outside guest memory: address=0x"
-                    + Long.toUnsignedString(initialProgramBreak, 16));
-        }
+        this(memory, in, out, err, initialProgramBreak, hostRoot, Clock.systemUTC());
+    }
 
-        this.memory = memory;
-        this.in = in;
-        this.out = out;
-        this.err = err;
-        this.env = null;
-        this.hostRootPath = null;
-        this.hostRoot = hostRoot == null ? null : hostRoot.getAbsoluteFile().normalize();
-        this.initialProgramBreak = initialProgramBreak;
-        this.programBreak = initialProgramBreak;
+    /// Creates a syscall handler backed by the supplied streams, resolved host file root, and guest clock.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            @Nullable TruffleFile hostRoot,
+            Clock clock) {
+        this(memory, in, out, err, initialProgramBreak, hostRoot, null, null, clock);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy host file root.
@@ -384,6 +425,33 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             TruffleLanguage.Env env,
             String hostRootPath) {
+        this(memory, in, out, err, initialProgramBreak, env, hostRootPath, Clock.systemUTC());
+    }
+
+    /// Creates a syscall handler backed by the supplied streams, lazy host file root, and guest clock.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            TruffleLanguage.Env env,
+            String hostRootPath,
+            Clock clock) {
+        this(memory, in, out, err, initialProgramBreak, null, env, hostRootPath, clock);
+    }
+
+    /// Creates a syscall handler with either an eager or lazy TruffleFile host root.
+    private GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            @Nullable TruffleFile hostRoot,
+            @Nullable TruffleLanguage.Env env,
+            @Nullable String hostRootPath,
+            Clock clock) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
                     + Long.toUnsignedString(initialProgramBreak, 16));
@@ -395,9 +463,11 @@ public final class GuestSyscalls implements AutoCloseable {
         this.err = err;
         this.env = env;
         this.hostRootPath = hostRootPath;
-        this.hostRoot = null;
+        this.hostRoot = hostRoot == null ? null : hostRoot.getAbsoluteFile().normalize();
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
+        this.clock = clock;
+        this.clockStartInstant = clock.instant();
     }
 
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
@@ -456,6 +526,10 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_SET_ROBUST_LIST) {
             state.setRegister(10, setRobustList(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_CLOCK_GETTIME) {
+            state.setRegister(10, clockGettime(state.register(10), state.register(11)));
             return;
         }
         if (callNumber == SYS_SCHED_GETAFFINITY) {
@@ -957,6 +1031,55 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.clear(cpuSetAddress, cpuSetSize);
         memory.writeLong(cpuSetAddress, 1);
         return 0;
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct timespec` for common clock ids.
+    private long clockGettime(long clockId, long timespecAddress) {
+        if (!isSupportedClock(clockId)) {
+            return EINVAL;
+        }
+
+        if (isRealtimeClock(clockId)) {
+            writeTimespecFromInstant(timespecAddress, clock.instant());
+        } else {
+            writeTimespecFromDuration(timespecAddress, Duration.between(clockStartInstant, clock.instant()));
+        }
+        return 0;
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct timespec` from a clock instant.
+    private void writeTimespecFromInstant(long timespecAddress, Instant instant) {
+        memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, instant.getEpochSecond());
+        memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, instant.getNano());
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct timespec` from a non-negative elapsed duration.
+    private void writeTimespecFromDuration(long timespecAddress, Duration duration) {
+        if (duration.isNegative()) {
+            memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, 0);
+            memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, 0);
+            return;
+        }
+
+        memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, duration.getSeconds());
+        memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, duration.getNano());
+    }
+
+    /// Returns true when `clock_gettime` accepts the supplied Linux clock id.
+    private static boolean isSupportedClock(long clockId) {
+        return clockId == CLOCK_REALTIME
+                || clockId == CLOCK_MONOTONIC
+                || clockId == CLOCK_PROCESS_CPUTIME_ID
+                || clockId == CLOCK_THREAD_CPUTIME_ID
+                || clockId == CLOCK_MONOTONIC_RAW
+                || clockId == CLOCK_REALTIME_COARSE
+                || clockId == CLOCK_MONOTONIC_COARSE
+                || clockId == CLOCK_BOOTTIME;
+    }
+
+    /// Returns true when the Linux clock id represents a wall-clock source.
+    private static boolean isRealtimeClock(long clockId) {
+        return clockId == CLOCK_REALTIME || clockId == CLOCK_REALTIME_COARSE;
     }
 
     /// Accepts signal action setup for a guest that never delivers host signals.
