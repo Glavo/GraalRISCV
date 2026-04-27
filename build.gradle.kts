@@ -58,6 +58,10 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     timeout.set(Duration.ofMinutes(10))
+    systemProperty("java.io.tmpdir", layout.buildDirectory.dir("tmp/test-temp").get().asFile.absolutePath)
+    doFirst {
+        layout.buildDirectory.dir("tmp/test-temp").get().asFile.mkdirs()
+    }
 }
 
 apply(from = "gradle/hello-world-example.gradle.kts")

@@ -1,9 +1,11 @@
 package org.glavo.riscv;
 
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 /// Builds small in-memory RISC-V ELF images for tests.
 @NotNullByDefault
@@ -11,8 +13,23 @@ public final class ElfTestImages {
     /// The test image load address.
     public static final long BASE_ADDRESS = Memory.DEFAULT_BASE_ADDRESS;
 
-    /// The offset of the single loadable segment in the generated ELF file.
-    private static final int PROGRAM_OFFSET = 0x100;
+    /// The first file offset available for generated loadable segment contents.
+    public static final int PROGRAM_OFFSET = 0x1000;
+
+    /// The byte offset of the ELF program header table in generated images.
+    public static final int PROGRAM_HEADER_OFFSET = 64;
+
+    /// The size in bytes of one generated ELF64 program header.
+    public static final int PROGRAM_HEADER_SIZE = 56;
+
+    /// The size in bytes of one generated ELF64 section header.
+    public static final int SECTION_HEADER_SIZE = 64;
+
+    /// The default generated `PT_LOAD` segment flags.
+    public static final int DEFAULT_LOAD_FLAGS = 7;
+
+    /// The default generated `PT_LOAD` segment alignment.
+    public static final long DEFAULT_LOAD_ALIGNMENT = 0x1000;
 
     /// Prevents construction of this utility class.
     private ElfTestImages() {
@@ -34,7 +51,26 @@ public final class ElfTestImages {
 
     /// Creates an ELF64 executable containing one loadable segment at the supplied guest address.
     public static byte[] executable(long segmentVirtualAddress, long entryPoint, byte[] segmentContents) {
-        byte[] bytes = new byte[PROGRAM_OFFSET + segmentContents.length];
+        return executableWithSegments(
+                entryPoint,
+                new TestLoadSegment(
+                        segmentVirtualAddress,
+                        segmentContents.length,
+                        DEFAULT_LOAD_FLAGS,
+                        DEFAULT_LOAD_ALIGNMENT,
+                        segmentContents));
+    }
+
+    /// Creates an ELF64 executable containing the supplied loadable segments.
+    public static byte[] executableWithSegments(long entryPoint, TestLoadSegment... segments) {
+        int[] offsets = new int[segments.length];
+        int fileSize = PROGRAM_OFFSET;
+        for (int index = 0; index < segments.length; index++) {
+            offsets[index] = fileSize;
+            fileSize = alignUp(fileSize + segments[index].contents().length, PROGRAM_OFFSET);
+        }
+
+        byte[] bytes = new byte[fileSize];
         ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
 
         buffer.put((byte) 0x7f);
@@ -55,23 +91,44 @@ public final class ElfTestImages {
         buffer.putInt(0);
         buffer.putShort((short) 64);
         buffer.putShort((short) 56);
-        buffer.putShort((short) 1);
+        buffer.putShort((short) segments.length);
         buffer.putShort((short) 64);
         buffer.putShort((short) 0);
         buffer.putShort((short) 0);
 
-        buffer.position(64);
-        buffer.putInt(1);
-        buffer.putInt(7);
-        buffer.putLong(PROGRAM_OFFSET);
-        buffer.putLong(segmentVirtualAddress);
-        buffer.putLong(segmentVirtualAddress);
-        buffer.putLong(segmentContents.length);
-        buffer.putLong(segmentContents.length);
-        buffer.putLong(0x1000);
+        for (int index = 0; index < segments.length; index++) {
+            TestLoadSegment segment = segments[index];
+            buffer.position(PROGRAM_HEADER_OFFSET + (index * PROGRAM_HEADER_SIZE));
+            buffer.putInt(1);
+            buffer.putInt(segment.flags());
+            buffer.putLong(offsets[index]);
+            buffer.putLong(segment.virtualAddress());
+            buffer.putLong(segment.virtualAddress());
+            buffer.putLong(segment.contents().length);
+            buffer.putLong(segment.memorySize());
+            buffer.putLong(segment.alignment());
 
-        buffer.position(PROGRAM_OFFSET);
-        buffer.put(segmentContents);
+            buffer.position(offsets[index]);
+            buffer.put(segment.contents());
+        }
+        return bytes;
+    }
+
+    /// Creates an ELF64 executable with one section header of the supplied type.
+    public static byte[] executableWithSectionType(int sectionType) {
+        byte[] executable = executable(ecall());
+        int sectionHeaderOffset = alignUp(executable.length, Long.BYTES);
+        byte[] bytes = Arrays.copyOf(executable, sectionHeaderOffset + SECTION_HEADER_SIZE);
+        ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+
+        buffer.putLong(40, sectionHeaderOffset);
+        buffer.putShort(58, (short) SECTION_HEADER_SIZE);
+        buffer.putShort(60, (short) 1);
+        buffer.putShort(62, (short) 0);
+
+        buffer.position(sectionHeaderOffset);
+        buffer.putInt(0);
+        buffer.putInt(sectionType);
         return bytes;
     }
 
@@ -123,5 +180,42 @@ public final class ElfTestImages {
     /// Writes a little-endian 32-bit instruction into a code buffer.
     public static void putInt(ByteBuffer buffer, int value) {
         buffer.putInt(value);
+    }
+
+    /// Aligns the supplied value up to the requested power-of-two alignment.
+    private static int alignUp(int value, int alignment) {
+        return (value + alignment - 1) & -alignment;
+    }
+
+    /// Describes one generated `PT_LOAD` test segment.
+    @NotNullByDefault
+    public record TestLoadSegment(
+            /// The guest virtual address where the segment starts.
+            long virtualAddress,
+
+            /// The total guest memory size of the segment.
+            long memorySize,
+
+            /// The ELF `p_flags` value.
+            int flags,
+
+            /// The ELF `p_align` value.
+            long alignment,
+
+            /// The bytes present in the ELF file for this segment.
+            byte @Unmodifiable [] contents) {
+        /// Creates a generated `PT_LOAD` segment.
+        public TestLoadSegment {
+            if (memorySize < contents.length) {
+                throw new IllegalArgumentException("Segment memory size is smaller than file size");
+            }
+            contents = contents.clone();
+        }
+
+        /// Returns a copy of the segment contents.
+        @Override
+        public byte @Unmodifiable [] contents() {
+            return contents.clone();
+        }
     }
 }

@@ -9,10 +9,8 @@
 
 ### 2. Harden ELF loading and diagnostics
 
-- Expand ELF loader tests for segment alignment, overlapping `PT_LOAD` ranges, non-readable or non-executable flags, unsupported dynamic sections, and relocation sections.
-- Improve diagnostics for common linker layout mistakes, especially images whose load address falls outside the selected guest memory range.
+- Improve diagnostics for common runtime memory layout mistakes, especially images whose load address falls outside the selected guest memory range.
 - Preserve the current `jelf`-based parser unless a specific compatibility or maintenance issue proves it inadequate.
-- Document supported ELF constraints: ELF64, little-endian, `EM_RISCV`, executable `PT_LOAD` images, no dynamic linking, and no runtime relocations.
 
 ### 3. Strengthen syscall and host I/O behavior
 

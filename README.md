@@ -46,6 +46,16 @@ The `ioctl` support is limited to the tty queries `TCGETS` and `TIOCGWINSZ`.
 The `getrandom` implementation returns deterministic pseudo-random bytes for reproducible runs.
 Unsupported `ecall` failures include the syscall number, program counter, and argument registers.
 
+## Supported ELF Inputs
+
+The loader accepts ELF64 little-endian RISC-V executable files with statically resolved `PT_LOAD`
+segments. Loadable segments must have valid file ranges, power-of-two `p_align` values, ELF
+address/offset alignment congruence, readable permissions, and non-overlapping guest memory ranges.
+The entry point must be inside an executable `PT_LOAD` segment.
+
+Dynamic linking and runtime relocation processing are not supported. Inputs with `PT_DYNAMIC`,
+`SHT_DYNAMIC`, `SHT_REL`, or `SHT_RELA` metadata are rejected during loading.
+
 ## Build The C Hello World Example
 
 Gradle downloads the configured Zig toolchain and uses `zig cc` to build the RISC-V ELF:
