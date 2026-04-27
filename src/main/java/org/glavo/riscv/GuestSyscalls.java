@@ -40,8 +40,23 @@ public final class GuestSyscalls {
     /// The Linux RISC-V syscall number for `exit_group`.
     private static final long SYS_EXIT_GROUP = 94;
 
+    /// The Linux RISC-V syscall number for `set_tid_address`.
+    private static final long SYS_SET_TID_ADDRESS = 96;
+
+    /// The Linux RISC-V syscall number for `set_robust_list`.
+    private static final long SYS_SET_ROBUST_LIST = 99;
+
+    /// The Linux RISC-V syscall number for `getpid`.
+    private static final long SYS_GETPID = 172;
+
+    /// The Linux RISC-V syscall number for `gettid`.
+    private static final long SYS_GETTID = 178;
+
     /// The Linux RISC-V syscall number for `brk`.
     private static final long SYS_BRK = 214;
+
+    /// The Linux RISC-V syscall number for `getrandom`.
+    private static final long SYS_GETRANDOM = 278;
 
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
@@ -112,6 +127,21 @@ public final class GuestSyscalls {
     /// The block size exposed for standard streams.
     private static final int STANDARD_STREAM_BLOCK_SIZE = 4096;
 
+    /// The fixed guest process id returned by process identity syscalls.
+    private static final long GUEST_PROCESS_ID = 1;
+
+    /// The non-cryptographic seed used for deterministic `getrandom` bytes.
+    private static final long RANDOM_SEED = 0x4752_4953_4356_0001L;
+
+    /// Linux `GRND_NONBLOCK`; accepted because simulator randomness never blocks.
+    private static final long GRND_NONBLOCK = 0x0001;
+
+    /// Linux `GRND_RANDOM`; accepted and mapped to the same deterministic source.
+    private static final long GRND_RANDOM = 0x0002;
+
+    /// The supported Linux `getrandom` flags mask.
+    private static final long GETRANDOM_SUPPORTED_FLAGS = GRND_NONBLOCK | GRND_RANDOM;
+
     /// The guest memory accessed by syscall buffers.
     private final Memory memory;
 
@@ -129,6 +159,18 @@ public final class GuestSyscalls {
 
     /// The current guest program break returned by `brk`.
     private long programBreak;
+
+    /// The address supplied by `set_tid_address`, or zero when unset.
+    private long clearChildTidAddress;
+
+    /// The robust futex list head address supplied by `set_robust_list`.
+    private long robustListHeadAddress;
+
+    /// The robust futex list structure length supplied by `set_robust_list`.
+    private long robustListLength;
+
+    /// The next deterministic random state used by `getrandom`.
+    private long randomState = RANDOM_SEED;
 
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
     public GuestSyscalls(
@@ -188,8 +230,24 @@ public final class GuestSyscalls {
         if (callNumber == SYS_EXIT || callNumber == SYS_EXIT_GROUP) {
             throw new ProgramExitException(state.register(10));
         }
+        if (callNumber == SYS_SET_TID_ADDRESS) {
+            state.setRegister(10, setTidAddress(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_SET_ROBUST_LIST) {
+            state.setRegister(10, setRobustList(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_GETPID || callNumber == SYS_GETTID) {
+            state.setRegister(10, GUEST_PROCESS_ID);
+            return;
+        }
         if (callNumber == SYS_BRK) {
             state.setRegister(10, brk(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_GETRANDOM) {
+            state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
             return;
         }
         throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
@@ -390,6 +448,22 @@ public final class GuestSyscalls {
         return ENOTTY;
     }
 
+    /// Stores the guest clear-child-TID pointer and returns the fixed guest thread id.
+    private long setTidAddress(long address) {
+        clearChildTidAddress = address;
+        return GUEST_PROCESS_ID;
+    }
+
+    /// Accepts a single-threaded robust futex list registration.
+    private long setRobustList(long headAddress, long length) {
+        if (length < 0) {
+            return EINVAL;
+        }
+        robustListHeadAddress = headAddress;
+        robustListLength = length;
+        return 0;
+    }
+
     /// Implements the Linux `brk` syscall within the simulator memory window.
     private long brk(long requestedAddress) {
         if (requestedAddress == 0) {
@@ -399,6 +473,35 @@ public final class GuestSyscalls {
             programBreak = requestedAddress;
         }
         return programBreak;
+    }
+
+    /// Fills a guest buffer with deterministic bytes for the Linux `getrandom` syscall.
+    private long getrandom(long address, long length, long flags) {
+        if ((flags & ~GETRANDOM_SUPPORTED_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (length < 0) {
+            return EINVAL;
+        }
+        if (length > Integer.MAX_VALUE) {
+            throw new RiscVException("Guest getrandom syscall buffer is too large: " + length);
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        byte[] bytes = new byte[(int) length];
+        for (int index = 0; index < bytes.length; index++) {
+            bytes[index] = nextRandomByte();
+        }
+        memory.writeBytes(address, bytes, 0, bytes.length);
+        return bytes.length;
+    }
+
+    /// Returns the next deterministic pseudo-random byte.
+    private byte nextRandomByte() {
+        randomState = randomState * 6364136223846793005L + 1442695040888963407L;
+        return (byte) (randomState >>> 56);
     }
 
     /// Returns the host output stream mapped to a guest file descriptor.

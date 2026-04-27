@@ -37,9 +37,11 @@ Options:
   -h, --help                 Print this help message.
 ```
 
-The simulator currently supports the Linux RISC-V ABI calls `read`, `write`, `readv`, `writev`, `close`,
-`fstat`, `lseek`, `ioctl`, `exit`, `exit_group`, and `brk`.
+The simulator currently supports the Linux RISC-V ABI calls `read`, `write`, `readv`, `writev`,
+`close`, `fstat`, `lseek`, `ioctl`, `exit`, `exit_group`, `set_tid_address`,
+`set_robust_list`, `getpid`, `gettid`, `brk`, and `getrandom`.
 The `ioctl` support is limited to the tty queries `TCGETS` and `TIOCGWINSZ`.
+The `getrandom` implementation returns deterministic pseudo-random bytes for reproducible runs.
 Unsupported `ecall` failures include the syscall number, program counter, and argument registers.
 
 ## Build The C Hello World Example

@@ -56,8 +56,23 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `fstat`.
     private static final long SYS_FSTAT = 80;
 
+    /// The Linux RISC-V syscall number for `set_tid_address`.
+    private static final long SYS_SET_TID_ADDRESS = 96;
+
+    /// The Linux RISC-V syscall number for `set_robust_list`.
+    private static final long SYS_SET_ROBUST_LIST = 99;
+
+    /// The Linux RISC-V syscall number for `getpid`.
+    private static final long SYS_GETPID = 172;
+
+    /// The Linux RISC-V syscall number for `gettid`.
+    private static final long SYS_GETTID = 178;
+
     /// The Linux RISC-V syscall number for `brk`.
     private static final long SYS_BRK = 214;
+
+    /// The Linux RISC-V syscall number for `getrandom`.
+    private static final long SYS_GETRANDOM = 278;
 
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
@@ -289,6 +304,74 @@ public final class GuestSyscallsTest {
             assertArrayEquals("AB".getBytes(StandardCharsets.UTF_8), memory.readBytes(firstBuffer, 2));
             assertEquals('C', memory.readUnsignedByte(secondBuffer));
             assertEquals('Z', memory.readUnsignedByte(secondBuffer + 1));
+        }
+    }
+
+    /// Verifies stable process identity syscalls for the single-process simulator.
+    @Test
+    public void processIdentitySyscallsReturnStableIds() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_GETPID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_GETTID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_SET_TID_ADDRESS, memory.baseAddress() + 32, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+        }
+    }
+
+    /// Verifies that robust futex list registration is accepted for single-threaded guests.
+    @Test
+    public void setRobustListAcceptsNonNegativeLength() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_SET_ROBUST_LIST, memory.baseAddress() + 64, 24, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SET_ROBUST_LIST, memory.baseAddress() + 64, -1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies deterministic `getrandom` bytes and flag validation.
+    @Test
+    public void getrandomFillsDeterministicBytes() {
+        byte[] firstBytes;
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 3);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(8, state.register(10));
+            firstBytes = memory.readBytes(memory.baseAddress(), 8);
+
+            setSyscall(state, SYS_GETRANDOM, memory.endAddress() + 128, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 1, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertArrayEquals(firstBytes, memory.readBytes(memory.baseAddress(), 8));
         }
     }
 
