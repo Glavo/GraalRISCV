@@ -65,39 +65,39 @@ public sealed abstract class InstructionNode extends Node {
 
     /// The guest address of this instruction.
     @CompilationFinal
-    private final long address;
+    protected final long address;
 
     /// The original 16-bit or 32-bit instruction bits.
     @CompilationFinal
-    private final int raw;
+    protected final int raw;
 
     /// The instruction length in bytes.
     @CompilationFinal
-    private final int length;
+    protected final int length;
 
     /// The decoded operation.
     @CompilationFinal
-    private final Operation operation;
+    protected final Operation operation;
 
     /// The destination register index, or zero when unused.
     @CompilationFinal
-    private final int rd;
+    protected final int rd;
 
     /// The first source register index, or zero when unused.
     @CompilationFinal
-    private final int rs1;
+    protected final int rs1;
 
     /// The second source register index, or zero when unused.
     @CompilationFinal
-    private final int rs2;
+    protected final int rs2;
 
     /// The decoded immediate or operation-specific small integer.
     @CompilationFinal
-    private final long immediate;
+    protected final long immediate;
 
     /// Whether this instruction ends the current basic block.
     @CompilationFinal
-    private final boolean terminator;
+    protected final boolean terminator;
 
     /// Creates a decoded instruction node.
     protected InstructionNode(
@@ -133,22 +133,62 @@ public sealed abstract class InstructionNode extends Node {
             long immediate,
             boolean terminator) {
         return switch (operation) {
-            case NOP, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU, FENCE, FENCE_I,
-                    ECALL, EBREAK, CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
+            case NOP, FENCE, FENCE_I ->
+                    new AdvancePcInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LUI -> new LuiInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case AUIPC -> new AuipcInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case JAL -> new JalInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case JALR -> new JalrInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case BEQ -> new BeqInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case BNE -> new BneInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case BLT -> new BltInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case BGE -> new BgeInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case BLTU -> new BltuInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case BGEU -> new BgeuInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case ECALL -> new EcallInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case EBREAK -> new EbreakInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
                     new ControlInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case LB, LH, LW, LD, LBU, LHU, LWU ->
-                    new LoadInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LB -> new LbInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LH -> new LhInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LW -> new LwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LD -> new LdInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LBU -> new LbuInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LHU -> new LhuInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LWU -> new LwuInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FLW, FLD ->
                     new FloatingPointLoadInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case SB, SH, SW, SD ->
-                    new StoreInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SB -> new SbInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SH -> new ShInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SW -> new SwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SD -> new SdInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FSW, FSD ->
                     new FloatingPointStoreInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI, ADDIW, SLLIW, SRLIW, SRAIW ->
+            case ADDI -> new AddiInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case XORI -> new XoriInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case ORI -> new OriInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case ANDI -> new AndiInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLLI -> new SlliInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRLI -> new SrliInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRAI -> new SraiInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case ADDIW -> new AddiwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLTI, SLTIU, SLLIW, SRLIW, SRAIW ->
                     new ImmediateIntegerInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, ADDW, SUBW, SLLW, SRLW, SRAW ->
+            case ADD -> new AddInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SUB -> new SubInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case XOR -> new XorInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case OR -> new OrInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case AND -> new AndInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLL -> new SllInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRL -> new SrlInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRA -> new SraInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case ADDW -> new AddwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SUBW -> new SubwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLT, SLTU, SLLW, SRLW, SRAW ->
                     new RegisterIntegerInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, MULW, DIVW, DIVUW, REMW, REMUW ->
+            case MUL -> new MulInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case MULW -> new MulwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, DIVW, DIVUW, REMW, REMUW ->
                     new MultiplyDivideInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
                     FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
@@ -179,6 +219,688 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Executes the operation-specific instruction body.
     protected abstract void executeInstruction(MachineState state, long nextPc);
+
+    /// Base class for decoded instructions with direct operation bodies.
+    private abstract static sealed class DirectInstructionNode extends InstructionNode {
+        /// Creates a direct decoded instruction node.
+        private DirectInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+    }
+
+    /// Advances the program counter for no-op control instructions.
+    private static final class AdvancePcInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded no-op instruction node.
+        private AdvancePcInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Advances the program counter.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `lui`.
+    private static final class LuiInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `lui` instruction node.
+        private LuiInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Writes the upper immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `auipc`.
+    private static final class AuipcInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `auipc` instruction node.
+        private AuipcInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Writes the PC-relative upper immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, address + immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `jal`.
+    private static final class JalInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `jal` instruction node.
+        private JalInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Writes the link register and jumps to the PC-relative target.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, nextPc);
+            state.setPc(address + immediate);
+        }
+    }
+
+    /// Executes `jalr`.
+    private static final class JalrInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `jalr` instruction node.
+        private JalrInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Writes the link register and jumps to the register-relative target.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            long target = (state.register(rs1) + immediate) & ~1L;
+            state.setRegister(rd, nextPc);
+            state.setPc(target);
+        }
+    }
+
+    /// Executes `beq`.
+    private static final class BeqInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `beq` instruction node.
+        private BeqInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Branches when both source registers are equal.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setPc(state.register(rs1) == state.register(rs2) ? address + immediate : nextPc);
+        }
+    }
+
+    /// Executes `bne`.
+    private static final class BneInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `bne` instruction node.
+        private BneInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Branches when both source registers differ.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setPc(state.register(rs1) != state.register(rs2) ? address + immediate : nextPc);
+        }
+    }
+
+    /// Executes `blt`.
+    private static final class BltInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `blt` instruction node.
+        private BltInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Branches when the first source register is signed-less-than the second.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setPc(state.register(rs1) < state.register(rs2) ? address + immediate : nextPc);
+        }
+    }
+
+    /// Executes `bge`.
+    private static final class BgeInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `bge` instruction node.
+        private BgeInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Branches when the first source register is signed-greater-or-equal to the second.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setPc(state.register(rs1) >= state.register(rs2) ? address + immediate : nextPc);
+        }
+    }
+
+    /// Executes `bltu`.
+    private static final class BltuInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `bltu` instruction node.
+        private BltuInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Branches when the first source register is unsigned-less-than the second.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setPc(Long.compareUnsigned(state.register(rs1), state.register(rs2)) < 0 ? address + immediate : nextPc);
+        }
+    }
+
+    /// Executes `bgeu`.
+    private static final class BgeuInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `bgeu` instruction node.
+        private BgeuInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Branches when the first source register is unsigned-greater-or-equal to the second.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setPc(Long.compareUnsigned(state.register(rs1), state.register(rs2)) >= 0 ? address + immediate : nextPc);
+        }
+    }
+
+    /// Executes `ecall`.
+    private static final class EcallInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `ecall` instruction node.
+        private EcallInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Dispatches the environment call through the syscall handler.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.syscalls().handle(state, address);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `ebreak`.
+    private static final class EbreakInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `ebreak` instruction node.
+        private EbreakInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Terminates the program with a zero exit status.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            throw new ProgramExitException(0);
+        }
+    }
+
+    /// Executes `addi`.
+    private static final class AddiInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `addi` instruction node.
+        private AddiInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Adds a sign-extended immediate to a register.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) + immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `xori`.
+    private static final class XoriInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `xori` instruction node.
+        private XoriInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Xors a register with a sign-extended immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) ^ immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `ori`.
+    private static final class OriInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `ori` instruction node.
+        private OriInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Ors a register with a sign-extended immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) | immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `andi`.
+    private static final class AndiInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `andi` instruction node.
+        private AndiInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Ands a register with a sign-extended immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) & immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `slli`.
+    private static final class SlliInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `slli` instruction node.
+        private SlliInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a register left by the decoded immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) << immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `srli`.
+    private static final class SrliInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `srli` instruction node.
+        private SrliInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a register right logically by the decoded immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) >>> immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `srai`.
+    private static final class SraiInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `srai` instruction node.
+        private SraiInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a register right arithmetically by the decoded immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) >> immediate);
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `addiw`.
+    private static final class AddiwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `addiw` instruction node.
+        private AddiwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Adds an immediate in word width and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, (int) (state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `add`.
+    private static final class AddInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `add` instruction node.
+        private AddInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Adds two source registers.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) + state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `sub`.
+    private static final class SubInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sub` instruction node.
+        private SubInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Subtracts the second source register from the first.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) - state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `xor`.
+    private static final class XorInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `xor` instruction node.
+        private XorInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Xors two source registers.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) ^ state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `or`.
+    private static final class OrInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `or` instruction node.
+        private OrInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Ors two source registers.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) | state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `and`.
+    private static final class AndInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `and` instruction node.
+        private AndInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Ands two source registers.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) & state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `sll`.
+    private static final class SllInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sll` instruction node.
+        private SllInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts the first source register left by the masked second source register.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) << (state.register(rs2) & 0x3f));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `srl`.
+    private static final class SrlInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `srl` instruction node.
+        private SrlInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts the first source register right logically by the masked second source register.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) >>> (state.register(rs2) & 0x3f));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `sra`.
+    private static final class SraInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sra` instruction node.
+        private SraInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts the first source register right arithmetically by the masked second source register.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) >> (state.register(rs2) & 0x3f));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `addw`.
+    private static final class AddwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `addw` instruction node.
+        private AddwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Adds two source registers in word width and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, (int) state.register(rs1) + (int) state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `subw`.
+    private static final class SubwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `subw` instruction node.
+        private SubwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Subtracts two source registers in word width and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, (int) state.register(rs1) - (int) state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `mul`.
+    private static final class MulInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `mul` instruction node.
+        private MulInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Multiplies two source registers and keeps the low 64 bits.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.register(rs1) * state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `mulw`.
+    private static final class MulwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `mulw` instruction node.
+        private MulwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Multiplies two source registers in word width and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, (int) state.register(rs1) * (int) state.register(rs2));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `lb`.
+    private static final class LbInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `lb` instruction node.
+        private LbInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Loads a sign-extended byte.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.memory().readByte(state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `lh`.
+    private static final class LhInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `lh` instruction node.
+        private LhInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Loads a sign-extended halfword.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.memory().readShort(state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `lw`.
+    private static final class LwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `lw` instruction node.
+        private LwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Loads a sign-extended word.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.memory().readInt(state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `ld`.
+    private static final class LdInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `ld` instruction node.
+        private LdInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Loads a doubleword.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.memory().readLong(state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `lbu`.
+    private static final class LbuInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `lbu` instruction node.
+        private LbuInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Loads a zero-extended byte.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.memory().readUnsignedByte(state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `lhu`.
+    private static final class LhuInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `lhu` instruction node.
+        private LhuInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Loads a zero-extended halfword.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.memory().readUnsignedShort(state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `lwu`.
+    private static final class LwuInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `lwu` instruction node.
+        private LwuInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Loads a zero-extended word.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setRegister(rd, state.memory().readUnsignedInt(state.register(rs1) + immediate));
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `sb`.
+    private static final class SbInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sb` instruction node.
+        private SbInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Stores a byte.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            long storeAddress = state.register(rs1) + immediate;
+            state.memory().writeByte(storeAddress, (byte) state.register(rs2));
+            state.afterStore(storeAddress, Byte.BYTES);
+            state.clearReservation();
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `sh`.
+    private static final class ShInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sh` instruction node.
+        private ShInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Stores a halfword.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            long storeAddress = state.register(rs1) + immediate;
+            state.memory().writeShort(storeAddress, (short) state.register(rs2));
+            state.afterStore(storeAddress, Short.BYTES);
+            state.clearReservation();
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `sw`.
+    private static final class SwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sw` instruction node.
+        private SwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Stores a word.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            long storeAddress = state.register(rs1) + immediate;
+            state.memory().writeInt(storeAddress, (int) state.register(rs2));
+            state.afterStore(storeAddress, Integer.BYTES);
+            state.clearReservation();
+            state.setPc(nextPc);
+        }
+    }
+
+    /// Executes `sd`.
+    private static final class SdInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sd` instruction node.
+        private SdInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Stores a doubleword.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            long storeAddress = state.register(rs1) + immediate;
+            state.memory().writeLong(storeAddress, state.register(rs2));
+            state.afterStore(storeAddress, Long.BYTES);
+            state.clearReservation();
+            state.setPc(nextPc);
+        }
+    }
 
     /// Executes control-flow and system operations as a specialized instruction node.
     private static final class ControlInstructionNode extends InstructionNode {
