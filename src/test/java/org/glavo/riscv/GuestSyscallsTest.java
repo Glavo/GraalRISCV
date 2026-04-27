@@ -142,6 +142,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `madvise`.
     private static final long SYS_MADVISE = 233;
 
+    /// The Linux RISC-V syscall number for `riscv_hwprobe`.
+    private static final long SYS_RISCV_HWPROBE = 258;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -210,6 +213,60 @@ public final class GuestSyscallsTest {
 
     /// The guest page size used by `mmap` and `munmap`.
     private static final long PAGE_SIZE = 4096;
+
+    /// The byte size of Linux `struct riscv_hwprobe`.
+    private static final long RISCV_HWPROBE_PAIR_SIZE = 16;
+
+    /// The byte offset of `key` inside `struct riscv_hwprobe`.
+    private static final long RISCV_HWPROBE_KEY_OFFSET = 0;
+
+    /// The byte offset of `value` inside `struct riscv_hwprobe`.
+    private static final long RISCV_HWPROBE_VALUE_OFFSET = Long.BYTES;
+
+    /// Linux `RISCV_HWPROBE_WHICH_CPUS`.
+    private static final long RISCV_HWPROBE_WHICH_CPUS = 1;
+
+    /// Linux `RISCV_HWPROBE_KEY_MVENDORID`.
+    private static final long RISCV_HWPROBE_KEY_MVENDORID = 0;
+
+    /// Linux `RISCV_HWPROBE_KEY_BASE_BEHAVIOR`.
+    private static final long RISCV_HWPROBE_KEY_BASE_BEHAVIOR = 3;
+
+    /// Linux `RISCV_HWPROBE_BASE_BEHAVIOR_IMA`.
+    private static final long RISCV_HWPROBE_BASE_BEHAVIOR_IMA = 1;
+
+    /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0`.
+    private static final long RISCV_HWPROBE_KEY_IMA_EXT_0 = 4;
+
+    /// Linux `RISCV_HWPROBE_IMA_FD`.
+    private static final long RISCV_HWPROBE_IMA_FD = 1;
+
+    /// Linux `RISCV_HWPROBE_IMA_C`.
+    private static final long RISCV_HWPROBE_IMA_C = 1 << 1;
+
+    /// Linux `RISCV_HWPROBE_IMA_V`.
+    private static final long RISCV_HWPROBE_IMA_V = 1 << 2;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZICNTR`.
+    private static final long RISCV_HWPROBE_EXT_ZICNTR = 1L << 50;
+
+    /// Linux `RISCV_HWPROBE_KEY_CPUPERF_0`.
+    private static final long RISCV_HWPROBE_KEY_CPUPERF_0 = 5;
+
+    /// Linux `RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS`.
+    private static final long RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS = 7;
+
+    /// Linux `RISCV_HWPROBE_KEY_TIME_CSR_FREQ`.
+    private static final long RISCV_HWPROBE_KEY_TIME_CSR_FREQ = 8;
+
+    /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF`.
+    private static final long RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF = 9;
+
+    /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF`.
+    private static final long RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF = 10;
+
+    /// Linux `RISCV_HWPROBE_MISALIGNED_UNSUPPORTED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_UNSUPPORTED = 4;
 
     /// Linux `PROT_NONE`.
     private static final long PROT_NONE = 0x0;
@@ -862,6 +919,78 @@ public final class GuestSyscallsTest {
             assertEquals(0, memory.readUnsignedByte(maskAddress + Long.BYTES));
 
             setSyscall(state, SYS_SCHED_GETAFFINITY, 0, Long.BYTES - 1, maskAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies deterministic RISC-V hardware probe values for the simulated CPU.
+    @Test
+    public void riscvHwprobeReportsSupportedCapabilities() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pairsAddress = memory.baseAddress() + 64;
+
+            writeHwprobeKey(memory, pairsAddress, 0, RISCV_HWPROBE_KEY_MVENDORID);
+            writeHwprobeKey(memory, pairsAddress, 1, RISCV_HWPROBE_KEY_BASE_BEHAVIOR);
+            writeHwprobeKey(memory, pairsAddress, 2, RISCV_HWPROBE_KEY_IMA_EXT_0);
+            writeHwprobeKey(memory, pairsAddress, 3, RISCV_HWPROBE_KEY_CPUPERF_0);
+            writeHwprobeKey(memory, pairsAddress, 4, RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS);
+            writeHwprobeKey(memory, pairsAddress, 5, RISCV_HWPROBE_KEY_TIME_CSR_FREQ);
+            writeHwprobeKey(memory, pairsAddress, 6, RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF);
+            writeHwprobeKey(memory, pairsAddress, 7, RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF);
+            writeHwprobeKey(memory, pairsAddress, 8, 99);
+
+            setSyscall(state, SYS_RISCV_HWPROBE, pairsAddress, 9, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(0, state.register(10));
+            assertEquals(0, readHwprobeValue(memory, pairsAddress, 0));
+            assertEquals(RISCV_HWPROBE_BASE_BEHAVIOR_IMA, readHwprobeValue(memory, pairsAddress, 1));
+            assertEquals(
+                    RISCV_HWPROBE_IMA_FD | RISCV_HWPROBE_IMA_C | RISCV_HWPROBE_EXT_ZICNTR,
+                    readHwprobeValue(memory, pairsAddress, 2));
+            assertEquals(RISCV_HWPROBE_MISALIGNED_UNSUPPORTED, readHwprobeValue(memory, pairsAddress, 3));
+            assertEquals(Long.MAX_VALUE, readHwprobeValue(memory, pairsAddress, 4));
+            assertEquals(1_000_000_000L, readHwprobeValue(memory, pairsAddress, 5));
+            assertEquals(RISCV_HWPROBE_MISALIGNED_UNSUPPORTED, readHwprobeValue(memory, pairsAddress, 6));
+            assertEquals(RISCV_HWPROBE_MISALIGNED_UNSUPPORTED, readHwprobeValue(memory, pairsAddress, 7));
+            assertEquals(-1, readHwprobeKey(memory, pairsAddress, 8));
+            assertEquals(0, readHwprobeValue(memory, pairsAddress, 8));
+        }
+    }
+
+    /// Verifies `riscv_hwprobe` validation and single-CPU filtering behavior.
+    @Test
+    public void riscvHwprobeFiltersWhichCpus() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pairsAddress = memory.baseAddress() + 64;
+            long cpuSetAddress = memory.baseAddress() + 256;
+
+            writeHwprobePair(
+                    memory,
+                    pairsAddress,
+                    0,
+                    RISCV_HWPROBE_KEY_BASE_BEHAVIOR,
+                    RISCV_HWPROBE_BASE_BEHAVIOR_IMA);
+            setSyscall(state, SYS_RISCV_HWPROBE, pairsAddress, 1, Long.BYTES, cpuSetAddress, RISCV_HWPROBE_WHICH_CPUS, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1, memory.readUnsignedByte(cpuSetAddress));
+
+            memory.writeByte(cpuSetAddress, (byte) 1);
+            writeHwprobePair(memory, pairsAddress, 0, RISCV_HWPROBE_KEY_IMA_EXT_0, RISCV_HWPROBE_IMA_V);
+            setSyscall(state, SYS_RISCV_HWPROBE, pairsAddress, 1, Long.BYTES, cpuSetAddress, RISCV_HWPROBE_WHICH_CPUS, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readUnsignedByte(cpuSetAddress));
+
+            setSyscall(state, SYS_RISCV_HWPROBE, pairsAddress, 1, 0, 0, RISCV_HWPROBE_WHICH_CPUS, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RISCV_HWPROBE, pairsAddress, 1, 0, 0, 2, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
         }
@@ -1617,6 +1746,28 @@ public final class GuestSyscallsTest {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         memory.writeBytes(address, bytes, 0, bytes.length);
         memory.writeByte(address + bytes.length, (byte) 0);
+    }
+
+    /// Writes a `struct riscv_hwprobe` key with a zero value.
+    private static void writeHwprobeKey(Memory memory, long pairsAddress, int index, long key) {
+        writeHwprobePair(memory, pairsAddress, index, key, 0);
+    }
+
+    /// Writes one `struct riscv_hwprobe` pair into guest memory.
+    private static void writeHwprobePair(Memory memory, long pairsAddress, int index, long key, long value) {
+        long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
+        memory.writeLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET, key);
+        memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, value);
+    }
+
+    /// Reads a `struct riscv_hwprobe` key from guest memory.
+    private static long readHwprobeKey(Memory memory, long pairsAddress, int index) {
+        return memory.readLong(pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE + RISCV_HWPROBE_KEY_OFFSET);
+    }
+
+    /// Reads a `struct riscv_hwprobe` value from guest memory.
+    private static long readHwprobeValue(Memory memory, long pairsAddress, int index) {
+        return memory.readLong(pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE + RISCV_HWPROBE_VALUE_OFFSET);
     }
 
     /// Populates the syscall number and the first three argument registers.

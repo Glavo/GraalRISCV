@@ -104,6 +104,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `madvise`.
     private static final long SYS_MADVISE = 233;
 
+    /// The Linux RISC-V syscall number for `riscv_hwprobe`.
+    private static final long SYS_RISCV_HWPROBE = 258;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -319,6 +322,85 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of the minimal CPU affinity mask exposed to the guest.
     private static final long MINIMUM_CPU_AFFINITY_MASK_SIZE = Long.BYTES;
+
+    /// The byte size of Linux `struct riscv_hwprobe`.
+    private static final long RISCV_HWPROBE_PAIR_SIZE = 16;
+
+    /// The byte offset of `key` inside `struct riscv_hwprobe`.
+    private static final long RISCV_HWPROBE_KEY_OFFSET = 0;
+
+    /// The byte offset of `value` inside `struct riscv_hwprobe`.
+    private static final long RISCV_HWPROBE_VALUE_OFFSET = Long.BYTES;
+
+    /// Linux `RISCV_HWPROBE_WHICH_CPUS`.
+    private static final long RISCV_HWPROBE_WHICH_CPUS = 1;
+
+    /// Linux `RISCV_HWPROBE_KEY_MVENDORID`.
+    private static final long RISCV_HWPROBE_KEY_MVENDORID = 0;
+
+    /// Linux `RISCV_HWPROBE_KEY_MARCHID`.
+    private static final long RISCV_HWPROBE_KEY_MARCHID = 1;
+
+    /// Linux `RISCV_HWPROBE_KEY_MIMPID`.
+    private static final long RISCV_HWPROBE_KEY_MIMPID = 2;
+
+    /// Linux `RISCV_HWPROBE_KEY_BASE_BEHAVIOR`.
+    private static final long RISCV_HWPROBE_KEY_BASE_BEHAVIOR = 3;
+
+    /// Linux `RISCV_HWPROBE_BASE_BEHAVIOR_IMA`.
+    private static final long RISCV_HWPROBE_BASE_BEHAVIOR_IMA = 1;
+
+    /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0`.
+    private static final long RISCV_HWPROBE_KEY_IMA_EXT_0 = 4;
+
+    /// Linux `RISCV_HWPROBE_IMA_FD`.
+    private static final long RISCV_HWPROBE_IMA_FD = 1;
+
+    /// Linux `RISCV_HWPROBE_IMA_C`.
+    private static final long RISCV_HWPROBE_IMA_C = 1 << 1;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZICNTR`.
+    private static final long RISCV_HWPROBE_EXT_ZICNTR = 1L << 50;
+
+    /// Linux `RISCV_HWPROBE_KEY_CPUPERF_0`.
+    private static final long RISCV_HWPROBE_KEY_CPUPERF_0 = 5;
+
+    /// Linux `RISCV_HWPROBE_MISALIGNED_UNSUPPORTED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_UNSUPPORTED = 4;
+
+    /// Linux `RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE`.
+    private static final long RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE = 6;
+
+    /// Linux `RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS`.
+    private static final long RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS = 7;
+
+    /// Linux `RISCV_HWPROBE_KEY_TIME_CSR_FREQ`.
+    private static final long RISCV_HWPROBE_KEY_TIME_CSR_FREQ = 8;
+
+    /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF`.
+    private static final long RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF = 9;
+
+    /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF`.
+    private static final long RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF = 10;
+
+    /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0`.
+    private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0 = 11;
+
+    /// Linux `RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE`.
+    private static final long RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE = 12;
+
+    /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0`.
+    private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0 = 13;
+
+    /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0`.
+    private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0 = 14;
+
+    /// Linux `RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE`.
+    private static final long RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE = 15;
+
+    /// The extension bits reported through `RISCV_HWPROBE_KEY_IMA_EXT_0`.
+    private static final long RISCV_HWPROBE_IMA_EXTENSIONS =
+            RISCV_HWPROBE_IMA_FD | RISCV_HWPROBE_IMA_C | RISCV_HWPROBE_EXT_ZICNTR;
 
     /// Linux `CLOCK_REALTIME`.
     private static final long CLOCK_REALTIME = 0;
@@ -769,6 +851,15 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_MADVISE) {
             state.setRegister(10, madvise(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_RISCV_HWPROBE) {
+            state.setRegister(10, riscvHwprobe(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             return;
         }
         if (callNumber == SYS_GETRANDOM) {
@@ -1258,6 +1349,131 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.clear(cpuSetAddress, cpuSetSize);
         memory.writeLong(cpuSetAddress, 1);
         return 0;
+    }
+
+    /// Reports deterministic RISC-V hardware probe values for the single simulated CPU.
+    private long riscvHwprobe(long pairsAddress, long pairCount, long cpuSetSize, long cpuSetAddress, long flags) {
+        if (pairCount < 0
+                || pairCount > Integer.MAX_VALUE
+                || (flags & ~RISCV_HWPROBE_WHICH_CPUS) != 0
+                || pairCount > Long.MAX_VALUE / RISCV_HWPROBE_PAIR_SIZE
+                || (cpuSetAddress == 0 && cpuSetSize != 0)
+                || (cpuSetAddress != 0 && cpuSetSize <= 0)) {
+            return EINVAL;
+        }
+
+        if ((flags & RISCV_HWPROBE_WHICH_CPUS) == 0) {
+            if (cpuSetAddress != 0 && !cpuSetContainsGuestCpu(cpuSetAddress)) {
+                return EINVAL;
+            }
+            populateHwprobePairs(pairsAddress, pairCount);
+            return 0;
+        }
+
+        if (cpuSetAddress == 0) {
+            return EINVAL;
+        }
+
+        boolean selected = cpuSetContainsGuestCpu(cpuSetAddress) || cpuSetIsEmpty(cpuSetAddress, cpuSetSize);
+        boolean matches = selected && hwprobePairsMatch(pairsAddress, pairCount);
+        memory.clear(cpuSetAddress, cpuSetSize);
+        if (matches) {
+            memory.writeByte(cpuSetAddress, (byte) 1);
+        }
+        return 0;
+    }
+
+    /// Writes values for all requested RISC-V hardware probe pairs.
+    private void populateHwprobePairs(long pairsAddress, long pairCount) {
+        for (long index = 0; index < pairCount; index++) {
+            long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
+            long key = memory.readLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET);
+            if (isSupportedHwprobeKey(key)) {
+                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, hwprobeValue(key));
+            } else {
+                memory.writeLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET, -1);
+                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, 0);
+            }
+        }
+    }
+
+    /// Returns true when all supplied RISC-V hardware probe constraints match the simulated CPU.
+    private boolean hwprobePairsMatch(long pairsAddress, long pairCount) {
+        boolean matches = true;
+        for (long index = 0; index < pairCount; index++) {
+            long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
+            long key = memory.readLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET);
+            long requestedValue = memory.readLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET);
+            if (!isSupportedHwprobeKey(key)) {
+                memory.writeLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET, -1);
+                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, 0);
+                matches = false;
+                continue;
+            }
+
+            long actualValue = hwprobeValue(key);
+            if (isHwprobeBitmaskKey(key)) {
+                if ((actualValue & requestedValue) != requestedValue) {
+                    matches = false;
+                }
+            } else if (actualValue != requestedValue) {
+                matches = false;
+            }
+        }
+        return matches;
+    }
+
+    /// Returns true when a hardware probe key is supported by this simulator.
+    private static boolean isSupportedHwprobeKey(long key) {
+        return key >= RISCV_HWPROBE_KEY_MVENDORID && key <= RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE;
+    }
+
+    /// Returns the deterministic value for a supported RISC-V hardware probe key.
+    private static long hwprobeValue(long key) {
+        return switch ((int) key) {
+            case (int) RISCV_HWPROBE_KEY_MVENDORID,
+                    (int) RISCV_HWPROBE_KEY_MARCHID,
+                    (int) RISCV_HWPROBE_KEY_MIMPID,
+                    (int) RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE,
+                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0,
+                    (int) RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE,
+                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0,
+                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0,
+                    (int) RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE -> 0;
+            case (int) RISCV_HWPROBE_KEY_BASE_BEHAVIOR -> RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
+            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> RISCV_HWPROBE_IMA_EXTENSIONS;
+            case (int) RISCV_HWPROBE_KEY_CPUPERF_0,
+                    (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF,
+                    (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_UNSUPPORTED;
+            case (int) RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS -> Long.MAX_VALUE;
+            case (int) RISCV_HWPROBE_KEY_TIME_CSR_FREQ -> NANOSECONDS_PER_SECOND;
+            default -> throw new AssertionError("validated RISC-V hardware probe key");
+        };
+    }
+
+    /// Returns true when a hardware probe key uses bitmask matching.
+    private static boolean isHwprobeBitmaskKey(long key) {
+        return key == RISCV_HWPROBE_KEY_BASE_BEHAVIOR
+                || key == RISCV_HWPROBE_KEY_IMA_EXT_0
+                || key == RISCV_HWPROBE_KEY_CPUPERF_0
+                || key == RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0
+                || key == RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0
+                || key == RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0;
+    }
+
+    /// Returns true when the supplied CPU set contains the simulator's only CPU.
+    private boolean cpuSetContainsGuestCpu(long cpuSetAddress) {
+        return (memory.readUnsignedByte(cpuSetAddress) & 1) != 0;
+    }
+
+    /// Returns true when all bytes in a guest CPU set are zero.
+    private boolean cpuSetIsEmpty(long cpuSetAddress, long cpuSetSize) {
+        for (long index = 0; index < cpuSetSize; index++) {
+            if (memory.readUnsignedByte(cpuSetAddress + index) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timespec` for common clock ids.
