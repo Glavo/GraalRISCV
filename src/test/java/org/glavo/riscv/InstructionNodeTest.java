@@ -90,7 +90,7 @@ public final class InstructionNodeTest {
                 state.setRegister(LEFT_REGISTER, leftValue);
                 state.setRegister(RIGHT_REGISTER, rightValue);
 
-                InstructionNode instruction = new InstructionNode(
+                InstructionNode instruction = InstructionNode.create(
                         TEST_PC,
                         0,
                         Integer.BYTES,

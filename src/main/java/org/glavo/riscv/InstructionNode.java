@@ -6,9 +6,9 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.math.BigInteger;
 
-/// Executes one decoded RV64GC guest instruction subset.
+/// Base class for one decoded RV64GC guest instruction node.
 @NotNullByDefault
-public final class InstructionNode extends Node {
+public sealed abstract class InstructionNode extends Node {
     /// The immediate bit offset used for the packed floating-point format field.
     private static final int FLOATING_POINT_FORMAT_SHIFT = 3;
 
@@ -100,7 +100,7 @@ public final class InstructionNode extends Node {
     private final boolean terminator;
 
     /// Creates a decoded instruction node.
-    public InstructionNode(
+    protected InstructionNode(
             long address,
             int raw,
             int length,
@@ -121,6 +121,46 @@ public final class InstructionNode extends Node {
         this.terminator = terminator;
     }
 
+    /// Creates a decoded instruction node using the specialized node class for the operation group.
+    public static InstructionNode create(
+            long address,
+            int raw,
+            int length,
+            Operation operation,
+            int rd,
+            int rs1,
+            int rs2,
+            long immediate,
+            boolean terminator) {
+        return switch (operation) {
+            case NOP, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU, FENCE, FENCE_I,
+                    ECALL, EBREAK, CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
+                    new ControlInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LB, LH, LW, LD, LBU, LHU, LWU ->
+                    new LoadInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case FLW, FLD ->
+                    new FloatingPointLoadInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SB, SH, SW, SD ->
+                    new StoreInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case FSW, FSD ->
+                    new FloatingPointStoreInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI, ADDIW, SLLIW, SRLIW, SRAIW ->
+                    new ImmediateIntegerInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, ADDW, SUBW, SLLW, SRLW, SRAW ->
+                    new RegisterIntegerInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, MULW, DIVW, DIVUW, REMW, REMUW ->
+                    new MultiplyDivideInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
+                    FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
+                    FMV_X_FP, FMV_FP_X ->
+                    new FloatingPointInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
+                    AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
+                    AMOMIN_D, AMOMAX_D, AMOMINU_D, AMOMAXU_D ->
+                    new AtomicInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        };
+    }
+
     /// Returns the instruction length in bytes.
     public int length() {
         return length;
@@ -132,36 +172,246 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes this instruction against the supplied architectural state.
-    public void execute(MachineState state) {
+    public final void execute(MachineState state) {
         state.beforeInstruction(address, raw);
-        long nextPc = address + length;
-        Memory memory = state.memory();
+        executeInstruction(state, address + length);
+    }
 
-        switch (operation) {
-            case NOP, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU, FENCE, FENCE_I,
-                    ECALL, EBREAK, CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
-                    executeControl(state, nextPc);
-            case LB, LH, LW, LD, LBU, LHU, LWU -> executeLoad(state, memory, nextPc);
-            case FLW, FLD -> executeFloatingPointLoad(state, memory, nextPc);
-            case SB, SH, SW, SD -> executeStore(state, memory, nextPc);
-            case FSW, FSD -> executeFloatingPointStore(state, memory, nextPc);
-            case ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI, ADDIW, SLLIW, SRLIW, SRAIW ->
-                    executeImmediateInteger(state, nextPc);
-            case ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, ADDW, SUBW, SLLW, SRLW, SRAW ->
-                    executeRegisterInteger(state, nextPc);
-            case MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, MULW, DIVW, DIVUW, REMW, REMUW ->
-                    executeMultiplyDivide(state, nextPc);
-            case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
-                    FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
-                    FMV_X_FP, FMV_FP_X -> executeFloatingPointOperation(state, nextPc);
-            case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
-                    AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
-                    AMOMIN_D, AMOMAX_D, AMOMINU_D, AMOMAXU_D -> executeAtomic(state, memory, nextPc);
+    /// Executes the operation-specific instruction body.
+    protected abstract void executeInstruction(MachineState state, long nextPc);
+
+    /// Executes control-flow and system operations as a specialized instruction node.
+    private static final class ControlInstructionNode extends InstructionNode {
+        /// Creates a decoded control-flow or system instruction node.
+        private ControlInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded control-flow or system instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeControl(state, nextPc);
+        }
+    }
+
+    /// Executes integer load operations as a specialized instruction node.
+    private static final class LoadInstructionNode extends InstructionNode {
+        /// Creates a decoded integer load instruction node.
+        private LoadInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded integer load instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeLoad(state, state.memory(), nextPc);
+        }
+    }
+
+    /// Executes floating-point load operations as a specialized instruction node.
+    private static final class FloatingPointLoadInstructionNode extends InstructionNode {
+        /// Creates a decoded floating-point load instruction node.
+        private FloatingPointLoadInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded floating-point load instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeFloatingPointLoad(state, state.memory(), nextPc);
+        }
+    }
+
+    /// Executes integer store operations as a specialized instruction node.
+    private static final class StoreInstructionNode extends InstructionNode {
+        /// Creates a decoded integer store instruction node.
+        private StoreInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded integer store instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeStore(state, state.memory(), nextPc);
+        }
+    }
+
+    /// Executes floating-point store operations as a specialized instruction node.
+    private static final class FloatingPointStoreInstructionNode extends InstructionNode {
+        /// Creates a decoded floating-point store instruction node.
+        private FloatingPointStoreInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded floating-point store instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeFloatingPointStore(state, state.memory(), nextPc);
+        }
+    }
+
+    /// Executes register-immediate integer operations as a specialized instruction node.
+    private static final class ImmediateIntegerInstructionNode extends InstructionNode {
+        /// Creates a decoded register-immediate integer instruction node.
+        private ImmediateIntegerInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded register-immediate integer instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeImmediateInteger(state, nextPc);
+        }
+    }
+
+    /// Executes register-register integer operations as a specialized instruction node.
+    private static final class RegisterIntegerInstructionNode extends InstructionNode {
+        /// Creates a decoded register-register integer instruction node.
+        private RegisterIntegerInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded register-register integer instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeRegisterInteger(state, nextPc);
+        }
+    }
+
+    /// Executes RV64M multiply and divide operations as a specialized instruction node.
+    private static final class MultiplyDivideInstructionNode extends InstructionNode {
+        /// Creates a decoded multiply or divide instruction node.
+        private MultiplyDivideInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded multiply or divide instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeMultiplyDivide(state, nextPc);
+        }
+    }
+
+    /// Executes floating-point arithmetic and conversion operations as a specialized instruction node.
+    private static final class FloatingPointInstructionNode extends InstructionNode {
+        /// Creates a decoded floating-point arithmetic or conversion instruction node.
+        private FloatingPointInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded floating-point arithmetic or conversion instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeFloatingPointOperation(state, nextPc);
+        }
+    }
+
+    /// Executes RV64A atomic memory operations as a specialized instruction node.
+    private static final class AtomicInstructionNode extends InstructionNode {
+        /// Creates a decoded atomic memory instruction node.
+        private AtomicInstructionNode(
+                long address,
+                int raw,
+                int length,
+                Operation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded atomic memory instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeAtomic(state, state.memory(), nextPc);
         }
     }
 
     /// Executes control-flow and system operations.
-    private void executeControl(MachineState state, long nextPc) {
+    protected final void executeControl(MachineState state, long nextPc) {
         switch (operation) {
             case NOP, FENCE, FENCE_I -> state.setPc(nextPc);
             case LUI -> {
@@ -200,7 +450,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes load operations.
-    private void executeLoad(MachineState state, Memory memory, long nextPc) {
+    protected final void executeLoad(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
             case LB -> loadByte(state, memory, nextPc);
             case LH -> loadShort(state, memory, nextPc);
@@ -214,7 +464,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes floating-point load operations.
-    private void executeFloatingPointLoad(MachineState state, Memory memory, long nextPc) {
+    protected final void executeFloatingPointLoad(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
             case FLW -> loadFloatWord(state, memory, nextPc);
             case FLD -> loadFloatDouble(state, memory, nextPc);
@@ -223,7 +473,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes store operations.
-    private void executeStore(MachineState state, Memory memory, long nextPc) {
+    protected final void executeStore(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
             case SB -> storeByte(state, memory, nextPc);
             case SH -> storeShort(state, memory, nextPc);
@@ -234,7 +484,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes floating-point store operations.
-    private void executeFloatingPointStore(MachineState state, Memory memory, long nextPc) {
+    protected final void executeFloatingPointStore(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
             case FSW -> storeFloatWord(state, memory, nextPc);
             case FSD -> storeFloatDouble(state, memory, nextPc);
@@ -243,7 +493,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes integer register-immediate operations.
-    private void executeImmediateInteger(MachineState state, long nextPc) {
+    protected final void executeImmediateInteger(MachineState state, long nextPc) {
         switch (operation) {
             case ADDI -> binaryImmediate(state, nextPc, state.register(rs1) + immediate);
             case SLTI -> binaryImmediate(state, nextPc, state.register(rs1) < immediate ? 1 : 0);
@@ -263,7 +513,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes integer register-register operations.
-    private void executeRegisterInteger(MachineState state, long nextPc) {
+    protected final void executeRegisterInteger(MachineState state, long nextPc) {
         switch (operation) {
             case ADD -> binaryRegister(state, nextPc, state.register(rs1) + state.register(rs2));
             case SUB -> binaryRegister(state, nextPc, state.register(rs1) - state.register(rs2));
@@ -285,7 +535,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes RV64M multiply and divide operations.
-    private void executeMultiplyDivide(MachineState state, long nextPc) {
+    protected final void executeMultiplyDivide(MachineState state, long nextPc) {
         switch (operation) {
             case MUL -> binaryRegister(state, nextPc, state.register(rs1) * state.register(rs2));
             case MULH -> binaryRegister(state, nextPc, Math.multiplyHigh(state.register(rs1), state.register(rs2)));
@@ -305,7 +555,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes floating-point arithmetic, conversion, move, compare, and classify operations.
-    private void executeFloatingPointOperation(MachineState state, long nextPc) {
+    protected final void executeFloatingPointOperation(MachineState state, long nextPc) {
         switch (operation) {
             case FMADD -> fusedMultiplyAdd(state, nextPc, false, false);
             case FMSUB -> fusedMultiplyAdd(state, nextPc, false, true);
@@ -370,7 +620,7 @@ public final class InstructionNode extends Node {
     }
 
     /// Executes RV64A atomic operations.
-    private void executeAtomic(MachineState state, Memory memory, long nextPc) {
+    protected final void executeAtomic(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
             case LR_W -> lrWord(state, memory, nextPc);
             case LR_D -> lrDouble(state, memory, nextPc);

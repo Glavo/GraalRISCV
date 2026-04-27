@@ -111,7 +111,7 @@ public final class AtomicInstructionNodeTest {
             int rs2,
             long immediate) {
         long pc = machine.state().pc();
-        InstructionNode instruction = new InstructionNode(
+        InstructionNode instruction = InstructionNode.create(
                 pc,
                 0,
                 Integer.BYTES,

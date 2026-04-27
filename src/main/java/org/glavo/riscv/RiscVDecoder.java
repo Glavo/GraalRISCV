@@ -633,7 +633,7 @@ public final class RiscVDecoder {
             int rs2,
             long immediate,
             boolean terminator) {
-        return new InstructionNode(address, raw, Integer.BYTES, operation, rd, rs1, rs2, immediate, terminator);
+        return InstructionNode.create(address, raw, Integer.BYTES, operation, rd, rs1, rs2, immediate, terminator);
     }
 
     /// Creates a 16-bit compressed decoded instruction.
@@ -646,7 +646,7 @@ public final class RiscVDecoder {
             int rs2,
             long immediate,
             boolean terminator) {
-        return new InstructionNode(address, raw, Short.BYTES, operation, rd, rs1, rs2, immediate, terminator);
+        return InstructionNode.create(address, raw, Short.BYTES, operation, rd, rs1, rs2, immediate, terminator);
     }
 
     /// Extracts the destination register field.
