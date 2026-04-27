@@ -29,7 +29,12 @@ public final class ElfTestImages {
 
     /// Creates an ELF64 executable containing the supplied raw code bytes.
     public static byte[] executable(byte[] code) {
-        byte[] bytes = new byte[PROGRAM_OFFSET + code.length];
+        return executable(BASE_ADDRESS, BASE_ADDRESS, code);
+    }
+
+    /// Creates an ELF64 executable containing one loadable segment at the supplied guest address.
+    public static byte[] executable(long segmentVirtualAddress, long entryPoint, byte[] segmentContents) {
+        byte[] bytes = new byte[PROGRAM_OFFSET + segmentContents.length];
         ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
 
         buffer.put((byte) 0x7f);
@@ -44,7 +49,7 @@ public final class ElfTestImages {
         buffer.putShort((short) 2);
         buffer.putShort((short) 243);
         buffer.putInt(1);
-        buffer.putLong(BASE_ADDRESS);
+        buffer.putLong(entryPoint);
         buffer.putLong(64);
         buffer.putLong(0);
         buffer.putInt(0);
@@ -59,14 +64,14 @@ public final class ElfTestImages {
         buffer.putInt(1);
         buffer.putInt(7);
         buffer.putLong(PROGRAM_OFFSET);
-        buffer.putLong(BASE_ADDRESS);
-        buffer.putLong(BASE_ADDRESS);
-        buffer.putLong(code.length);
-        buffer.putLong(code.length);
+        buffer.putLong(segmentVirtualAddress);
+        buffer.putLong(segmentVirtualAddress);
+        buffer.putLong(segmentContents.length);
+        buffer.putLong(segmentContents.length);
         buffer.putLong(0x1000);
 
         buffer.position(PROGRAM_OFFSET);
-        buffer.put(code);
+        buffer.put(segmentContents);
         return bytes;
     }
 

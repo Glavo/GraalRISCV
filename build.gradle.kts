@@ -3,6 +3,7 @@ import java.time.Duration
 plugins {
     id("java")
     id("application")
+    id("com.gradleup.shadow") version "9.4.1"
 }
 
 group = "org.glavo"
@@ -18,6 +19,8 @@ java {
     }
 }
 
+val mainClassName = "org.glavo.riscv.Main"
+
 application {
     applicationName = "graalriscv"
     mainClass = "org.glavo.riscv.Main"
@@ -25,6 +28,13 @@ application {
     applicationDefaultJvmArgs = listOf(
         "--enable-native-access=ALL-UNNAMED",
         "--sun-misc-unsafe-memory-access=allow"
+    )
+}
+
+tasks.shadowJar {
+    manifest.attributes(
+        "Main-Class" to mainClassName,
+        "Enable-Native-Access" to "ALL-UNNAMED",
     )
 }
 

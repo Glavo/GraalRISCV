@@ -22,6 +22,7 @@ public final class Main {
             Usage: graalriscv [options] <program.elf>
 
             Options:
+              --memory-base <address>    Guest memory base address; accepts decimal or 0x-prefixed hex.
               --memory-size <bytes>      Guest memory size in bytes.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --trace                    Print guest instruction trace lines.
@@ -83,6 +84,9 @@ public final class Main {
                 .err(err)
                 .option("engine.WarnInterpreterOnly", "false");
 
+        if (options.memoryBase() != null) {
+            builder.option("riscv.memoryBase", options.memoryBase());
+        }
         if (options.memorySize() != null) {
             builder.option("riscv.memorySize", options.memorySize());
         }
@@ -98,6 +102,7 @@ public final class Main {
 
     /// Parses command-line arguments.
     private static CliOptions parseArguments(String[] args, OutputStream out, PrintStream err) {
+        @Nullable String memoryBase = null;
         @Nullable String memorySize = null;
         @Nullable String maxInstructions = null;
         boolean trace = false;
@@ -118,6 +123,20 @@ public final class Main {
                 trace = true;
                 continue;
             }
+            if (parseOptions && "--memory-base".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --memory-base.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                memoryBase = parseLongOption("--memory-base", args[index], err);
+                if (memoryBase == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
             if (parseOptions && "--memory-size".equals(argument)) {
                 index++;
                 if (index >= args.length) {
@@ -125,7 +144,11 @@ public final class Main {
                     printUsage(err);
                     return CliOptions.error();
                 }
-                memorySize = args[index];
+                memorySize = parseLongOption("--memory-size", args[index], err);
+                if (memorySize == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
                 continue;
             }
             if (parseOptions && "--max-instructions".equals(argument)) {
@@ -135,7 +158,11 @@ public final class Main {
                     printUsage(err);
                     return CliOptions.error();
                 }
-                maxInstructions = args[index];
+                maxInstructions = parseLongOption("--max-instructions", args[index], err);
+                if (maxInstructions == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
                 continue;
             }
             if (parseOptions && argument.startsWith("-")) {
@@ -157,7 +184,17 @@ public final class Main {
             return CliOptions.error();
         }
 
-        return CliOptions.execute(programPath, memorySize, maxInstructions, trace);
+        return CliOptions.execute(programPath, memoryBase, memorySize, maxInstructions, trace);
+    }
+
+    /// Parses a signed long option and returns its normalized decimal string value.
+    private static @Nullable String parseLongOption(String optionName, String value, PrintStream err) {
+        try {
+            return Long.toString(Long.decode(value));
+        } catch (NumberFormatException exception) {
+            err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
     }
 
     /// Prints command-line usage.
@@ -200,6 +237,9 @@ public final class Main {
             /// The guest ELF path to execute.
             Path programPath,
 
+            /// The optional guest memory base option value.
+            @Nullable String memoryBase,
+
             /// The optional guest memory size option value.
             @Nullable String memorySize,
 
@@ -210,21 +250,22 @@ public final class Main {
             boolean trace) {
         /// Creates options for printing help.
         static CliOptions help() {
-            return new CliOptions(CliMode.HELP, Path.of("."), null, null, false);
+            return new CliOptions(CliMode.HELP, Path.of("."), null, null, null, false);
         }
 
         /// Creates options for a usage error.
         static CliOptions error() {
-            return new CliOptions(CliMode.ERROR, Path.of("."), null, null, false);
+            return new CliOptions(CliMode.ERROR, Path.of("."), null, null, null, false);
         }
 
         /// Creates options for executing a guest ELF program.
         static CliOptions execute(
                 Path programPath,
+                @Nullable String memoryBase,
                 @Nullable String memorySize,
                 @Nullable String maxInstructions,
                 boolean trace) {
-            return new CliOptions(CliMode.EXECUTE, programPath, memorySize, maxInstructions, trace);
+            return new CliOptions(CliMode.EXECUTE, programPath, memoryBase, memorySize, maxInstructions, trace);
         }
     }
 }

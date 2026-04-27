@@ -9,6 +9,9 @@ public final class RiscVContext {
     /// The Truffle environment associated with this context.
     private final TruffleLanguage.Env env;
 
+    /// The guest memory base address.
+    private final long memoryBase;
+
     /// The guest memory size in bytes.
     private final long memorySize;
 
@@ -19,15 +22,22 @@ public final class RiscVContext {
     private final boolean trace;
 
     /// Creates a simulator context.
-    public RiscVContext(TruffleLanguage.Env env, long memorySize, long maxInstructions, boolean trace) {
+    public RiscVContext(TruffleLanguage.Env env, long memoryBase, long memorySize, long maxInstructions, boolean trace) {
+        if (memoryBase < 0) {
+            throw new RiscVException("riscv.memoryBase must be non-negative: " + memoryBase);
+        }
         if (memorySize <= 0) {
             throw new RiscVException("riscv.memorySize must be positive: " + memorySize);
+        }
+        if (memoryBase > Long.MAX_VALUE - memorySize) {
+            throw new RiscVException("Guest memory range overflows: base=" + memoryBase + ", size=" + memorySize);
         }
         if (maxInstructions < 0) {
             throw new RiscVException("riscv.maxInstructions must be non-negative: " + maxInstructions);
         }
 
         this.env = env;
+        this.memoryBase = memoryBase;
         this.memorySize = memorySize;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
@@ -36,6 +46,11 @@ public final class RiscVContext {
     /// Returns the Truffle environment associated with this context.
     public TruffleLanguage.Env env() {
         return env;
+    }
+
+    /// Returns the configured guest memory base address.
+    public long memoryBase() {
+        return memoryBase;
     }
 
     /// Returns the configured guest memory size in bytes.

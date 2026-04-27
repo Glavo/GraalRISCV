@@ -29,6 +29,17 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The default guest memory size in bytes.
     public static final long DEFAULT_MEMORY_SIZE = 128L * 1024L * 1024L;
 
+    /// The default guest memory base address.
+    public static final long DEFAULT_MEMORY_BASE = Memory.DEFAULT_BASE_ADDRESS;
+
+    /// The `riscv.memoryBase` language option.
+    @Option(
+            name = "memoryBase",
+            help = "Guest memory base address. Default: 2147483648.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> MEMORY_BASE = new OptionKey<>(DEFAULT_MEMORY_BASE);
+
     /// The `riscv.memorySize` language option.
     @Option(
             name = "memorySize",
@@ -62,6 +73,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     protected RiscVContext createContext(Env env) {
         return new RiscVContext(
                 env,
+                env.getOptions().get(MEMORY_BASE),
                 env.getOptions().get(MEMORY_SIZE),
                 env.getOptions().get(MAX_INSTRUCTIONS),
                 env.getOptions().get(TRACE));

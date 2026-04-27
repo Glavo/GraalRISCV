@@ -25,12 +25,43 @@ public final class MainTest {
     @Test
     public void runsHelloWorldProgram() throws Exception {
         Path elfPath = tempDirectory.resolve("hello.elf");
-        Files.write(elfPath, helloWorldElf());
+        Files.write(elfPath, ElfTestImages.executable(helloWorldCode()));
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         int exitCode = Main.run(
                 new String[]{"--max-instructions", "1000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that the CLI can execute an ELF whose load segment starts below `0x80000000`.
+    @Test
+    public void runsPageAlignedSegmentBelowDefaultMemoryBase() throws Exception {
+        Path elfPath = tempDirectory.resolve("hello-low-segment.elf");
+        int padding = 0x1000;
+        byte[] program = helloWorldCode();
+        ByteBuffer segment = ByteBuffer.allocate(padding + program.length).order(ByteOrder.LITTLE_ENDIAN);
+        segment.position(padding);
+        segment.put(program);
+        Files.write(elfPath, ElfTestImages.executable(
+                ElfTestImages.BASE_ADDRESS - padding,
+                ElfTestImages.BASE_ADDRESS,
+                segment.array()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--memory-base", "0x7ffff000",
+                        "--max-instructions", "1000",
+                        elfPath.toString()
+                },
                 new ByteArrayInputStream(new byte[0]),
                 out,
                 err);
@@ -54,8 +85,8 @@ public final class MainTest {
         assertEquals(2, exitCode);
     }
 
-    /// Builds a freestanding Hello World ELF using the same ABI as a compiled C program would use.
-    private static byte[] helloWorldElf() {
+    /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
+    private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
         int messageOffset = Integer.BYTES * 9;
         ByteBuffer code = ByteBuffer.allocate(messageOffset + message.length).order(ByteOrder.LITTLE_ENDIAN);
@@ -69,6 +100,6 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put(message);
-        return ElfTestImages.executable(code.array());
+        return code.array();
     }
 }
