@@ -2,6 +2,7 @@ package org.glavo.riscv;
 
 import org.jetbrains.annotations.NotNullByDefault;
 
+import java.io.OutputStream;
 import java.io.PrintStream;
 
 /// Stores mutable architectural state for one guest execution.
@@ -21,6 +22,9 @@ public final class MachineState {
 
     /// Whether instruction tracing is enabled.
     private final boolean trace;
+
+    /// The stream used for instruction trace output.
+    private final PrintStream traceStream;
 
     /// The optional `tohost` symbol guest address.
     private final long tohostAddress;
@@ -48,9 +52,34 @@ public final class MachineState {
             long tohostAddress,
             long fromhostAddress,
             GuestSyscalls syscalls) {
+        this(memory, maxInstructions, trace, tohostAddress, fromhostAddress, syscalls, System.err);
+    }
+
+    /// Creates a new architectural state container with an explicit trace stream.
+    public MachineState(
+            Memory memory,
+            long maxInstructions,
+            boolean trace,
+            long tohostAddress,
+            long fromhostAddress,
+            GuestSyscalls syscalls,
+            OutputStream traceStream) {
+        this(memory, maxInstructions, trace, tohostAddress, fromhostAddress, syscalls, asPrintStream(traceStream));
+    }
+
+    /// Creates a new architectural state container with a prepared trace print stream.
+    private MachineState(
+            Memory memory,
+            long maxInstructions,
+            boolean trace,
+            long tohostAddress,
+            long fromhostAddress,
+            GuestSyscalls syscalls,
+            PrintStream traceStream) {
         this.memory = memory;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
+        this.traceStream = traceStream;
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
         this.syscalls = syscalls;
@@ -103,7 +132,7 @@ public final class MachineState {
 
         instructionCount++;
         if (trace) {
-            traceInstruction(System.err, address, raw);
+            traceInstruction(traceStream, address, raw);
         }
     }
 
@@ -142,5 +171,10 @@ public final class MachineState {
     /// Writes a single trace line for a guest instruction.
     private static void traceInstruction(PrintStream stream, long address, int raw) {
         stream.println("pc=0x" + Long.toUnsignedString(address, 16) + " raw=0x" + Integer.toUnsignedString(raw, 16));
+    }
+
+    /// Adapts an output stream to a print stream without double-wrapping existing print streams.
+    private static PrintStream asPrintStream(OutputStream stream) {
+        return stream instanceof PrintStream printStream ? printStream : new PrintStream(stream, true);
     }
 }

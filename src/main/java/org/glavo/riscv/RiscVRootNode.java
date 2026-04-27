@@ -72,7 +72,8 @@ public final class RiscVRootNode extends RootNode {
                         context.env().out(),
                         context.env().err(),
                         initialProgramBreak,
-                        context.hostRoot()));
+                        context.hostRoot()),
+                context.env().err());
         state.setPc(image.entryPoint());
         state.setRegister(2, memory.endAddress() & ~0xfL);
         return state;

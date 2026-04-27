@@ -208,6 +208,31 @@ public final class MainTest {
         assertTrue(diagnostics.contains("a7=0x7b"));
     }
 
+    /// Verifies that CLI tracing writes instruction lines to the configured error stream.
+    @Test
+    public void writesTraceToErrorStream() throws Exception {
+        Path elfPath = tempDirectory.resolve("trace.elf");
+        Files.write(elfPath, ElfTestImages.executable(
+                ElfTestImages.addi(10, 0, 42),
+                ElfTestImages.addi(17, 0, 93),
+                ElfTestImages.ecall()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--trace", "--max-instructions", "1000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        String diagnostics = err.toString(StandardCharsets.UTF_8);
+        assertEquals(42, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(diagnostics.contains("pc=0x80000000 raw=0x"));
+        assertTrue(diagnostics.contains("pc=0x80000004 raw=0x"));
+        assertTrue(diagnostics.contains("pc=0x80000008 raw=0x"));
+    }
+
     /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
     private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
