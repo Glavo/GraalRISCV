@@ -24,6 +24,7 @@ import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.LocalState;
+import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
@@ -31,13 +32,14 @@ import org.gradle.api.tasks.TaskAction;
 import org.gradle.process.ExecOperations;
 import org.gradle.work.DisableCachingByDefault;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 import javax.inject.Inject;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-/// Builds a freestanding RISC-V ELF from a C source file with the Gradle-managed Zig compiler.
+/// Builds a RISC-V ELF from a C source file with the Gradle-managed Zig compiler.
 @DisableCachingByDefault(because = "The compiled ELF is a local verification artifact.")
 @NotNullByDefault
 public abstract class RiscVZigCcTask extends DefaultTask {
@@ -56,6 +58,9 @@ public abstract class RiscVZigCcTask extends DefaultTask {
         getEnabledTargetFeatures().convention(List.of("m", "a", "c"));
         getAbi().convention("lp64");
         getCodeModel().convention("medany");
+        getFreestanding().convention(true);
+        getStaticLinking().convention(false);
+        getAdditionalCompilerArguments().convention(List.of());
     }
 
     /// Returns the Zig executable file.
@@ -76,6 +81,7 @@ public abstract class RiscVZigCcTask extends DefaultTask {
     ///
     /// @return the linker script file property
     @InputFile
+    @Optional
     @PathSensitive(PathSensitivity.RELATIVE)
     public abstract RegularFileProperty getLinkerScript();
 
@@ -120,6 +126,24 @@ public abstract class RiscVZigCcTask extends DefaultTask {
     /// @return the code model property
     @Input
     public abstract Property<String> getCodeModel();
+
+    /// Returns whether the task should build a freestanding no-libc executable.
+    ///
+    /// @return the freestanding mode property
+    @Input
+    public abstract Property<Boolean> getFreestanding();
+
+    /// Returns whether the task should request static linking from the toolchain.
+    ///
+    /// @return the static-linking property
+    @Input
+    public abstract Property<Boolean> getStaticLinking();
+
+    /// Returns additional compiler and linker arguments appended before the output path.
+    ///
+    /// @return the additional compiler argument list property
+    @Input
+    public abstract ListProperty<String> getAdditionalCompilerArguments();
 
     /// Invokes {@code zig cc} and writes the configured ELF output.
     @TaskAction
@@ -171,16 +195,36 @@ public abstract class RiscVZigCcTask extends DefaultTask {
 
         arguments.add("-mabi=" + getAbi().get());
         arguments.add("-mcmodel=" + getCodeModel().get());
-        arguments.add("-nostdlib");
-        arguments.add("-ffreestanding");
+
+        if (getStaticLinking().get()) {
+            arguments.add("-static");
+        }
+
+        if (getFreestanding().get()) {
+            arguments.add("-nostdlib");
+            arguments.add("-ffreestanding");
+        }
+
         arguments.add("-fno-sanitize=undefined");
-        arguments.add("-fno-builtin");
-        arguments.add("-fno-pic");
-        arguments.add("-fno-pie");
-        arguments.add("-fno-stack-protector");
-        arguments.add("-fno-asynchronous-unwind-tables");
-        arguments.add("-Wl,-T," + getLinkerScript().get().getAsFile().getAbsolutePath());
+        if (getFreestanding().get()) {
+            arguments.add("-fno-builtin");
+            arguments.add("-fno-pic");
+            arguments.add("-fno-pie");
+            arguments.add("-fno-stack-protector");
+            arguments.add("-fno-asynchronous-unwind-tables");
+        }
+
+        @Nullable File linkerScript = getLinkerScript().isPresent()
+                ? getLinkerScript().get().getAsFile()
+                : null;
+        if (linkerScript != null) {
+            arguments.add("-Wl,-T," + linkerScript.getAbsolutePath());
+        } else if (getFreestanding().get()) {
+            throw new GradleException("A linker script is required for freestanding RISC-V examples.");
+        }
+
         arguments.add("-Wl,--build-id=none");
+        arguments.addAll(getAdditionalCompilerArguments().get());
         arguments.add("-o");
         arguments.add(outputFile.getAbsolutePath());
         arguments.add(getSourceFile().get().getAsFile().getAbsolutePath());

@@ -16,6 +16,7 @@ val mainClassName = applicationExtension.mainClass.get()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val helloWorldExampleElf = layout.buildDirectory.file("examples/hello/hello.elf")
+val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-static/printf-hello.elf")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -73,6 +74,25 @@ tasks.register<RiscVZigCcTask>("buildHelloWorldExample") {
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
 }
 
+tasks.register<RiscVZigCcTask>("buildLinuxStaticPrintfExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/PrintfHelloWorld.c as a static riscv64-linux-musl executable."
+
+    dependsOn(extractZig)
+    zigExecutable.set(zigExecutableFile)
+    sourceFile.set(layout.projectDirectory.file("examples/linux-static/PrintfHelloWorld.c"))
+    outputFile.set(linuxStaticPrintfExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    target.set("riscv64-linux-musl")
+    enabledTargetFeatures.set(listOf("m", "a", "f", "d", "c", "zicsr", "zifencei"))
+    abi.set("lp64d")
+    codeModel.set("medany")
+    freestanding.set(false)
+    staticLinking.set(true)
+    additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie"))
+}
+
 tasks.register<JavaExec>("testHelloWorldExample") {
     group = "verification"
     description = "Compiles Hello World and verifies the GraalRISCV CLI output."
@@ -103,6 +123,53 @@ tasks.register<JavaExec>("testHelloWorldExample") {
         if (actualError.isNotEmpty()) {
             throw GradleException("Hello World wrote to stderr: $actualError")
         }
+    }
+}
+
+tasks.register<JavaExec>("testLinuxStaticPrintfExample") {
+    group = "verification"
+    description = "Compiles a static musl printf Hello World and verifies the GraalRISCV CLI output."
+
+    dependsOn("classes", "buildLinuxStaticPrintfExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticPrintfExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "Hello World!\n") {
+            throw GradleException("Unexpected static printf output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static printf Hello World wrote to stderr: $actualError")
+        }
+    }
+}
+
+tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
+    group = "verification"
+    description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildLinuxStaticPrintfExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(linuxStaticPrintfExampleElf.get().asFile.absolutePath))
     }
 }
 
@@ -182,6 +249,7 @@ tasks.register("checkHelloWorldExample") {
 
     dependsOn(
         "testHelloWorldExample",
+        "testLinuxStaticPrintfExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -190,4 +258,5 @@ tasks.register("checkHelloWorldExample") {
 
 tasks.named("check") {
     dependsOn("testHelloWorldExample")
+    dependsOn("testLinuxStaticPrintfExample")
 }

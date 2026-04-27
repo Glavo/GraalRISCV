@@ -12,8 +12,8 @@
 ### 2. Support static Linux user-mode programs
 
 - Keep the simulator user-mode only; do not implement privileged mode, page tables, interrupts, devices, or Linux kernel boot.
-- Extend auxv with any additional entries required by static libc startup after real Zig/musl verification.
-- Accept statically linked Linux ELF executables with resolved load segments.
+- Extend auxv if broader static libc programs require entries beyond the current musl `printf` smoke path.
+- Broaden statically linked Linux ELF coverage beyond the current resolved-segment musl `printf` baseline.
 - Reject dynamic linking in this phase with clear diagnostics when inputs contain `PT_INTERP`, `PT_DYNAMIC`, or unresolved relocation metadata.
 - Preserve existing freestanding ELF behavior and tests while adding Linux static program behavior.
 
@@ -28,10 +28,6 @@
 
 ### 4. Add static Linux C acceptance examples
 
-- Add a `printf("Hello World!\n")` C example compiled as a static Linux RISC-V program with the Gradle-managed Zig toolchain.
-- Use Zig target `riscv64-linux-musl` for this example, without `-nostdlib`, a custom `_start`, or a freestanding linker script.
-- Add `buildLinuxStaticPrintfExample` to compile the example.
-- Add `testLinuxStaticPrintfExample` to assert stdout is `Hello World!\n`, stderr is empty, and the exit code is `0`.
 - Add an argument-passing example that verifies `argc` and `argv` from the generated Linux initial stack.
 - Add a sandboxed file I/O example that verifies regular file reads and writes under `--host-root`.
 - Keep no-toolchain package smoke tests available so basic CI remains possible without Zig.
