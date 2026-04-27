@@ -1,11 +1,15 @@
-import java.time.Duration
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.time.Duration
 import org.gradle.jvm.tasks.Jar
+import org.glavo.ZigUtils
 
 plugins {
     id("java")
     id("application")
     id("com.gradleup.shadow") version "9.4.1"
+    id("de.undercouch.download") version "5.7.0"
 }
 
 group = "org.glavo"
@@ -96,6 +100,13 @@ fun findExecutable(command: String): String? {
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val riscvGcc = providers.gradleProperty("riscvGcc").orElse("riscv64-unknown-elf-gcc")
 val helloWorldExampleElf = layout.buildDirectory.file("examples/hello/hello.elf")
+val zigArchiveName = ZigUtils.getZigArchiveName()
+val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
+val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
+val zigExecutable = zigInstallDirectory.map {
+    it.file("${ZigUtils.getZigArchiveBaseName()}/${ZigUtils.getZigExecutableName()}")
+}
+val zigHelloWorldExampleElf = layout.buildDirectory.file("examples/hello/hello-zig.elf")
 val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
 val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
@@ -107,6 +118,39 @@ fun helloWorldExampleElfExists(taskName: String): Boolean {
         logger.lifecycle("Skipping $taskName: ${elf.absolutePath} does not exist.")
     }
     return elf.isFile
+}
+
+val downloadZig by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
+    group = "build setup"
+    description = "Downloads Zig ${ZigUtils.ZIG_VERSION} for the current host platform."
+
+    src("https://ziglang.org/download/${ZigUtils.ZIG_VERSION}/${ZigUtils.getZigArchiveName()}")
+    dest(zigArchiveFile.get().asFile)
+    overwrite(false)
+    tempAndMove(true)
+
+    doFirst {
+        val archive = zigArchiveFile.get().asFile
+        if (archive.isFile && archive.length() == 0L) {
+            delete(archive)
+        }
+    }
+}
+
+val extractZig by tasks.registering {
+    group = "build setup"
+    description = "Extracts the downloaded Zig toolchain."
+
+    dependsOn(downloadZig)
+    inputs.file(zigArchiveFile)
+    outputs.file(zigExecutable)
+
+    doLast {
+        val installDirectory = zigInstallDirectory.get().asFile
+        delete(installDirectory)
+        val archive = zigArchiveFile.get().asFile
+        ZigUtils.extractZigArchive(archive, installDirectory)
+    }
 }
 
 tasks.register<Exec>("buildHelloWorldExample") {
@@ -148,6 +192,75 @@ tasks.register<Exec>("buildHelloWorldExample") {
             helloWorldExampleElf.get().asFile.absolutePath,
             layout.projectDirectory.file("examples/hello/HelloWorld.c").asFile.absolutePath
         )
+    }
+}
+
+tasks.register<Exec>("buildZigHelloWorldExample") {
+    group = "verification"
+    description = "Builds examples/hello/HelloWorld.c for RISC-V with the Gradle-managed Zig toolchain."
+
+    dependsOn(extractZig)
+    inputs.files("examples/hello/HelloWorld.c", "examples/hello/linker.ld")
+    outputs.file(zigHelloWorldExampleElf)
+
+    doFirst {
+        zigHelloWorldExampleElf.get().asFile.parentFile.mkdirs()
+        executable = zigExecutable.get().asFile.absolutePath
+        args(
+            "cc",
+            "-target",
+            "riscv64-freestanding",
+            "-march=rv64imac",
+            "-mabi=lp64",
+            "-mcmodel=medany",
+            "-nostdlib",
+            "-nostartfiles",
+            "-ffreestanding",
+            "-fno-builtin",
+            "-fno-pic",
+            "-fno-pie",
+            "-fno-stack-protector",
+            "-fno-asynchronous-unwind-tables",
+            "-Wl,-T,${layout.projectDirectory.file("examples/hello/linker.ld").asFile.absolutePath}",
+            "-Wl,--no-relax",
+            "-Wl,--build-id=none",
+            "-o",
+            zigHelloWorldExampleElf.get().asFile.absolutePath,
+            layout.projectDirectory.file("examples/hello/HelloWorld.c").asFile.absolutePath
+        )
+    }
+}
+
+tasks.register<JavaExec>("testZigHelloWorldExample") {
+    group = "verification"
+    description = "Compiles Hello World with Zig and verifies the GraalRISCV CLI output."
+
+    dependsOn("classes", "buildZigHelloWorldExample")
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(application.applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(zigHelloWorldExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "Hello World!\n") {
+            throw GradleException("Unexpected Zig Hello World output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Zig Hello World wrote to stderr: $actualError")
+        }
     }
 }
 
@@ -224,8 +337,13 @@ tasks.register("checkHelloWorldExample") {
     description = "Runs every available Hello World example smoke check."
 
     dependsOn(
+        "testZigHelloWorldExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
     )
+}
+
+tasks.named("check") {
+    dependsOn("testZigHelloWorldExample")
 }
