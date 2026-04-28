@@ -2964,7 +2964,7 @@ public final class GuestSyscallsTest {
             memory.writeByte(maskAddress + Long.BYTES, (byte) 0x7f);
             setSyscall(state, SYS_SCHED_GETAFFINITY, 0, 16, maskAddress);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
+            assertEquals(Long.BYTES, state.register(10));
             assertEquals(1, memory.readLong(maskAddress));
             assertEquals(0, memory.readUnsignedByte(maskAddress + Long.BYTES));
 

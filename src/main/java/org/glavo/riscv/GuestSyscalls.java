@@ -4110,7 +4110,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
         memory.clear(cpuSetAddress, cpuSetSize);
         memory.writeLong(cpuSetAddress, 1);
-        return 0;
+        return MINIMUM_CPU_AFFINITY_MASK_SIZE;
     }
 
     /// Yields the host thread for the Linux `sched_yield` syscall.

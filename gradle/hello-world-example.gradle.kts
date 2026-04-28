@@ -30,6 +30,7 @@ val linuxStaticStatxMetadataExampleElf = layout.buildDirectory.file("examples/li
 val linuxStaticPositionedIoExampleElf = layout.buildDirectory.file("examples/linux-static/positioned-io.elf")
 val linuxStaticEventPollingExampleElf = layout.buildDirectory.file("examples/linux-static/event-polling.elf")
 val linuxStaticThreadJoinExampleElf = layout.buildDirectory.file("examples/linux-static/thread-join.elf")
+val linuxStaticRuntimeServicesExampleElf = layout.buildDirectory.file("examples/linux-static/runtime-services.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
@@ -200,6 +201,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticThreadJoinExample") {
 
     configureLinuxStaticExample("ThreadJoin.c", linuxStaticThreadJoinExampleElf)
     additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie", "-pthread"))
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticRuntimeServicesExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/RuntimeServices.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("RuntimeServices.c", linuxStaticRuntimeServicesExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -689,6 +697,39 @@ tasks.register<JavaExec>("testLinuxStaticThreadJoinExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticRuntimeServicesExample") {
+    group = "verification"
+    description = "Compiles a static musl runtime-services example and verifies memory, time, random, and resource syscalls."
+
+    dependsOn("classes", "buildLinuxStaticRuntimeServicesExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticRuntimeServicesExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "runtime-services-ok\n") {
+            throw GradleException("Unexpected static runtime services output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static runtime services example wrote to stderr: $actualError")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -852,6 +893,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticPositionedIoExample",
         "testLinuxStaticEventPollingExample",
         "testLinuxStaticThreadJoinExample",
+        "testLinuxStaticRuntimeServicesExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -871,4 +913,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticPositionedIoExample")
     dependsOn("testLinuxStaticEventPollingExample")
     dependsOn("testLinuxStaticThreadJoinExample")
+    dependsOn("testLinuxStaticRuntimeServicesExample")
 }
