@@ -28,6 +28,7 @@ val linuxStaticWorkingDirectoryExampleElf = layout.buildDirectory.file("examples
 val linuxStaticFilesystemStatusExampleElf = layout.buildDirectory.file("examples/linux-static/filesystem-status.elf")
 val linuxStaticStatxMetadataExampleElf = layout.buildDirectory.file("examples/linux-static/statx-metadata.elf")
 val linuxStaticPositionedIoExampleElf = layout.buildDirectory.file("examples/linux-static/positioned-io.elf")
+val linuxStaticEventPollingExampleElf = layout.buildDirectory.file("examples/linux-static/event-polling.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
@@ -183,6 +184,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticPositionedIoExample") {
     description = "Builds examples/linux-static/PositionedIo.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("PositionedIo.c", linuxStaticPositionedIoExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticEventPollingExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/EventPolling.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("EventPolling.c", linuxStaticEventPollingExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -606,6 +614,39 @@ tasks.register<JavaExec>("testLinuxStaticPositionedIoExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticEventPollingExample") {
+    group = "verification"
+    description = "Compiles a static musl eventfd/epoll example and verifies readiness polling."
+
+    dependsOn("classes", "buildLinuxStaticEventPollingExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticEventPollingExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "event-polling-ok\n") {
+            throw GradleException("Unexpected static event polling output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static event polling example wrote to stderr: $actualError")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -767,6 +808,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticFilesystemStatusExample",
         "testLinuxStaticStatxMetadataExample",
         "testLinuxStaticPositionedIoExample",
+        "testLinuxStaticEventPollingExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -784,4 +826,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticFilesystemStatusExample")
     dependsOn("testLinuxStaticStatxMetadataExample")
     dependsOn("testLinuxStaticPositionedIoExample")
+    dependsOn("testLinuxStaticEventPollingExample")
 }

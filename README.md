@@ -66,7 +66,7 @@ RISC-V syscall ABI. The current subset is sufficient for small statically linked
 musl programs, including `printf`, argument passing, basic file I/O, directory
 listing, cwd-aware path resolution, file mutation through a host-root sandbox,
 filesystem status queries, time queries, anonymous memory mappings, and common
-libc process setup probes.
+libc process setup and event-polling probes.
 
 Supported syscall families currently include:
 
@@ -77,6 +77,8 @@ Supported syscall families currently include:
   `mkdirat`, `unlinkat`, `renameat`, `renameat2`, `truncate`, `ftruncate`,
   `statfs`, `fstatfs`, `statx`, `sync`, `fsync`, `fdatasync`, `syncfs`,
   `lseek`, `ioctl`, `fcntl`, `dup`, `dup3`, and `pipe2`
+- deterministic single-process `eventfd2`, `epoll_create1`, `epoll_ctl`, and
+  zero-timeout `epoll_pwait`
 - `getcwd`, `chdir`, `fchdir`, `faccessat`, and `faccessat2`
 - `brk`, `mmap`, `munmap`, `mprotect`, `madvise`, and `riscv_hwprobe`
 - `clock_gettime`, `gettimeofday`, `times`, `nanosleep`, `getrusage`, and
@@ -140,6 +142,7 @@ smoke programs. They are built with the Gradle-managed Zig toolchain.
 ./gradlew testLinuxStaticFilesystemStatusExample
 ./gradlew testLinuxStaticStatxMetadataExample
 ./gradlew testLinuxStaticPositionedIoExample
+./gradlew testLinuxStaticEventPollingExample
 ```
 
 Run every available C smoke check:

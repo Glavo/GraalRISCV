@@ -32,6 +32,18 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final long SYS_GETCWD = 17;
 
+    /// The Linux RISC-V syscall number for `eventfd2`.
+    private static final long SYS_EVENTFD2 = 19;
+
+    /// The Linux RISC-V syscall number for `epoll_create1`.
+    private static final long SYS_EPOLL_CREATE1 = 20;
+
+    /// The Linux RISC-V syscall number for `epoll_ctl`.
+    private static final long SYS_EPOLL_CTL = 21;
+
+    /// The Linux RISC-V syscall number for `epoll_pwait`.
+    private static final long SYS_EPOLL_PWAIT = 22;
+
     /// The Linux RISC-V syscall number for `dup`.
     private static final long SYS_DUP = 23;
 
@@ -440,6 +452,45 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
+
+    /// Linux `EFD_SEMAPHORE`.
+    private static final long EFD_SEMAPHORE = 1;
+
+    /// Linux flags accepted by `eventfd2`.
+    private static final long SUPPORTED_EVENTFD2_FLAGS = EFD_SEMAPHORE | O_NONBLOCK | O_CLOEXEC;
+
+    /// Linux flags accepted by `epoll_create1`.
+    private static final long SUPPORTED_EPOLL_CREATE1_FLAGS = O_CLOEXEC;
+
+    /// Linux `EPOLL_CTL_ADD`.
+    private static final int EPOLL_CTL_ADD = 1;
+
+    /// Linux `EPOLL_CTL_DEL`.
+    private static final int EPOLL_CTL_DEL = 2;
+
+    /// Linux `EPOLL_CTL_MOD`.
+    private static final int EPOLL_CTL_MOD = 3;
+
+    /// Linux `EPOLLIN`.
+    private static final int EPOLLIN = 0x001;
+
+    /// Linux `EPOLLOUT`.
+    private static final int EPOLLOUT = 0x004;
+
+    /// Linux `EPOLLERR`.
+    private static final int EPOLLERR = 0x008;
+
+    /// Linux `EPOLLHUP`.
+    private static final int EPOLLHUP = 0x010;
+
+    /// The byte size of Linux RISC-V 64-bit `struct epoll_event`.
+    private static final int EPOLL_EVENT_SIZE = 16;
+
+    /// The byte offset of `events` inside Linux RISC-V 64-bit `struct epoll_event`.
+    private static final int EPOLL_EVENT_EVENTS_OFFSET = 0;
+
+    /// The byte offset of `data` inside Linux RISC-V 64-bit `struct epoll_event`.
+    private static final int EPOLL_EVENT_DATA_OFFSET = Long.BYTES;
 
     /// Linux flags accepted by `pipe2`.
     private static final long SUPPORTED_PIPE2_FLAGS = O_NONBLOCK | O_CLOEXEC;
@@ -1373,6 +1424,32 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, getcwd(state.register(10), state.register(11)));
             return;
         }
+        if (callNumber == SYS_EVENTFD2) {
+            state.setRegister(10, eventfd2(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_EPOLL_CREATE1) {
+            state.setRegister(10, epollCreate1(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_EPOLL_CTL) {
+            state.setRegister(10, epollCtl(
+                    (int) state.register(10),
+                    (int) state.register(11),
+                    (int) state.register(12),
+                    state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_EPOLL_PWAIT) {
+            state.setRegister(10, epollPwait(
+                    (int) state.register(10),
+                    state.register(11),
+                    (int) state.register(12),
+                    (int) state.register(13),
+                    state.register(14),
+                    state.register(15)));
+            return;
+        }
         if (callNumber == SYS_DUP) {
             state.setRegister(10, dup((int) state.register(10)));
             return;
@@ -1824,6 +1901,102 @@ public final class GuestSyscalls implements AutoCloseable {
             }
             throw new RiscVException("Guest dup3 syscall failed", exception);
         }
+    }
+
+    /// Creates an in-memory Linux `eventfd` counter.
+    private long eventfd2(long initialValue, long flags) {
+        if ((flags & ~SUPPORTED_EVENTFD2_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        long counterValue = initialValue & 0xffff_ffffL;
+        EventCounter counter = new EventCounter(
+                counterValue,
+                (flags & EFD_SEMAPHORE) != 0,
+                (flags & O_NONBLOCK) != 0);
+        return addOpenFile(OpenFile.eventFile(counter));
+    }
+
+    /// Creates an in-memory Linux `epoll` descriptor.
+    private long epollCreate1(long flags) {
+        if ((flags & ~SUPPORTED_EPOLL_CREATE1_FLAGS) != 0) {
+            return EINVAL;
+        }
+        return addOpenFile(OpenFile.epollFile(new EpollSet()));
+    }
+
+    /// Adds, modifies, or removes one descriptor interest from an in-memory `epoll` set.
+    private long epollCtl(int epollFileDescriptor, int operation, int fileDescriptor, long eventAddress) {
+        @Nullable OpenFile epollFile = openFile(epollFileDescriptor);
+        if (epollFile == null) {
+            return EBADF;
+        }
+        if (!epollFile.isEpollFile()) {
+            return EINVAL;
+        }
+        if (!isOpenFileDescriptor(fileDescriptor)) {
+            return EBADF;
+        }
+        if (fileDescriptor == epollFileDescriptor) {
+            return EINVAL;
+        }
+
+        EpollSet epollSet = epollFile.epollSet();
+        if (operation == EPOLL_CTL_DEL) {
+            return epollSet.remove(fileDescriptor);
+        }
+        if (operation != EPOLL_CTL_ADD && operation != EPOLL_CTL_MOD) {
+            return EINVAL;
+        }
+        if (eventAddress == 0) {
+            return EINVAL;
+        }
+
+        int events = memory.readInt(eventAddress + EPOLL_EVENT_EVENTS_OFFSET);
+        long data = readLongUnaligned(eventAddress + EPOLL_EVENT_DATA_OFFSET);
+        if (operation == EPOLL_CTL_ADD) {
+            return epollSet.add(fileDescriptor, events, data);
+        }
+        return epollSet.modify(fileDescriptor, events, data);
+    }
+
+    /// Returns currently ready events from an in-memory `epoll` descriptor without blocking the host thread.
+    private long epollPwait(
+            int epollFileDescriptor,
+            long eventsAddress,
+            int maximumEvents,
+            int timeoutMilliseconds,
+            long signalMaskAddress,
+            long signalSetSize) {
+        if (maximumEvents <= 0) {
+            return EINVAL;
+        }
+        if (signalMaskAddress != 0 && signalSetSize != KERNEL_SIGSET_SIZE) {
+            return EINVAL;
+        }
+
+        @Nullable OpenFile epollFile = openFile(epollFileDescriptor);
+        if (epollFile == null) {
+            return EBADF;
+        }
+        if (!epollFile.isEpollFile()) {
+            return EINVAL;
+        }
+
+        int count = 0;
+        EpollSet epollSet = epollFile.epollSet();
+        for (int index = 0; index < epollSet.size() && count < maximumEvents; index++) {
+            EpollInterest interest = epollSet.interest(index);
+            int readyEvents = readyEventsFor(interest.fileDescriptor());
+            int reportedEvents = (readyEvents & interest.events()) | (readyEvents & (EPOLLERR | EPOLLHUP));
+            if (reportedEvents == 0) {
+                continue;
+            }
+
+            writeEpollEvent(eventsAddress + (long) count * EPOLL_EVENT_SIZE, reportedEvents, interest.data());
+            count++;
+        }
+        return count;
     }
 
     /// Creates an in-memory pipe and writes its read and write descriptors to guest memory.
@@ -2476,29 +2649,43 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         try {
-            byte[] buffer = new byte[(int) length];
-            int count;
             @Nullable InputStream stream = inputStreamFor(fileDescriptor);
             if (stream != null) {
-                count = stream.read(buffer);
+                byte[] buffer = new byte[(int) length];
+                int count = stream.read(buffer);
+                if (count < 0) {
+                    return 0;
+                }
+
+                memory.writeBytes(address, buffer, 0, count);
+                return count;
+            }
+
+            @Nullable OpenFile openFile = openFile(fileDescriptor);
+            if (openFile == null || !openFile.readable()) {
+                return EBADF;
+            }
+            if (openFile.isEventFile()) {
+                return readEventFile(openFile.eventCounter(), address, length);
+            }
+            if (openFile.isEpollFile()) {
+                return EINVAL;
+            }
+            if (openFile.isDirectory()) {
+                return EISDIR;
+            }
+
+            byte[] buffer = new byte[(int) length];
+            int count;
+            if (openFile.isPipeReader()) {
+                count = openFile.pipe().read(buffer, buffer.length, openFile.nonblocking());
+                if (count < 0) {
+                    return EAGAIN;
+                }
+            } else if (openFile.isHostFile()) {
+                count = openFile.channel().read(ByteBuffer.wrap(buffer));
             } else {
-                @Nullable OpenFile openFile = openFile(fileDescriptor);
-                if (openFile == null || !openFile.readable()) {
-                    return EBADF;
-                }
-                if (openFile.isDirectory()) {
-                    return EISDIR;
-                }
-                if (openFile.isPipeReader()) {
-                    count = openFile.pipe().read(buffer, buffer.length, openFile.nonblocking());
-                    if (count < 0) {
-                        return EAGAIN;
-                    }
-                } else if (openFile.isHostFile()) {
-                    count = openFile.channel().read(ByteBuffer.wrap(buffer));
-                } else {
-                    return EBADF;
-                }
+                return EBADF;
             }
             if (count < 0) {
                 return 0;
@@ -2522,8 +2709,8 @@ public final class GuestSyscalls implements AutoCloseable {
 
         OutputStream stream = outputStreamFor(fileDescriptor);
         try {
-            byte[] bytes = memory.readBytes(address, length);
             if (stream != null) {
+                byte[] bytes = memory.readBytes(address, length);
                 stream.write(bytes);
                 stream.flush();
             } else {
@@ -2531,12 +2718,20 @@ public final class GuestSyscalls implements AutoCloseable {
                 if (openFile == null || !openFile.writable()) {
                     return EBADF;
                 }
+                if (openFile.isEventFile()) {
+                    return writeEventFile(openFile.eventCounter(), address, length);
+                }
+                if (openFile.isEpollFile()) {
+                    return EINVAL;
+                }
+                byte[] bytes = memory.readBytes(address, length);
                 long count = writeOpenFile(openFile, bytes);
                 if (count < 0) {
                     return count;
                 }
+                return bytes.length;
             }
-            return bytes.length;
+            return length;
         } catch (IOException exception) {
             throw new RiscVException("Guest write syscall failed", exception);
         }
@@ -2706,6 +2901,83 @@ public final class GuestSyscalls implements AutoCloseable {
             openFile.channel().write(buffer);
         }
         return bytes.length;
+    }
+
+    /// Reads one little-endian counter value from an `eventfd` descriptor.
+    private long readEventFile(EventCounter counter, long address, long length) {
+        if (length < Long.BYTES) {
+            return EINVAL;
+        }
+        if (!counter.isReadable()) {
+            return EAGAIN;
+        }
+
+        writeLongUnaligned(address, counter.readValue());
+        return Long.BYTES;
+    }
+
+    /// Writes one little-endian counter increment to an `eventfd` descriptor.
+    private long writeEventFile(EventCounter counter, long address, long length) {
+        if (length != Long.BYTES) {
+            return EINVAL;
+        }
+
+        long result = counter.write(readLongUnaligned(address));
+        return result < 0 ? result : Long.BYTES;
+    }
+
+    /// Computes the currently ready low-level `epoll` event bits for one guest descriptor.
+    private int readyEventsFor(int fileDescriptor) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor == 0) {
+            return EPOLLIN;
+        }
+        if (standardFileDescriptor == 1 || standardFileDescriptor == 2) {
+            return EPOLLOUT;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EPOLLHUP;
+        }
+        if (openFile.isEventFile()) {
+            EventCounter counter = openFile.eventCounter();
+            int events = 0;
+            if (counter.isReadable()) {
+                events |= EPOLLIN;
+            }
+            if (counter.isWritable()) {
+                events |= EPOLLOUT;
+            }
+            return events;
+        }
+        if (openFile.isPipeReader()) {
+            int events = openFile.pipe().isReadable() ? EPOLLIN : 0;
+            if (!openFile.pipe().isWriterOpen()) {
+                events |= EPOLLHUP;
+            }
+            return events;
+        }
+        if (openFile.isPipeWriter()) {
+            return openFile.pipe().isReaderOpen() ? EPOLLOUT : EPOLLERR;
+        }
+        if (openFile.isHostFile() || openFile.isDirectory()) {
+            int events = 0;
+            if (openFile.readable()) {
+                events |= EPOLLIN;
+            }
+            if (openFile.writable()) {
+                events |= EPOLLOUT;
+            }
+            return events;
+        }
+        return 0;
+    }
+
+    /// Writes a packed Linux generic `struct epoll_event` to guest memory.
+    private void writeEpollEvent(long eventAddress, int events, long data) {
+        memory.writeInt(eventAddress + EPOLL_EVENT_EVENTS_OFFSET, events);
+        writeLongUnaligned(eventAddress + EPOLL_EVENT_DATA_OFFSET, data);
     }
 
     /// Reads bytes at a fixed host file offset while preserving the channel position.
@@ -2897,6 +3169,11 @@ public final class GuestSyscalls implements AutoCloseable {
             writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_FIFO | permissions, 0);
             return 0;
         }
+        if (openFile.isEventFile() || openFile.isEpollFile()) {
+            int permissions = (openFile.readable() ? 0400 : 0) | (openFile.writable() ? 0200 : 0);
+            writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_REGULAR_FILE | permissions, 0);
+            return 0;
+        }
         if (openFile.isDirectory()) {
             writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_DIRECTORY | STAT_MODE_READ_EXECUTE_ALL, 0);
             return 0;
@@ -2949,6 +3226,9 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
         if (openFile.isPipe()) {
+            return EINVAL;
+        }
+        if (openFile.isEventFile() || openFile.isEpollFile()) {
             return EINVAL;
         }
         if (openFile.isDirectory()) {
@@ -3022,6 +3302,11 @@ public final class GuestSyscalls implements AutoCloseable {
             int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
                     | (openFile.writable() ? 0222 : 0);
             writeStatx(statxAddress, fileDescriptor + 1L, STAT_MODE_FIFO | permissions, 0, requestedMask);
+            return 0;
+        }
+        if (openFile.isEventFile() || openFile.isEpollFile()) {
+            int permissions = (openFile.readable() ? 0400 : 0) | (openFile.writable() ? 0200 : 0);
+            writeStatx(statxAddress, fileDescriptor + 1L, STAT_MODE_REGULAR_FILE | permissions, 0, requestedMask);
             return 0;
         }
         if (openFile.isDirectory()) {
@@ -4220,6 +4505,24 @@ public final class GuestSyscalls implements AutoCloseable {
         return null;
     }
 
+    /// Reads a little-endian 64-bit value without requiring guest alignment.
+    private long readLongUnaligned(long address) {
+        long value = 0;
+        for (int index = 0; index < Long.BYTES; index++) {
+            value |= (long) memory.readUnsignedByte(address + index) << (index * Byte.SIZE);
+        }
+        return value;
+    }
+
+    /// Writes a little-endian 64-bit value without requiring guest alignment.
+    private void writeLongUnaligned(long address, long value) {
+        byte[] bytes = new byte[Long.BYTES];
+        for (int index = 0; index < bytes.length; index++) {
+            bytes[index] = (byte) (value >>> (index * Byte.SIZE));
+        }
+        memory.writeBytes(address, bytes, 0, bytes.length);
+    }
+
     /// Returns true when a non-empty guest path can be resolved from the supplied directory descriptor.
     private boolean canResolvePathFrom(long directoryFileDescriptor, String guestPath) {
         if (directoryFileDescriptor == AT_FDCWD || isAbsoluteGuestPath(guestPath)) {
@@ -4901,6 +5204,137 @@ public final class GuestSyscalls implements AutoCloseable {
             byte type) {
     }
 
+    /// Stores the shared counter state for one Linux `eventfd` open-file description.
+    private static final class EventCounter {
+        /// The current unsigned 64-bit counter value.
+        private long value;
+
+        /// Whether reads decrement the counter by one and return `1`.
+        private final boolean semaphore;
+
+        /// Whether the open-file status flags include `O_NONBLOCK`.
+        private final boolean nonblocking;
+
+        /// Creates an event counter with the supplied initial value and flags.
+        EventCounter(long value, boolean semaphore, boolean nonblocking) {
+            this.value = value;
+            this.semaphore = semaphore;
+            this.nonblocking = nonblocking;
+        }
+
+        /// Returns true when a read can complete without blocking.
+        boolean isReadable() {
+            return value != 0;
+        }
+
+        /// Returns true when a write can increment the counter without overflowing.
+        boolean isWritable() {
+            return value != -2L;
+        }
+
+        /// Returns true when the open-file status flags include `O_NONBLOCK`.
+        boolean nonblocking() {
+            return nonblocking;
+        }
+
+        /// Reads the current counter value and applies Linux `eventfd` decrement rules.
+        long readValue() {
+            if (semaphore) {
+                value--;
+                return 1;
+            }
+
+            long result = value;
+            value = 0;
+            return result;
+        }
+
+        /// Adds an unsigned increment to the counter or returns a raw negative Linux error.
+        long write(long increment) {
+            if (increment == -1L) {
+                return EINVAL;
+            }
+
+            long sum = value + increment;
+            if (Long.compareUnsigned(sum, value) < 0 || sum == -1L) {
+                return EAGAIN;
+            }
+
+            value = sum;
+            return 0;
+        }
+    }
+
+    /// One descriptor interest stored in an in-memory Linux `epoll` set.
+    private record EpollInterest(
+            /// The watched guest file descriptor.
+            int fileDescriptor,
+
+            /// The event mask requested by the guest.
+            int events,
+
+            /// The opaque guest data returned with readiness notifications.
+            long data) {
+    }
+
+    /// Stores descriptor interests for a single in-memory Linux `epoll` descriptor.
+    private static final class EpollSet {
+        /// Ordered descriptor interests registered by the guest.
+        private final ArrayList<EpollInterest> interests = new ArrayList<>();
+
+        /// Adds a new descriptor interest or returns a raw negative Linux error.
+        long add(int fileDescriptor, int events, long data) {
+            if (findIndex(fileDescriptor) >= 0) {
+                return EEXIST;
+            }
+
+            interests.add(new EpollInterest(fileDescriptor, events, data));
+            return 0;
+        }
+
+        /// Replaces an existing descriptor interest or returns a raw negative Linux error.
+        long modify(int fileDescriptor, int events, long data) {
+            int index = findIndex(fileDescriptor);
+            if (index < 0) {
+                return ENOENT;
+            }
+
+            interests.set(index, new EpollInterest(fileDescriptor, events, data));
+            return 0;
+        }
+
+        /// Removes an existing descriptor interest or returns a raw negative Linux error.
+        long remove(int fileDescriptor) {
+            int index = findIndex(fileDescriptor);
+            if (index < 0) {
+                return ENOENT;
+            }
+
+            interests.remove(index);
+            return 0;
+        }
+
+        /// Returns the number of registered descriptor interests.
+        int size() {
+            return interests.size();
+        }
+
+        /// Returns the descriptor interest at the supplied index.
+        EpollInterest interest(int index) {
+            return interests.get(index);
+        }
+
+        /// Returns the index of the descriptor interest, or `-1` when absent.
+        private int findIndex(int fileDescriptor) {
+            for (int index = 0; index < interests.size(); index++) {
+                if (interests.get(index).fileDescriptor() == fileDescriptor) {
+                    return index;
+                }
+            }
+            return -1;
+        }
+    }
+
     /// Stores buffered bytes for a single in-memory pipe.
     private static final class PipeBuffer {
         /// The initial pipe buffer capacity used before the first expansion.
@@ -4971,6 +5405,21 @@ public final class GuestSyscalls implements AutoCloseable {
             writerOpen = false;
         }
 
+        /// Returns true when a read endpoint would observe data or end-of-file immediately.
+        boolean isReadable() {
+            return length > 0 || !writerOpen;
+        }
+
+        /// Returns true when at least one read endpoint is still open.
+        boolean isReaderOpen() {
+            return readerOpen;
+        }
+
+        /// Returns true when at least one write endpoint is still open.
+        boolean isWriterOpen() {
+            return writerOpen;
+        }
+
         /// Expands the circular buffer while preserving unread byte order.
         private void ensureCapacity(int requestedCapacity) {
             if (requestedCapacity <= buffer.length) {
@@ -5009,6 +5458,12 @@ public final class GuestSyscalls implements AutoCloseable {
         /// The pipe buffer backing a pipe endpoint.
         private final @Nullable PipeBuffer pipe;
 
+        /// The counter backing an eventfd descriptor.
+        private final @Nullable EventCounter eventCounter;
+
+        /// The interest set backing an epoll descriptor.
+        private final @Nullable EpollSet epollSet;
+
         /// Whether this descriptor refers to a host directory.
         private final boolean directory;
 
@@ -5045,6 +5500,8 @@ public final class GuestSyscalls implements AutoCloseable {
                 @Nullable TruffleFile path,
                 @Nullable SeekableByteChannel channel,
                 @Nullable PipeBuffer pipe,
+                @Nullable EventCounter eventCounter,
+                @Nullable EpollSet epollSet,
                 boolean directory,
                 boolean pipeReader,
                 boolean pipeWriter,
@@ -5056,6 +5513,8 @@ public final class GuestSyscalls implements AutoCloseable {
             this.path = path;
             this.channel = channel;
             this.pipe = pipe;
+            this.eventCounter = eventCounter;
+            this.epollSet = epollSet;
             this.directory = directory;
             this.pipeReader = pipeReader;
             this.pipeWriter = pipeWriter;
@@ -5072,18 +5531,33 @@ public final class GuestSyscalls implements AutoCloseable {
                 boolean readable,
                 boolean writable,
                 boolean append) {
-            return new OpenFile(-1, path, channel, null, false, false, false, readable, writable, append, false);
+            return new OpenFile(
+                    -1,
+                    path,
+                    channel,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    false,
+                    readable,
+                    writable,
+                    append,
+                    false);
         }
 
         /// Creates an entry backed by a host directory path.
         static OpenFile hostDirectory(TruffleFile path) {
-            return new OpenFile(-1, path, null, null, true, false, false, true, false, false, false);
+            return new OpenFile(-1, path, null, null, null, null, true, false, false, true, false, false, false);
         }
 
         /// Creates an entry that duplicates a standard stream descriptor.
         static OpenFile standardFileDescriptor(int fileDescriptor) {
             return new OpenFile(
                     fileDescriptor,
+                    null,
+                    null,
                     null,
                     null,
                     null,
@@ -5098,12 +5572,35 @@ public final class GuestSyscalls implements AutoCloseable {
 
         /// Creates the read endpoint of a pipe.
         static OpenFile pipeReader(PipeBuffer pipe, boolean nonblocking) {
-            return new OpenFile(-1, null, null, pipe, false, true, false, true, false, false, nonblocking);
+            return new OpenFile(-1, null, null, pipe, null, null, false, true, false, true, false, false, nonblocking);
         }
 
         /// Creates the write endpoint of a pipe.
         static OpenFile pipeWriter(PipeBuffer pipe, boolean nonblocking) {
-            return new OpenFile(-1, null, null, pipe, false, false, true, false, true, false, nonblocking);
+            return new OpenFile(-1, null, null, pipe, null, null, false, false, true, false, true, false, nonblocking);
+        }
+
+        /// Creates an entry backed by an eventfd counter.
+        static OpenFile eventFile(EventCounter eventCounter) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    null,
+                    null,
+                    eventCounter,
+                    null,
+                    false,
+                    false,
+                    false,
+                    true,
+                    true,
+                    false,
+                    eventCounter.nonblocking());
+        }
+
+        /// Creates an entry backed by an epoll interest set.
+        static OpenFile epollFile(EpollSet epollSet) {
+            return new OpenFile(-1, null, null, null, null, epollSet, false, false, false, true, false, false, false);
         }
 
         /// Returns true when this entry duplicates one of the original standard streams.
@@ -5124,6 +5621,16 @@ public final class GuestSyscalls implements AutoCloseable {
         /// Returns true when this entry is backed by a pipe endpoint.
         boolean isPipe() {
             return pipe != null;
+        }
+
+        /// Returns true when this entry is backed by an eventfd counter.
+        boolean isEventFile() {
+            return eventCounter != null;
+        }
+
+        /// Returns true when this entry is backed by an epoll interest set.
+        boolean isEpollFile() {
+            return epollSet != null;
         }
 
         /// Returns true when this entry refers to a host directory.
@@ -5151,6 +5658,18 @@ public final class GuestSyscalls implements AutoCloseable {
         PipeBuffer pipe() {
             assert pipe != null;
             return pipe;
+        }
+
+        /// Returns the eventfd counter backing this descriptor.
+        EventCounter eventCounter() {
+            assert eventCounter != null;
+            return eventCounter;
+        }
+
+        /// Returns the epoll interest set backing this descriptor.
+        EpollSet epollSet() {
+            assert epollSet != null;
+            return epollSet;
         }
 
         /// Returns the host path backing this descriptor.

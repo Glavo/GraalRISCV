@@ -95,6 +95,18 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final long SYS_GETCWD = 17;
 
+    /// The Linux RISC-V syscall number for `eventfd2`.
+    private static final long SYS_EVENTFD2 = 19;
+
+    /// The Linux RISC-V syscall number for `epoll_create1`.
+    private static final long SYS_EPOLL_CREATE1 = 20;
+
+    /// The Linux RISC-V syscall number for `epoll_ctl`.
+    private static final long SYS_EPOLL_CTL = 21;
+
+    /// The Linux RISC-V syscall number for `epoll_pwait`.
+    private static final long SYS_EPOLL_PWAIT = 22;
+
     /// The Linux RISC-V syscall number for `dup`.
     private static final long SYS_DUP = 23;
 
@@ -601,6 +613,33 @@ public final class GuestSyscallsTest {
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
+
+    /// Linux `EFD_SEMAPHORE`.
+    private static final long EFD_SEMAPHORE = 1;
+
+    /// Linux `EPOLL_CTL_ADD`.
+    private static final long EPOLL_CTL_ADD = 1;
+
+    /// Linux `EPOLL_CTL_DEL`.
+    private static final long EPOLL_CTL_DEL = 2;
+
+    /// Linux `EPOLL_CTL_MOD`.
+    private static final long EPOLL_CTL_MOD = 3;
+
+    /// Linux `EPOLLIN`.
+    private static final int EPOLLIN = 0x001;
+
+    /// Linux `EPOLLOUT`.
+    private static final int EPOLLOUT = 0x004;
+
+    /// The byte size of Linux RISC-V 64-bit `struct epoll_event`.
+    private static final int EPOLL_EVENT_SIZE = 16;
+
+    /// The byte offset of `events` inside Linux RISC-V 64-bit `struct epoll_event`.
+    private static final int EPOLL_EVENT_EVENTS_OFFSET = 0;
+
+    /// The byte offset of `data` inside Linux RISC-V 64-bit `struct epoll_event`.
+    private static final int EPOLL_EVENT_DATA_OFFSET = Long.BYTES;
 
     /// The Linux generic kernel `sigset_t` size accepted by signal syscalls.
     private static final long KERNEL_SIGSET_SIZE = 8;
@@ -1931,6 +1970,132 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_PIPE2, pipeAddress, O_APPEND, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies in-memory `eventfd2` counters and basic zero-timeout `epoll` readiness.
+    @Test
+    public void eventfd2AndEpollReportReadiness() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long bufferAddress = memory.baseAddress();
+            long eventAddress = memory.baseAddress() + 128;
+            long eventsAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_EVENTFD2, 0, O_NONBLOCK | O_CLOEXEC, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int eventFileDescriptor = (int) state.register(10);
+            assertEquals(3, eventFileDescriptor);
+
+            setSyscall(state, SYS_READ, eventFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, eventFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDWR | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_EVENTFD2, 0, O_APPEND, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(bufferAddress, 3);
+            setSyscall(state, SYS_WRITE, eventFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+
+            setSyscall(state, SYS_READ, eventFileDescriptor, bufferAddress, Integer.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_READ, eventFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertEquals(3, memory.readLong(bufferAddress));
+
+            setSyscall(state, SYS_EVENTFD2, 2, EFD_SEMAPHORE | O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int semaphoreFileDescriptor = (int) state.register(10);
+            assertEquals(4, semaphoreFileDescriptor);
+
+            setSyscall(state, SYS_READ, semaphoreFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertEquals(1, memory.readLong(bufferAddress));
+
+            setSyscall(state, SYS_READ, semaphoreFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertEquals(1, memory.readLong(bufferAddress));
+
+            setSyscall(state, SYS_READ, semaphoreFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_CREATE1, O_CLOEXEC, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int epollFileDescriptor = (int) state.register(10);
+            assertEquals(5, epollFileDescriptor);
+
+            setSyscall(state, SYS_EPOLL_CREATE1, O_NONBLOCK, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeEpollEvent(memory, eventAddress, EPOLLIN, 0x1122_3344_5566_7788L);
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, eventFileDescriptor, eventAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, eventFileDescriptor, eventAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EEXIST, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(bufferAddress, 5);
+            setSyscall(state, SYS_WRITE, eventFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertEquals(EPOLLIN, memory.readInt(eventsAddress + EPOLL_EVENT_EVENTS_OFFSET));
+            assertEquals(0x1122_3344_5566_7788L, readEpollEventData(memory, eventsAddress));
+
+            setSyscall(state, SYS_READ, eventFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertEquals(5, memory.readLong(bufferAddress));
+
+            setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeEpollEvent(memory, eventAddress, EPOLLOUT, 0x55);
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_MOD, eventFileDescriptor, eventAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertEquals(EPOLLOUT, memory.readInt(eventsAddress + EPOLL_EVENT_EVENTS_OFFSET));
+            assertEquals(0x55, readEpollEventData(memory, eventsAddress));
+
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_DEL, eventFileDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_DEL, eventFileDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, 99, eventAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
         }
     }
 
@@ -4003,6 +4168,35 @@ public final class GuestSyscallsTest {
     /// Reads a `struct riscv_hwprobe` value from guest memory.
     private static long readHwprobeValue(Memory memory, long pairsAddress, int index) {
         return memory.readLong(pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE + RISCV_HWPROBE_VALUE_OFFSET);
+    }
+
+    /// Writes a packed Linux generic `struct epoll_event` into guest memory.
+    private static void writeEpollEvent(Memory memory, long eventAddress, int events, long data) {
+        memory.writeInt(eventAddress + EPOLL_EVENT_EVENTS_OFFSET, events);
+        writeLongUnaligned(memory, eventAddress + EPOLL_EVENT_DATA_OFFSET, data);
+    }
+
+    /// Reads the `data` field from a packed Linux generic `struct epoll_event`.
+    private static long readEpollEventData(Memory memory, long eventAddress) {
+        return readLongUnaligned(memory, eventAddress + EPOLL_EVENT_DATA_OFFSET);
+    }
+
+    /// Reads a little-endian 64-bit value without requiring guest alignment.
+    private static long readLongUnaligned(Memory memory, long address) {
+        long value = 0;
+        for (int index = 0; index < Long.BYTES; index++) {
+            value |= (long) memory.readUnsignedByte(address + index) << (index * Byte.SIZE);
+        }
+        return value;
+    }
+
+    /// Writes a little-endian 64-bit value without requiring guest alignment.
+    private static void writeLongUnaligned(Memory memory, long address, long value) {
+        byte[] bytes = new byte[Long.BYTES];
+        for (int index = 0; index < bytes.length; index++) {
+            bytes[index] = (byte) (value >>> (index * Byte.SIZE));
+        }
+        memory.writeBytes(address, bytes, 0, bytes.length);
     }
 
     /// Populates the syscall number and the first three argument registers.
