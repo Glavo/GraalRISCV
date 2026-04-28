@@ -33,9 +33,7 @@ public final class ElfLoader {
             boolean entryPointIsExecutable = false;
             for (int index = 0; index < programHeaderCount; index++) {
                 ElfSegment segment = elfFile.getProgramHeader(index);
-                if (segment.p_type == ElfSegment.PT_DYNAMIC) {
-                    throw new RiscVException("Dynamic ELF files are not supported");
-                }
+                validateProgramHeader(segment);
                 if (segment.p_type != ElfSegment.PT_LOAD) {
                     continue;
                 }
@@ -83,6 +81,18 @@ public final class ElfLoader {
                     programHeaderCount);
         } catch (ElfException | IndexOutOfBoundsException exception) {
             throw new RiscVException("Invalid ELF file", exception);
+        }
+    }
+
+    /// Rejects program header metadata that requires dynamic linking support.
+    private static void validateProgramHeader(ElfSegment segment) {
+        switch (segment.p_type) {
+            case ElfSegment.PT_INTERP -> throw new RiscVException(
+                    "Dynamic ELF interpreter segments are not supported: PT_INTERP");
+            case ElfSegment.PT_DYNAMIC -> throw new RiscVException(
+                    "Dynamic ELF segments are not supported: PT_DYNAMIC");
+            default -> {
+            }
         }
     }
 

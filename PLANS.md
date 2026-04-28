@@ -14,14 +14,13 @@
 - Keep the simulator user-mode only; do not implement privileged mode, page tables, interrupts, devices, or Linux kernel boot.
 - Extend auxv if broader static libc programs require entries beyond the current musl `printf` smoke path.
 - Broaden statically linked Linux ELF coverage beyond the current resolved-segment musl `printf` baseline.
-- Reject dynamic linking in this phase with clear diagnostics when inputs contain `PT_INTERP`, `PT_DYNAMIC`, or unresolved relocation metadata.
 - Preserve existing freestanding ELF behavior and tests while adding Linux static program behavior.
 
 ### 3. Expand Linux syscall coverage for static libc
 
 - Keep syscall handling deterministic and single-process unless a later plan explicitly expands that boundary.
 - Preserve `--host-root` as the TruffleFile-backed filesystem sandbox root and reject path escapes.
-- Broaden file descriptor support beyond the current regular-file read/write/create/truncate/append, descriptor duplication, in-memory `pipe2`, and minimal `fcntl` baseline, including directory fds and additional Linux flags when needed.
+- Broaden file descriptor support beyond the current regular-file read/write/create/truncate/append, directory fd, descriptor duplication, in-memory `pipe2`, and minimal `fcntl` baseline, including additional Linux flags when needed.
 - Add syscall implementations as broader static Linux workloads require beyond the current `clone` parent-return compatibility, `dup`/`dup3`, `faccessat`/`faccessat2`, `fcntl`, `futex` single-thread compatibility, `getcpu`, `getcwd`, `getpgid`, `getppid`, `getrusage`, `gettimeofday`, `kill`/`tkill`/`tgkill` validation, `madvise`, `mprotect`, `nanosleep`, `newfstatat`, `pipe2`, `prctl`, `prlimit64`, `readlinkat`, `riscv_hwprobe`, `sched_getaffinity`, `sched_yield`, `setsid`, `sigaltstack`, `times`, `uname`, and user/group identity syscall baseline.
 - Keep unsupported syscall diagnostics actionable by including the syscall number, guest PC, and argument registers.
 - Add direct syscall tests for success paths, Linux-compatible error returns, filesystem sandboxing, configurable time, and deterministic random behavior.

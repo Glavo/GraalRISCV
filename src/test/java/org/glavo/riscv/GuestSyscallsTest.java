@@ -65,6 +65,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
 
+    /// Linux `ENOTDIR` as a raw negative syscall result.
+    private static final long ENOTDIR = -20;
+
     /// Linux `EISDIR` as a raw negative syscall result.
     private static final long EISDIR = -21;
 
@@ -403,6 +406,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `O_NONBLOCK`.
     private static final long O_NONBLOCK = 00004000L;
+
+    /// Linux `O_DIRECTORY`.
+    private static final long O_DIRECTORY = 00200000L;
 
     /// Linux `F_GETFL`.
     private static final long F_GETFL = 3;
@@ -1013,6 +1019,76 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 1);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `openat` supports read-only directory descriptors for relative paths.
+    @Test
+    public void openatSupportsDirectoryFileDescriptors() throws Exception {
+        Files.createDirectories(tempDirectory.resolve("subdir"));
+        Files.writeString(tempDirectory.resolve("subdir").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long directoryPathAddress = memory.baseAddress();
+            long filePathAddress = memory.baseAddress() + 64;
+            long bufferAddress = memory.baseAddress() + 128;
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, directoryPathAddress, "subdir");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, directoryPathAddress, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, directoryFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY | O_DIRECTORY, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, directoryFileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_READ, directoryFileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EISDIR, state.register(10));
+
+            writeGuestString(memory, filePathAddress, "message.txt");
+            setSyscall(state, SYS_OPENAT, directoryFileDescriptor, filePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(4, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 14);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(14, state.register(10));
+            assertArrayEquals("directory-data".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 14));
+
+            setSyscall(state, SYS_NEWFSTATAT, directoryFileDescriptor, filePathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READ_WRITE_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_FACCESSAT2, directoryFileDescriptor, filePathAddress, R_OK, AT_EACCESS, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, filePathAddress, "../../outside.txt");
+            setSyscall(state, SYS_OPENAT, directoryFileDescriptor, filePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, filePathAddress, "subdir/message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, filePathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTDIR, state.register(10));
         }
     }
 

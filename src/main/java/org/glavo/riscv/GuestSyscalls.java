@@ -225,6 +225,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
 
+    /// Linux `ENOTDIR` as a raw negative syscall result.
+    private static final long ENOTDIR = -20;
+
     /// Linux `EISDIR` as a raw negative syscall result.
     private static final long EISDIR = -21;
 
@@ -323,6 +326,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `O_NONBLOCK`.
     private static final long O_NONBLOCK = 00004000L;
+
+    /// Linux `O_DIRECTORY`.
+    private static final long O_DIRECTORY = 00200000L;
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
@@ -1542,11 +1548,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return accessFileDescriptor((int) directoryFileDescriptor, mode);
         }
 
-        if (directoryFileDescriptor != AT_FDCWD) {
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
             return EBADF;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -1576,7 +1582,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((mode & W_OK) != 0 && !openFile.writable()) {
             return EACCES;
         }
-        if ((mode & X_OK) != 0) {
+        if ((mode & X_OK) != 0 && !openFile.isDirectory()) {
             return EACCES;
         }
         return 0;
@@ -1606,11 +1612,8 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Opens a host file below the configured host root.
+    /// Opens a host file or directory below the configured host root.
     private long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
-        if (directoryFileDescriptor != AT_FDCWD) {
-            return EBADF;
-        }
         long accessMode = flags & O_ACCMODE;
         if (accessMode != O_RDONLY && accessMode != O_WRONLY && accessMode != O_RDWR) {
             return EINVAL;
@@ -1624,7 +1627,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return ENOENT;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -1634,6 +1641,11 @@ public final class GuestSyscalls implements AutoCloseable {
         boolean create = (flags & O_CREAT) != 0;
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
+        boolean directoryOnly = (flags & O_DIRECTORY) != 0;
+        if (directoryOnly && create) {
+            return EINVAL;
+        }
+
         boolean exists;
         try {
             exists = hostFile.exists();
@@ -1673,7 +1685,13 @@ public final class GuestSyscalls implements AutoCloseable {
         try {
             exists = hostFile.exists();
             if (exists && hostFile.isDirectory()) {
-                return EISDIR;
+                if (!directoryOnly || writable || truncate || append) {
+                    return EISDIR;
+                }
+                return addOpenFile(OpenFile.hostDirectory(hostFile));
+            }
+            if (directoryOnly) {
+                return ENOTDIR;
             }
             if (exists && !hostFile.isRegularFile()) {
                 return ENODEV;
@@ -1732,6 +1750,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 @Nullable OpenFile openFile = openFile(fileDescriptor);
                 if (openFile == null || !openFile.readable()) {
                     return EBADF;
+                }
+                if (openFile.isDirectory()) {
+                    return EISDIR;
                 }
                 if (openFile.isPipeReader()) {
                     count = openFile.pipe().read(buffer, buffer.length, openFile.nonblocking());
@@ -1948,9 +1969,6 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Reads a sandboxed symbolic link target into guest memory.
     private long readlinkat(long directoryFileDescriptor, long pathAddress, long bufferAddress, long bufferSize) {
-        if (directoryFileDescriptor != AT_FDCWD) {
-            return EBADF;
-        }
         if (bufferSize <= 0 || bufferSize > Integer.MAX_VALUE) {
             return EINVAL;
         }
@@ -1963,7 +1981,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return ENOENT;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2011,11 +2033,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return fstat((int) directoryFileDescriptor, statAddress);
         }
 
-        if (directoryFileDescriptor != AT_FDCWD) {
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
             return EBADF;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(guestPath);
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2038,6 +2060,10 @@ public final class GuestSyscalls implements AutoCloseable {
             int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
                     | (openFile.writable() ? 0222 : 0);
             writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_FIFO | permissions, 0);
+            return 0;
+        }
+        if (openFile.isDirectory()) {
+            writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_DIRECTORY | STAT_MODE_READ_EXECUTE_ALL, 0);
             return 0;
         }
 
@@ -3084,8 +3110,21 @@ public final class GuestSyscalls implements AutoCloseable {
         return null;
     }
 
-    /// Resolves a guest path below the configured host root or returns null for escapes.
-    private @Nullable TruffleFile resolveHostFile(String guestPath) {
+    /// Returns true when a non-empty guest path can be resolved from the supplied directory descriptor.
+    private boolean canResolvePathFrom(long directoryFileDescriptor, String guestPath) {
+        if (directoryFileDescriptor == AT_FDCWD || isAbsoluteGuestPath(guestPath)) {
+            return true;
+        }
+        if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
+            return false;
+        }
+
+        @Nullable OpenFile openFile = openFile((int) directoryFileDescriptor);
+        return openFile != null && openFile.isDirectory();
+    }
+
+    /// Resolves a guest path below the configured host root or an open directory descriptor.
+    private @Nullable TruffleFile resolveHostFile(long directoryFileDescriptor, String guestPath) {
         @Nullable TruffleFile root = currentHostRoot();
         if (root == null) {
             return null;
@@ -3094,17 +3133,35 @@ public final class GuestSyscalls implements AutoCloseable {
             return null;
         }
 
+        TruffleFile base = root;
+        if (directoryFileDescriptor != AT_FDCWD && !isAbsoluteGuestPath(guestPath)) {
+            @Nullable OpenFile directory = openFile((int) directoryFileDescriptor);
+            if (directory == null || !directory.isDirectory()) {
+                return null;
+            }
+            @Nullable TruffleFile path = directory.path();
+            if (path == null) {
+                return null;
+            }
+            base = path;
+        }
+
         String relativePath = guestPath;
         while (relativePath.startsWith("/")) {
             relativePath = relativePath.substring(1);
         }
 
         try {
-            TruffleFile hostFile = root.resolve(relativePath).normalize();
+            TruffleFile hostFile = base.resolve(relativePath).normalize();
             return hostFile.startsWith(root) ? hostFile : null;
         } catch (InvalidPathException exception) {
             return null;
         }
+    }
+
+    /// Returns true when the guest path is absolute in Linux path syntax.
+    private static boolean isAbsoluteGuestPath(String guestPath) {
+        return guestPath.startsWith("/");
     }
 
     /// Returns true when a host file's canonical location stays below the sandbox root.
@@ -3211,6 +3268,9 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (openFile.nonblocking()) {
             flags |= O_NONBLOCK;
+        }
+        if (openFile.isDirectory()) {
+            flags |= O_DIRECTORY;
         }
         return flags;
     }
@@ -3727,6 +3787,9 @@ public final class GuestSyscalls implements AutoCloseable {
         /// The pipe buffer backing a pipe endpoint.
         private final @Nullable PipeBuffer pipe;
 
+        /// Whether this descriptor refers to a host directory.
+        private final boolean directory;
+
         /// Whether this descriptor is the read endpoint of a pipe.
         private final boolean pipeReader;
 
@@ -3754,6 +3817,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 @Nullable TruffleFile path,
                 @Nullable SeekableByteChannel channel,
                 @Nullable PipeBuffer pipe,
+                boolean directory,
                 boolean pipeReader,
                 boolean pipeWriter,
                 boolean readable,
@@ -3764,6 +3828,7 @@ public final class GuestSyscalls implements AutoCloseable {
             this.path = path;
             this.channel = channel;
             this.pipe = pipe;
+            this.directory = directory;
             this.pipeReader = pipeReader;
             this.pipeWriter = pipeWriter;
             this.readable = readable;
@@ -3779,7 +3844,12 @@ public final class GuestSyscalls implements AutoCloseable {
                 boolean readable,
                 boolean writable,
                 boolean append) {
-            return new OpenFile(-1, path, channel, null, false, false, readable, writable, append, false);
+            return new OpenFile(-1, path, channel, null, false, false, false, readable, writable, append, false);
+        }
+
+        /// Creates an entry backed by a host directory path.
+        static OpenFile hostDirectory(TruffleFile path) {
+            return new OpenFile(-1, path, null, null, true, false, false, true, false, false, false);
         }
 
         /// Creates an entry that duplicates a standard stream descriptor.
@@ -3791,6 +3861,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     false,
                     false,
+                    false,
                     fileDescriptor == 0,
                     fileDescriptor == 1 || fileDescriptor == 2,
                     false,
@@ -3799,12 +3870,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
         /// Creates the read endpoint of a pipe.
         static OpenFile pipeReader(PipeBuffer pipe, boolean nonblocking) {
-            return new OpenFile(-1, null, null, pipe, true, false, true, false, false, nonblocking);
+            return new OpenFile(-1, null, null, pipe, false, true, false, true, false, false, nonblocking);
         }
 
         /// Creates the write endpoint of a pipe.
         static OpenFile pipeWriter(PipeBuffer pipe, boolean nonblocking) {
-            return new OpenFile(-1, null, null, pipe, false, true, false, true, false, nonblocking);
+            return new OpenFile(-1, null, null, pipe, false, false, true, false, true, false, nonblocking);
         }
 
         /// Returns true when this entry duplicates one of the original standard streams.
@@ -3827,6 +3898,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return pipe != null;
         }
 
+        /// Returns true when this entry refers to a host directory.
+        boolean isDirectory() {
+            return directory;
+        }
+
         /// Returns true when this entry is a pipe read endpoint.
         boolean isPipeReader() {
             return pipeReader;
@@ -3847,6 +3923,11 @@ public final class GuestSyscalls implements AutoCloseable {
         PipeBuffer pipe() {
             assert pipe != null;
             return pipe;
+        }
+
+        /// Returns the host path backing this descriptor.
+        @Nullable TruffleFile path() {
+            return path;
         }
 
         /// Returns true when reads are permitted.

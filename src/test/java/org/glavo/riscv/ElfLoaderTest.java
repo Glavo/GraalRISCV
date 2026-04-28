@@ -138,7 +138,18 @@ public final class ElfLoaderTest {
 
         RiscVException exception = assertThrows(RiscVException.class, () -> ElfLoader.load(elf));
 
-        assertTrue(exception.getMessage().contains("Dynamic ELF files are not supported"));
+        assertTrue(exception.getMessage().contains("PT_DYNAMIC"));
+    }
+
+    /// Verifies that program-header interpreter metadata is rejected.
+    @Test
+    public void rejectsInterpreterProgramSegment() {
+        byte[] elf = ElfTestImages.executable(ElfTestImages.ecall());
+        putProgramHeaderInt(elf, 0, 0, ElfSegment.PT_INTERP);
+
+        RiscVException exception = assertThrows(RiscVException.class, () -> ElfLoader.load(elf));
+
+        assertTrue(exception.getMessage().contains("PT_INTERP"));
     }
 
     /// Verifies that relocation section metadata is rejected.
