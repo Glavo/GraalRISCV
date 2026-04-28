@@ -1,11 +1,10 @@
 package org.glavo.riscv;
 
-import org.glavo.riscv.InstructionNode.Operation;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.util.ArrayList;
 
-/// Decodes RV64GC guest instruction subsets from guest memory into executable nodes.
+/// Decodes RV64GC guest instruction subsets from guest memory into immutable block data.
 @NotNullByDefault
 public final class RiscVDecoder {
     /// The maximum number of straight-line instructions decoded into one block.
@@ -16,23 +15,28 @@ public final class RiscVDecoder {
     }
 
     /// Decodes a basic block starting at the supplied guest program counter.
-    public static BlockNode decodeBlock(Memory memory, long startPc) {
-        ArrayList<InstructionNode> instructions = new ArrayList<>();
+    public static DecodedBlock decodeBlock(Memory memory, long startPc) {
+        ArrayList<DecodedInstruction> instructions = new ArrayList<>();
         long pc = startPc;
         for (int count = 0; count < MAX_BLOCK_INSTRUCTIONS; count++) {
-            InstructionNode instruction = decode(memory, pc);
+            DecodedInstruction instruction = decode(memory, pc);
             instructions.add(instruction);
             pc += instruction.length();
-            if (instruction.isTerminator()) {
+            if (instruction.terminator()) {
                 break;
             }
         }
 
-        return new BlockNode(instructions.toArray(InstructionNode[]::new));
+        DecodedInstruction[] decodedInstructions = instructions.toArray(DecodedInstruction[]::new);
+        return new DecodedBlock(
+                startPc,
+                decodedInstructions,
+                pc,
+                decodedInstructions[decodedInstructions.length - 1].terminator());
     }
 
     /// Decodes one instruction at the supplied guest address.
-    private static InstructionNode decode(Memory memory, long address) {
+    private static DecodedInstruction decode(Memory memory, long address) {
         int half = memory.readUnsignedShort(address);
         if ((half & 0b11) != 0b11) {
             return decodeCompressed(address, half);
@@ -42,12 +46,12 @@ public final class RiscVDecoder {
     }
 
     /// Decodes a 32-bit instruction.
-    private static InstructionNode decodeInt(long address, int raw) {
+    private static DecodedInstruction decodeInt(long address, int raw) {
         int opcode = raw & 0x7f;
         return switch (opcode) {
-            case 0x37 -> instruction(address, raw, Operation.LUI, rd(raw), 0, 0, uImmediate(raw), false);
-            case 0x17 -> instruction(address, raw, Operation.AUIPC, rd(raw), 0, 0, uImmediate(raw), false);
-            case 0x6f -> instruction(address, raw, Operation.JAL, rd(raw), 0, 0, jalImmediate(raw), true);
+            case 0x37 -> instruction(address, raw, RiscVOperation.LUI, rd(raw), 0, 0, uImmediate(raw), false);
+            case 0x17 -> instruction(address, raw, RiscVOperation.AUIPC, rd(raw), 0, 0, uImmediate(raw), false);
+            case 0x6f -> instruction(address, raw, RiscVOperation.JAL, rd(raw), 0, 0, jalImmediate(raw), true);
             case 0x67 -> decodeJalr(address, raw);
             case 0x63 -> decodeBranch(address, raw);
             case 0x03 -> decodeLoad(address, raw);
@@ -58,10 +62,10 @@ public final class RiscVDecoder {
             case 0x1b -> decodeOpImmediateWord(address, raw);
             case 0x33 -> decodeOp(address, raw);
             case 0x3b -> decodeOpWord(address, raw);
-            case 0x43 -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FMADD);
-            case 0x47 -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FMSUB);
-            case 0x4b -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FNMSUB);
-            case 0x4f -> decodeFloatingPointFusedMultiplyAdd(address, raw, Operation.FNMADD);
+            case 0x43 -> decodeFloatingPointFusedMultiplyAdd(address, raw, RiscVOperation.FMADD);
+            case 0x47 -> decodeFloatingPointFusedMultiplyAdd(address, raw, RiscVOperation.FMSUB);
+            case 0x4b -> decodeFloatingPointFusedMultiplyAdd(address, raw, RiscVOperation.FNMSUB);
+            case 0x4f -> decodeFloatingPointFusedMultiplyAdd(address, raw, RiscVOperation.FNMADD);
             case 0x53 -> decodeFloatingPointOperation(address, raw);
             case 0x0f -> decodeMiscMemory(address, raw);
             case 0x73 -> decodeSystem(address, raw);
@@ -71,86 +75,86 @@ public final class RiscVDecoder {
     }
 
     /// Decodes memory-ordering instructions.
-    private static InstructionNode decodeMiscMemory(long address, int raw) {
+    private static DecodedInstruction decodeMiscMemory(long address, int raw) {
         int funct3 = funct3(raw);
         if (funct3 == 0) {
-            return instruction(address, raw, Operation.FENCE, 0, 0, 0, 0, false);
+            return instruction(address, raw, RiscVOperation.FENCE, 0, 0, 0, 0, false);
         }
         if (funct3 == 1 && rd(raw) == 0 && rs1(raw) == 0 && (raw >>> 20) == 0) {
-            return instruction(address, raw, Operation.FENCE_I, 0, 0, 0, 0, false);
+            return instruction(address, raw, RiscVOperation.FENCE_I, 0, 0, 0, 0, false);
         }
         throw illegalException(address, raw);
     }
 
     /// Decodes `jalr`.
-    private static InstructionNode decodeJalr(long address, int raw) {
+    private static DecodedInstruction decodeJalr(long address, int raw) {
         requireFunct3(address, raw, 0);
-        return instruction(address, raw, Operation.JALR, rd(raw), rs1(raw), 0, iImmediate(raw), true);
+        return instruction(address, raw, RiscVOperation.JALR, rd(raw), rs1(raw), 0, iImmediate(raw), true);
     }
 
     /// Decodes branch instructions.
-    private static InstructionNode decodeBranch(long address, int raw) {
-        Operation operation = switch (funct3(raw)) {
-            case 0 -> Operation.BEQ;
-            case 1 -> Operation.BNE;
-            case 4 -> Operation.BLT;
-            case 5 -> Operation.BGE;
-            case 6 -> Operation.BLTU;
-            case 7 -> Operation.BGEU;
+    private static DecodedInstruction decodeBranch(long address, int raw) {
+        RiscVOperation operation = switch (funct3(raw)) {
+            case 0 -> RiscVOperation.BEQ;
+            case 1 -> RiscVOperation.BNE;
+            case 4 -> RiscVOperation.BLT;
+            case 5 -> RiscVOperation.BGE;
+            case 6 -> RiscVOperation.BLTU;
+            case 7 -> RiscVOperation.BGEU;
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, 0, rs1(raw), rs2(raw), branchImmediate(raw), true);
     }
 
     /// Decodes load instructions.
-    private static InstructionNode decodeLoad(long address, int raw) {
-        Operation operation = switch (funct3(raw)) {
-            case 0 -> Operation.LB;
-            case 1 -> Operation.LH;
-            case 2 -> Operation.LW;
-            case 3 -> Operation.LD;
-            case 4 -> Operation.LBU;
-            case 5 -> Operation.LHU;
-            case 6 -> Operation.LWU;
+    private static DecodedInstruction decodeLoad(long address, int raw) {
+        RiscVOperation operation = switch (funct3(raw)) {
+            case 0 -> RiscVOperation.LB;
+            case 1 -> RiscVOperation.LH;
+            case 2 -> RiscVOperation.LW;
+            case 3 -> RiscVOperation.LD;
+            case 4 -> RiscVOperation.LBU;
+            case 5 -> RiscVOperation.LHU;
+            case 6 -> RiscVOperation.LWU;
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, rd(raw), rs1(raw), 0, iImmediate(raw), false);
     }
 
     /// Decodes floating-point load instructions.
-    private static InstructionNode decodeFloatingPointLoad(long address, int raw) {
-        Operation operation = switch (funct3(raw)) {
-            case 2 -> Operation.FLW;
-            case 3 -> Operation.FLD;
+    private static DecodedInstruction decodeFloatingPointLoad(long address, int raw) {
+        RiscVOperation operation = switch (funct3(raw)) {
+            case 2 -> RiscVOperation.FLW;
+            case 3 -> RiscVOperation.FLD;
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, rd(raw), rs1(raw), 0, iImmediate(raw), false);
     }
 
     /// Decodes store instructions.
-    private static InstructionNode decodeStore(long address, int raw) {
-        Operation operation = switch (funct3(raw)) {
-            case 0 -> Operation.SB;
-            case 1 -> Operation.SH;
-            case 2 -> Operation.SW;
-            case 3 -> Operation.SD;
+    private static DecodedInstruction decodeStore(long address, int raw) {
+        RiscVOperation operation = switch (funct3(raw)) {
+            case 0 -> RiscVOperation.SB;
+            case 1 -> RiscVOperation.SH;
+            case 2 -> RiscVOperation.SW;
+            case 3 -> RiscVOperation.SD;
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, 0, rs1(raw), rs2(raw), storeImmediate(raw), false);
     }
 
     /// Decodes floating-point store instructions.
-    private static InstructionNode decodeFloatingPointStore(long address, int raw) {
-        Operation operation = switch (funct3(raw)) {
-            case 2 -> Operation.FSW;
-            case 3 -> Operation.FSD;
+    private static DecodedInstruction decodeFloatingPointStore(long address, int raw) {
+        RiscVOperation operation = switch (funct3(raw)) {
+            case 2 -> RiscVOperation.FSW;
+            case 3 -> RiscVOperation.FSD;
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, 0, rs1(raw), rs2(raw), storeImmediate(raw), false);
     }
 
     /// Decodes floating-point fused multiply-add instructions.
-    private static InstructionNode decodeFloatingPointFusedMultiplyAdd(long address, int raw, Operation operation) {
+    private static DecodedInstruction decodeFloatingPointFusedMultiplyAdd(long address, int raw, RiscVOperation operation) {
         int format = requireFloatingPointFormat(address, raw, (raw >>> 25) & 0x3);
         int roundingMode = requireFloatingPointRoundingMode(address, raw, funct3(raw));
         return instruction(
@@ -165,34 +169,34 @@ public final class RiscVDecoder {
     }
 
     /// Decodes floating-point arithmetic, conversion, move, compare, and classify instructions.
-    private static InstructionNode decodeFloatingPointOperation(long address, int raw) {
+    private static DecodedInstruction decodeFloatingPointOperation(long address, int raw) {
         int funct7 = (raw >>> 25) & 0x7f;
         int format = requireFloatingPointFormat(address, raw, funct7 & 0x1);
         int roundingMode = funct3(raw);
         return switch (funct7) {
-            case 0x00, 0x01 -> roundedFloatingPointInstruction(address, raw, Operation.FADD, format, roundingMode);
-            case 0x04, 0x05 -> roundedFloatingPointInstruction(address, raw, Operation.FSUB, format, roundingMode);
-            case 0x08, 0x09 -> roundedFloatingPointInstruction(address, raw, Operation.FMUL, format, roundingMode);
-            case 0x0c, 0x0d -> roundedFloatingPointInstruction(address, raw, Operation.FDIV, format, roundingMode);
+            case 0x00, 0x01 -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FADD, format, roundingMode);
+            case 0x04, 0x05 -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FSUB, format, roundingMode);
+            case 0x08, 0x09 -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FMUL, format, roundingMode);
+            case 0x0c, 0x0d -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FDIV, format, roundingMode);
             case 0x2c, 0x2d -> {
                 if (rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }
-                yield roundedFloatingPointInstruction(address, raw, Operation.FSQRT, format, roundingMode);
+                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FSQRT, format, roundingMode);
             }
             case 0x10, 0x11 -> {
-                Operation operation = switch (funct3(raw)) {
-                    case 0 -> Operation.FSGNJ;
-                    case 1 -> Operation.FSGNJN;
-                    case 2 -> Operation.FSGNJX;
+                RiscVOperation operation = switch (funct3(raw)) {
+                    case 0 -> RiscVOperation.FSGNJ;
+                    case 1 -> RiscVOperation.FSGNJN;
+                    case 2 -> RiscVOperation.FSGNJX;
                     default -> throw illegalException(address, raw);
                 };
                 yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
             }
             case 0x14, 0x15 -> {
-                Operation operation = switch (funct3(raw)) {
-                    case 0 -> Operation.FMIN;
-                    case 1 -> Operation.FMAX;
+                RiscVOperation operation = switch (funct3(raw)) {
+                    case 0 -> RiscVOperation.FMIN;
+                    case 1 -> RiscVOperation.FMAX;
                     default -> throw illegalException(address, raw);
                 };
                 yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
@@ -201,38 +205,38 @@ public final class RiscVDecoder {
                 if (rs2(raw) != 1) {
                     throw illegalException(address, raw);
                 }
-                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_S_D, 0, roundingMode);
+                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_S_D, 0, roundingMode);
             }
             case 0x21 -> {
                 if (rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }
-                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_D_S, 1, roundingMode);
+                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_D_S, 1, roundingMode);
             }
             case 0x50, 0x51 -> {
-                Operation operation = switch (funct3(raw)) {
-                    case 0 -> Operation.FLE;
-                    case 1 -> Operation.FLT;
-                    case 2 -> Operation.FEQ;
+                RiscVOperation operation = switch (funct3(raw)) {
+                    case 0 -> RiscVOperation.FLE;
+                    case 1 -> RiscVOperation.FLT;
+                    case 2 -> RiscVOperation.FEQ;
                     default -> throw illegalException(address, raw);
                 };
                 yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
             }
             case 0x60, 0x61 -> {
                 requireConversionSelector(address, raw, rs2(raw));
-                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_INT_FP, format, roundingMode);
+                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_INT_FP, format, roundingMode);
             }
             case 0x68, 0x69 -> {
                 requireConversionSelector(address, raw, rs2(raw));
-                yield roundedFloatingPointInstruction(address, raw, Operation.FCVT_FP_INT, format, roundingMode);
+                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_FP_INT, format, roundingMode);
             }
             case 0x70, 0x71 -> {
                 if (rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }
-                Operation operation = switch (funct3(raw)) {
-                    case 0 -> Operation.FMV_X_FP;
-                    case 1 -> Operation.FCLASS;
+                RiscVOperation operation = switch (funct3(raw)) {
+                    case 0 -> RiscVOperation.FMV_X_FP;
+                    case 1 -> RiscVOperation.FCLASS;
                     default -> throw illegalException(address, raw);
                 };
                 yield instruction(address, raw, operation, rd(raw), rs1(raw), 0, floatingPointImmediate(format), false);
@@ -241,17 +245,17 @@ public final class RiscVDecoder {
                 if (funct3(raw) != 0 || rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }
-                yield instruction(address, raw, Operation.FMV_FP_X, rd(raw), rs1(raw), 0, floatingPointImmediate(format), false);
+                yield instruction(address, raw, RiscVOperation.FMV_FP_X, rd(raw), rs1(raw), 0, floatingPointImmediate(format), false);
             }
             default -> throw illegalException(address, raw);
         };
     }
 
     /// Creates a rounded floating-point decoded instruction.
-    private static InstructionNode roundedFloatingPointInstruction(
+    private static DecodedInstruction roundedFloatingPointInstruction(
             long address,
             int raw,
-            Operation operation,
+            RiscVOperation operation,
             int format,
             int roundingMode) {
         requireFloatingPointRoundingMode(address, raw, roundingMode);
@@ -259,29 +263,29 @@ public final class RiscVDecoder {
     }
 
     /// Decodes integer immediate arithmetic instructions.
-    private static InstructionNode decodeOpImmediate(long address, int raw) {
+    private static DecodedInstruction decodeOpImmediate(long address, int raw) {
         int funct3 = funct3(raw);
-        Operation operation = switch (funct3) {
-            case 0 -> Operation.ADDI;
-            case 2 -> Operation.SLTI;
-            case 3 -> Operation.SLTIU;
-            case 4 -> Operation.XORI;
-            case 6 -> Operation.ORI;
-            case 7 -> Operation.ANDI;
+        RiscVOperation operation = switch (funct3) {
+            case 0 -> RiscVOperation.ADDI;
+            case 2 -> RiscVOperation.SLTI;
+            case 3 -> RiscVOperation.SLTIU;
+            case 4 -> RiscVOperation.XORI;
+            case 6 -> RiscVOperation.ORI;
+            case 7 -> RiscVOperation.ANDI;
             case 1 -> {
                 int imm = raw >>> 20;
                 if ((imm & ~0x3f) != 0) {
                     throw illegalException(address, raw);
                 }
-                yield Operation.SLLI;
+                yield RiscVOperation.SLLI;
             }
             case 5 -> {
                 int funct6 = (raw >>> 26) & 0x3f;
                 if (funct6 == 0) {
-                    yield Operation.SRLI;
+                    yield RiscVOperation.SRLI;
                 }
                 if (funct6 == 0x10) {
-                    yield Operation.SRAI;
+                    yield RiscVOperation.SRAI;
                 }
                 throw illegalException(address, raw);
             }
@@ -292,23 +296,23 @@ public final class RiscVDecoder {
     }
 
     /// Decodes word-width immediate arithmetic instructions.
-    private static InstructionNode decodeOpImmediateWord(long address, int raw) {
+    private static DecodedInstruction decodeOpImmediateWord(long address, int raw) {
         int shift = (raw >>> 20) & 0x1f;
-        Operation operation = switch (funct3(raw)) {
-            case 0 -> Operation.ADDIW;
+        RiscVOperation operation = switch (funct3(raw)) {
+            case 0 -> RiscVOperation.ADDIW;
             case 1 -> {
                 if (((raw >>> 25) & 0x7f) != 0) {
                     throw illegalException(address, raw);
                 }
-                yield Operation.SLLIW;
+                yield RiscVOperation.SLLIW;
             }
             case 5 -> {
                 int funct7 = (raw >>> 25) & 0x7f;
                 if (funct7 == 0) {
-                    yield Operation.SRLIW;
+                    yield RiscVOperation.SRLIW;
                 }
                 if (funct7 == 0x20) {
-                    yield Operation.SRAIW;
+                    yield RiscVOperation.SRAIW;
                 }
                 throw illegalException(address, raw);
             }
@@ -319,35 +323,35 @@ public final class RiscVDecoder {
     }
 
     /// Decodes register arithmetic instructions.
-    private static InstructionNode decodeOp(long address, int raw) {
+    private static DecodedInstruction decodeOp(long address, int raw) {
         int funct3 = funct3(raw);
         int funct7 = (raw >>> 25) & 0x7f;
-        Operation operation = switch (funct7) {
+        RiscVOperation operation = switch (funct7) {
             case 0x00 -> switch (funct3) {
-                case 0 -> Operation.ADD;
-                case 1 -> Operation.SLL;
-                case 2 -> Operation.SLT;
-                case 3 -> Operation.SLTU;
-                case 4 -> Operation.XOR;
-                case 5 -> Operation.SRL;
-                case 6 -> Operation.OR;
-                case 7 -> Operation.AND;
+                case 0 -> RiscVOperation.ADD;
+                case 1 -> RiscVOperation.SLL;
+                case 2 -> RiscVOperation.SLT;
+                case 3 -> RiscVOperation.SLTU;
+                case 4 -> RiscVOperation.XOR;
+                case 5 -> RiscVOperation.SRL;
+                case 6 -> RiscVOperation.OR;
+                case 7 -> RiscVOperation.AND;
                 default -> throw illegalException(address, raw);
             };
             case 0x20 -> switch (funct3) {
-                case 0 -> Operation.SUB;
-                case 5 -> Operation.SRA;
+                case 0 -> RiscVOperation.SUB;
+                case 5 -> RiscVOperation.SRA;
                 default -> throw illegalException(address, raw);
             };
             case 0x01 -> switch (funct3) {
-                case 0 -> Operation.MUL;
-                case 1 -> Operation.MULH;
-                case 2 -> Operation.MULHSU;
-                case 3 -> Operation.MULHU;
-                case 4 -> Operation.DIV;
-                case 5 -> Operation.DIVU;
-                case 6 -> Operation.REM;
-                case 7 -> Operation.REMU;
+                case 0 -> RiscVOperation.MUL;
+                case 1 -> RiscVOperation.MULH;
+                case 2 -> RiscVOperation.MULHSU;
+                case 3 -> RiscVOperation.MULHU;
+                case 4 -> RiscVOperation.DIV;
+                case 5 -> RiscVOperation.DIVU;
+                case 6 -> RiscVOperation.REM;
+                case 7 -> RiscVOperation.REMU;
                 default -> throw illegalException(address, raw);
             };
             default -> throw illegalException(address, raw);
@@ -356,27 +360,27 @@ public final class RiscVDecoder {
     }
 
     /// Decodes word-width register arithmetic instructions.
-    private static InstructionNode decodeOpWord(long address, int raw) {
+    private static DecodedInstruction decodeOpWord(long address, int raw) {
         int funct3 = funct3(raw);
         int funct7 = (raw >>> 25) & 0x7f;
-        Operation operation = switch (funct7) {
+        RiscVOperation operation = switch (funct7) {
             case 0x00 -> switch (funct3) {
-                case 0 -> Operation.ADDW;
-                case 1 -> Operation.SLLW;
-                case 5 -> Operation.SRLW;
+                case 0 -> RiscVOperation.ADDW;
+                case 1 -> RiscVOperation.SLLW;
+                case 5 -> RiscVOperation.SRLW;
                 default -> throw illegalException(address, raw);
             };
             case 0x20 -> switch (funct3) {
-                case 0 -> Operation.SUBW;
-                case 5 -> Operation.SRAW;
+                case 0 -> RiscVOperation.SUBW;
+                case 5 -> RiscVOperation.SRAW;
                 default -> throw illegalException(address, raw);
             };
             case 0x01 -> switch (funct3) {
-                case 0 -> Operation.MULW;
-                case 4 -> Operation.DIVW;
-                case 5 -> Operation.DIVUW;
-                case 6 -> Operation.REMW;
-                case 7 -> Operation.REMUW;
+                case 0 -> RiscVOperation.MULW;
+                case 4 -> RiscVOperation.DIVW;
+                case 5 -> RiscVOperation.DIVUW;
+                case 6 -> RiscVOperation.REMW;
+                case 7 -> RiscVOperation.REMUW;
                 default -> throw illegalException(address, raw);
             };
             default -> throw illegalException(address, raw);
@@ -385,79 +389,79 @@ public final class RiscVDecoder {
     }
 
     /// Decodes system instructions.
-    private static InstructionNode decodeSystem(long address, int raw) {
+    private static DecodedInstruction decodeSystem(long address, int raw) {
         if (raw == 0x0000_0073) {
-            return instruction(address, raw, Operation.ECALL, 0, 0, 0, 0, true);
+            return instruction(address, raw, RiscVOperation.ECALL, 0, 0, 0, 0, true);
         }
         if (raw == 0x0010_0073) {
-            return instruction(address, raw, Operation.EBREAK, 0, 0, 0, 0, true);
+            return instruction(address, raw, RiscVOperation.EBREAK, 0, 0, 0, 0, true);
         }
 
-        Operation operation = switch (funct3(raw)) {
-            case 1 -> Operation.CSRRW;
-            case 2 -> Operation.CSRRS;
-            case 3 -> Operation.CSRRC;
-            case 5 -> Operation.CSRRWI;
-            case 6 -> Operation.CSRRSI;
-            case 7 -> Operation.CSRRCI;
+        RiscVOperation operation = switch (funct3(raw)) {
+            case 1 -> RiscVOperation.CSRRW;
+            case 2 -> RiscVOperation.CSRRS;
+            case 3 -> RiscVOperation.CSRRC;
+            case 5 -> RiscVOperation.CSRRWI;
+            case 6 -> RiscVOperation.CSRRSI;
+            case 7 -> RiscVOperation.CSRRCI;
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, rd(raw), rs1(raw), 0, raw >>> 20, false);
     }
 
     /// Decodes atomic memory instructions.
-    private static InstructionNode decodeAtomic(long address, int raw) {
+    private static DecodedInstruction decodeAtomic(long address, int raw) {
         int width = funct3(raw);
         int funct5 = (raw >>> 27) & 0x1f;
-        Operation operation = switch (width) {
+        RiscVOperation operation = switch (width) {
             case 2 -> atomicWordOperation(address, raw, funct5);
             case 3 -> atomicDoubleOperation(address, raw, funct5);
             default -> throw illegalException(address, raw);
         };
-        if ((operation == Operation.LR_W || operation == Operation.LR_D) && rs2(raw) != 0) {
+        if ((operation == RiscVOperation.LR_W || operation == RiscVOperation.LR_D) && rs2(raw) != 0) {
             throw illegalException(address, raw);
         }
         return instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), 0, false);
     }
 
     /// Decodes the word-width atomic operation field.
-    private static Operation atomicWordOperation(long address, int raw, int funct5) {
+    private static RiscVOperation atomicWordOperation(long address, int raw, int funct5) {
         return switch (funct5) {
-            case 0x02 -> Operation.LR_W;
-            case 0x03 -> Operation.SC_W;
-            case 0x01 -> Operation.AMOSWAP_W;
-            case 0x00 -> Operation.AMOADD_W;
-            case 0x04 -> Operation.AMOXOR_W;
-            case 0x0c -> Operation.AMOAND_W;
-            case 0x08 -> Operation.AMOOR_W;
-            case 0x10 -> Operation.AMOMIN_W;
-            case 0x14 -> Operation.AMOMAX_W;
-            case 0x18 -> Operation.AMOMINU_W;
-            case 0x1c -> Operation.AMOMAXU_W;
+            case 0x02 -> RiscVOperation.LR_W;
+            case 0x03 -> RiscVOperation.SC_W;
+            case 0x01 -> RiscVOperation.AMOSWAP_W;
+            case 0x00 -> RiscVOperation.AMOADD_W;
+            case 0x04 -> RiscVOperation.AMOXOR_W;
+            case 0x0c -> RiscVOperation.AMOAND_W;
+            case 0x08 -> RiscVOperation.AMOOR_W;
+            case 0x10 -> RiscVOperation.AMOMIN_W;
+            case 0x14 -> RiscVOperation.AMOMAX_W;
+            case 0x18 -> RiscVOperation.AMOMINU_W;
+            case 0x1c -> RiscVOperation.AMOMAXU_W;
             default -> throw illegalException(address, raw);
         };
     }
 
     /// Decodes the doubleword-width atomic operation field.
-    private static Operation atomicDoubleOperation(long address, int raw, int funct5) {
+    private static RiscVOperation atomicDoubleOperation(long address, int raw, int funct5) {
         return switch (funct5) {
-            case 0x02 -> Operation.LR_D;
-            case 0x03 -> Operation.SC_D;
-            case 0x01 -> Operation.AMOSWAP_D;
-            case 0x00 -> Operation.AMOADD_D;
-            case 0x04 -> Operation.AMOXOR_D;
-            case 0x0c -> Operation.AMOAND_D;
-            case 0x08 -> Operation.AMOOR_D;
-            case 0x10 -> Operation.AMOMIN_D;
-            case 0x14 -> Operation.AMOMAX_D;
-            case 0x18 -> Operation.AMOMINU_D;
-            case 0x1c -> Operation.AMOMAXU_D;
+            case 0x02 -> RiscVOperation.LR_D;
+            case 0x03 -> RiscVOperation.SC_D;
+            case 0x01 -> RiscVOperation.AMOSWAP_D;
+            case 0x00 -> RiscVOperation.AMOADD_D;
+            case 0x04 -> RiscVOperation.AMOXOR_D;
+            case 0x0c -> RiscVOperation.AMOAND_D;
+            case 0x08 -> RiscVOperation.AMOOR_D;
+            case 0x10 -> RiscVOperation.AMOMIN_D;
+            case 0x14 -> RiscVOperation.AMOMAX_D;
+            case 0x18 -> RiscVOperation.AMOMINU_D;
+            case 0x1c -> RiscVOperation.AMOMAXU_D;
             default -> throw illegalException(address, raw);
         };
     }
 
     /// Decodes a 16-bit compressed instruction.
-    private static InstructionNode decodeCompressed(long address, int raw) {
+    private static DecodedInstruction decodeCompressed(long address, int raw) {
         int quadrant = raw & 0x3;
         int funct3 = (raw >>> 13) & 0x7;
         return switch (quadrant) {
@@ -469,7 +473,7 @@ public final class RiscVDecoder {
     }
 
     /// Decodes compressed quadrant 0 instructions.
-    private static InstructionNode decodeCompressedQuadrant0(long address, int raw, int funct3) {
+    private static DecodedInstruction decodeCompressedQuadrant0(long address, int raw, int funct3) {
         int rd = compressedRegister(raw >>> 2);
         int rs1 = compressedRegister(raw >>> 7);
         int rs2 = compressedRegister(raw >>> 2);
@@ -479,75 +483,75 @@ public final class RiscVDecoder {
                 if (immediate == 0) {
                     throw illegalException(address, raw);
                 }
-                yield compressed(address, raw, Operation.ADDI, rd, 2, 0, immediate, false);
+                yield compressed(address, raw, RiscVOperation.ADDI, rd, 2, 0, immediate, false);
             }
-            case 1 -> compressed(address, raw, Operation.FLD, rd, rs1, 0, cLdImmediate(raw), false);
-            case 2 -> compressed(address, raw, Operation.LW, rd, rs1, 0, cLwImmediate(raw), false);
-            case 3 -> compressed(address, raw, Operation.LD, rd, rs1, 0, cLdImmediate(raw), false);
-            case 5 -> compressed(address, raw, Operation.FSD, 0, rs1, rs2, cLdImmediate(raw), false);
-            case 6 -> compressed(address, raw, Operation.SW, 0, rs1, rs2, cLwImmediate(raw), false);
-            case 7 -> compressed(address, raw, Operation.SD, 0, rs1, rs2, cLdImmediate(raw), false);
+            case 1 -> compressed(address, raw, RiscVOperation.FLD, rd, rs1, 0, cLdImmediate(raw), false);
+            case 2 -> compressed(address, raw, RiscVOperation.LW, rd, rs1, 0, cLwImmediate(raw), false);
+            case 3 -> compressed(address, raw, RiscVOperation.LD, rd, rs1, 0, cLdImmediate(raw), false);
+            case 5 -> compressed(address, raw, RiscVOperation.FSD, 0, rs1, rs2, cLdImmediate(raw), false);
+            case 6 -> compressed(address, raw, RiscVOperation.SW, 0, rs1, rs2, cLwImmediate(raw), false);
+            case 7 -> compressed(address, raw, RiscVOperation.SD, 0, rs1, rs2, cLdImmediate(raw), false);
             default -> throw illegalException(address, raw);
         };
     }
 
     /// Decodes compressed quadrant 1 instructions.
-    private static InstructionNode decodeCompressedQuadrant1(long address, int raw, int funct3) {
+    private static DecodedInstruction decodeCompressedQuadrant1(long address, int raw, int funct3) {
         int rd = (raw >>> 7) & 0x1f;
         long immediate = cImmediate(raw);
         return switch (funct3) {
             case 0 -> rd == 0
-                    ? compressed(address, raw, Operation.NOP, 0, 0, 0, 0, false)
-                    : compressed(address, raw, Operation.ADDI, rd, rd, 0, immediate, false);
+                    ? compressed(address, raw, RiscVOperation.NOP, 0, 0, 0, 0, false)
+                    : compressed(address, raw, RiscVOperation.ADDI, rd, rd, 0, immediate, false);
             case 1 -> {
                 if (rd == 0) {
                     throw illegalException(address, raw);
                 }
-                yield compressed(address, raw, Operation.ADDIW, rd, rd, 0, immediate, false);
+                yield compressed(address, raw, RiscVOperation.ADDIW, rd, rd, 0, immediate, false);
             }
             case 2 -> rd == 0
-                    ? compressed(address, raw, Operation.NOP, 0, 0, 0, 0, false)
-                    : compressed(address, raw, Operation.ADDI, rd, 0, 0, immediate, false);
+                    ? compressed(address, raw, RiscVOperation.NOP, 0, 0, 0, 0, false)
+                    : compressed(address, raw, RiscVOperation.ADDI, rd, 0, 0, immediate, false);
             case 3 -> decodeCompressedLuiOrAddi16Sp(address, raw, rd);
             case 4 -> decodeCompressedAlu(address, raw);
-            case 5 -> compressed(address, raw, Operation.JAL, 0, 0, 0, cJumpImmediate(raw), true);
-            case 6 -> compressed(address, raw, Operation.BEQ, 0, compressedRegister(raw >>> 7), 0, cBranchImmediate(raw), true);
-            case 7 -> compressed(address, raw, Operation.BNE, 0, compressedRegister(raw >>> 7), 0, cBranchImmediate(raw), true);
+            case 5 -> compressed(address, raw, RiscVOperation.JAL, 0, 0, 0, cJumpImmediate(raw), true);
+            case 6 -> compressed(address, raw, RiscVOperation.BEQ, 0, compressedRegister(raw >>> 7), 0, cBranchImmediate(raw), true);
+            case 7 -> compressed(address, raw, RiscVOperation.BNE, 0, compressedRegister(raw >>> 7), 0, cBranchImmediate(raw), true);
             default -> throw illegalException(address, raw);
         };
     }
 
     /// Decodes compressed quadrant 2 instructions.
-    private static InstructionNode decodeCompressedQuadrant2(long address, int raw, int funct3) {
+    private static DecodedInstruction decodeCompressedQuadrant2(long address, int raw, int funct3) {
         int rd = (raw >>> 7) & 0x1f;
         int rs2 = (raw >>> 2) & 0x1f;
         return switch (funct3) {
             case 0 -> rd == 0
-                    ? compressed(address, raw, Operation.NOP, 0, 0, 0, 0, false)
-                    : compressed(address, raw, Operation.SLLI, rd, rd, 0, cShiftImmediate(raw), false);
-            case 1 -> compressed(address, raw, Operation.FLD, rd, 2, 0, cLdspImmediate(raw), false);
+                    ? compressed(address, raw, RiscVOperation.NOP, 0, 0, 0, 0, false)
+                    : compressed(address, raw, RiscVOperation.SLLI, rd, rd, 0, cShiftImmediate(raw), false);
+            case 1 -> compressed(address, raw, RiscVOperation.FLD, rd, 2, 0, cLdspImmediate(raw), false);
             case 2 -> {
                 if (rd == 0) {
                     throw illegalException(address, raw);
                 }
-                yield compressed(address, raw, Operation.LW, rd, 2, 0, cLwspImmediate(raw), false);
+                yield compressed(address, raw, RiscVOperation.LW, rd, 2, 0, cLwspImmediate(raw), false);
             }
             case 3 -> {
                 if (rd == 0) {
                     throw illegalException(address, raw);
                 }
-                yield compressed(address, raw, Operation.LD, rd, 2, 0, cLdspImmediate(raw), false);
+                yield compressed(address, raw, RiscVOperation.LD, rd, 2, 0, cLdspImmediate(raw), false);
             }
             case 4 -> decodeCompressedJumpMoveAdd(address, raw, rd, rs2);
-            case 5 -> compressed(address, raw, Operation.FSD, 0, 2, rs2, cSdspImmediate(raw), false);
-            case 6 -> compressed(address, raw, Operation.SW, 0, 2, rs2, cSwspImmediate(raw), false);
-            case 7 -> compressed(address, raw, Operation.SD, 0, 2, rs2, cSdspImmediate(raw), false);
+            case 5 -> compressed(address, raw, RiscVOperation.FSD, 0, 2, rs2, cSdspImmediate(raw), false);
+            case 6 -> compressed(address, raw, RiscVOperation.SW, 0, 2, rs2, cSwspImmediate(raw), false);
+            case 7 -> compressed(address, raw, RiscVOperation.SD, 0, 2, rs2, cSdspImmediate(raw), false);
             default -> throw illegalException(address, raw);
         };
     }
 
     /// Decodes compressed LUI and ADDI16SP.
-    private static InstructionNode decodeCompressedLuiOrAddi16Sp(long address, int raw, int rd) {
+    private static DecodedInstruction decodeCompressedLuiOrAddi16Sp(long address, int raw, int rd) {
         if (rd == 0) {
             throw illegalException(address, raw);
         }
@@ -556,97 +560,97 @@ public final class RiscVDecoder {
             if (immediate == 0) {
                 throw illegalException(address, raw);
             }
-            return compressed(address, raw, Operation.ADDI, 2, 2, 0, immediate, false);
+            return compressed(address, raw, RiscVOperation.ADDI, 2, 2, 0, immediate, false);
         }
 
         long immediate = cLuiImmediate(raw);
         if (immediate == 0) {
             throw illegalException(address, raw);
         }
-        return compressed(address, raw, Operation.LUI, rd, 0, 0, immediate, false);
+        return compressed(address, raw, RiscVOperation.LUI, rd, 0, 0, immediate, false);
     }
 
     /// Decodes compressed ALU instructions.
-    private static InstructionNode decodeCompressedAlu(long address, int raw) {
+    private static DecodedInstruction decodeCompressedAlu(long address, int raw) {
         int rd = compressedRegister(raw >>> 7);
         int mode = (raw >>> 10) & 0x3;
         if (mode == 0) {
-            return compressed(address, raw, Operation.SRLI, rd, rd, 0, cShiftImmediate(raw), false);
+            return compressed(address, raw, RiscVOperation.SRLI, rd, rd, 0, cShiftImmediate(raw), false);
         }
         if (mode == 1) {
-            return compressed(address, raw, Operation.SRAI, rd, rd, 0, cShiftImmediate(raw), false);
+            return compressed(address, raw, RiscVOperation.SRAI, rd, rd, 0, cShiftImmediate(raw), false);
         }
         if (mode == 2) {
-            return compressed(address, raw, Operation.ANDI, rd, rd, 0, cImmediate(raw), false);
+            return compressed(address, raw, RiscVOperation.ANDI, rd, rd, 0, cImmediate(raw), false);
         }
 
         int rs2 = compressedRegister(raw >>> 2);
         boolean word = ((raw >>> 12) & 1) != 0;
         int subop = (raw >>> 5) & 0x3;
-        Operation operation = word
+        RiscVOperation operation = word
                 ? switch (subop) {
-                    case 0 -> Operation.SUBW;
-                    case 1 -> Operation.ADDW;
+                    case 0 -> RiscVOperation.SUBW;
+                    case 1 -> RiscVOperation.ADDW;
                     default -> throw illegalException(address, raw);
                 }
                 : switch (subop) {
-                    case 0 -> Operation.SUB;
-                    case 1 -> Operation.XOR;
-                    case 2 -> Operation.OR;
-                    case 3 -> Operation.AND;
+                    case 0 -> RiscVOperation.SUB;
+                    case 1 -> RiscVOperation.XOR;
+                    case 2 -> RiscVOperation.OR;
+                    case 3 -> RiscVOperation.AND;
                     default -> throw illegalException(address, raw);
                 };
         return compressed(address, raw, operation, rd, rd, rs2, 0, false);
     }
 
     /// Decodes compressed JR, MV, EBREAK, JALR, and ADD instructions.
-    private static InstructionNode decodeCompressedJumpMoveAdd(long address, int raw, int rd, int rs2) {
+    private static DecodedInstruction decodeCompressedJumpMoveAdd(long address, int raw, int rd, int rs2) {
         boolean highBit = ((raw >>> 12) & 1) != 0;
         if (!highBit && rs2 == 0) {
             if (rd == 0) {
                 throw illegalException(address, raw);
             }
-            return compressed(address, raw, Operation.JALR, 0, rd, 0, 0, true);
+            return compressed(address, raw, RiscVOperation.JALR, 0, rd, 0, 0, true);
         }
         if (!highBit) {
             if (rd == 0) {
                 throw illegalException(address, raw);
             }
-            return compressed(address, raw, Operation.ADD, rd, 0, rs2, 0, false);
+            return compressed(address, raw, RiscVOperation.ADD, rd, 0, rs2, 0, false);
         }
         if (rd == 0 && rs2 == 0) {
-            return compressed(address, raw, Operation.EBREAK, 0, 0, 0, 0, true);
+            return compressed(address, raw, RiscVOperation.EBREAK, 0, 0, 0, 0, true);
         }
         if (rs2 == 0) {
-            return compressed(address, raw, Operation.JALR, 1, rd, 0, 0, true);
+            return compressed(address, raw, RiscVOperation.JALR, 1, rd, 0, 0, true);
         }
-        return compressed(address, raw, Operation.ADD, rd, rd, rs2, 0, false);
+        return compressed(address, raw, RiscVOperation.ADD, rd, rd, rs2, 0, false);
     }
 
     /// Creates a 32-bit decoded instruction.
-    private static InstructionNode instruction(
+    private static DecodedInstruction instruction(
             long address,
             int raw,
-            Operation operation,
+            RiscVOperation operation,
             int rd,
             int rs1,
             int rs2,
             long immediate,
             boolean terminator) {
-        return InstructionNode.create(address, raw, Integer.BYTES, operation, rd, rs1, rs2, immediate, terminator);
+        return new DecodedInstruction(address, raw, Integer.BYTES, operation, rd, rs1, rs2, immediate, terminator);
     }
 
     /// Creates a 16-bit compressed decoded instruction.
-    private static InstructionNode compressed(
+    private static DecodedInstruction compressed(
             long address,
             int raw,
-            Operation operation,
+            RiscVOperation operation,
             int rd,
             int rs1,
             int rs2,
             long immediate,
             boolean terminator) {
-        return InstructionNode.create(address, raw, Short.BYTES, operation, rd, rs1, rs2, immediate, terminator);
+        return new DecodedInstruction(address, raw, Short.BYTES, operation, rd, rs1, rs2, immediate, terminator);
     }
 
     /// Extracts the destination register field.
@@ -852,7 +856,7 @@ public final class RiscVDecoder {
     }
 
     /// Throws an illegal instruction exception.
-    private static InstructionNode illegal(long address, int raw) {
+    private static DecodedInstruction illegal(long address, int raw) {
         throw illegalException(address, raw);
     }
 

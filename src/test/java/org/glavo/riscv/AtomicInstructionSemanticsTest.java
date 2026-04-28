@@ -1,6 +1,5 @@
 package org.glavo.riscv;
 
-import org.glavo.riscv.InstructionNode.Operation;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 
@@ -11,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /// Tests single-threaded RV64A atomic instruction behavior.
 @NotNullByDefault
-public final class AtomicInstructionNodeTest {
+public final class AtomicInstructionSemanticsTest {
     /// The guest address used for standalone atomic instruction execution.
     private static final long TEST_PC = Memory.DEFAULT_BASE_ADDRESS;
 
@@ -34,16 +33,16 @@ public final class AtomicInstructionNodeTest {
             machine.memory().writeInt(DATA_ADDRESS, 41);
             machine.state().setRegister(ADDRESS_REGISTER, DATA_ADDRESS);
 
-            execute(machine, Operation.LR_W, RESULT_REGISTER, ADDRESS_REGISTER, 0, 0);
+            execute(machine, RiscVOperation.LR_W, RESULT_REGISTER, ADDRESS_REGISTER, 0, 0);
             assertEquals(41, machine.state().register(RESULT_REGISTER));
 
             machine.state().setRegister(VALUE_REGISTER, 42);
-            execute(machine, Operation.SC_W, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
+            execute(machine, RiscVOperation.SC_W, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
             assertEquals(0, machine.state().register(RESULT_REGISTER));
             assertEquals(42, machine.memory().readInt(DATA_ADDRESS));
 
             machine.state().setRegister(VALUE_REGISTER, 43);
-            execute(machine, Operation.SC_W, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
+            execute(machine, RiscVOperation.SC_W, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
             assertEquals(1, machine.state().register(RESULT_REGISTER));
             assertEquals(42, machine.memory().readInt(DATA_ADDRESS));
         }
@@ -57,14 +56,14 @@ public final class AtomicInstructionNodeTest {
             machine.memory().writeLong(DATA_ADDRESS + Long.BYTES, 0);
             machine.state().setRegister(ADDRESS_REGISTER, DATA_ADDRESS);
 
-            execute(machine, Operation.LR_D, RESULT_REGISTER, ADDRESS_REGISTER, 0, 0);
+            execute(machine, RiscVOperation.LR_D, RESULT_REGISTER, ADDRESS_REGISTER, 0, 0);
             assertEquals(41, machine.state().register(RESULT_REGISTER));
 
             machine.state().setRegister(VALUE_REGISTER, 99);
-            execute(machine, Operation.SD, 0, ADDRESS_REGISTER, VALUE_REGISTER, Long.BYTES);
+            execute(machine, RiscVOperation.SD, 0, ADDRESS_REGISTER, VALUE_REGISTER, Long.BYTES);
 
             machine.state().setRegister(VALUE_REGISTER, 42);
-            execute(machine, Operation.SC_D, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
+            execute(machine, RiscVOperation.SC_D, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
 
             assertEquals(1, machine.state().register(RESULT_REGISTER));
             assertEquals(41, machine.memory().readLong(DATA_ADDRESS));
@@ -80,7 +79,7 @@ public final class AtomicInstructionNodeTest {
             machine.state().setRegister(ADDRESS_REGISTER, DATA_ADDRESS);
             machine.state().setRegister(VALUE_REGISTER, 2);
 
-            execute(machine, Operation.AMOADD_W, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
+            execute(machine, RiscVOperation.AMOADD_W, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
 
             assertEquals(-1L, machine.state().register(RESULT_REGISTER));
             assertEquals(1, machine.memory().readInt(DATA_ADDRESS));
@@ -95,7 +94,7 @@ public final class AtomicInstructionNodeTest {
             machine.state().setRegister(ADDRESS_REGISTER, DATA_ADDRESS);
             machine.state().setRegister(VALUE_REGISTER, 1);
 
-            execute(machine, Operation.AMOMINU_D, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
+            execute(machine, RiscVOperation.AMOMINU_D, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
 
             assertEquals(-1L, machine.state().register(RESULT_REGISTER));
             assertEquals(1, machine.memory().readLong(DATA_ADDRESS));
@@ -105,13 +104,13 @@ public final class AtomicInstructionNodeTest {
     /// Executes one atomic test instruction against the supplied machine.
     private static void execute(
             TestMachine machine,
-            Operation operation,
+            RiscVOperation operation,
             int rd,
             int rs1,
             int rs2,
             long immediate) {
         long pc = machine.state().pc();
-        InstructionNode instruction = InstructionNode.create(
+        RiscVInstructionSemantics instruction = RiscVInstructionSemantics.create(
                 pc,
                 0,
                 Integer.BYTES,

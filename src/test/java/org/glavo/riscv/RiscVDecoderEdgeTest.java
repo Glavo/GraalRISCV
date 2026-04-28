@@ -257,7 +257,7 @@ public final class RiscVDecoderEdgeTest {
     private static void runDecodedProgram(TestMachine machine, int maxBlocks) {
         for (int index = 0; index < maxBlocks; index++) {
             try {
-                RiscVDecoder.decodeBlock(machine.memory(), machine.state().pc()).execute(machine.state());
+                DecodedBlockTestExecutor.execute(machine.state(), RiscVDecoder.decodeBlock(machine.memory(), machine.state().pc()));
             } catch (ProgramExitException exception) {
                 return;
             }

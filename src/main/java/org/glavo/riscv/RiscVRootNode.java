@@ -1,6 +1,7 @@
 package org.glavo.riscv;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -18,12 +19,13 @@ public final class RiscVRootNode extends RootNode {
     private final ElfImage image;
 
     /// The lazily populated block cache for this execution root.
-    private final BlockCache blocks = new BlockCache();
+    private final BlockCache blocks;
 
     /// Creates a root node for a parsed ELF image.
     public RiscVRootNode(RiscVLanguage language, ElfImage image) {
-        super(language, RiscVFrameLayout.newDescriptor());
+        super(language);
         this.image = image;
+        this.blocks = new BlockCache(language);
     }
 
     /// Executes the guest program and returns its exit code.
@@ -33,7 +35,7 @@ public final class RiscVRootNode extends RootNode {
         try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
             MachineState state = createState(context, memory);
             try {
-                return executeGuestLoop(frame, memory, state);
+                return executeGuestLoop(memory, state);
             } catch (ProgramExitException exit) {
                 state.syscalls().requestProcessExit(exit.exitCode());
                 state.syscalls().recordThreadExit(state, exit.exitCode());
@@ -49,18 +51,17 @@ public final class RiscVRootNode extends RootNode {
     }
 
     /// Runs the decoded-block dispatch loop for an initialized guest state.
-    private int executeGuestLoop(VirtualFrame frame, Memory memory, MachineState state) {
-        RiscVFrameLayout.loadIntegerRegisters(frame, state);
+    private int executeGuestLoop(Memory memory, MachineState state) {
         long pc = state.pc();
         long primaryPc = 0;
         long secondaryPc = 0;
-        @Nullable BlockNode primaryBlock = null;
-        @Nullable BlockNode secondaryBlock = null;
+        @Nullable RootCallTarget primaryBlock = null;
+        @Nullable RootCallTarget secondaryBlock = null;
 
         while (true) {
             try {
                 state.syscalls().checkProcessStatus();
-                BlockNode block;
+                RootCallTarget block;
                 if (primaryBlock != null && pc == primaryPc) {
                     block = primaryBlock;
                 } else if (secondaryBlock != null && pc == secondaryPc) {
@@ -76,10 +77,9 @@ public final class RiscVRootNode extends RootNode {
                     primaryBlock = block;
                     primaryPc = pc;
                 }
-                pc = block.execute(frame, state);
+                pc = (long) block.call(state);
                 state.setPc(pc);
             } catch (ThreadExitException exit) {
-                RiscVFrameLayout.spillIntegerRegisters(frame, state);
                 return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
             }
         }
@@ -105,8 +105,8 @@ public final class RiscVRootNode extends RootNode {
         long pc = state.pc();
         while (true) {
             state.syscalls().checkProcessStatus();
-            BlockNode block = blockFor(memory, pc);
-            pc = block.execute(state);
+            RootCallTarget block = blockFor(memory, pc);
+            pc = (long) block.call(state);
             state.setPc(pc);
         }
     }
@@ -168,7 +168,7 @@ public final class RiscVRootNode extends RootNode {
     }
 
     /// Returns a decoded block, creating it on first use.
-    private BlockNode blockFor(Memory memory, long pc) {
+    private RootCallTarget blockFor(Memory memory, long pc) {
         return blocks.getOrDecode(memory, pc);
     }
 
@@ -286,21 +286,29 @@ public final class RiscVRootNode extends RootNode {
         /// The resize threshold denominator for the cache load factor.
         private static final int LOAD_FACTOR_DENOMINATOR = 2;
 
+        /// The language instance used to create bytecode block roots.
+        private final RiscVLanguage language;
+
         /// Guest program counters stored in cache slots.
         private volatile long[] keys = new long[INITIAL_CAPACITY];
 
         /// Cache values stored in the slot matching `keys`.
-        private volatile @Nullable BlockNode[] values = new BlockNode[INITIAL_CAPACITY];
+        private volatile @Nullable RootCallTarget[] values = new RootCallTarget[INITIAL_CAPACITY];
 
         /// The number of occupied cache slots.
         private int size;
 
+        /// Creates a decoded block cache for one root node.
+        private BlockCache(RiscVLanguage language) {
+            this.language = language;
+        }
+
         /// Returns the cached block for a guest program counter, decoding it on a cache miss.
-        private BlockNode getOrDecode(Memory memory, long pc) {
+        private RootCallTarget getOrDecode(Memory memory, long pc) {
             long[] currentKeys = keys;
-            @Nullable BlockNode[] currentValues = values;
+            @Nullable RootCallTarget[] currentValues = values;
             int slot = findSlot(pc, currentKeys, currentValues);
-            BlockNode block = currentValues[slot];
+            RootCallTarget block = currentValues[slot];
             if (block != null) {
                 return block;
             }
@@ -309,9 +317,9 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Decodes and caches a block after a miss on the unsynchronized fast path.
-        private synchronized BlockNode decodeAndCache(Memory memory, long pc) {
+        private synchronized RootCallTarget decodeAndCache(Memory memory, long pc) {
             int slot = findSlot(pc, keys, values);
-            BlockNode block = values[slot];
+            RootCallTarget block = values[slot];
             if (block != null) {
                 return block;
             }
@@ -322,7 +330,8 @@ public final class RiscVRootNode extends RootNode {
                 slot = findSlot(pc, keys, values);
             }
 
-            block = RiscVDecoder.decodeBlock(memory, pc);
+            DecodedBlock decodedBlock = RiscVDecoder.decodeBlock(memory, pc);
+            block = RiscVBytecodeBlockCompiler.compile(language, decodedBlock);
             keys[slot] = pc;
             values[slot] = block;
             size++;
@@ -332,12 +341,12 @@ public final class RiscVRootNode extends RootNode {
         /// Doubles the cache capacity and reinserts all existing entries.
         private void grow() {
             long[] oldKeys = keys;
-            @Nullable BlockNode[] oldValues = values;
+            @Nullable RootCallTarget[] oldValues = values;
             keys = new long[oldKeys.length << 1];
-            values = new BlockNode[keys.length];
+            values = new RootCallTarget[keys.length];
 
             for (int index = 0; index < oldValues.length; index++) {
-                BlockNode block = oldValues[index];
+                RootCallTarget block = oldValues[index];
                 if (block != null) {
                     int slot = findSlot(oldKeys[index], keys, values);
                     keys[slot] = oldKeys[index];
@@ -347,11 +356,11 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Finds the cache slot containing the key or the first empty slot for it.
-        private static int findSlot(long pc, long[] keys, @Nullable BlockNode[] values) {
+        private static int findSlot(long pc, long[] keys, @Nullable RootCallTarget[] values) {
             int mask = values.length - 1;
             int slot = hash(pc) & mask;
             while (true) {
-                BlockNode block = values[slot];
+                RootCallTarget block = values[slot];
                 if (block == null || keys[slot] == pc) {
                     return slot;
                 }

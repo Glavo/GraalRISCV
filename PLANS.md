@@ -23,5 +23,5 @@
 ### 4. Maintain build, docs, and performance probes
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
-- Continue profiling dispatch, memory access, block-cache lookup, and compiled-block layout with hot-loop and CoreMark probes.
+- Continue profiling Bytecode DSL dispatch, memory access, block-cache lookup, and compiled-block layout with hot-loop and CoreMark probes.
 - Keep rejected performance experiments documented outside `PLANS.md`.
