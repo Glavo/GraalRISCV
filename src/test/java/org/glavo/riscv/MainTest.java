@@ -282,11 +282,11 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
-    /// Verifies that compiled dispatch misses can run cold block batches without repeated OSR deoptimization.
+    /// Verifies that programs with more loop blocks than the former inline dispatch cache keep making progress.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
-    public void compiledDispatchRunsProgramsWithManyLoopBlocks() throws Exception {
-        Path elfPath = tempDirectory.resolve("dispatch-stress.elf");
+    public void runsProgramsWithManyLoopBlocks() throws Exception {
+        Path elfPath = tempDirectory.resolve("many-block-loop.elf");
         Files.write(elfPath, ElfTestImages.executable(dispatchStressCode()));
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -345,7 +345,7 @@ public final class MainTest {
         return code.array();
     }
 
-    /// Creates CLI arguments for the dispatch stress program.
+    /// Creates CLI arguments for the many-block loop stress program.
     private static String[] dispatchStressArguments(Path elfPath) {
         if (runningOnGraalVm()) {
             return new String[]{
