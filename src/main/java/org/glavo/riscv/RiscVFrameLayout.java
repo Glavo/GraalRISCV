@@ -13,6 +13,15 @@ final class RiscVFrameLayout {
     /// The total number of static frame slots used by this layout.
     private static final int SLOT_COUNT = 32;
 
+    /// The first Linux syscall argument register, `a0`.
+    private static final int SYSCALL_ARGUMENT_BASE = 10;
+
+    /// The number of Linux syscall argument and selector registers, `a0..a7`.
+    private static final int SYSCALL_ARGUMENT_COUNT = 8;
+
+    /// The Linux syscall return register, `a0`.
+    private static final int SYSCALL_RESULT_REGISTER = 10;
+
     /// Prevents instantiation.
     private RiscVFrameLayout() {
     }
@@ -50,5 +59,19 @@ final class RiscVFrameLayout {
         for (int register = 1; register < SLOT_COUNT; register++) {
             state.setDecodedRegister(register, frame.getLongStatic(register));
         }
+    }
+
+    /// Spills the Linux syscall argument and selector registers from the frame.
+    @ExplodeLoop
+    static void spillSyscallRegisters(VirtualFrame frame, MachineState state) {
+        for (int index = 0; index < SYSCALL_ARGUMENT_COUNT; index++) {
+            int register = SYSCALL_ARGUMENT_BASE + index;
+            state.setDecodedRegister(register, frame.getLongStatic(register));
+        }
+    }
+
+    /// Loads the Linux syscall result register back into the execution frame.
+    static void loadSyscallResult(VirtualFrame frame, MachineState state) {
+        frame.setLongStatic(SYSCALL_RESULT_REGISTER, state.decodedRegister(SYSCALL_RESULT_REGISTER));
     }
 }

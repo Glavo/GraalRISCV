@@ -98,15 +98,11 @@ public final class BlockNode extends Node {
 
         if (endsWithTerminator) {
             InstructionNode terminator = instructions[instructionCount - 1];
-            long nextPc = blockRetired
+            return blockRetired
                     ? terminator.executeTerminatorInRetiredBlock(frame, state)
                     : terminator.executeTerminatorInBlock(frame, state);
-            state.setPc(nextPc);
-            return nextPc;
         }
 
-        long nextPc = fallThroughPc;
-        state.setPc(nextPc);
-        return nextPc;
+        return fallThroughPc;
     }
 }

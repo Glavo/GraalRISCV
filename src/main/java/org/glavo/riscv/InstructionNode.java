@@ -187,8 +187,11 @@ public sealed abstract class InstructionNode extends Node {
             case SRLI -> new SrliInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case SRAI -> new SraiInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case ADDIW -> new AddiwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case SLTI, SLTIU, SLLIW, SRLIW, SRAIW ->
-                    new ImmediateIntegerInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLTI -> new SltiInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLTIU -> new SltiuInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLLIW -> new SlliwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRLIW -> new SrliwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRAIW -> new SraiwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case ADD -> new AddInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case SUB -> new SubInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case XOR -> new XorInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
@@ -199,8 +202,11 @@ public sealed abstract class InstructionNode extends Node {
             case SRA -> new SraInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case ADDW -> new AddwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case SUBW -> new SubwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case SLT, SLTU, SLLW, SRLW, SRAW ->
-                    new RegisterIntegerInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLT -> new SltInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLTU -> new SltuInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SLLW -> new SllwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRLW -> new SrlwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SRAW -> new SrawInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case MUL -> new MulInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case MULW -> new MulwInstructionNode(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, DIVW, DIVUW, REMW, REMUW ->
@@ -706,9 +712,9 @@ public sealed abstract class InstructionNode extends Node {
         /// Dispatches the environment call after synchronizing frame registers.
         @Override
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
-            RiscVFrameLayout.spillIntegerRegisters(frame, state);
+            RiscVFrameLayout.spillSyscallRegisters(frame, state);
             state.syscalls().handle(state, address);
-            RiscVFrameLayout.loadIntegerRegisters(frame, state);
+            RiscVFrameLayout.loadSyscallResult(frame, state);
             state.setPc(nextPc);
         }
     }
@@ -890,6 +896,106 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             writeRegister(frame, rd, (int) (readRegister(frame, rs1) + immediate));
+        }
+    }
+
+    /// Executes `slti`.
+    private static final class SltiInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `slti` instruction node.
+        private SltiInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Sets the destination when the source register is signed-less-than the immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) < immediate ? 1 : 0);
+        }
+
+        /// Sets the destination frame register when the source is signed-less-than the immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) < immediate ? 1 : 0);
+        }
+    }
+
+    /// Executes `sltiu`.
+    private static final class SltiuInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sltiu` instruction node.
+        private SltiuInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Sets the destination when the source register is unsigned-less-than the immediate.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, Long.compareUnsigned(state.decodedRegister(rs1), immediate) < 0 ? 1 : 0);
+        }
+
+        /// Sets the destination frame register when the source is unsigned-less-than the immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, Long.compareUnsigned(readRegister(frame, rs1), immediate) < 0 ? 1 : 0);
+        }
+    }
+
+    /// Executes `slliw`.
+    private static final class SlliwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `slliw` instruction node.
+        private SlliwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a word left by the immediate and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) << immediate);
+        }
+
+        /// Shifts a frame word left by the immediate and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) << immediate);
+        }
+    }
+
+    /// Executes `srliw`.
+    private static final class SrliwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `srliw` instruction node.
+        private SrliwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a word right logically by the immediate and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >>> immediate);
+        }
+
+        /// Shifts a frame word right logically by the immediate and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) >>> immediate);
+        }
+    }
+
+    /// Executes `sraiw`.
+    private static final class SraiwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sraiw` instruction node.
+        private SraiwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a word right arithmetically by the immediate and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >> immediate);
+        }
+
+        /// Shifts a frame word right arithmetically by the immediate and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) >> immediate);
         }
     }
 
@@ -1090,6 +1196,106 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             writeRegister(frame, rd, (int) readRegister(frame, rs1) - (int) readRegister(frame, rs2));
+        }
+    }
+
+    /// Executes `slt`.
+    private static final class SltInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `slt` instruction node.
+        private SltInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Sets the destination when the first source register is signed-less-than the second.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) < state.decodedRegister(rs2) ? 1 : 0);
+        }
+
+        /// Sets the destination frame register when the first source is signed-less-than the second.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) < readRegister(frame, rs2) ? 1 : 0);
+        }
+    }
+
+    /// Executes `sltu`.
+    private static final class SltuInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sltu` instruction node.
+        private SltuInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Sets the destination when the first source register is unsigned-less-than the second.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0 ? 1 : 0);
+        }
+
+        /// Sets the destination frame register when the first source is unsigned-less-than the second.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) < 0 ? 1 : 0);
+        }
+    }
+
+    /// Executes `sllw`.
+    private static final class SllwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sllw` instruction node.
+        private SllwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a word left by the masked second source register and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x1f));
+        }
+
+        /// Shifts a frame word left by the masked second source register and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) << (readRegister(frame, rs2) & 0x1f));
+        }
+    }
+
+    /// Executes `srlw`.
+    private static final class SrlwInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `srlw` instruction node.
+        private SrlwInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a word right logically by the masked second source register and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x1f));
+        }
+
+        /// Shifts a frame word right logically by the masked second source register and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) >>> (readRegister(frame, rs2) & 0x1f));
+        }
+    }
+
+    /// Executes `sraw`.
+    private static final class SrawInstructionNode extends DirectInstructionNode {
+        /// Creates a decoded `sraw` instruction node.
+        private SrawInstructionNode(long address, int raw, int length, Operation operation, int rd, int rs1, int rs2, long immediate, boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Shifts a word right arithmetically by the masked second source register and sign-extends the result.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x1f));
+        }
+
+        /// Shifts a frame word right arithmetically by the masked second source register and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) >> (readRegister(frame, rs2) & 0x1f));
         }
     }
 
@@ -1735,9 +1941,9 @@ public sealed abstract class InstructionNode extends Node {
             case CSRRSI -> setClearControlStatusRegister(frame, state, rs1, true);
             case CSRRCI -> setClearControlStatusRegister(frame, state, rs1, false);
             case ECALL -> {
-                RiscVFrameLayout.spillIntegerRegisters(frame, state);
+                RiscVFrameLayout.spillSyscallRegisters(frame, state);
                 ecall(state);
-                RiscVFrameLayout.loadIntegerRegisters(frame, state);
+                RiscVFrameLayout.loadSyscallResult(frame, state);
             }
             case EBREAK -> throw new ProgramExitException(0);
             default -> throw unexpectedOperationGroup("control");
