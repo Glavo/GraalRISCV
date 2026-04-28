@@ -125,6 +125,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `faccessat`.
     private static final long SYS_FACCESSAT = 48;
 
+    /// The Linux RISC-V syscall number for `chdir`.
+    private static final long SYS_CHDIR = 49;
+
+    /// The Linux RISC-V syscall number for `fchdir`.
+    private static final long SYS_FCHDIR = 50;
+
     /// The Linux RISC-V syscall number for `openat`.
     private static final long SYS_OPENAT = 56;
 
@@ -850,6 +856,126 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETCWD, bufferAddress, 1, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ERANGE, state.register(10));
+        }
+    }
+
+    /// Verifies that `chdir` and `fchdir` update `AT_FDCWD` path resolution.
+    @Test
+    public void chdirUpdatesWorkingDirectoryAndRelativePaths() throws Exception {
+        Files.createDirectories(tempDirectory.resolve("first").resolve("nested"));
+        Files.writeString(tempDirectory.resolve("first").resolve("message.txt"), "cwd-data", StandardCharsets.UTF_8);
+        Files.writeString(tempDirectory.resolve("root.txt"), "root-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 128;
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "first");
+            setSyscall(state, SYS_CHDIR, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETCWD, bufferAddress, 16, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(7, state.register(10));
+            assertEquals("/first", readGuestCString(memory, bufferAddress, 16));
+
+            writeGuestString(memory, pathAddress, "message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(8, state.register(10));
+            assertArrayEquals("cwd-data".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 8));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/root.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "nested");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            setSyscall(state, SYS_FCHDIR, directoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETCWD, bufferAddress, 32, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(14, state.register(10));
+            assertEquals("/first/nested", readGuestCString(memory, bufferAddress, 32));
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "../message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            fileDescriptor = (int) state.register(10);
+            assertEquals(4, fileDescriptor);
+
+            setSyscall(state, SYS_FCHDIR, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTDIR, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "../..");
+            setSyscall(state, SYS_CHDIR, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETCWD, bufferAddress, 16, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals("/", readGuestCString(memory, bufferAddress, 16));
+
+            writeGuestString(memory, pathAddress, "../outside");
+            setSyscall(state, SYS_CHDIR, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "root.txt");
+            setSyscall(state, SYS_CHDIR, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTDIR, state.register(10));
+
+            writeGuestString(memory, pathAddress, "missing");
+            setSyscall(state, SYS_CHDIR, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            setSyscall(state, SYS_FCHDIR, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
         }
     }
 

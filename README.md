@@ -64,8 +64,8 @@ rejected during loading.
 The simulator implements a deterministic single-process subset of the Linux
 RISC-V syscall ABI. The current subset is sufficient for small statically linked
 musl programs, including `printf`, argument passing, basic file I/O, directory
-listing, file mutation through a host-root sandbox, time queries, anonymous
-memory mappings, and common libc process setup probes.
+listing, cwd-aware path resolution, file mutation through a host-root sandbox,
+time queries, anonymous memory mappings, and common libc process setup probes.
 
 Supported syscall families currently include:
 
@@ -74,7 +74,7 @@ Supported syscall families currently include:
 - `openat`, `close`, `fstat`, `newfstatat`, `readlinkat`, `getdents64`,
   `mkdirat`, `unlinkat`, `renameat`, `renameat2`, `truncate`, `ftruncate`,
   `lseek`, `ioctl`, `fcntl`, `dup`, `dup3`, and `pipe2`
-- `getcwd`, `faccessat`, and `faccessat2`
+- `getcwd`, `chdir`, `fchdir`, `faccessat`, and `faccessat2`
 - `brk`, `mmap`, `munmap`, `mprotect`, `madvise`, and `riscv_hwprobe`
 - `clock_gettime`, `gettimeofday`, `times`, `nanosleep`, `getrusage`, and
   `prlimit64`
@@ -86,7 +86,8 @@ Supported syscall families currently include:
 
 File syscalls are sandboxed under `--host-root`, which defaults to the current
 working directory. Host file access, directory descriptors, and directory
-listing and mutation are implemented through Truffle file APIs.
+listing, working-directory changes, and mutation are implemented through
+Truffle file APIs.
 Unsupported `ecall` failures include the syscall number, guest PC, and argument
 registers.
 
@@ -132,6 +133,7 @@ smoke programs. They are built with the Gradle-managed Zig toolchain.
 ./gradlew testLinuxStaticFileIoExample
 ./gradlew testLinuxStaticDirectoryListExample
 ./gradlew testLinuxStaticFileMutationExample
+./gradlew testLinuxStaticWorkingDirectoryExample
 ```
 
 Run every available C smoke check:

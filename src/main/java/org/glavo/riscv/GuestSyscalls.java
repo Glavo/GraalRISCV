@@ -61,6 +61,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `faccessat`.
     private static final long SYS_FACCESSAT = 48;
 
+    /// The Linux RISC-V syscall number for `chdir`.
+    private static final long SYS_CHDIR = 49;
+
+    /// The Linux RISC-V syscall number for `fchdir`.
+    private static final long SYS_FCHDIR = 50;
+
     /// The Linux RISC-V syscall number for `openat`.
     private static final long SYS_OPENAT = 56;
 
@@ -1023,6 +1029,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The resolved host root directory exposed through sandboxed `openat`.
     private @Nullable TruffleFile hostRoot;
 
+    /// The guest-visible current working directory in absolute Linux path syntax.
+    private String guestWorkingDirectory = "/";
+
     /// The lowest program break accepted by the `brk` syscall.
     private final long initialProgramBreak;
 
@@ -1257,6 +1266,14 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_FACCESSAT) {
             state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
+            return;
+        }
+        if (callNumber == SYS_CHDIR) {
+            state.setRegister(10, chdir(state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_FCHDIR) {
+            state.setRegister(10, fchdir((int) state.register(10)));
             return;
         }
         if (callNumber == SYS_OPENAT) {
@@ -1556,7 +1573,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Writes the deterministic guest working directory path.
     private long getcwd(long bufferAddress, long bufferSize) {
-        byte[] currentDirectory = {'/', 0};
+        byte[] pathBytes = guestWorkingDirectory.getBytes(StandardCharsets.UTF_8);
+        byte[] currentDirectory = new byte[pathBytes.length + 1];
+        System.arraycopy(pathBytes, 0, currentDirectory, 0, pathBytes.length);
         if (bufferSize < currentDirectory.length) {
             return ERANGE;
         }
@@ -1760,8 +1779,8 @@ public final class GuestSyscalls implements AutoCloseable {
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable TruffleFile root = currentHostRoot();
-                return root == null ? EACCES : accessHostFile(root, mode);
+                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                return currentDirectory == null ? EACCES : accessHostFile(currentDirectory, mode);
             }
             return accessFileDescriptor((int) directoryFileDescriptor, mode);
         }
@@ -2066,6 +2085,64 @@ public final class GuestSyscalls implements AutoCloseable {
 
         try {
             resizeHostChannel(openFile.channel(), length);
+            return 0;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Changes the guest-visible current working directory to a sandboxed host directory.
+    private long chdir(long pathAddress) {
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+        return changeWorkingDirectory(hostFile);
+    }
+
+    /// Changes the guest-visible current working directory to an open directory descriptor.
+    private long fchdir(int fileDescriptor) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isDirectory()) {
+            return ENOTDIR;
+        }
+
+        @Nullable TruffleFile path = openFile.path();
+        if (path == null) {
+            return EBADF;
+        }
+        return changeWorkingDirectory(path);
+    }
+
+    /// Applies a host directory as the guest-visible current working directory.
+    private long changeWorkingDirectory(TruffleFile hostFile) {
+        try {
+            if (!pathEntryExists(hostFile)) {
+                return ENOENT;
+            }
+            if (!canonicalFileStaysBelowHostRoot(hostFile)) {
+                return EACCES;
+            }
+            if (!hostFile.isDirectory()) {
+                return ENOTDIR;
+            }
+
+            @Nullable String guestPath = guestPathForHostFile(hostFile);
+            if (guestPath == null) {
+                return EACCES;
+            }
+            guestWorkingDirectory = guestPath;
             return 0;
         } catch (IOException | SecurityException exception) {
             return EACCES;
@@ -2487,8 +2564,8 @@ public final class GuestSyscalls implements AutoCloseable {
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable TruffleFile root = currentHostRoot();
-                return root == null ? EACCES : statHostFile(root, statAddress);
+                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                return currentDirectory == null ? EACCES : statHostFile(currentDirectory, statAddress);
             }
             return fstat((int) directoryFileDescriptor, statAddress);
         }
@@ -3593,8 +3670,12 @@ public final class GuestSyscalls implements AutoCloseable {
             return null;
         }
 
+        boolean absoluteGuestPath = isAbsoluteGuestPath(guestPath);
         TruffleFile base = root;
-        if (directoryFileDescriptor != AT_FDCWD && !isAbsoluteGuestPath(guestPath)) {
+        String relativePath = guestPath;
+        if (absoluteGuestPath) {
+            relativePath = removeLeadingSlashes(guestPath);
+        } else if (directoryFileDescriptor != AT_FDCWD) {
             @Nullable OpenFile directory = openFile((int) directoryFileDescriptor);
             if (directory == null || !directory.isDirectory()) {
                 return null;
@@ -3604,11 +3685,12 @@ public final class GuestSyscalls implements AutoCloseable {
                 return null;
             }
             base = path;
-        }
-
-        String relativePath = guestPath;
-        while (relativePath.startsWith("/")) {
-            relativePath = relativePath.substring(1);
+        } else {
+            @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory(root);
+            if (currentDirectory == null) {
+                return null;
+            }
+            base = currentDirectory;
         }
 
         try {
@@ -3624,6 +3706,15 @@ public final class GuestSyscalls implements AutoCloseable {
         return guestPath.startsWith("/");
     }
 
+    /// Removes every leading Linux path separator from an absolute guest path.
+    private static String removeLeadingSlashes(String guestPath) {
+        int index = 0;
+        while (index < guestPath.length() && guestPath.charAt(index) == '/') {
+            index++;
+        }
+        return guestPath.substring(index);
+    }
+
     /// Returns true when a host file's canonical location stays below the sandbox root.
     private boolean canonicalFileStaysBelowHostRoot(TruffleFile hostFile) throws IOException {
         @Nullable TruffleFile root = currentHostRoot();
@@ -3631,6 +3722,43 @@ public final class GuestSyscalls implements AutoCloseable {
             return false;
         }
         return hostFile.getCanonicalFile().startsWith(root.getCanonicalFile());
+    }
+
+    /// Returns the sandboxed host directory backing the guest-visible current working directory.
+    private @Nullable TruffleFile currentHostWorkingDirectory() {
+        @Nullable TruffleFile root = currentHostRoot();
+        return root == null ? null : currentHostWorkingDirectory(root);
+    }
+
+    /// Returns the sandboxed host directory backing the guest-visible current working directory.
+    private @Nullable TruffleFile currentHostWorkingDirectory(TruffleFile root) {
+        try {
+            TruffleFile hostFile = root.resolve(removeLeadingSlashes(guestWorkingDirectory)).normalize();
+            return hostFile.startsWith(root) ? hostFile : null;
+        } catch (InvalidPathException exception) {
+            return null;
+        }
+    }
+
+    /// Converts a sandboxed host path to an absolute guest-visible Linux path.
+    private @Nullable String guestPathForHostFile(TruffleFile hostFile) {
+        @Nullable TruffleFile root = currentHostRoot();
+        if (root == null) {
+            return null;
+        }
+
+        TruffleFile normalizedRoot = root.normalize();
+        TruffleFile normalizedHostFile = hostFile.normalize();
+        if (!normalizedHostFile.startsWith(normalizedRoot)) {
+            return null;
+        }
+
+        try {
+            String relativePath = normalizedRoot.relativize(normalizedHostFile).getPath().replace('\\', '/');
+            return relativePath.isEmpty() ? "/" : "/" + relativePath;
+        } catch (IllegalArgumentException | SecurityException exception) {
+            return null;
+        }
     }
 
     /// Validates that a file's parent directory exists inside the host-root sandbox.

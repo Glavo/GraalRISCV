@@ -24,9 +24,11 @@ val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-stati
 val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
 val linuxStaticDirectoryListExampleElf = layout.buildDirectory.file("examples/linux-static/directory-list.elf")
 val linuxStaticFileMutationExampleElf = layout.buildDirectory.file("examples/linux-static/file-mutation.elf")
+val linuxStaticWorkingDirectoryExampleElf = layout.buildDirectory.file("examples/linux-static/working-directory.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
+val linuxStaticWorkingDirectoryRoot = layout.buildDirectory.dir("tmp/linux-static-working-directory-root")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -147,6 +149,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticFileMutationExample") {
     description = "Builds examples/linux-static/FileMutation.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("FileMutation.c", linuxStaticFileMutationExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticWorkingDirectoryExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/WorkingDirectory.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("WorkingDirectory.c", linuxStaticWorkingDirectoryExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -386,6 +395,52 @@ tasks.register<JavaExec>("testLinuxStaticFileMutationExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticWorkingDirectoryExample") {
+    group = "verification"
+    description = "Compiles a static musl working-directory example and verifies chdir/fchdir behavior."
+
+    dependsOn("classes", "buildLinuxStaticWorkingDirectoryExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticWorkingDirectoryRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticWorkingDirectoryExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "cwd-ok\n") {
+            throw GradleException("Unexpected static working-directory output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static working-directory example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticWorkingDirectoryRoot.get().file("work/message.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "cwd-data\n") {
+            throw GradleException("Unexpected static working-directory host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -543,6 +598,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticFileIoExample",
         "testLinuxStaticDirectoryListExample",
         "testLinuxStaticFileMutationExample",
+        "testLinuxStaticWorkingDirectoryExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -556,4 +612,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticFileIoExample")
     dependsOn("testLinuxStaticDirectoryListExample")
     dependsOn("testLinuxStaticFileMutationExample")
+    dependsOn("testLinuxStaticWorkingDirectoryExample")
 }
