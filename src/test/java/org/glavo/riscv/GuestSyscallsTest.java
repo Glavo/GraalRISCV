@@ -2707,7 +2707,6 @@ public final class GuestSyscallsTest {
     public void signalSendSyscallsValidateSingleProcessTargets() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
-            long stackAddress = memory.baseAddress() + 512;
 
             setSyscall(state, SYS_KILL, 1, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -2740,21 +2739,12 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_TGKILL, 99, 1, 10);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ESRCH, state.register(10));
-
-            setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS, stackAddress, 0, 0, 0, 0);
-            state.syscalls().handle(state, TEST_PC);
-            long syntheticThreadId = state.register(10);
-            assertEquals(2, syntheticThreadId);
-
-            setSyscall(state, SYS_TGKILL, 1, syntheticThreadId, 10);
-            state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
         }
     }
 
-    /// Verifies the supported parent return path for thread-style `clone` calls.
+    /// Verifies that thread-style `clone` requires a Truffle environment that can create threads.
     @Test
-    public void cloneReportsSyntheticThreadIdsForThreadStyleRequests() {
+    public void cloneRequiresThreadCreationContext() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 512;
@@ -2773,31 +2763,9 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
 
-            assertEquals(2, state.register(10));
-            assertEquals(2, memory.readInt(parentTidAddress));
-            assertEquals(2, memory.readInt(childTidAddress));
-
-            setSyscall(
-                    state,
-                    SYS_CLONE,
-                    THREAD_CLONE_FLAGS,
-                    stackAddress,
-                    parentTidAddress,
-                    tlsAddress,
-                    childTidAddress,
-                    0);
-            state.syscalls().handle(state, TEST_PC);
-
-            assertEquals(3, state.register(10));
-            assertEquals(3, memory.readInt(parentTidAddress));
-            assertEquals(3, memory.readInt(childTidAddress));
-
-            setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS, stackAddress, 0, 0, 0, 0);
-            state.syscalls().handle(state, TEST_PC);
-
-            assertEquals(4, state.register(10));
-            assertEquals(3, memory.readInt(parentTidAddress));
-            assertEquals(3, memory.readInt(childTidAddress));
+            assertEquals(EAGAIN, state.register(10));
+            assertEquals(0, memory.readInt(parentTidAddress));
+            assertEquals(0, memory.readInt(childTidAddress));
         }
     }
 

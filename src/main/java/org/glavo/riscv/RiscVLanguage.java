@@ -107,6 +107,12 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(HOST_ROOT));
     }
 
+    /// Allows clone-created guest threads to enter the same exclusive language context.
+    @Override
+    protected boolean isThreadAccessAllowed(Thread thread, boolean singleThreaded) {
+        return true;
+    }
+
     /// Creates the guest clock from the fixed-clock debug option.
     static Clock clockFromDebugFixedClockNanos(long debugFixedClockNanos) {
         if (debugFixedClockNanos == HOST_CLOCK_NANOS) {

@@ -10,6 +10,12 @@ import org.jetbrains.annotations.Nullable;
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
+    /// The high exclusive stack address used to match a 39-bit Linux RISC-V user VMA.
+    private static final long LINUX_STACK_TOP = 1L << 38;
+
+    /// The size of the initial Linux user stack mapping.
+    private static final long LINUX_STACK_SIZE = 8L * 1024L * 1024L;
+
     /// Resolves the current RISC-V context for this root node.
     private static final TruffleLanguage.ContextReference<RiscVContext> CONTEXT_REFERENCE =
             TruffleLanguage.ContextReference.create(RiscVLanguage.class);
@@ -32,19 +38,25 @@ public final class RiscVRootNode extends RootNode {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
         try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
             MachineState state = createState(context, memory);
-            RiscVFrameLayout.loadIntegerRegisters(frame, state);
             try {
                 return executeGuestLoop(frame, memory, state);
+            } catch (ProgramExitException exit) {
+                state.syscalls().requestProcessExit(exit.exitCode());
+                state.syscalls().recordThreadExit(state, exit.exitCode());
+                return exit.exitCode();
+            } catch (RuntimeException | Error throwable) {
+                state.syscalls().requestProcessExit(1);
+                throw throwable;
             } finally {
+                state.syscalls().joinGuestThreads();
                 state.syscalls().close();
             }
-        } catch (ProgramExitException exit) {
-            return exit.exitCode();
         }
     }
 
     /// Runs the decoded-block dispatch loop for an initialized guest state.
     private int executeGuestLoop(VirtualFrame frame, Memory memory, MachineState state) {
+        RiscVFrameLayout.loadIntegerRegisters(frame, state);
         long pc = state.pc();
         long primaryPc = 0;
         long secondaryPc = 0;
@@ -52,23 +64,56 @@ public final class RiscVRootNode extends RootNode {
         @Nullable BlockNode secondaryBlock = null;
 
         while (true) {
-            BlockNode block;
-            if (primaryBlock != null && pc == primaryPc) {
-                block = primaryBlock;
-            } else if (secondaryBlock != null && pc == secondaryPc) {
-                block = secondaryBlock;
-                secondaryBlock = primaryBlock;
-                secondaryPc = primaryPc;
-                primaryBlock = block;
-                primaryPc = pc;
-            } else {
-                block = blockFor(memory, pc);
-                secondaryBlock = primaryBlock;
-                secondaryPc = primaryPc;
-                primaryBlock = block;
-                primaryPc = pc;
+            try {
+                state.syscalls().checkProcessStatus();
+                BlockNode block;
+                if (primaryBlock != null && pc == primaryPc) {
+                    block = primaryBlock;
+                } else if (secondaryBlock != null && pc == secondaryPc) {
+                    block = secondaryBlock;
+                    secondaryBlock = primaryBlock;
+                    secondaryPc = primaryPc;
+                    primaryBlock = block;
+                    primaryPc = pc;
+                } else {
+                    block = blockFor(memory, pc);
+                    secondaryBlock = primaryBlock;
+                    secondaryPc = primaryPc;
+                    primaryBlock = block;
+                    primaryPc = pc;
+                }
+                pc = block.execute(frame, state);
+                state.setPc(pc);
+            } catch (ThreadExitException exit) {
+                RiscVFrameLayout.spillIntegerRegisters(frame, state);
+                return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
             }
-            pc = block.execute(frame, state);
+        }
+    }
+
+    /// Runs one clone-created guest thread on its Truffle host thread.
+    private void runGuestThread(Memory memory, MachineState state) {
+        try {
+            executeGuestThreadLoop(memory, state);
+        } catch (ThreadExitException exit) {
+            state.syscalls().recordThreadExit(state, exit.exitCode());
+        } catch (ProgramExitException exit) {
+            state.syscalls().requestProcessExit(exit.exitCode());
+            state.syscalls().recordThreadExit(state, exit.exitCode());
+        } catch (Throwable throwable) {
+            state.syscalls().recordThreadFailure(throwable);
+            state.syscalls().recordThreadExit(state, 1);
+        }
+    }
+
+    /// Runs the decoded-block dispatch loop for a clone-created guest thread.
+    private void executeGuestThreadLoop(Memory memory, MachineState state) {
+        long pc = state.pc();
+        while (true) {
+            state.syscalls().checkProcessStatus();
+            BlockNode block = blockFor(memory, pc);
+            pc = block.execute(state);
+            state.setPc(pc);
         }
     }
 
@@ -87,25 +132,37 @@ public final class RiscVRootNode extends RootNode {
                     Math.min(alignUp(segment.virtualAddress() + segment.memorySize(), 16), memory.endAddress()));
         }
 
+        GuestSyscalls syscalls = new GuestSyscalls(
+                memory,
+                context.env().in(),
+                context.env().out(),
+                context.env().err(),
+                initialProgramBreak,
+                context.env(),
+                context.hostRoot(),
+                context.clock(),
+                childState -> runGuestThread(memory, childState));
         MachineState state = new MachineState(
                 memory,
                 context.maxInstructions(),
                 context.trace(),
                 image.tohostAddress(),
                 image.fromhostAddress(),
-                new GuestSyscalls(
-                        memory,
-                        context.env().in(),
-                        context.env().out(),
-                        context.env().err(),
-                        initialProgramBreak,
-                        context.env(),
-                        context.hostRoot(),
-                        context.clock()),
+                syscalls,
                 context.env().err());
         state.setPc(image.entryPoint());
-        state.setRegister(2, LinuxInitialStack.initialize(memory, memory.endAddress(), context.programArguments(), image));
+        state.setRegister(2, initializeLinuxStack(memory, context));
         return state;
+    }
+
+    /// Maps and initializes the Linux user stack at a high RISC-V user address.
+    private long initializeLinuxStack(Memory memory, RiscVContext context) {
+        long stackBase = LINUX_STACK_TOP - LINUX_STACK_SIZE;
+        if (!memory.map(stackBase, LINUX_STACK_SIZE)) {
+            throw new RiscVException("Failed to map Linux initial stack: base="
+                    + formatHex(stackBase) + ", size=" + LINUX_STACK_SIZE);
+        }
+        return LinuxInitialStack.initialize(memory, LINUX_STACK_TOP, context.programArguments(), image);
     }
 
     /// Resolves the memory base from context options or the lowest ELF load segment address.
@@ -250,7 +307,7 @@ public final class RiscVRootNode extends RootNode {
         private int size;
 
         /// Returns the cached block for a guest program counter, decoding it on a cache miss.
-        private BlockNode getOrDecode(Memory memory, long pc) {
+        private synchronized BlockNode getOrDecode(Memory memory, long pc) {
             int slot = findSlot(pc, keys, values);
             BlockNode block = values[slot];
             if (block != null) {

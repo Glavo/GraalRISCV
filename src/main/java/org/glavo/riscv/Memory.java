@@ -58,7 +58,7 @@ public final class Memory implements AutoCloseable {
         }
 
         this.baseAddress = baseAddress;
-        this.arena = Arena.ofConfined();
+        this.arena = Arena.ofShared();
         this.segment = arena.allocate(size, Long.BYTES);
         this.size = size;
         this.endAddress = baseAddress + size;
@@ -260,7 +260,7 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Adds a sparse guest memory region backed by a native memory segment.
-    public boolean map(long address, long length) {
+    public synchronized boolean map(long address, long length) {
         if (!isValidRange(address, length) || length == 0 || overlapsInitialMemory(address, length)
                 || overlappingMappedRegion(address, length) != null) {
             return false;
@@ -285,7 +285,7 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Removes sparse guest memory backing overlapped by the supplied range.
-    public void unmap(long address, long length) {
+    public synchronized void unmap(long address, long length) {
         if (length == 0) {
             return;
         }
@@ -325,13 +325,13 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns true when the supplied guest range has native backing.
-    public boolean isBacked(long address, long length) {
+    public synchronized boolean isBacked(long address, long length) {
         return findAccess(address, length) != null;
     }
 
     /// Releases the native memory segment backing this guest memory.
     @Override
-    public void close() {
+    public synchronized void close() {
         arena.close();
     }
 
@@ -405,7 +405,7 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Finds the sparse region backing a guest range, or null when absent.
-    private @Nullable MappedRegion findMappedRegion(long address, long length) {
+    private synchronized @Nullable MappedRegion findMappedRegion(long address, long length) {
         if (length < 0) {
             throw new RiscVException("Negative memory access length: " + length);
         }

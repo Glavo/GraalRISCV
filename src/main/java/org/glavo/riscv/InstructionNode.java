@@ -712,7 +712,11 @@ public sealed abstract class InstructionNode extends Node {
         /// Dispatches the environment call after synchronizing frame registers.
         @Override
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
-            RiscVFrameLayout.spillSyscallRegisters(frame, state);
+            if (GuestSyscalls.needsFullRegisterSnapshot(RiscVFrameLayout.readX(frame, 17))) {
+                RiscVFrameLayout.spillIntegerRegisters(frame, state);
+            } else {
+                RiscVFrameLayout.spillSyscallRegisters(frame, state);
+            }
             state.syscalls().handle(state, address);
             RiscVFrameLayout.loadSyscallResult(frame, state);
             state.setPc(nextPc);
@@ -1941,9 +1945,9 @@ public sealed abstract class InstructionNode extends Node {
             case CSRRSI -> setClearControlStatusRegister(frame, state, rs1, true);
             case CSRRCI -> setClearControlStatusRegister(frame, state, rs1, false);
             case ECALL -> {
-                RiscVFrameLayout.spillSyscallRegisters(frame, state);
+                RiscVFrameLayout.spillIntegerRegisters(frame, state);
                 ecall(state);
-                RiscVFrameLayout.loadSyscallResult(frame, state);
+                RiscVFrameLayout.loadIntegerRegisters(frame, state);
             }
             case EBREAK -> throw new ProgramExitException(0);
             default -> throw unexpectedOperationGroup("control");
@@ -2541,176 +2545,200 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Loads and reserves a 32-bit memory word.
     private void lrWord(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1);
-        state.setDecodedRegister(rd, memory.readInt(address));
-        state.reserve(address);
+        synchronized (memory) {
+            long address = state.decodedRegister(rs1);
+            state.setDecodedRegister(rd, memory.readInt(address));
+            state.reserve(address);
+        }
         state.setPc(nextPc);
     }
 
     /// Loads and reserves a 32-bit memory word using a frame-backed address register.
     private void lrWord(VirtualFrame frame, MachineState state, Memory memory) {
-        long address = readRegister(frame, rs1);
-        writeRegister(frame, rd, memory.readInt(address));
-        state.reserve(address);
+        synchronized (memory) {
+            long address = readRegister(frame, rs1);
+            writeRegister(frame, rd, memory.readInt(address));
+            state.reserve(address);
+        }
     }
 
     /// Loads and reserves a 64-bit memory doubleword.
     private void lrDouble(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1);
-        state.setDecodedRegister(rd, memory.readLong(address));
-        state.reserve(address);
+        synchronized (memory) {
+            long address = state.decodedRegister(rs1);
+            state.setDecodedRegister(rd, memory.readLong(address));
+            state.reserve(address);
+        }
         state.setPc(nextPc);
     }
 
     /// Loads and reserves a 64-bit memory doubleword using a frame-backed address register.
     private void lrDouble(VirtualFrame frame, MachineState state, Memory memory) {
-        long address = readRegister(frame, rs1);
-        writeRegister(frame, rd, memory.readLong(address));
-        state.reserve(address);
+        synchronized (memory) {
+            long address = readRegister(frame, rs1);
+            writeRegister(frame, rd, memory.readLong(address));
+            state.reserve(address);
+        }
     }
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
     private void scWord(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1);
-        if (state.hasReservation(address)) {
-            memory.writeInt(address, (int) state.decodedRegister(rs2));
-            afterStore(state, address, Integer.BYTES);
-            state.setDecodedRegister(rd, 0);
-        } else {
-            state.setDecodedRegister(rd, 1);
+        synchronized (memory) {
+            long address = state.decodedRegister(rs1);
+            if (state.hasReservation(address)) {
+                memory.writeInt(address, (int) state.decodedRegister(rs2));
+                afterStore(state, address, Integer.BYTES);
+                state.setDecodedRegister(rd, 0);
+            } else {
+                state.setDecodedRegister(rd, 1);
+            }
+            state.clearReservation();
         }
-        state.clearReservation();
         state.setPc(nextPc);
     }
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation using frame-backed registers.
     private void scWord(VirtualFrame frame, MachineState state, Memory memory) {
-        long address = readRegister(frame, rs1);
-        if (state.hasReservation(address)) {
-            memory.writeInt(address, (int) readRegister(frame, rs2));
-            afterStore(state, address, Integer.BYTES);
-            writeRegister(frame, rd, 0);
-        } else {
-            writeRegister(frame, rd, 1);
+        synchronized (memory) {
+            long address = readRegister(frame, rs1);
+            if (state.hasReservation(address)) {
+                memory.writeInt(address, (int) readRegister(frame, rs2));
+                afterStore(state, address, Integer.BYTES);
+                writeRegister(frame, rd, 0);
+            } else {
+                writeRegister(frame, rd, 1);
+            }
+            state.clearReservation();
         }
-        state.clearReservation();
     }
 
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
     private void scDouble(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1);
-        if (state.hasReservation(address)) {
-            memory.writeLong(address, state.decodedRegister(rs2));
-            afterStore(state, address, Long.BYTES);
-            state.setDecodedRegister(rd, 0);
-        } else {
-            state.setDecodedRegister(rd, 1);
+        synchronized (memory) {
+            long address = state.decodedRegister(rs1);
+            if (state.hasReservation(address)) {
+                memory.writeLong(address, state.decodedRegister(rs2));
+                afterStore(state, address, Long.BYTES);
+                state.setDecodedRegister(rd, 0);
+            } else {
+                state.setDecodedRegister(rd, 1);
+            }
+            state.clearReservation();
         }
-        state.clearReservation();
         state.setPc(nextPc);
     }
 
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation using frame-backed registers.
     private void scDouble(VirtualFrame frame, MachineState state, Memory memory) {
-        long address = readRegister(frame, rs1);
-        if (state.hasReservation(address)) {
-            memory.writeLong(address, readRegister(frame, rs2));
-            afterStore(state, address, Long.BYTES);
-            writeRegister(frame, rd, 0);
-        } else {
-            writeRegister(frame, rd, 1);
+        synchronized (memory) {
+            long address = readRegister(frame, rs1);
+            if (state.hasReservation(address)) {
+                memory.writeLong(address, readRegister(frame, rs2));
+                afterStore(state, address, Long.BYTES);
+                writeRegister(frame, rd, 0);
+            } else {
+                writeRegister(frame, rd, 1);
+            }
+            state.clearReservation();
         }
-        state.clearReservation();
     }
 
     /// Executes a 32-bit AMO instruction.
     private void amoWord(MachineState state, Memory memory, long nextPc, AmoKind kind) {
-        long address = state.decodedRegister(rs1);
-        int oldValue = memory.readInt(address);
-        int source = (int) state.decodedRegister(rs2);
-        int newValue = switch (kind) {
-            case SWAP -> source;
-            case ADD -> oldValue + source;
-            case XOR -> oldValue ^ source;
-            case AND -> oldValue & source;
-            case OR -> oldValue | source;
-            case MIN -> oldValue < source ? oldValue : source;
-            case MAX -> oldValue > source ? oldValue : source;
-            case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-            case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
-        };
-        memory.writeInt(address, newValue);
-        state.setDecodedRegister(rd, oldValue);
-        afterStore(state, address, Integer.BYTES);
-        state.clearReservation();
+        synchronized (memory) {
+            long address = state.decodedRegister(rs1);
+            int oldValue = memory.readInt(address);
+            int source = (int) state.decodedRegister(rs2);
+            int newValue = switch (kind) {
+                case SWAP -> source;
+                case ADD -> oldValue + source;
+                case XOR -> oldValue ^ source;
+                case AND -> oldValue & source;
+                case OR -> oldValue | source;
+                case MIN -> oldValue < source ? oldValue : source;
+                case MAX -> oldValue > source ? oldValue : source;
+                case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
+                case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+            };
+            memory.writeInt(address, newValue);
+            state.setDecodedRegister(rd, oldValue);
+            afterStore(state, address, Integer.BYTES);
+            state.clearReservation();
+        }
         state.setPc(nextPc);
     }
 
     /// Executes a 32-bit AMO instruction using frame-backed integer registers.
     private void amoWord(VirtualFrame frame, MachineState state, Memory memory, AmoKind kind) {
-        long address = readRegister(frame, rs1);
-        int oldValue = memory.readInt(address);
-        int source = (int) readRegister(frame, rs2);
-        int newValue = switch (kind) {
-            case SWAP -> source;
-            case ADD -> oldValue + source;
-            case XOR -> oldValue ^ source;
-            case AND -> oldValue & source;
-            case OR -> oldValue | source;
-            case MIN -> oldValue < source ? oldValue : source;
-            case MAX -> oldValue > source ? oldValue : source;
-            case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-            case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
-        };
-        memory.writeInt(address, newValue);
-        writeRegister(frame, rd, oldValue);
-        afterStore(state, address, Integer.BYTES);
-        state.clearReservation();
+        synchronized (memory) {
+            long address = readRegister(frame, rs1);
+            int oldValue = memory.readInt(address);
+            int source = (int) readRegister(frame, rs2);
+            int newValue = switch (kind) {
+                case SWAP -> source;
+                case ADD -> oldValue + source;
+                case XOR -> oldValue ^ source;
+                case AND -> oldValue & source;
+                case OR -> oldValue | source;
+                case MIN -> oldValue < source ? oldValue : source;
+                case MAX -> oldValue > source ? oldValue : source;
+                case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
+                case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+            };
+            memory.writeInt(address, newValue);
+            writeRegister(frame, rd, oldValue);
+            afterStore(state, address, Integer.BYTES);
+            state.clearReservation();
+        }
     }
 
     /// Executes a 64-bit AMO instruction.
     private void amoDouble(MachineState state, Memory memory, long nextPc, AmoKind kind) {
-        long address = state.decodedRegister(rs1);
-        long oldValue = memory.readLong(address);
-        long source = state.decodedRegister(rs2);
-        long newValue = switch (kind) {
-            case SWAP -> source;
-            case ADD -> oldValue + source;
-            case XOR -> oldValue ^ source;
-            case AND -> oldValue & source;
-            case OR -> oldValue | source;
-            case MIN -> oldValue < source ? oldValue : source;
-            case MAX -> oldValue > source ? oldValue : source;
-            case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-            case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
-        };
-        memory.writeLong(address, newValue);
-        state.setDecodedRegister(rd, oldValue);
-        afterStore(state, address, Long.BYTES);
-        state.clearReservation();
+        synchronized (memory) {
+            long address = state.decodedRegister(rs1);
+            long oldValue = memory.readLong(address);
+            long source = state.decodedRegister(rs2);
+            long newValue = switch (kind) {
+                case SWAP -> source;
+                case ADD -> oldValue + source;
+                case XOR -> oldValue ^ source;
+                case AND -> oldValue & source;
+                case OR -> oldValue | source;
+                case MIN -> oldValue < source ? oldValue : source;
+                case MAX -> oldValue > source ? oldValue : source;
+                case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
+                case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+            };
+            memory.writeLong(address, newValue);
+            state.setDecodedRegister(rd, oldValue);
+            afterStore(state, address, Long.BYTES);
+            state.clearReservation();
+        }
         state.setPc(nextPc);
     }
 
     /// Executes a 64-bit AMO instruction using frame-backed integer registers.
     private void amoDouble(VirtualFrame frame, MachineState state, Memory memory, AmoKind kind) {
-        long address = readRegister(frame, rs1);
-        long oldValue = memory.readLong(address);
-        long source = readRegister(frame, rs2);
-        long newValue = switch (kind) {
-            case SWAP -> source;
-            case ADD -> oldValue + source;
-            case XOR -> oldValue ^ source;
-            case AND -> oldValue & source;
-            case OR -> oldValue | source;
-            case MIN -> oldValue < source ? oldValue : source;
-            case MAX -> oldValue > source ? oldValue : source;
-            case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-            case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
-        };
-        memory.writeLong(address, newValue);
-        writeRegister(frame, rd, oldValue);
-        afterStore(state, address, Long.BYTES);
-        state.clearReservation();
+        synchronized (memory) {
+            long address = readRegister(frame, rs1);
+            long oldValue = memory.readLong(address);
+            long source = readRegister(frame, rs2);
+            long newValue = switch (kind) {
+                case SWAP -> source;
+                case ADD -> oldValue + source;
+                case XOR -> oldValue ^ source;
+                case AND -> oldValue & source;
+                case OR -> oldValue | source;
+                case MIN -> oldValue < source ? oldValue : source;
+                case MAX -> oldValue > source ? oldValue : source;
+                case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
+                case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+            };
+            memory.writeLong(address, newValue);
+            writeRegister(frame, rd, oldValue);
+            afterStore(state, address, Long.BYTES);
+            state.clearReservation();
+        }
     }
 
     /// Executes an F or D fused multiply-add operation.

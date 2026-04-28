@@ -100,6 +100,7 @@ public final class Main {
                 .out(out)
                 .err(err)
                 .allowIO(IOAccess.ALL)
+                .allowCreateThread(true)
                 .arguments(RiscVLanguage.ID, options.applicationArguments())
                 .option("engine.WarnInterpreterOnly", "false");
 

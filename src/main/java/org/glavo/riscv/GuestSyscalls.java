@@ -1223,6 +1223,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Truffle environment used to resolve the configured host root lazily.
     private final @Nullable TruffleLanguage.Env env;
 
+    /// Runs guest thread states created by Linux `clone`.
+    private final @Nullable GuestThreadRunner guestThreadRunner;
+
     /// The configured host root path exposed through sandboxed `openat`.
     private final @Nullable String hostRootPath;
 
@@ -1244,11 +1247,29 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The guest file descriptor table for host files opened by `openat`.
     private final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
 
-    /// The address supplied by `set_tid_address`, or zero when unset.
-    private long clearChildTidAddress;
-
     /// The next synthetic guest thread id returned by accepted `clone` calls.
     private long nextGuestThreadId = GUEST_PROCESS_ID + 1;
+
+    /// Guards guest thread, futex, and process-exit state.
+    private final Object threadLock = new Object();
+
+    /// Host threads currently executing cloned guest threads.
+    private final ArrayList<Thread> guestThreads = new ArrayList<>();
+
+    /// Futex waiters currently blocked in guest syscalls.
+    private final ArrayList<FutexWaiter> futexWaiters = new ArrayList<>();
+
+    /// The number of live guest threads, including the initial thread.
+    private int liveThreadCount = 1;
+
+    /// Whether a guest `exit_group` has requested process termination.
+    private boolean processExitRequested;
+
+    /// The exit code requested by `exit_group` or by the last exiting thread.
+    private long processExitCode;
+
+    /// A host exception thrown while executing a guest thread, or null when none has failed.
+    private @Nullable Throwable threadFailure;
 
     /// The robust futex list head address supplied by `set_robust_list`.
     private long robustListHeadAddress;
@@ -1337,7 +1358,7 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
-        this(memory, in, out, err, initialProgramBreak, null, null, null, Clock.systemUTC());
+        this(memory, in, out, err, initialProgramBreak, null, null, null, Clock.systemUTC(), null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and resolved host file root.
@@ -1360,7 +1381,7 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             @Nullable TruffleFile hostRoot,
             Clock clock) {
-        this(memory, in, out, err, initialProgramBreak, hostRoot, null, null, clock);
+        this(memory, in, out, err, initialProgramBreak, hostRoot, null, null, clock, null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy host file root.
@@ -1385,7 +1406,21 @@ public final class GuestSyscalls implements AutoCloseable {
             TruffleLanguage.Env env,
             String hostRootPath,
             Clock clock) {
-        this(memory, in, out, err, initialProgramBreak, null, env, hostRootPath, clock);
+        this(memory, in, out, err, initialProgramBreak, env, hostRootPath, clock, null);
+    }
+
+    /// Creates a syscall handler backed by streams, lazy host root, guest clock, and guest thread runner.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            TruffleLanguage.Env env,
+            String hostRootPath,
+            Clock clock,
+            GuestThreadRunner guestThreadRunner) {
+        this(memory, in, out, err, initialProgramBreak, null, env, hostRootPath, clock, guestThreadRunner);
     }
 
     /// Creates a syscall handler with either an eager or lazy TruffleFile host root.
@@ -1398,7 +1433,8 @@ public final class GuestSyscalls implements AutoCloseable {
             @Nullable TruffleFile hostRoot,
             @Nullable TruffleLanguage.Env env,
             @Nullable String hostRootPath,
-            Clock clock) {
+            Clock clock,
+            @Nullable GuestThreadRunner guestThreadRunner) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
                     + Long.toUnsignedString(initialProgramBreak, 16));
@@ -1409,6 +1445,7 @@ public final class GuestSyscalls implements AutoCloseable {
         this.out = out;
         this.err = err;
         this.env = env;
+        this.guestThreadRunner = guestThreadRunner;
         this.hostRootPath = hostRootPath;
         this.hostRoot = hostRoot == null ? null : hostRoot.getAbsoluteFile().normalize();
         this.initialProgramBreak = initialProgramBreak;
@@ -1598,11 +1635,16 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, fdatasync((int) state.register(10)));
             return;
         }
-        if (callNumber == SYS_EXIT || callNumber == SYS_EXIT_GROUP) {
+        if (callNumber == SYS_EXIT_GROUP) {
+            requestProcessExit(state.register(10));
             throw new ProgramExitException(state.register(10));
         }
+        if (callNumber == SYS_EXIT) {
+            exitThread(state, state.register(10));
+            return;
+        }
         if (callNumber == SYS_SET_TID_ADDRESS) {
-            state.setRegister(10, setTidAddress(state.register(10)));
+            state.setRegister(10, setTidAddress(state, state.register(10)));
             return;
         }
         if (callNumber == SYS_FUTEX) {
@@ -1689,6 +1731,7 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_PRCTL) {
             state.setRegister(10, prctl(
+                    state,
                     state.register(10),
                     state.register(11),
                     state.register(12),
@@ -1704,8 +1747,12 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, gettimeofday(state.register(10), state.register(11)));
             return;
         }
-        if (callNumber == SYS_GETPID || callNumber == SYS_GETTID) {
+        if (callNumber == SYS_GETPID) {
             state.setRegister(10, GUEST_PROCESS_ID);
+            return;
+        }
+        if (callNumber == SYS_GETTID) {
+            state.setRegister(10, state.threadId());
             return;
         }
         if (callNumber == SYS_GETPPID) {
@@ -1722,6 +1769,8 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_CLONE) {
             state.setRegister(10, clone(
+                    state,
+                    pc,
                     state.register(10),
                     state.register(11),
                     state.register(12),
@@ -1807,6 +1856,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return;
         }
         throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
+    }
+
+    /// Returns true when a syscall may need a full architectural register snapshot.
+    static boolean needsFullRegisterSnapshot(long callNumber) {
+        return callNumber == SYS_CLONE;
     }
 
     /// Closes all host files opened by guest file descriptors.
@@ -3560,13 +3614,161 @@ public final class GuestSyscalls implements AutoCloseable {
         return EINVAL;
     }
 
-    /// Stores the guest clear-child-TID pointer and returns the fixed guest thread id.
-    private long setTidAddress(long address) {
-        clearChildTidAddress = address;
-        return GUEST_PROCESS_ID;
+    /// Throws when another guest thread has failed or process termination has been requested.
+    void checkProcessStatus() {
+        synchronized (threadLock) {
+            if (threadFailure != null) {
+                throw guestThreadFailure(threadFailure);
+            }
+            if (processExitRequested) {
+                throw new ProgramExitException(processExitCode);
+            }
+        }
     }
 
-    /// Handles single-threaded Linux futex wait and wake operations.
+    /// Requests process-wide termination and wakes all guest threads blocked in host waits.
+    void requestProcessExit(long exitCode) {
+        synchronized (threadLock) {
+            if (!processExitRequested) {
+                processExitRequested = true;
+                processExitCode = exitCode;
+            }
+            threadLock.notifyAll();
+        }
+    }
+
+    /// Records that a guest thread exited and returns the process exit code once it is known.
+    long completeThreadExit(MachineState state, long exitCode) {
+        recordThreadExit(state, exitCode);
+        return waitForProcessExit();
+    }
+
+    /// Records a guest thread exit and performs Linux clear-child-TID wakeup side effects.
+    void recordThreadExit(MachineState state, long exitCode) {
+        synchronized (threadLock) {
+            clearChildTidAndWake(state);
+            if (liveThreadCount > 0) {
+                liveThreadCount--;
+            }
+            guestThreads.remove(Thread.currentThread());
+            if (!processExitRequested && liveThreadCount == 0) {
+                processExitRequested = true;
+                processExitCode = exitCode;
+            }
+            threadLock.notifyAll();
+        }
+    }
+
+    /// Records a host-side failure from a guest thread and wakes the process owner.
+    void recordThreadFailure(Throwable throwable) {
+        synchronized (threadLock) {
+            if (threadFailure == null) {
+                threadFailure = throwable;
+            }
+            processExitRequested = true;
+            processExitCode = 1;
+            threadLock.notifyAll();
+        }
+    }
+
+    /// Joins all guest host threads before the shared guest memory is closed.
+    void joinGuestThreads() {
+        while (true) {
+            Thread[] threads;
+            synchronized (threadLock) {
+                threads = guestThreads.toArray(Thread[]::new);
+                if (threads.length == 0) {
+                    if (threadFailure != null) {
+                        throw guestThreadFailure(threadFailure);
+                    }
+                    return;
+                }
+            }
+
+            Thread currentThread = Thread.currentThread();
+            for (Thread thread : threads) {
+                if (thread == currentThread) {
+                    continue;
+                }
+                try {
+                    thread.join();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new RiscVException("Interrupted while waiting for guest threads to exit", exception);
+                }
+            }
+
+            synchronized (threadLock) {
+                for (int index = 0; index < guestThreads.size(); ) {
+                    if (guestThreads.get(index).isAlive()) {
+                        index++;
+                    } else {
+                        guestThreads.remove(index);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Waits until the process exit code is known.
+    private long waitForProcessExit() {
+        synchronized (threadLock) {
+            while (!processExitRequested && threadFailure == null) {
+                try {
+                    threadLock.wait();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new RiscVException("Interrupted while waiting for guest process exit", exception);
+                }
+            }
+            if (threadFailure != null) {
+                throw guestThreadFailure(threadFailure);
+            }
+            return processExitCode;
+        }
+    }
+
+    /// Clears a thread's child-TID word and wakes one matching futex waiter.
+    private void clearChildTidAndWake(MachineState state) {
+        long clearAddress = state.clearChildTidAddress();
+        if (clearAddress == 0 || !memory.isBacked(clearAddress, Integer.BYTES)) {
+            return;
+        }
+
+        memory.writeInt(clearAddress, 0);
+        futexWakeLocked(clearAddress, 1, FUTEX_BITSET_MATCH_ANY);
+    }
+
+    /// Creates an exception that reports a failed guest worker thread.
+    private static RiscVException guestThreadFailure(Throwable failure) {
+        if (failure instanceof RiscVException exception) {
+            return exception;
+        }
+        return new RiscVException("Guest thread failed", failure);
+    }
+
+    /// Stores the guest clear-child-TID pointer and returns this guest thread id.
+    private static long setTidAddress(MachineState state, long address) {
+        state.setClearChildTidAddress(address);
+        return state.threadId();
+    }
+
+    /// Exits the current guest thread.
+    private void exitThread(MachineState state, long exitCode) {
+        synchronized (threadLock) {
+            if (liveThreadCount <= 1) {
+                if (!processExitRequested) {
+                    processExitRequested = true;
+                    processExitCode = exitCode;
+                }
+                threadLock.notifyAll();
+                throw new ProgramExitException(exitCode);
+            }
+        }
+        throw new ThreadExitException(exitCode);
+    }
+
+    /// Handles Linux futex wait and wake operations.
     private long futex(
             long address,
             long operation,
@@ -3588,55 +3790,199 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         return switch ((int) command) {
-            case (int) FUTEX_WAIT -> futexWait(address, expectedValue, timeoutAddress, FUTEX_BITSET_MATCH_ANY);
-            case (int) FUTEX_WAKE -> futexWake(expectedValue, FUTEX_BITSET_MATCH_ANY);
-            case (int) FUTEX_WAIT_BITSET -> futexWait(address, expectedValue, timeoutAddress, thirdValue);
-            case (int) FUTEX_WAKE_BITSET -> futexWake(expectedValue, thirdValue);
+            case (int) FUTEX_WAIT -> futexWait(
+                    address,
+                    expectedValue,
+                    timeoutAddress,
+                    FUTEX_BITSET_MATCH_ANY,
+                    (flags & FUTEX_CLOCK_REALTIME) != 0);
+            case (int) FUTEX_WAKE -> futexWake(address, expectedValue, FUTEX_BITSET_MATCH_ANY);
+            case (int) FUTEX_WAIT_BITSET -> futexWait(
+                    address,
+                    expectedValue,
+                    timeoutAddress,
+                    thirdValue,
+                    (flags & FUTEX_CLOCK_REALTIME) != 0);
+            case (int) FUTEX_WAKE_BITSET -> futexWake(address, expectedValue, thirdValue);
             default -> ENOSYS;
         };
     }
 
-    /// Handles a futex wait without blocking the single-threaded interpreter.
-    private long futexWait(long address, long expectedValue, long timeoutAddress, long bitset) {
+    /// Handles a futex wait, blocking only when guest threading is active.
+    private long futexWait(long address, long expectedValue, long timeoutAddress, long bitset, boolean realtimeTimeout) {
         if ((bitset & 0xffff_ffffL) == 0) {
             return EINVAL;
         }
 
-        int currentValue = memory.readInt(address);
-        if (currentValue != (int) expectedValue) {
-            return EAGAIN;
-        }
+        long timeoutNanos = -1;
         if (timeoutAddress != 0) {
             long seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
             long nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
             if (!isValidTimespec(seconds, nanoseconds)) {
                 return EINVAL;
             }
+            timeoutNanos = futexTimeoutNanos(seconds, nanoseconds, realtimeTimeout);
         }
-        return ETIMEDOUT;
+
+        synchronized (threadLock) {
+            int currentValue = memory.readInt(address);
+            if (currentValue != (int) expectedValue) {
+                return EAGAIN;
+            }
+            if (!guestThreadingEnabled()) {
+                return ETIMEDOUT;
+            }
+            if (timeoutNanos == 0) {
+                return ETIMEDOUT;
+            }
+
+            FutexWaiter waiter = new FutexWaiter(address, bitset);
+            futexWaiters.add(waiter);
+            try {
+                long remainingNanos = timeoutNanos;
+                long lastNanos = timeoutNanos >= 0 ? System.nanoTime() : 0;
+                while (!waiter.woken && !processExitRequested && threadFailure == null) {
+                    if (remainingNanos >= 0) {
+                        if (remainingNanos <= 0) {
+                            return ETIMEDOUT;
+                        }
+                        waitNanos(remainingNanos);
+                        long now = System.nanoTime();
+                        long elapsed = Math.max(0, now - lastNanos);
+                        remainingNanos = elapsed >= remainingNanos ? 0 : remainingNanos - elapsed;
+                        lastNanos = now;
+                    } else {
+                        threadLock.wait();
+                    }
+                }
+                if (threadFailure != null || processExitRequested) {
+                    return EINTR;
+                }
+                return 0;
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return EINTR;
+            } finally {
+                futexWaiters.remove(waiter);
+            }
+        }
     }
 
-    /// Handles a futex wake against an empty single-threaded waiter set.
-    private static long futexWake(long count, long bitset) {
+    /// Handles a futex wake against guest waiters.
+    private long futexWake(long address, long count, long bitset) {
         if (count < 0 || (bitset & 0xffff_ffffL) == 0) {
             return EINVAL;
         }
-        return 0;
+
+        synchronized (threadLock) {
+            long woken = futexWakeLocked(address, count, bitset);
+            if (woken > 0) {
+                threadLock.notifyAll();
+            }
+            return woken;
+        }
+    }
+
+    /// Wakes matching futex waiters while `threadLock` is held.
+    private long futexWakeLocked(long address, long count, long bitset) {
+        long woken = 0;
+        for (FutexWaiter waiter : futexWaiters) {
+            if (woken >= count) {
+                break;
+            }
+            if (waiter.address == address && (waiter.bitset & bitset) != 0) {
+                waiter.woken = true;
+                woken++;
+            }
+        }
+        if (woken > 0) {
+            threadLock.notifyAll();
+        }
+        return woken;
+    }
+
+    /// Waits on `threadLock` for at most the supplied nanosecond count.
+    private void waitNanos(long nanoseconds) throws InterruptedException {
+        long millis = nanoseconds / 1_000_000L;
+        int nanos = (int) (nanoseconds % 1_000_000L);
+        threadLock.wait(millis, nanos);
+    }
+
+    /// Converts a futex timeout to a relative nanosecond count.
+    private long futexTimeoutNanos(long seconds, long nanoseconds, boolean realtimeTimeout) {
+        long targetNanos = timespecToSaturatedNanoseconds(seconds, nanoseconds);
+        if (!realtimeTimeout) {
+            return targetNanos;
+        }
+
+        long nowNanos = instantToSaturatedNanoseconds(clock.instant());
+        return targetNanos <= nowNanos ? 0 : targetNanos - nowNanos;
+    }
+
+    /// Converts an instant to saturated nanoseconds since the Unix epoch.
+    private static long instantToSaturatedNanoseconds(Instant instant) {
+        long seconds = instant.getEpochSecond();
+        int nanoseconds = instant.getNano();
+        if (seconds <= 0) {
+            return 0;
+        }
+        return timespecToSaturatedNanoseconds(seconds, nanoseconds);
+    }
+
+    /// Returns true when clone-created guest threads can be started through the Truffle environment.
+    private boolean guestThreadingEnabled() {
+        return env != null && guestThreadRunner != null;
     }
 
     /// Handles the parent return path for Linux thread-style `clone` requests.
-    private long clone(long flags, long stackAddress, long parentTidAddress, long tlsAddress, long childTidAddress) {
+    private long clone(
+            MachineState state,
+            long pc,
+            long flags,
+            long stackAddress,
+            long parentTidAddress,
+            long tlsAddress,
+            long childTidAddress) {
         if (stackAddress == 0
                 || (flags & REQUIRED_THREAD_CLONE_FLAGS) != REQUIRED_THREAD_CLONE_FLAGS
                 || (flags & ~SUPPORTED_THREAD_CLONE_FLAGS) != 0) {
             return EINVAL;
         }
-
-        long threadId = nextGuestThreadId;
-        if (threadId <= GUEST_PROCESS_ID || threadId > Integer.MAX_VALUE) {
-            return ENOMEM;
+        if (!guestThreadingEnabled()) {
+            return EAGAIN;
         }
-        nextGuestThreadId++;
+
+        long threadId;
+        synchronized (threadLock) {
+            if (processExitRequested || threadFailure != null) {
+                return EAGAIN;
+            }
+            threadId = nextGuestThreadId;
+            if (threadId <= GUEST_PROCESS_ID || threadId > Integer.MAX_VALUE) {
+                return ENOMEM;
+            }
+            nextGuestThreadId++;
+        }
+
+        MachineState child = state.forkForClone(
+                (int) threadId,
+                pc + Integer.BYTES,
+                stackAddress,
+                tlsAddress,
+                (flags & CLONE_SETTLS) != 0);
+        if ((flags & CLONE_CHILD_CLEARTID) != 0) {
+            child.setClearChildTidAddress(childTidAddress);
+        }
+
+        TruffleLanguage.Env currentEnv = env;
+        GuestThreadRunner currentRunner = guestThreadRunner;
+        Thread thread;
+        try {
+            thread = currentEnv.newTruffleThreadBuilder(() -> currentRunner.runGuestThread(child)).build();
+        } catch (RuntimeException exception) {
+            return EAGAIN;
+        }
+        thread.setUncaughtExceptionHandler((failedThread, throwable) -> recordThreadFailure(throwable));
 
         if ((flags & CLONE_PARENT_SETTID) != 0) {
             memory.writeInt(parentTidAddress, (int) threadId);
@@ -3645,7 +3991,32 @@ public final class GuestSyscalls implements AutoCloseable {
             memory.writeInt(childTidAddress, (int) threadId);
         }
 
+        synchronized (threadLock) {
+            if (processExitRequested || threadFailure != null) {
+                return EAGAIN;
+            }
+            liveThreadCount++;
+            guestThreads.add(thread);
+        }
+
+        try {
+            thread.start();
+        } catch (RuntimeException exception) {
+            unregisterUnstartedGuestThread(thread);
+            return EAGAIN;
+        }
         return threadId;
+    }
+
+    /// Removes a child thread that failed before it could start running guest code.
+    private void unregisterUnstartedGuestThread(Thread thread) {
+        synchronized (threadLock) {
+            guestThreads.remove(thread);
+            if (liveThreadCount > 0) {
+                liveThreadCount--;
+            }
+            threadLock.notifyAll();
+        }
     }
 
     /// Accepts a single-threaded robust futex list registration.
@@ -4126,7 +4497,13 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Handles the Linux `prctl` operations needed by single-process user-mode guests.
-    private long prctl(long option, long argument2, long argument3, long argument4, long argument5) {
+    private long prctl(
+            MachineState state,
+            long option,
+            long argument2,
+            long argument3,
+            long argument4,
+            long argument5) {
         if (option == PR_SET_PDEATHSIG) {
             return setParentDeathSignal(argument2, argument3, argument4, argument5);
         }
@@ -4164,7 +4541,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return noArguments(argument2, argument3, argument4, argument5) ? (noNewPrivileges ? 1 : 0) : EINVAL;
         }
         if (option == PR_GET_TID_ADDRESS) {
-            return getTidAddress(argument2, argument3, argument4, argument5);
+            return getTidAddress(state, argument2, argument3, argument4, argument5);
         }
         if (option == PR_SET_THP_DISABLE) {
             return setTransparentHugePagesDisabled(argument2, argument3, argument4, argument5);
@@ -4273,11 +4650,11 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Writes the clear-child-TID address to a guest `long` pointer.
-    private long getTidAddress(long address, long argument3, long argument4, long argument5) {
+    private long getTidAddress(MachineState state, long address, long argument3, long argument4, long argument5) {
         if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
             return EINVAL;
         }
-        memory.writeLong(address, clearChildTidAddress);
+        memory.writeLong(address, state.clearChildTidAddress());
         return 0;
     }
 
@@ -5202,6 +5579,24 @@ public final class GuestSyscalls implements AutoCloseable {
 
             /// The Linux `DT_*` entry type.
             byte type) {
+    }
+
+    /// Stores one guest thread blocked in a futex wait operation.
+    private static final class FutexWaiter {
+        /// The guest futex word address being waited on.
+        private final long address;
+
+        /// The futex bitset mask used to match wake operations.
+        private final long bitset;
+
+        /// Whether a matching futex wake selected this waiter.
+        private boolean woken;
+
+        /// Creates a waiter for the supplied futex word and bitset.
+        private FutexWaiter(long address, long bitset) {
+            this.address = address;
+            this.bitset = bitset;
+        }
     }
 
     /// Stores the shared counter state for one Linux `eventfd` open-file description.
