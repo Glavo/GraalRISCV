@@ -5686,14 +5686,13 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Describes an anonymous guest memory mapping tracked by the syscall layer.
+    ///
+    /// @param address the inclusive guest start address of the mapping
+    /// @param length the byte length of the mapping
+    /// @param protection the Linux protection flags currently tracked for the mapping
     private record MemoryMapping(
-            /// The inclusive guest start address of the mapping.
             long address,
-
-            /// The byte length of the mapping.
             long length,
-
-            /// The Linux protection flags currently tracked for the mapping.
             long protection) {
         /// Returns the exclusive guest end address of the mapping.
         long endAddress() {
@@ -5707,23 +5706,22 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Describes a guest memory range allocated while changing protections.
+    ///
+    /// @param address the inclusive guest start address of the range
+    /// @param length the byte length of the range
     private record MemoryRange(
-            /// The inclusive guest start address of the range.
             long address,
-
-            /// The byte length of the range.
             long length) {
     }
 
     /// Describes one cached Linux directory entry for a directory descriptor.
+    ///
+    /// @param name the entry name without a trailing null byte
+    /// @param inode the deterministic inode value exposed to the guest
+    /// @param type the Linux `DT_*` entry type
     private record DirectoryEntry(
-            /// The entry name without a trailing null byte.
             String name,
-
-            /// The deterministic inode value exposed to the guest.
             long inode,
-
-            /// The Linux `DT_*` entry type.
             byte type) {
     }
 
@@ -5807,14 +5805,13 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// One descriptor interest stored in an in-memory Linux `epoll` set.
+    ///
+    /// @param fileDescriptor the watched guest file descriptor
+    /// @param events the event mask requested by the guest
+    /// @param data the opaque guest data returned with readiness notifications
     private record EpollInterest(
-            /// The watched guest file descriptor.
             int fileDescriptor,
-
-            /// The event mask requested by the guest.
             int events,
-
-            /// The opaque guest data returned with readiness notifications.
             long data) {
     }
 

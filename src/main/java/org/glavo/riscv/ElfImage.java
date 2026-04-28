@@ -91,15 +91,14 @@ public final class ElfImage {
     }
 
     /// Describes a loadable ELF segment and its guest memory extent.
+    ///
+    /// @param virtualAddress the guest virtual address where the segment starts
+    /// @param contents the bytes present in the ELF file for this segment
+    /// @param memorySize the total guest memory size of the segment, including zero-filled bytes
     @NotNullByDefault
     public record LoadSegment(
-            /// The guest virtual address where the segment starts.
             long virtualAddress,
-
-            /// The bytes present in the ELF file for this segment.
             byte @Unmodifiable [] contents,
-
-            /// The total guest memory size of the segment, including zero-filled bytes.
             long memorySize) {
         /// Creates a loadable segment description.
         public LoadSegment {

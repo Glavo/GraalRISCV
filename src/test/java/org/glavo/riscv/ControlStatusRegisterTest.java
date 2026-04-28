@@ -229,15 +229,14 @@ public final class ControlStatusRegisterTest {
     }
 
     /// Owns a CSR test machine and its closeable resources.
+    ///
+    /// @param memory the guest memory under test
+    /// @param syscalls the syscall handler attached to the machine state
+    /// @param state the mutable architectural state under test
     @NotNullByDefault
     private record TestMachine(
-            /// The guest memory under test.
             Memory memory,
-
-            /// The syscall handler attached to the machine state.
             GuestSyscalls syscalls,
-
-            /// The mutable architectural state under test.
             MachineState state) implements AutoCloseable {
         /// Creates a test machine initialized at the decoder test address.
         private static TestMachine create() {

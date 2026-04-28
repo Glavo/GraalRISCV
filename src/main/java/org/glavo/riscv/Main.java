@@ -334,36 +334,28 @@ public final class Main {
     }
 
     /// Stores parsed command-line options.
+    ///
+    /// @param mode the requested CLI action
+    /// @param programPath the guest ELF path to execute
+    /// @param programArguments the guest application arguments after the ELF path
+    /// @param memoryBase the optional guest memory base option value
+    /// @param memorySize the optional guest memory size option value
+    /// @param maxInstructions the optional maximum instruction count option value
+    /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
+    /// @param hostRoot the host directory exposed through sandboxed guest file syscalls
+    /// @param debugTraceCompilation whether Truffle compilation diagnostics should be enabled
+    /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
     private record CliOptions(
-            /// The requested CLI action.
             CliMode mode,
-
-            /// The guest ELF path to execute.
             Path programPath,
-
-            /// The guest application arguments after the ELF path.
             String @Unmodifiable [] programArguments,
-
-            /// The optional guest memory base option value.
             @Nullable String memoryBase,
-
-            /// The optional guest memory size option value.
             @Nullable String memorySize,
-
-            /// The optional maximum instruction count option value.
             @Nullable String maxInstructions,
-
-            /// The optional fixed debug `clock_gettime` nanosecond option value.
             @Nullable String debugFixedClockNanos,
-
-            /// The host directory exposed through sandboxed guest file syscalls.
             Path hostRoot,
-
-            /// Whether Truffle compilation diagnostics should be enabled.
             boolean debugTraceCompilation,
-
-            /// Whether instruction tracing is enabled.
             boolean trace) {
         /// Creates parsed command-line options.
         private CliOptions {

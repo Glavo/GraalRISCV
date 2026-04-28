@@ -188,21 +188,18 @@ public final class ElfTestImages {
     }
 
     /// Describes one generated `PT_LOAD` test segment.
+    ///
+    /// @param virtualAddress the guest virtual address where the segment starts
+    /// @param memorySize the total guest memory size of the segment
+    /// @param flags the ELF `p_flags` value
+    /// @param alignment the ELF `p_align` value
+    /// @param contents the bytes present in the ELF file for this segment
     @NotNullByDefault
     public record TestLoadSegment(
-            /// The guest virtual address where the segment starts.
             long virtualAddress,
-
-            /// The total guest memory size of the segment.
             long memorySize,
-
-            /// The ELF `p_flags` value.
             int flags,
-
-            /// The ELF `p_align` value.
             long alignment,
-
-            /// The bytes present in the ELF file for this segment.
             byte @Unmodifiable [] contents) {
         /// Creates a generated `PT_LOAD` segment.
         public TestLoadSegment {

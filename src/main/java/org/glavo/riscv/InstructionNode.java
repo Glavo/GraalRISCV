@@ -3812,12 +3812,12 @@ public sealed abstract class InstructionNode extends Node {
     }
 
     /// An exact signed binary value represented as `significand * 2^exponent`.
+    ///
+    /// @param significand the signed integer significand
+    /// @param exponent the binary exponent applied to the significand
     @NotNullByDefault
     private record ExactBinaryValue(
-            /// The signed integer significand.
             BigInteger significand,
-
-            /// The binary exponent applied to the significand.
             int exponent) {
         /// Returns the sign of this exact value.
         private int signum() {
@@ -3836,15 +3836,14 @@ public sealed abstract class InstructionNode extends Node {
     }
 
     /// An exact signed rational binary value represented as `numerator * 2^exponent / denominator`.
+    ///
+    /// @param numerator the signed integer numerator
+    /// @param denominator the positive integer denominator
+    /// @param exponent the binary exponent applied to the numerator
     @NotNullByDefault
     private record ExactRationalValue(
-            /// The signed integer numerator.
             BigInteger numerator,
-
-            /// The positive integer denominator.
             BigInteger denominator,
-
-            /// The binary exponent applied to the numerator.
             int exponent) {
         /// Creates an exact rational binary value.
         private ExactRationalValue {

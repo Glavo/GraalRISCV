@@ -29,6 +29,8 @@ These rules apply to all Java code written or modified in this repository.
 
 - Every class, field, and method must have documentation.
 - Documentation must use `///` Markdown-style Javadoc comments.
+- Document record components with `@param` entries in the record's own documentation; do not place standalone `///`
+  comments on individual record components.
 - Keep documentation accurate and specific to the actual behavior, constraints, and side effects.
 - Add concise implementation comments inside complex logic whenever they materially improve readability or explain non-obvious behavior.
 

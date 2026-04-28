@@ -459,23 +459,22 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Describes a concrete host segment access for a guest memory range.
+    ///
+    /// @param segment the host memory segment backing the guest range
+    /// @param offset the byte offset inside the host memory segment
     private record MemoryAccess(
-            /// The host memory segment backing the guest range.
             MemorySegment segment,
-
-            /// The byte offset inside the host memory segment.
             long offset) {
     }
 
     /// Describes a sparse guest memory region created by a memory syscall.
+    ///
+    /// @param address the inclusive guest start address of the region
+    /// @param length the byte length of the region
+    /// @param segment the host segment backing the region
     private record MappedRegion(
-            /// The inclusive guest start address of the region.
             long address,
-
-            /// The byte length of the region.
             long length,
-
-            /// The host segment backing the region.
             MemorySegment segment) {
         /// Returns the exclusive guest end address of the region.
         long endAddress() {
