@@ -1219,6 +1219,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             executeControl(state, nextPc);
         }
+
+        /// Executes the decoded control-flow or system instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeControl(frame, state, nextPc);
+        }
     }
 
     /// Executes integer load operations as a specialized instruction node.
@@ -1241,6 +1247,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             executeLoad(state, state.memory(), nextPc);
+        }
+
+        /// Executes the decoded integer load instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeLoad(frame, state, state.memory(), nextPc);
         }
     }
 
@@ -1265,6 +1277,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             executeFloatingPointLoad(state, state.memory(), nextPc);
         }
+
+        /// Executes the decoded floating-point load instruction using frame-backed integer address registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeFloatingPointLoad(frame, state, state.memory(), nextPc);
+        }
     }
 
     /// Executes integer store operations as a specialized instruction node.
@@ -1287,6 +1305,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             executeStore(state, state.memory(), nextPc);
+        }
+
+        /// Executes the decoded integer store instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeStore(frame, state, state.memory(), nextPc);
         }
     }
 
@@ -1311,6 +1335,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             executeFloatingPointStore(state, state.memory(), nextPc);
         }
+
+        /// Executes the decoded floating-point store instruction using frame-backed integer address registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeFloatingPointStore(frame, state, state.memory(), nextPc);
+        }
     }
 
     /// Executes register-immediate integer operations as a specialized instruction node.
@@ -1333,6 +1363,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             executeImmediateInteger(state, nextPc);
+        }
+
+        /// Executes the decoded register-immediate integer instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeImmediateInteger(frame, state, nextPc);
         }
     }
 
@@ -1357,6 +1393,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             executeRegisterInteger(state, nextPc);
         }
+
+        /// Executes the decoded register-register integer instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeRegisterInteger(frame, state, nextPc);
+        }
     }
 
     /// Executes RV64M multiply and divide operations as a specialized instruction node.
@@ -1379,6 +1421,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             executeMultiplyDivide(state, nextPc);
+        }
+
+        /// Executes the decoded multiply or divide instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeMultiplyDivide(frame, state, nextPc);
         }
     }
 
@@ -1403,6 +1451,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             executeFloatingPointOperation(state, nextPc);
         }
+
+        /// Executes the decoded floating-point arithmetic or conversion instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeFloatingPointOperation(frame, state, nextPc);
+        }
     }
 
     /// Executes RV64A atomic memory operations as a specialized instruction node.
@@ -1425,6 +1479,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             executeAtomic(state, state.memory(), nextPc);
+        }
+
+        /// Executes the decoded atomic memory instruction using frame-backed integer registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            executeAtomic(frame, state, state.memory(), nextPc);
         }
     }
 
@@ -1467,6 +1527,44 @@ public sealed abstract class InstructionNode extends Node {
         }
     }
 
+    /// Executes control-flow and system operations using frame-backed integer registers.
+    protected final void executeControl(VirtualFrame frame, MachineState state, long nextPc) {
+        switch (operation) {
+            case NOP, FENCE, FENCE_I -> {
+            }
+            case LUI -> writeRegister(frame, rd, immediate);
+            case AUIPC -> writeRegister(frame, rd, address + immediate);
+            case JAL -> {
+                writeRegister(frame, rd, nextPc);
+                state.setPc(address + immediate);
+            }
+            case JALR -> {
+                long target = (readRegister(frame, rs1) + immediate) & ~1L;
+                writeRegister(frame, rd, nextPc);
+                state.setPc(target);
+            }
+            case BEQ -> branch(state, readRegister(frame, rs1) == readRegister(frame, rs2), nextPc);
+            case BNE -> branch(state, readRegister(frame, rs1) != readRegister(frame, rs2), nextPc);
+            case BLT -> branch(state, readRegister(frame, rs1) < readRegister(frame, rs2), nextPc);
+            case BGE -> branch(state, readRegister(frame, rs1) >= readRegister(frame, rs2), nextPc);
+            case BLTU -> branch(state, Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) < 0, nextPc);
+            case BGEU -> branch(state, Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) >= 0, nextPc);
+            case CSRRW -> writeControlStatusRegister(frame, state, readRegister(frame, rs1));
+            case CSRRS -> setClearControlStatusRegister(frame, state, readRegister(frame, rs1), true);
+            case CSRRC -> setClearControlStatusRegister(frame, state, readRegister(frame, rs1), false);
+            case CSRRWI -> writeControlStatusRegister(frame, state, rs1);
+            case CSRRSI -> setClearControlStatusRegister(frame, state, rs1, true);
+            case CSRRCI -> setClearControlStatusRegister(frame, state, rs1, false);
+            case ECALL -> {
+                RiscVFrameLayout.spillIntegerRegisters(frame, state);
+                ecall(state);
+                RiscVFrameLayout.loadIntegerRegisters(frame, state);
+            }
+            case EBREAK -> throw new ProgramExitException(0);
+            default -> throw unexpectedOperationGroup("control");
+        }
+    }
+
     /// Executes load operations.
     protected final void executeLoad(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
@@ -1481,11 +1579,35 @@ public sealed abstract class InstructionNode extends Node {
         }
     }
 
+    /// Executes load operations using frame-backed integer registers.
+    protected final void executeLoad(VirtualFrame frame, MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case LB -> writeRegister(frame, rd, memory.readByte(readRegister(frame, rs1) + immediate));
+            case LH -> writeRegister(frame, rd, memory.readShort(readRegister(frame, rs1) + immediate));
+            case LW -> writeRegister(frame, rd, memory.readInt(readRegister(frame, rs1) + immediate));
+            case LD -> writeRegister(frame, rd, memory.readLong(readRegister(frame, rs1) + immediate));
+            case LBU -> writeRegister(frame, rd, memory.readUnsignedByte(readRegister(frame, rs1) + immediate));
+            case LHU -> writeRegister(frame, rd, memory.readUnsignedShort(readRegister(frame, rs1) + immediate));
+            case LWU -> writeRegister(frame, rd, memory.readUnsignedInt(readRegister(frame, rs1) + immediate));
+            default -> throw unexpectedOperationGroup("load");
+        }
+    }
+
     /// Executes floating-point load operations.
     protected final void executeFloatingPointLoad(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
             case FLW -> loadFloatWord(state, memory, nextPc);
             case FLD -> loadFloatDouble(state, memory, nextPc);
+            default -> throw unexpectedOperationGroup("floating-point load");
+        }
+    }
+
+    /// Executes floating-point load operations using frame-backed integer address registers.
+    protected final void executeFloatingPointLoad(VirtualFrame frame, MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case FLW -> state.setDecodedFloatingPointRegister(rd,
+                    0xffff_ffff_0000_0000L | memory.readUnsignedInt(readRegister(frame, rs1) + immediate));
+            case FLD -> state.setDecodedFloatingPointRegister(rd, memory.readLong(readRegister(frame, rs1) + immediate));
             default -> throw unexpectedOperationGroup("floating-point load");
         }
     }
@@ -1501,11 +1623,31 @@ public sealed abstract class InstructionNode extends Node {
         }
     }
 
+    /// Executes store operations using frame-backed integer registers.
+    protected final void executeStore(VirtualFrame frame, MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case SB -> storeByte(frame, state, memory);
+            case SH -> storeShort(frame, state, memory);
+            case SW -> storeInt(frame, state, memory);
+            case SD -> storeLong(frame, state, memory);
+            default -> throw unexpectedOperationGroup("store");
+        }
+    }
+
     /// Executes floating-point store operations.
     protected final void executeFloatingPointStore(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
             case FSW -> storeFloatWord(state, memory, nextPc);
             case FSD -> storeFloatDouble(state, memory, nextPc);
+            default -> throw unexpectedOperationGroup("floating-point store");
+        }
+    }
+
+    /// Executes floating-point store operations using frame-backed integer address registers.
+    protected final void executeFloatingPointStore(VirtualFrame frame, MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case FSW -> storeFloatWord(frame, state, memory);
+            case FSD -> storeFloatDouble(frame, state, memory);
             default -> throw unexpectedOperationGroup("floating-point store");
         }
     }
@@ -1526,6 +1668,26 @@ public sealed abstract class InstructionNode extends Node {
             case SLLIW -> wordImmediate(state, nextPc, (int) state.decodedRegister(rs1) << immediate);
             case SRLIW -> wordImmediate(state, nextPc, (int) state.decodedRegister(rs1) >>> immediate);
             case SRAIW -> wordImmediate(state, nextPc, (int) state.decodedRegister(rs1) >> immediate);
+            default -> throw unexpectedOperationGroup("immediate integer");
+        }
+    }
+
+    /// Executes integer register-immediate operations using frame-backed integer registers.
+    protected final void executeImmediateInteger(VirtualFrame frame, MachineState state, long nextPc) {
+        switch (operation) {
+            case ADDI -> writeRegister(frame, rd, readRegister(frame, rs1) + immediate);
+            case SLTI -> writeRegister(frame, rd, readRegister(frame, rs1) < immediate ? 1 : 0);
+            case SLTIU -> writeRegister(frame, rd, Long.compareUnsigned(readRegister(frame, rs1), immediate) < 0 ? 1 : 0);
+            case XORI -> writeRegister(frame, rd, readRegister(frame, rs1) ^ immediate);
+            case ORI -> writeRegister(frame, rd, readRegister(frame, rs1) | immediate);
+            case ANDI -> writeRegister(frame, rd, readRegister(frame, rs1) & immediate);
+            case SLLI -> writeRegister(frame, rd, readRegister(frame, rs1) << immediate);
+            case SRLI -> writeRegister(frame, rd, readRegister(frame, rs1) >>> immediate);
+            case SRAI -> writeRegister(frame, rd, readRegister(frame, rs1) >> immediate);
+            case ADDIW -> writeRegister(frame, rd, (int) (readRegister(frame, rs1) + immediate));
+            case SLLIW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) << immediate);
+            case SRLIW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) >>> immediate);
+            case SRAIW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) >> immediate);
             default -> throw unexpectedOperationGroup("immediate integer");
         }
     }
@@ -1552,6 +1714,28 @@ public sealed abstract class InstructionNode extends Node {
         }
     }
 
+    /// Executes integer register-register operations using frame-backed integer registers.
+    protected final void executeRegisterInteger(VirtualFrame frame, MachineState state, long nextPc) {
+        switch (operation) {
+            case ADD -> writeRegister(frame, rd, readRegister(frame, rs1) + readRegister(frame, rs2));
+            case SUB -> writeRegister(frame, rd, readRegister(frame, rs1) - readRegister(frame, rs2));
+            case SLL -> writeRegister(frame, rd, readRegister(frame, rs1) << (readRegister(frame, rs2) & 0x3f));
+            case SLT -> writeRegister(frame, rd, readRegister(frame, rs1) < readRegister(frame, rs2) ? 1 : 0);
+            case SLTU -> writeRegister(frame, rd, Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) < 0 ? 1 : 0);
+            case XOR -> writeRegister(frame, rd, readRegister(frame, rs1) ^ readRegister(frame, rs2));
+            case SRL -> writeRegister(frame, rd, readRegister(frame, rs1) >>> (readRegister(frame, rs2) & 0x3f));
+            case SRA -> writeRegister(frame, rd, readRegister(frame, rs1) >> (readRegister(frame, rs2) & 0x3f));
+            case OR -> writeRegister(frame, rd, readRegister(frame, rs1) | readRegister(frame, rs2));
+            case AND -> writeRegister(frame, rd, readRegister(frame, rs1) & readRegister(frame, rs2));
+            case ADDW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) + (int) readRegister(frame, rs2));
+            case SUBW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) - (int) readRegister(frame, rs2));
+            case SLLW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) << (readRegister(frame, rs2) & 0x1f));
+            case SRLW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) >>> (readRegister(frame, rs2) & 0x1f));
+            case SRAW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) >> (readRegister(frame, rs2) & 0x1f));
+            default -> throw unexpectedOperationGroup("register integer");
+        }
+    }
+
     /// Executes RV64M multiply and divide operations.
     protected final void executeMultiplyDivide(MachineState state, long nextPc) {
         switch (operation) {
@@ -1568,6 +1752,26 @@ public sealed abstract class InstructionNode extends Node {
             case DIVUW -> wordRegister(state, nextPc, divideUnsignedWord((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
             case REMW -> wordRegister(state, nextPc, remainderSignedWord((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
             case REMUW -> wordRegister(state, nextPc, remainderUnsignedWord((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            default -> throw unexpectedOperationGroup("multiply/divide");
+        }
+    }
+
+    /// Executes RV64M multiply and divide operations using frame-backed integer registers.
+    protected final void executeMultiplyDivide(VirtualFrame frame, MachineState state, long nextPc) {
+        switch (operation) {
+            case MUL -> writeRegister(frame, rd, readRegister(frame, rs1) * readRegister(frame, rs2));
+            case MULH -> writeRegister(frame, rd, Math.multiplyHigh(readRegister(frame, rs1), readRegister(frame, rs2)));
+            case MULHSU -> writeRegister(frame, rd, multiplyHighSignedUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)));
+            case MULHU -> writeRegister(frame, rd, Math.unsignedMultiplyHigh(readRegister(frame, rs1), readRegister(frame, rs2)));
+            case DIV -> writeRegister(frame, rd, divideSigned(readRegister(frame, rs1), readRegister(frame, rs2)));
+            case DIVU -> writeRegister(frame, rd, divideUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)));
+            case REM -> writeRegister(frame, rd, remainderSigned(readRegister(frame, rs1), readRegister(frame, rs2)));
+            case REMU -> writeRegister(frame, rd, remainderUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)));
+            case MULW -> writeRegister(frame, rd, (int) readRegister(frame, rs1) * (int) readRegister(frame, rs2));
+            case DIVW -> writeRegister(frame, rd, divideSignedWord((int) readRegister(frame, rs1), (int) readRegister(frame, rs2)));
+            case DIVUW -> writeRegister(frame, rd, divideUnsignedWord((int) readRegister(frame, rs1), (int) readRegister(frame, rs2)));
+            case REMW -> writeRegister(frame, rd, remainderSignedWord((int) readRegister(frame, rs1), (int) readRegister(frame, rs2)));
+            case REMUW -> writeRegister(frame, rd, remainderUnsignedWord((int) readRegister(frame, rs1), (int) readRegister(frame, rs2)));
             default -> throw unexpectedOperationGroup("multiply/divide");
         }
     }
@@ -1637,6 +1841,31 @@ public sealed abstract class InstructionNode extends Node {
         }
     }
 
+    /// Executes floating-point arithmetic, conversion, move, compare, and classify operations using frame-backed integer registers.
+    protected final void executeFloatingPointOperation(VirtualFrame frame, MachineState state, long nextPc) {
+        switch (operation) {
+            case FEQ -> floatingPointCompare(frame, state, CompareKind.EQUAL);
+            case FLT -> floatingPointCompare(frame, state, CompareKind.LESS_THAN);
+            case FLE -> floatingPointCompare(frame, state, CompareKind.LESS_THAN_OR_EQUAL);
+            case FCLASS -> writeRegister(frame, rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
+                    ? classifySingle(readSingleBits(state, rs1))
+                    : classifyDouble(state.decodedFloatingPointRegister(rs1)));
+            case FCVT_INT_FP -> convertFloatingPointToInteger(frame, state);
+            case FCVT_FP_INT -> convertIntegerToFloatingPoint(frame, state);
+            case FMV_X_FP -> writeRegister(frame, rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
+                    ? (int) readSingleBits(state, rs1)
+                    : state.decodedFloatingPointRegister(rs1));
+            case FMV_FP_X -> {
+                if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+                    writeSingleBits(state, rd, (int) readRegister(frame, rs1));
+                } else {
+                    writeDoubleBits(state, rd, readRegister(frame, rs1));
+                }
+            }
+            default -> executeFloatingPointOperation(state, nextPc);
+        }
+    }
+
     /// Executes RV64A atomic operations.
     protected final void executeAtomic(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
@@ -1666,6 +1895,35 @@ public sealed abstract class InstructionNode extends Node {
         }
     }
 
+    /// Executes RV64A atomic operations using frame-backed integer registers.
+    protected final void executeAtomic(VirtualFrame frame, MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case LR_W -> lrWord(frame, state, memory);
+            case LR_D -> lrDouble(frame, state, memory);
+            case SC_W -> scWord(frame, state, memory);
+            case SC_D -> scDouble(frame, state, memory);
+            case AMOSWAP_W -> amoWord(frame, state, memory, AmoKind.SWAP);
+            case AMOADD_W -> amoWord(frame, state, memory, AmoKind.ADD);
+            case AMOXOR_W -> amoWord(frame, state, memory, AmoKind.XOR);
+            case AMOAND_W -> amoWord(frame, state, memory, AmoKind.AND);
+            case AMOOR_W -> amoWord(frame, state, memory, AmoKind.OR);
+            case AMOMIN_W -> amoWord(frame, state, memory, AmoKind.MIN);
+            case AMOMAX_W -> amoWord(frame, state, memory, AmoKind.MAX);
+            case AMOMINU_W -> amoWord(frame, state, memory, AmoKind.MINU);
+            case AMOMAXU_W -> amoWord(frame, state, memory, AmoKind.MAXU);
+            case AMOSWAP_D -> amoDouble(frame, state, memory, AmoKind.SWAP);
+            case AMOADD_D -> amoDouble(frame, state, memory, AmoKind.ADD);
+            case AMOXOR_D -> amoDouble(frame, state, memory, AmoKind.XOR);
+            case AMOAND_D -> amoDouble(frame, state, memory, AmoKind.AND);
+            case AMOOR_D -> amoDouble(frame, state, memory, AmoKind.OR);
+            case AMOMIN_D -> amoDouble(frame, state, memory, AmoKind.MIN);
+            case AMOMAX_D -> amoDouble(frame, state, memory, AmoKind.MAX);
+            case AMOMINU_D -> amoDouble(frame, state, memory, AmoKind.MINU);
+            case AMOMAXU_D -> amoDouble(frame, state, memory, AmoKind.MAXU);
+            default -> throw unexpectedOperationGroup("atomic");
+        }
+    }
+
     /// Creates an assertion error for an impossible operation group dispatch.
     private AssertionError unexpectedOperationGroup(String group) {
         return new AssertionError("Unexpected " + group + " operation: " + operation);
@@ -1684,6 +1942,13 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Writes a CSR and returns its old value to a frame register when the destination register is not `x0`.
+    private void writeControlStatusRegister(VirtualFrame frame, MachineState state, long value) {
+        long oldValue = rd == 0 ? 0 : state.readControlStatusRegister((int) immediate);
+        state.writeControlStatusRegister((int) immediate, value);
+        writeRegister(frame, rd, oldValue);
+    }
+
     /// Sets or clears CSR bits using the supplied mask value.
     private void setClearControlStatusRegister(MachineState state, long nextPc, long mask, boolean setBits) {
         long oldValue = state.readControlStatusRegister((int) immediate);
@@ -1692,6 +1957,15 @@ public sealed abstract class InstructionNode extends Node {
         }
         state.setDecodedRegister(rd, oldValue);
         state.setPc(nextPc);
+    }
+
+    /// Sets or clears CSR bits using a mask value from frame-backed execution.
+    private void setClearControlStatusRegister(VirtualFrame frame, MachineState state, long mask, boolean setBits) {
+        long oldValue = state.readControlStatusRegister((int) immediate);
+        if (mask != 0) {
+            state.writeControlStatusRegister((int) immediate, setBits ? oldValue | mask : oldValue & ~mask);
+        }
+        writeRegister(frame, rd, oldValue);
     }
 
     /// Writes an immediate arithmetic result and advances the program counter.
@@ -1781,6 +2055,14 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Stores a byte value from a frame register.
+    private void storeByte(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1) + immediate;
+        memory.writeByte(address, (byte) readRegister(frame, rs2));
+        state.afterStore(address, Byte.BYTES);
+        state.clearReservation();
+    }
+
     /// Stores a 16-bit value.
     private void storeShort(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
@@ -1788,6 +2070,14 @@ public sealed abstract class InstructionNode extends Node {
         state.afterStore(address, Short.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
+    }
+
+    /// Stores a 16-bit value from a frame register.
+    private void storeShort(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1) + immediate;
+        memory.writeShort(address, (short) readRegister(frame, rs2));
+        state.afterStore(address, Short.BYTES);
+        state.clearReservation();
     }
 
     /// Stores a 32-bit value.
@@ -1799,6 +2089,14 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Stores a 32-bit value from a frame register.
+    private void storeInt(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1) + immediate;
+        memory.writeInt(address, (int) readRegister(frame, rs2));
+        state.afterStore(address, Integer.BYTES);
+        state.clearReservation();
+    }
+
     /// Stores a 64-bit value.
     private void storeLong(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
@@ -1806,6 +2104,14 @@ public sealed abstract class InstructionNode extends Node {
         state.afterStore(address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
+    }
+
+    /// Stores a 64-bit value from a frame register.
+    private void storeLong(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1) + immediate;
+        memory.writeLong(address, readRegister(frame, rs2));
+        state.afterStore(address, Long.BYTES);
+        state.clearReservation();
     }
 
     /// Stores the low 32 bits of a floating-point register.
@@ -1817,6 +2123,14 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Stores the low 32 bits of a floating-point register to a frame-addressed location.
+    private void storeFloatWord(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1) + immediate;
+        memory.writeInt(address, (int) state.decodedFloatingPointRegister(rs2));
+        state.afterStore(address, Integer.BYTES);
+        state.clearReservation();
+    }
+
     /// Stores a 64-bit floating-point register as raw bits.
     private void storeFloatDouble(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
@@ -1824,6 +2138,14 @@ public sealed abstract class InstructionNode extends Node {
         state.afterStore(address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
+    }
+
+    /// Stores a 64-bit floating-point register as raw bits to a frame-addressed location.
+    private void storeFloatDouble(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1) + immediate;
+        memory.writeLong(address, state.decodedFloatingPointRegister(rs2));
+        state.afterStore(address, Long.BYTES);
+        state.clearReservation();
     }
 
     /// Executes an environment call through the configured syscall handler.
@@ -1840,12 +2162,26 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Loads and reserves a 32-bit memory word using a frame-backed address register.
+    private void lrWord(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1);
+        writeRegister(frame, rd, memory.readInt(address));
+        state.reserve(address);
+    }
+
     /// Loads and reserves a 64-bit memory doubleword.
     private void lrDouble(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1);
         state.setDecodedRegister(rd, memory.readLong(address));
         state.reserve(address);
         state.setPc(nextPc);
+    }
+
+    /// Loads and reserves a 64-bit memory doubleword using a frame-backed address register.
+    private void lrDouble(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1);
+        writeRegister(frame, rd, memory.readLong(address));
+        state.reserve(address);
     }
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
@@ -1862,6 +2198,19 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Conditionally stores a 32-bit memory word through an LR/SC reservation using frame-backed registers.
+    private void scWord(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1);
+        if (state.hasReservation(address)) {
+            memory.writeInt(address, (int) readRegister(frame, rs2));
+            state.afterStore(address, Integer.BYTES);
+            writeRegister(frame, rd, 0);
+        } else {
+            writeRegister(frame, rd, 1);
+        }
+        state.clearReservation();
+    }
+
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
     private void scDouble(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1);
@@ -1874,6 +2223,19 @@ public sealed abstract class InstructionNode extends Node {
         }
         state.clearReservation();
         state.setPc(nextPc);
+    }
+
+    /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation using frame-backed registers.
+    private void scDouble(VirtualFrame frame, MachineState state, Memory memory) {
+        long address = readRegister(frame, rs1);
+        if (state.hasReservation(address)) {
+            memory.writeLong(address, readRegister(frame, rs2));
+            state.afterStore(address, Long.BYTES);
+            writeRegister(frame, rd, 0);
+        } else {
+            writeRegister(frame, rd, 1);
+        }
+        state.clearReservation();
     }
 
     /// Executes a 32-bit AMO instruction.
@@ -1899,6 +2261,28 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Executes a 32-bit AMO instruction using frame-backed integer registers.
+    private void amoWord(VirtualFrame frame, MachineState state, Memory memory, AmoKind kind) {
+        long address = readRegister(frame, rs1);
+        int oldValue = memory.readInt(address);
+        int source = (int) readRegister(frame, rs2);
+        int newValue = switch (kind) {
+            case SWAP -> source;
+            case ADD -> oldValue + source;
+            case XOR -> oldValue ^ source;
+            case AND -> oldValue & source;
+            case OR -> oldValue | source;
+            case MIN -> oldValue < source ? oldValue : source;
+            case MAX -> oldValue > source ? oldValue : source;
+            case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
+            case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+        };
+        memory.writeInt(address, newValue);
+        writeRegister(frame, rd, oldValue);
+        state.afterStore(address, Integer.BYTES);
+        state.clearReservation();
+    }
+
     /// Executes a 64-bit AMO instruction.
     private void amoDouble(MachineState state, Memory memory, long nextPc, AmoKind kind) {
         long address = state.decodedRegister(rs1);
@@ -1920,6 +2304,28 @@ public sealed abstract class InstructionNode extends Node {
         state.afterStore(address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
+    }
+
+    /// Executes a 64-bit AMO instruction using frame-backed integer registers.
+    private void amoDouble(VirtualFrame frame, MachineState state, Memory memory, AmoKind kind) {
+        long address = readRegister(frame, rs1);
+        long oldValue = memory.readLong(address);
+        long source = readRegister(frame, rs2);
+        long newValue = switch (kind) {
+            case SWAP -> source;
+            case ADD -> oldValue + source;
+            case XOR -> oldValue ^ source;
+            case AND -> oldValue & source;
+            case OR -> oldValue | source;
+            case MIN -> oldValue < source ? oldValue : source;
+            case MAX -> oldValue > source ? oldValue : source;
+            case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
+            case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+        };
+        memory.writeLong(address, newValue);
+        writeRegister(frame, rd, oldValue);
+        state.afterStore(address, Long.BYTES);
+        state.clearReservation();
     }
 
     /// Executes an F or D fused multiply-add operation.
@@ -2150,6 +2556,37 @@ public sealed abstract class InstructionNode extends Node {
         state.setPc(nextPc);
     }
 
+    /// Executes a floating-point comparison operation and writes the result to a frame register.
+    private void floatingPointCompare(VirtualFrame frame, MachineState state, CompareKind kind) {
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            int leftBits = readSingleBits(state, rs1);
+            int rightBits = readSingleBits(state, rs2);
+            float left = Float.intBitsToFloat(leftBits);
+            float right = Float.intBitsToFloat(rightBits);
+            if (Float.isNaN(left) || Float.isNaN(right)) {
+                if (kind != CompareKind.EQUAL || isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                writeRegister(frame, rd, 0);
+            } else {
+                writeRegister(frame, rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
+            }
+        } else {
+            long leftBits = state.decodedFloatingPointRegister(rs1);
+            long rightBits = state.decodedFloatingPointRegister(rs2);
+            double left = Double.longBitsToDouble(leftBits);
+            double right = Double.longBitsToDouble(rightBits);
+            if (Double.isNaN(left) || Double.isNaN(right)) {
+                if (kind != CompareKind.EQUAL || isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                writeRegister(frame, rd, 0);
+            } else {
+                writeRegister(frame, rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
+            }
+        }
+    }
+
     /// Converts a floating-point value to an integer register.
     private void convertFloatingPointToInteger(MachineState state, long nextPc) {
         int roundingMode = effectiveRoundingMode(state);
@@ -2162,6 +2599,19 @@ public sealed abstract class InstructionNode extends Node {
             default -> throw unexpectedConversionSelector();
         }
         state.setPc(nextPc);
+    }
+
+    /// Converts a floating-point value to a frame-backed integer register.
+    private void convertFloatingPointToInteger(VirtualFrame frame, MachineState state) {
+        int roundingMode = effectiveRoundingMode(state);
+        double value = floatingPointFormat() == SINGLE_FLOAT_FORMAT ? readSingle(state, rs1) : readDouble(state, rs1);
+        switch (rs2) {
+            case 0 -> writeRegister(frame, rd, (int) convertToSignedInteger(state, value, roundingMode, Integer.MIN_VALUE, 0x1.0p31));
+            case 1 -> writeRegister(frame, rd, (int) convertToUnsignedInteger(state, value, roundingMode, 0x1.0p32));
+            case 2 -> writeRegister(frame, rd, convertToSignedInteger(state, value, roundingMode, Long.MIN_VALUE, 0x1.0p63));
+            case 3 -> writeRegister(frame, rd, convertToUnsignedInteger(state, value, roundingMode, 0x1.0p64));
+            default -> throw unexpectedConversionSelector();
+        }
     }
 
     /// Converts an integer register value to a floating-point register.
@@ -2183,6 +2633,26 @@ public sealed abstract class InstructionNode extends Node {
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
+    }
+
+    /// Converts a frame-backed integer register value to a floating-point register.
+    private void convertIntegerToFloatingPoint(VirtualFrame frame, MachineState state) {
+        int roundingMode = effectiveRoundingMode(state);
+        long value = readRegister(frame, rs1);
+        ExactBinaryValue exact = switch (rs2) {
+            case 0 -> exactIntegerValue(BigInteger.valueOf((int) value));
+            case 1 -> exactIntegerValue(BigInteger.valueOf(value & 0xffff_ffffL));
+            case 2 -> exactIntegerValue(BigInteger.valueOf(value));
+            case 3 -> exactIntegerValue(unsignedLongToBigInteger(value));
+            default -> throw unexpectedConversionSelector();
+        };
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            float result = roundSingleExactBinaryResult(state, exact, exact.significand().floatValue(), roundingMode);
+            writeSingleBits(state, rd, canonicalizeSingleBits(result));
+        } else {
+            double result = roundDoubleResult(state, exact, exact.significand().doubleValue(), roundingMode);
+            writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
+        }
     }
 
     /// Updates invalid-operation flags for signaling single-precision NaN inputs.
