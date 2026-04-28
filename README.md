@@ -1,30 +1,47 @@
 # GraalRISCV
 
-GraalRISCV is a GraalVM Truffle-based RISC-V user-mode ELF simulator. It runs
-RV64GC ELF64 little-endian executables, with current coverage focused on
-freestanding programs and statically linked Linux `riscv64-linux-musl`
-programs.
 
-Current practical workloads include:
+GraalRISCV is a pure Java 64-bit RISC-V user-mode emulator built with GraalVM’s Truffle framework.
+It can be used to run 64-bit RISC-V ELF executables on the JVM.
 
-- freestanding RISC-V C programs, including the built-in `Hello World!` and
-  hot-loop examples
-- statically linked musl `printf` programs
-- statically linked musl programs that use argv, file I/O, directory listing,
-  cwd changes, file mutation, filesystem metadata, positioned I/O,
-  `eventfd`, and `epoll`
-- statically linked musl CoreMark-style benchmark executables
+The project is currently under development.
 
-The implementation is user-mode oriented. Static executables are the main input
-format today, and the CLI reports unsupported syscall failures with the syscall
-number, guest PC, and argument registers.
+We have implemented the complete RVA20U64 Profile (RV64GC) and are gradually adding support for more system calls.
+
+It can already run some programs statically linked against musl libc.
+
+For example, it can already run CoreMark:
+
+```
+> arch
+x86_64
+> file coremark.riscv64-musl
+coremark.riscv64-musl: ELF 64-bit LSB executable, UCB RISC-V, RVC, double-float ABI, version 1 (SYSV), statically linked, with debug_info, not stripped
+> java -jar GraalRISCV-1.0-SNAPSHOT-all.jar coremark.riscv64-musl
+2K performance run parameters for coremark.
+CoreMark Size    : 666
+Total ticks      : 12492
+Total time (secs): 12.492000
+Iterations/Sec   : 880.563561
+Iterations       : 11000
+Compiler version : Clang 21.1.0
+Compiler flags   : -O2   -lrt
+Memory location  : Please put data memory location here
+                        (e.g. code in flash, data on heap etc)
+seedcrc          : 0xe9f5
+[0]crclist       : 0xe714
+[0]crcmatrix     : 0x1fd7
+[0]crcstate      : 0x8e3a
+[0]crcfinal      : 0x33ff
+Correct operation validated. See README.md for run and reporting rules.
+CoreMark 1.0 : 880.563561 / Clang 21.1.0 -O2   -lrt / Heap
+```
+
+We are working to support more programs.
 
 ## Requirements
 
 - JDK 25
-- The Gradle wrapper included in this repository
-- No host RISC-V GCC toolchain is required for the built-in examples; Gradle
-  downloads and extracts Zig, then uses `zig cc` for RISC-V C examples.
 
 ## Run A RISC-V Program
 
@@ -40,36 +57,11 @@ Pass guest arguments after the ELF path:
 ./gradlew run --args="path/to/program.riscv64-musl alpha --beta"
 ```
 
-For repeated local runs, build the installable launcher:
-
-```text
-./gradlew installDist
-```
-
-Windows:
-
-```text
-build\install\graalriscv\bin\graalriscv.bat path\to\program.riscv64-musl
-```
-
-Linux/macOS:
-
-```text
-build/install/graalriscv/bin/graalriscv path/to/program.riscv64-musl
-```
-
-For example, a statically linked `riscv64-linux-musl` CoreMark binary can be run
-with the same launcher:
-
-```text
-build\install\graalriscv\bin\graalriscv.bat path\to\coremark.riscv64-musl
-```
-
-The Shadow JAR is also runnable:
+You can also package it as a Shadow JAR:
 
 ```text
 ./gradlew shadowJar
-java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -jar build/libs/GraalRISCV-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
+java --sun-misc-unsafe-memory-access=allow -jar build/libs/GraalRISCV-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
 ```
 
 ## CLI Options
