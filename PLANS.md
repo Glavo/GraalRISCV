@@ -14,6 +14,8 @@
 - Extend auxv if broader static libc programs require entries beyond the current musl `printf` smoke path.
 - Broaden statically linked Linux ELF coverage beyond the current resolved-segment musl `printf` baseline.
 - Preserve existing freestanding ELF behavior and tests while adding Linux static program behavior.
+- Keep the initial Linux stack on the contiguous guest-memory fast path; use sparse mappings for dynamic `mmap` regions
+  rather than moving stack-heavy single-thread programs onto mapped-memory lookup paths.
 
 ### 3. Expand Linux syscall coverage for static libc
 
@@ -38,7 +40,7 @@
 - Record any non-Windows Zig download, extraction, or linker troubleshooting that is needed after real-toolchain verification.
 - Keep `ciCheck` covering compile, tests, package artifacts, no-toolchain smoke checks, and the new static Linux C acceptance checks when Zig is available.
 - Keep native-image packaging available through the opt-in `nativeCompile` and `nativeImageSmokeTest` tasks, and add it to CI only after Native Image toolchain availability is explicit.
-- Continue profiling dispatch overhead, especially primitive block-cache lookup, remaining operation-group instruction body shape, and whether the `BlockNode` loop warrants a different compiled-block layout.
+- Continue profiling dispatch overhead, especially primitive block-cache lookup, mapped-memory accesses, remaining operation-group instruction body shape, and whether the `BlockNode` loop warrants a different compiled-block layout.
 - Keep rejected performance experiments documented outside `PLANS.md`; do not re-enable the hot-block promotion cache or root `@Children` block adoption without CoreMark comparison.
 - Keep the hot-loop compilation trace task as the current performance regression probe and expand it when broader Linux workloads become stable.
 - Keep CLI behavior stable while internal execution nodes evolve.

@@ -10,12 +10,6 @@ import org.jetbrains.annotations.Nullable;
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
-    /// The high exclusive stack address used to match a 39-bit Linux RISC-V user VMA.
-    private static final long LINUX_STACK_TOP = 1L << 38;
-
-    /// The size of the initial Linux user stack mapping.
-    private static final long LINUX_STACK_SIZE = 8L * 1024L * 1024L;
-
     /// Resolves the current RISC-V context for this root node.
     private static final TruffleLanguage.ContextReference<RiscVContext> CONTEXT_REFERENCE =
             TruffleLanguage.ContextReference.create(RiscVLanguage.class);
@@ -155,14 +149,9 @@ public final class RiscVRootNode extends RootNode {
         return state;
     }
 
-    /// Maps and initializes the Linux user stack at a high RISC-V user address.
+    /// Initializes the Linux user stack at the top of the contiguous guest memory segment.
     private long initializeLinuxStack(Memory memory, RiscVContext context) {
-        long stackBase = LINUX_STACK_TOP - LINUX_STACK_SIZE;
-        if (!memory.map(stackBase, LINUX_STACK_SIZE)) {
-            throw new RiscVException("Failed to map Linux initial stack: base="
-                    + formatHex(stackBase) + ", size=" + LINUX_STACK_SIZE);
-        }
-        return LinuxInitialStack.initialize(memory, LINUX_STACK_TOP, context.programArguments(), image);
+        return LinuxInitialStack.initialize(memory, memory.endAddress(), context.programArguments(), image);
     }
 
     /// Resolves the memory base from context options or the lowest ELF load segment address.
@@ -298,16 +287,29 @@ public final class RiscVRootNode extends RootNode {
         private static final int LOAD_FACTOR_DENOMINATOR = 2;
 
         /// Guest program counters stored in cache slots.
-        private long[] keys = new long[INITIAL_CAPACITY];
+        private volatile long[] keys = new long[INITIAL_CAPACITY];
 
         /// Cache values stored in the slot matching `keys`.
-        private @Nullable BlockNode[] values = new BlockNode[INITIAL_CAPACITY];
+        private volatile @Nullable BlockNode[] values = new BlockNode[INITIAL_CAPACITY];
 
         /// The number of occupied cache slots.
         private int size;
 
         /// Returns the cached block for a guest program counter, decoding it on a cache miss.
-        private synchronized BlockNode getOrDecode(Memory memory, long pc) {
+        private BlockNode getOrDecode(Memory memory, long pc) {
+            long[] currentKeys = keys;
+            @Nullable BlockNode[] currentValues = values;
+            int slot = findSlot(pc, currentKeys, currentValues);
+            BlockNode block = currentValues[slot];
+            if (block != null) {
+                return block;
+            }
+
+            return decodeAndCache(memory, pc);
+        }
+
+        /// Decodes and caches a block after a miss on the unsynchronized fast path.
+        private synchronized BlockNode decodeAndCache(Memory memory, long pc) {
             int slot = findSlot(pc, keys, values);
             BlockNode block = values[slot];
             if (block != null) {

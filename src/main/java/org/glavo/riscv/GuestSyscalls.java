@@ -1263,13 +1263,13 @@ public final class GuestSyscalls implements AutoCloseable {
     private int liveThreadCount = 1;
 
     /// Whether a guest `exit_group` has requested process termination.
-    private boolean processExitRequested;
+    private volatile boolean processExitRequested;
 
     /// The exit code requested by `exit_group` or by the last exiting thread.
-    private long processExitCode;
+    private volatile long processExitCode;
 
     /// A host exception thrown while executing a guest thread, or null when none has failed.
-    private @Nullable Throwable threadFailure;
+    private volatile @Nullable Throwable threadFailure;
 
     /// The robust futex list head address supplied by `set_robust_list`.
     private long robustListHeadAddress;
@@ -3616,13 +3616,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Throws when another guest thread has failed or process termination has been requested.
     void checkProcessStatus() {
-        synchronized (threadLock) {
-            if (threadFailure != null) {
-                throw guestThreadFailure(threadFailure);
-            }
-            if (processExitRequested) {
-                throw new ProgramExitException(processExitCode);
-            }
+        @Nullable Throwable failure = threadFailure;
+        if (failure != null) {
+            throw guestThreadFailure(failure);
+        }
+        if (processExitRequested) {
+            throw new ProgramExitException(processExitCode);
         }
     }
 
