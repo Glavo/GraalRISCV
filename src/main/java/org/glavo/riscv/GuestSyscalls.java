@@ -52,6 +52,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `renameat`.
     private static final long SYS_RENAMEAT = 38;
 
+    /// The Linux RISC-V syscall number for `statfs`.
+    private static final long SYS_STATFS = 43;
+
+    /// The Linux RISC-V syscall number for `fstatfs`.
+    private static final long SYS_FSTATFS = 44;
+
     /// The Linux RISC-V syscall number for `truncate`.
     private static final long SYS_TRUNCATE = 45;
 
@@ -441,6 +447,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE = 128;
+
+    /// The byte size of Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_SIZE = 120;
 
     /// The byte size of one Linux `struct utsname` field.
     private static final int UTSNAME_FIELD_SIZE = 65;
@@ -954,6 +963,36 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The `st_blocks` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_BLOCK_COUNT_OFFSET = 64;
 
+    /// The byte offset of `f_type` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_TYPE_OFFSET = 0;
+
+    /// The byte offset of `f_bsize` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCK_SIZE_OFFSET = 8;
+
+    /// The byte offset of `f_blocks` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCKS_OFFSET = 16;
+
+    /// The byte offset of `f_bfree` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCKS_FREE_OFFSET = 24;
+
+    /// The byte offset of `f_bavail` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCKS_AVAILABLE_OFFSET = 32;
+
+    /// The byte offset of `f_files` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FILES_OFFSET = 40;
+
+    /// The byte offset of `f_ffree` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FILES_FREE_OFFSET = 48;
+
+    /// The byte offset of `f_namelen` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_NAME_LENGTH_OFFSET = 64;
+
+    /// The byte offset of `f_frsize` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FRAGMENT_SIZE_OFFSET = 72;
+
+    /// The byte offset of `f_flags` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FLAGS_OFFSET = 80;
+
     /// The Linux `S_IFCHR` file type bit used for character devices.
     private static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
 
@@ -980,6 +1019,21 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The block size exposed for standard streams.
     private static final int STANDARD_STREAM_BLOCK_SIZE = 4096;
+
+    /// The synthetic filesystem magic returned by `statfs`.
+    private static final long STATFS_MAGIC = 0x0102_1994L;
+
+    /// The synthetic filesystem block size returned by `statfs`.
+    private static final long STATFS_BLOCK_SIZE = 4096;
+
+    /// The synthetic filesystem block count returned by `statfs`.
+    private static final long STATFS_BLOCK_COUNT = 1_048_576;
+
+    /// The synthetic filesystem file count returned by `statfs`.
+    private static final long STATFS_FILE_COUNT = 1_048_576;
+
+    /// The maximum guest filename length returned by `statfs`.
+    private static final long STATFS_NAME_MAX = 255;
 
     /// The fixed guest process id returned by process identity syscalls.
     private static final long GUEST_PROCESS_ID = 1;
@@ -1254,6 +1308,14 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_STATFS) {
+            state.setRegister(10, statfs(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_FSTATFS) {
+            state.setRegister(10, fstatfs((int) state.register(10), state.register(11)));
             return;
         }
         if (callNumber == SYS_TRUNCATE) {
@@ -2615,6 +2677,59 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
+    /// Writes a deterministic Linux generic 64-bit `struct statfs` for a sandboxed path.
+    private long statfs(long pathAddress, long statfsAddress) {
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+        return statfsHostFile(hostFile, statfsAddress);
+    }
+
+    /// Writes a deterministic Linux generic 64-bit `struct statfs` for a file descriptor.
+    private long fstatfs(int fileDescriptor, long statfsAddress) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            writeStatfs(statfsAddress);
+            return 0;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (openFile.isPipe()) {
+            writeStatfs(statfsAddress);
+            return 0;
+        }
+
+        @Nullable TruffleFile path = openFile.path();
+        return path == null ? EACCES : statfsHostFile(path, statfsAddress);
+    }
+
+    /// Writes deterministic filesystem metadata for an existing sandboxed host path.
+    private long statfsHostFile(TruffleFile hostFile, long statfsAddress) {
+        try {
+            if (!pathEntryExists(hostFile)) {
+                return ENOENT;
+            }
+            if (!canonicalFileStaysBelowHostRoot(hostFile)) {
+                return EACCES;
+            }
+            writeStatfs(statfsAddress);
+            return 0;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
     /// Writes a minimal Linux generic 64-bit `struct stat` for a sandboxed host file.
     private long statHostFile(TruffleFile hostFile, long statAddress) {
         try {
@@ -2652,6 +2767,21 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeLong(statAddress + STAT_SIZE_OFFSET, size);
         memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
         memory.writeLong(statAddress + STAT_BLOCK_COUNT_OFFSET, (size + 511L) / 512L);
+    }
+
+    /// Writes deterministic Linux generic 64-bit `struct statfs` fields.
+    private void writeStatfs(long statfsAddress) {
+        memory.clear(statfsAddress, STATFS_SIZE);
+        memory.writeLong(statfsAddress + STATFS_TYPE_OFFSET, STATFS_MAGIC);
+        memory.writeLong(statfsAddress + STATFS_BLOCK_SIZE_OFFSET, STATFS_BLOCK_SIZE);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_OFFSET, STATFS_BLOCK_COUNT);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_FREE_OFFSET, STATFS_BLOCK_COUNT);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_AVAILABLE_OFFSET, STATFS_BLOCK_COUNT);
+        memory.writeLong(statfsAddress + STATFS_FILES_OFFSET, STATFS_FILE_COUNT);
+        memory.writeLong(statfsAddress + STATFS_FILES_FREE_OFFSET, STATFS_FILE_COUNT);
+        memory.writeLong(statfsAddress + STATFS_NAME_LENGTH_OFFSET, STATFS_NAME_MAX);
+        memory.writeLong(statfsAddress + STATFS_FRAGMENT_SIZE_OFFSET, STATFS_BLOCK_SIZE);
+        memory.writeLong(statfsAddress + STATFS_FLAGS_OFFSET, 0);
     }
 
     /// Returns a deterministic synthetic inode number for a sandboxed host path.

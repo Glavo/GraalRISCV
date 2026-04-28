@@ -116,6 +116,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `renameat`.
     private static final long SYS_RENAMEAT = 38;
 
+    /// The Linux RISC-V syscall number for `statfs`.
+    private static final long SYS_STATFS = 43;
+
+    /// The Linux RISC-V syscall number for `fstatfs`.
+    private static final long SYS_FSTATFS = 44;
+
     /// The Linux RISC-V syscall number for `truncate`.
     private static final long SYS_TRUNCATE = 45;
 
@@ -337,6 +343,51 @@ public final class GuestSyscallsTest {
 
     /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE_OFFSET = 48;
+
+    /// The byte offset of `f_type` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_TYPE_OFFSET = 0;
+
+    /// The byte offset of `f_bsize` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCK_SIZE_OFFSET = 8;
+
+    /// The byte offset of `f_blocks` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCKS_OFFSET = 16;
+
+    /// The byte offset of `f_bfree` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCKS_FREE_OFFSET = 24;
+
+    /// The byte offset of `f_bavail` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_BLOCKS_AVAILABLE_OFFSET = 32;
+
+    /// The byte offset of `f_files` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FILES_OFFSET = 40;
+
+    /// The byte offset of `f_ffree` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FILES_FREE_OFFSET = 48;
+
+    /// The byte offset of `f_namelen` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_NAME_LENGTH_OFFSET = 64;
+
+    /// The byte offset of `f_frsize` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FRAGMENT_SIZE_OFFSET = 72;
+
+    /// The byte offset of `f_flags` inside Linux generic 64-bit `struct statfs`.
+    private static final int STATFS_FLAGS_OFFSET = 80;
+
+    /// The synthetic filesystem magic returned by `statfs`.
+    private static final long STATFS_MAGIC = 0x0102_1994L;
+
+    /// The synthetic filesystem block size returned by `statfs`.
+    private static final long STATFS_BLOCK_SIZE = 4096;
+
+    /// The synthetic filesystem block count returned by `statfs`.
+    private static final long STATFS_BLOCK_COUNT = 1_048_576;
+
+    /// The synthetic filesystem file count returned by `statfs`.
+    private static final long STATFS_FILE_COUNT = 1_048_576;
+
+    /// The maximum guest filename length returned by `statfs`.
+    private static final long STATFS_NAME_MAX = 255;
 
     /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
     private static final long AT_FDCWD = -100;
@@ -1024,6 +1075,89 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EACCES, state.register(10));
+        }
+    }
+
+    /// Verifies that `statfs` and `fstatfs` return deterministic sandbox filesystem metadata.
+    @Test
+    public void statfsReportsDeterministicFilesystemMetadata() throws Exception {
+        Files.createDirectories(tempDirectory.resolve("directory"));
+        Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long statfsAddress = memory.baseAddress() + 256;
+            long pipeAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "directory/message.txt");
+            setSyscall(state, SYS_STATFS, pathAddress, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatfs(memory, statfsAddress);
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_STATFS, pathAddress, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "../escape");
+            setSyscall(state, SYS_STATFS, pathAddress, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "directory");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            setSyscall(state, SYS_FSTATFS, directoryFileDescriptor, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_FCHDIR, directoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, ".");
+            setSyscall(state, SYS_STATFS, pathAddress, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatfs(memory, statfsAddress);
+
+            writeGuestString(memory, pathAddress, "message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(4, fileDescriptor);
+
+            setSyscall(state, SYS_FSTATFS, fileDescriptor, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            assertEquals(5, readFileDescriptor);
+
+            setSyscall(state, SYS_FSTATFS, readFileDescriptor, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_FSTATFS, 99, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
         }
     }
 
@@ -3409,6 +3543,20 @@ public final class GuestSyscallsTest {
         assertEquals(type, memory.readUnsignedByte(address + DIRENT64_TYPE_OFFSET));
         assertEquals(name, readGuestCString(memory, address + DIRENT64_NAME_OFFSET, recordLength - DIRENT64_NAME_OFFSET));
         return address + recordLength;
+    }
+
+    /// Verifies the deterministic `struct statfs` values exposed by the simulator.
+    private static void assertStatfs(Memory memory, long address) {
+        assertEquals(STATFS_MAGIC, memory.readLong(address + STATFS_TYPE_OFFSET));
+        assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_BLOCK_SIZE_OFFSET));
+        assertEquals(STATFS_BLOCK_COUNT, memory.readLong(address + STATFS_BLOCKS_OFFSET));
+        assertEquals(STATFS_BLOCK_COUNT, memory.readLong(address + STATFS_BLOCKS_FREE_OFFSET));
+        assertEquals(STATFS_BLOCK_COUNT, memory.readLong(address + STATFS_BLOCKS_AVAILABLE_OFFSET));
+        assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_OFFSET));
+        assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_FREE_OFFSET));
+        assertEquals(STATFS_NAME_MAX, memory.readLong(address + STATFS_NAME_LENGTH_OFFSET));
+        assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_FRAGMENT_SIZE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_FLAGS_OFFSET));
     }
 
     /// Writes a Linux RISC-V 64-bit `stack_t` into guest memory.
