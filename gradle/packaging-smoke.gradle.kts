@@ -5,16 +5,26 @@ import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 import org.glavo.RiscVSmokeElfTask
+import org.glavo.ZigUtils
 
 val applicationExtension = extensions.getByType<JavaApplication>()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val smokeElfFile = layout.buildDirectory.file("fixtures/smoke/smoke.elf")
+val zigArchiveFile = layout.buildDirectory.file("downloads/zig/${ZigUtils.getZigArchiveName()}")
+val zigExecutableFile = layout.buildDirectory.file(
+    "tools/zig/${ZigUtils.getZigArchiveBaseName()}/${ZigUtils.getZigExecutableName()}"
+)
 val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
 val javaToolchains = extensions.getByType<JavaToolchainService>()
 val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }
+val includeZigExampleChecks = providers.gradleProperty("graalriscvCiIncludeZigExamples")
+    .map(String::toBooleanStrict)
+    .orElse(providers.provider {
+        zigArchiveFile.get().asFile.isFile || zigExecutableFile.get().asFile.isFile
+    })
 
 fun verifySmokeOutput(taskName: String, stdout: ByteArrayOutputStream, stderr: ByteArrayOutputStream) {
     val actualOutput = stdout.toString(StandardCharsets.UTF_8)
@@ -106,9 +116,16 @@ tasks.register("packageSmokeTest") {
     dependsOn("runInstallDistSmoke", "runShadowJarSmoke")
 }
 
+tasks.register("ciZigExampleCheck") {
+    group = "verification"
+    description = "Runs CI example checks that require the Gradle-managed Zig toolchain."
+
+    dependsOn("checkHelloWorldExample")
+}
+
 tasks.register("ciCheck") {
     group = "verification"
-    description = "Compiles, tests, packages, and runs no-toolchain package smoke checks."
+    description = "Compiles, tests, packages, and runs CI smoke checks."
 
     dependsOn(
         "compileJava",
@@ -119,4 +136,7 @@ tasks.register("ciCheck") {
         "shadowJar",
         "packageSmokeTest"
     )
+    if (includeZigExampleChecks.get()) {
+        dependsOn("ciZigExampleCheck")
+    }
 }

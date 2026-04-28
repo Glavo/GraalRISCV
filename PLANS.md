@@ -37,7 +37,8 @@
 
 - Run `./gradlew -g .gradle-user-home checkHelloWorldExample` on Linux and macOS after Zig download and extraction are available.
 - Record any non-Windows Zig download, extraction, or linker troubleshooting that is needed after real-toolchain verification.
-- Keep `ciCheck` covering compile, tests, package artifacts, no-toolchain smoke checks, and the new static Linux C acceptance checks when Zig is available.
+- Keep `ciCheck`, `ciZigExampleCheck`, and `graalriscvCiIncludeZigExamples` coverage in sync as new static Linux
+  C acceptance checks are added.
 - Keep native-image packaging available through the opt-in `nativeCompile` and `nativeImageSmokeTest` tasks, and add it to CI only after Native Image toolchain availability is explicit.
 - Continue profiling dispatch overhead, especially primitive block-cache lookup, mapped-memory accesses, remaining operation-group instruction body shape, and whether the `BlockNode` loop warrants a different compiled-block layout.
 - Keep rejected performance experiments documented outside `PLANS.md`; do not re-enable the hot-block promotion cache or root `@Children` block adoption without CoreMark comparison.

@@ -209,6 +209,20 @@ Run the local CI verification task:
 
 This compiles main and test sources, runs the unit tests, builds distribution
 artifacts, builds the Shadow JAR, and runs no-toolchain package smoke checks.
+When the managed Zig archive or extracted toolchain is already present, it also
+runs the static Linux C example checks.
+
+Run the Zig-backed CI example checks explicitly:
+
+```text
+./gradlew ciZigExampleCheck
+```
+
+Force `ciCheck` to download/use Zig and include those checks:
+
+```text
+./gradlew -PgraalriscvCiIncludeZigExamples=true ciCheck
+```
 
 ## Native Image Packaging
 
