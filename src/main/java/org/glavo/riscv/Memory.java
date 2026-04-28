@@ -2,6 +2,7 @@ package org.glavo.riscv;
 
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -42,11 +43,11 @@ public final class Memory implements AutoCloseable {
     /// The exclusive end address of the initial contiguous guest memory segment.
     private final long endAddress;
 
-    /// The sparse memory regions created by Linux user-mode memory syscalls.
-    private final ArrayList<MappedRegion> mappedRegions = new ArrayList<>();
+    /// The sorted immutable snapshot of sparse memory regions created by Linux user-mode memory syscalls.
+    private volatile MappedRegion @Unmodifiable [] mappedRegions = new MappedRegion[0];
 
     /// The most recently accessed sparse memory region.
-    private @Nullable MappedRegion cachedMappedRegion;
+    private volatile @Nullable MappedRegion cachedMappedRegion;
 
     /// Creates a memory window at the supplied guest base address.
     public Memory(long baseAddress, long size) {
@@ -256,8 +257,9 @@ public final class Memory implements AutoCloseable {
 
     /// Adds a sparse guest memory region backed by a native memory segment.
     public synchronized boolean map(long address, long length) {
+        MappedRegion @Unmodifiable [] regions = mappedRegions;
         if (!isValidRange(address, length) || length == 0 || overlapsInitialMemory(address, length)
-                || overlappingMappedRegion(address, length) != null) {
+                || overlappingMappedRegion(regions, address, length) != null) {
             return false;
         }
 
@@ -269,12 +271,12 @@ public final class Memory implements AutoCloseable {
         }
 
         MappedRegion region = new MappedRegion(address, length, mappedSegment);
-        int insertionIndex = 0;
-        while (insertionIndex < mappedRegions.size()
-                && Long.compareUnsigned(mappedRegions.get(insertionIndex).address(), address) < 0) {
-            insertionIndex++;
-        }
-        mappedRegions.add(insertionIndex, region);
+        int insertionIndex = insertionIndex(regions, address);
+        MappedRegion[] newRegions = new MappedRegion[regions.length + 1];
+        System.arraycopy(regions, 0, newRegions, 0, insertionIndex);
+        newRegions[insertionIndex] = region;
+        System.arraycopy(regions, insertionIndex, newRegions, insertionIndex + 1, regions.length - insertionIndex);
+        mappedRegions = newRegions;
         cachedMappedRegion = region;
         return true;
     }
@@ -291,32 +293,31 @@ public final class Memory implements AutoCloseable {
 
         cachedMappedRegion = null;
         long endAddress = address + length;
-        for (int index = 0; index < mappedRegions.size(); ) {
-            MappedRegion region = mappedRegions.get(index);
+        MappedRegion @Unmodifiable [] regions = mappedRegions;
+        ArrayList<MappedRegion> newRegions = new ArrayList<>(regions.length + 1);
+        for (MappedRegion region : regions) {
             if (!rangesOverlap(address, endAddress, region.address(), region.endAddress())) {
-                index++;
+                newRegions.add(region);
                 continue;
             }
 
-            mappedRegions.remove(index);
             if (region.address() < address) {
                 long prefixLength = address - region.address();
-                mappedRegions.add(index, new MappedRegion(
+                newRegions.add(new MappedRegion(
                         region.address(),
                         prefixLength,
                         region.segment().asSlice(0, prefixLength)));
-                index++;
             }
             if (endAddress < region.endAddress()) {
                 long suffixOffset = endAddress - region.address();
                 long suffixLength = region.endAddress() - endAddress;
-                mappedRegions.add(index, new MappedRegion(
+                newRegions.add(new MappedRegion(
                         endAddress,
                         suffixLength,
                         region.segment().asSlice(suffixOffset, suffixLength)));
-                index++;
             }
         }
+        mappedRegions = newRegions.toArray(MappedRegion[]::new);
     }
 
     /// Returns true when the supplied guest range has native backing.
@@ -400,7 +401,7 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Finds the sparse region backing a guest range, or null when absent.
-    private synchronized @Nullable MappedRegion findMappedRegion(long address, long length) {
+    private @Nullable MappedRegion findMappedRegion(long address, long length) {
         if (length < 0) {
             throw new RiscVException("Negative memory access length: " + length);
         }
@@ -413,13 +414,12 @@ public final class Memory implements AutoCloseable {
             return cached;
         }
 
-        for (MappedRegion region : mappedRegions) {
-            if (containsRange(region, address, length)) {
-                cachedMappedRegion = region;
-                return region;
-            }
+        MappedRegion @Unmodifiable [] regions = mappedRegions;
+        @Nullable MappedRegion region = findMappedRegion(regions, address, length);
+        if (region != null && mappedRegions == regions) {
+            cachedMappedRegion = region;
         }
-        return null;
+        return region;
     }
 
     /// Returns true when the supplied guest range overlaps the initial memory segment.
@@ -428,14 +428,61 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns the first sparse region overlapped by the supplied guest range.
-    private @Nullable MappedRegion overlappingMappedRegion(long address, long length) {
+    private static @Nullable MappedRegion overlappingMappedRegion(
+            MappedRegion @Unmodifiable [] regions,
+            long address,
+            long length) {
         long endAddress = address + length;
-        for (MappedRegion region : mappedRegions) {
-            if (rangesOverlap(address, endAddress, region.address(), region.endAddress())) {
-                return region;
+        int insertionIndex = insertionIndex(regions, address);
+        if (insertionIndex > 0) {
+            MappedRegion previous = regions[insertionIndex - 1];
+            if (rangesOverlap(address, endAddress, previous.address(), previous.endAddress())) {
+                return previous;
+            }
+        }
+        if (insertionIndex < regions.length) {
+            MappedRegion next = regions[insertionIndex];
+            if (rangesOverlap(address, endAddress, next.address(), next.endAddress())) {
+                return next;
             }
         }
         return null;
+    }
+
+    /// Finds the sparse region backing a guest range in a sorted snapshot, or null when absent.
+    private static @Nullable MappedRegion findMappedRegion(
+            MappedRegion @Unmodifiable [] regions,
+            long address,
+            long length) {
+        int low = 0;
+        int high = regions.length - 1;
+        while (low <= high) {
+            int index = (low + high) >>> 1;
+            MappedRegion region = regions[index];
+            if (address < region.address()) {
+                high = index - 1;
+            } else if (address >= region.endAddress()) {
+                low = index + 1;
+            } else {
+                return containsRange(region, address, length) ? region : null;
+            }
+        }
+        return null;
+    }
+
+    /// Returns the insertion index for an address in a sorted sparse-region snapshot.
+    private static int insertionIndex(MappedRegion @Unmodifiable [] regions, long address) {
+        int low = 0;
+        int high = regions.length;
+        while (low < high) {
+            int index = (low + high) >>> 1;
+            if (regions[index].address() < address) {
+                low = index + 1;
+            } else {
+                high = index;
+            }
+        }
+        return low;
     }
 
     /// Returns true when the supplied address and length form a non-overflowing guest range.
