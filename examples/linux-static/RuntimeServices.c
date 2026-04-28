@@ -1,3 +1,9 @@
+/*
+ * This static musl example validates common runtime-service syscalls used by
+ * larger static programs. It covers clocks, sleeping, rusage, CPU affinity,
+ * uname, limits, randomness, and anonymous memory mapping operations.
+ */
+
 #define _GNU_SOURCE
 
 #include <errno.h>
@@ -22,12 +28,14 @@
 #define SYS_prlimit64 __NR_prlimit64
 #endif
 
+/* Prints a stable failure token for the Gradle-side assertion. */
 static int fail(const char *message) {
     puts(message);
     return 1;
 }
 
 int main(void) {
+    /* Clock queries should return normalized timespec/timeval values. */
     struct timespec realtime;
     if (clock_gettime(CLOCK_REALTIME, &realtime) != 0 || realtime.tv_nsec < 0 || realtime.tv_nsec >= 1000000000L) {
         return fail("clock-realtime-failed");
@@ -43,11 +51,13 @@ int main(void) {
         return fail("gettimeofday-failed");
     }
 
+    /* A zero-duration sleep should succeed without advancing guest-visible state incorrectly. */
     struct timespec zero_sleep = {0, 0};
     if (nanosleep(&zero_sleep, NULL) != 0) {
         return fail("nanosleep-failed");
     }
 
+    /* These process information calls are used by libc and language runtimes during startup. */
     struct rusage usage;
     if (getrusage(RUSAGE_SELF, &usage) != 0) {
         return fail("getrusage-failed");
@@ -69,6 +79,7 @@ int main(void) {
         return fail("prlimit-failed");
     }
 
+    /* Random bytes must be nonzero so callers do not treat the source as stubbed out. */
     unsigned char random_bytes[16];
     memset(random_bytes, 0, sizeof(random_bytes));
     if (syscall(SYS_getrandom, random_bytes, sizeof(random_bytes), GRND_NONBLOCK) != sizeof(random_bytes)) {
@@ -87,6 +98,7 @@ int main(void) {
         return fail("page-size-failed");
     }
 
+    /* Reserve two pages, commit one page, and then discard it through madvise. */
     void *mapping = mmap(
             NULL,
             (size_t) page_size * 2,
@@ -115,6 +127,7 @@ int main(void) {
         return fail("madvise-clear-failed");
     }
 
+    /* Protect and unmap the region to validate the end of the mapping lifecycle. */
     if (mprotect(mapping, (size_t) page_size, PROT_NONE) != 0) {
         munmap(mapping, (size_t) page_size * 2);
         return fail("mprotect-none-failed");

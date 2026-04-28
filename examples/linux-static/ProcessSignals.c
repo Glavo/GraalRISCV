@@ -1,3 +1,10 @@
+/*
+ * This static musl example validates process identity, lightweight signal
+ * setup, robust-list registration, thread-id bookkeeping, and selected prctl
+ * operations. It does not deliver a real signal; it verifies the setup paths
+ * that libc and language runtimes commonly require.
+ */
+
 #define _GNU_SOURCE
 
 #include <errno.h>
@@ -26,26 +33,31 @@
 #define SYS_tgkill __NR_tgkill
 #endif
 
+/* Minimal robust-list layout used by SYS_set_robust_list. */
 struct robust_list_head {
     void *list;
     long futex_offset;
     void *list_op_pending;
 };
 
+/* Storage passed to process and signal syscalls that expect guest pointers. */
 static int child_tid = 0;
 static struct robust_list_head robust_head;
 static unsigned char signal_stack[SIGSTKSZ];
 
+/* Prints a stable failure token for the Gradle-side assertion. */
 static int fail(const char *message) {
     puts(message);
     return 1;
 }
 
+/* Handler used only to validate sigaction installation. */
 static void unused_handler(int signal_number) {
     (void) signal_number;
 }
 
 int main(void) {
+    /* Identity calls should return deterministic positive ids for the synthetic process. */
     pid_t pid = getpid();
     if (pid <= 0 || getppid() < 0) {
         return fail("process-id-failed");
@@ -54,6 +66,7 @@ int main(void) {
         return fail("identity-failed");
     }
 
+    /* Thread-id and robust-list registration are required by pthread and Go runtimes. */
     long tid = syscall(SYS_gettid);
     if (tid <= 0) {
         return fail("gettid-failed");
@@ -67,6 +80,7 @@ int main(void) {
         return fail("set-robust-list-failed");
     }
 
+    /* Alternate signal stack state should round-trip through sigaltstack. */
     stack_t new_stack;
     memset(&new_stack, 0, sizeof(new_stack));
     new_stack.ss_sp = signal_stack;
@@ -81,6 +95,7 @@ int main(void) {
         return fail("sigaltstack-get-failed");
     }
 
+    /* Install and block a handler to exercise signal mask and action syscalls. */
     struct sigaction action;
     memset(&action, 0, sizeof(action));
     action.sa_handler = unused_handler;
@@ -97,10 +112,12 @@ int main(void) {
         return fail("sigprocmask-failed");
     }
 
+    /* Signal number 0 probes validate process and thread existence without delivery. */
     if (kill(pid, 0) != 0 || syscall(SYS_tgkill, pid, tid, 0) != 0) {
         return fail("signal-probe-failed");
     }
 
+    /* The remaining checks cover prctl state commonly touched by runtimes. */
     if (prctl(PR_SET_NAME, "graalriscv", 0, 0, 0) != 0) {
         return fail("prctl-set-name-failed");
     }

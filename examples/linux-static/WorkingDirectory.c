@@ -1,3 +1,9 @@
+/*
+ * This static musl example validates current-working-directory state. It
+ * creates a directory, switches into it, opens a relative path, then uses a
+ * saved directory file descriptor to return to the guest root.
+ */
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -5,6 +11,7 @@
 #include <unistd.h>
 
 int main(void) {
+    /* Create a directory and seed it with a file used after chdir. */
     if (mkdir("/work", 0777) != 0) {
         puts("mkdir-failed");
         return 1;
@@ -25,6 +32,7 @@ int main(void) {
         return 4;
     }
 
+    /* Keep a descriptor for fchdir so the test covers fd-based directory changes. */
     int root = open("/", O_RDONLY | O_DIRECTORY);
     if (root < 0) {
         puts("open-root-failed");
@@ -36,6 +44,7 @@ int main(void) {
         return 6;
     }
 
+    /* Verify that getcwd reflects the guest path rather than the host sandbox path. */
     char cwd[64];
     if (getcwd(cwd, sizeof cwd) == NULL || strcmp(cwd, "/work") != 0) {
         puts("getcwd-work-failed");
@@ -43,6 +52,7 @@ int main(void) {
         return 7;
     }
 
+    /* Relative fopen should resolve against the guest working directory. */
     FILE *in = fopen("message.txt", "r");
     if (in == NULL) {
         puts("open-read-failed");
@@ -68,6 +78,7 @@ int main(void) {
         return 11;
     }
 
+    /* Return to the root through fchdir and confirm cwd state was restored. */
     if (fchdir(root) != 0) {
         puts("fchdir-failed");
         close(root);

@@ -1,3 +1,9 @@
+/*
+ * This static musl example validates positioned I/O and sync-related syscalls.
+ * It confirms that pread and pwrite do not disturb the current file offset,
+ * then checks that the modified file contents are visible through normal read.
+ */
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -5,6 +11,7 @@
 #include <unistd.h>
 
 int main(void) {
+    /* Create a known byte pattern used by the later positioned operations. */
     int fd = open("/positioned.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
     if (fd < 0) {
         puts("open-failed");
@@ -21,6 +28,7 @@ int main(void) {
         return 3;
     }
 
+    /* pread must read from the requested offset without changing the descriptor offset. */
     char buffer[16] = {0};
     if (pread(fd, buffer, 4, 5) != 4 || memcmp(buffer, "5678", 4) != 0) {
         puts("pread-failed");
@@ -32,6 +40,7 @@ int main(void) {
         close(fd);
         return 5;
     }
+    /* pwrite has the same offset-preservation rule for writes. */
     if (pwrite(fd, "AB", 2, 4) != 2) {
         puts("pwrite-failed");
         close(fd);
@@ -42,6 +51,7 @@ int main(void) {
         close(fd);
         return 7;
     }
+    /* Sync calls are expected to be accepted even when the host backend is already durable enough. */
     if (fdatasync(fd) != 0) {
         puts("fdatasync-failed");
         close(fd);
@@ -61,6 +71,7 @@ int main(void) {
 #endif
     sync();
 
+    /* Read the whole file normally to verify the positioned write changed only the target bytes. */
     if (lseek(fd, 0, SEEK_SET) != 0) {
         puts("final-lseek-failed");
         close(fd);

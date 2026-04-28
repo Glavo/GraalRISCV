@@ -1,3 +1,9 @@
+/*
+ * This static musl example validates the Linux statx syscall. It checks both
+ * path-based and file-descriptor-based metadata lookup for a regular file in
+ * the sandboxed guest root.
+ */
+
 #include <asm/unistd.h>
 #include <fcntl.h>
 #include <linux/stat.h>
@@ -23,6 +29,7 @@
 #define STATX_BASIC_STATS 0x000007ffU
 #endif
 
+/* Checks deterministic metadata values produced by the simulator for this fixture file. */
 static int valid_regular_statx(const struct statx *status) {
     return (status->stx_mask & STATX_BASIC_STATS) == STATX_BASIC_STATS
             && status->stx_blksize == 4096
@@ -35,6 +42,7 @@ static int valid_regular_statx(const struct statx *status) {
 }
 
 int main(void) {
+    /* Create a known regular file so statx can verify mode, size, owner, and block fields. */
     int fd = open("/statx.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
     if (fd < 0) {
         puts("open-failed");
@@ -46,6 +54,7 @@ int main(void) {
         return 2;
     }
 
+    /* Path lookup exercises AT_FDCWD and guest absolute path resolution. */
     struct statx status;
     memset(&status, 0, sizeof(status));
     if (syscall(SYS_statx, AT_FDCWD, "/statx.txt", AT_NO_AUTOMOUNT, STATX_BASIC_STATS, &status) != 0
@@ -55,6 +64,7 @@ int main(void) {
         return 3;
     }
 
+    /* Empty path lookup exercises AT_EMPTY_PATH against an already-open descriptor. */
     memset(&status, 0, sizeof(status));
     if (syscall(SYS_statx, fd, "", AT_EMPTY_PATH, STATX_BASIC_STATS, &status) != 0
             || !valid_regular_statx(&status)) {

@@ -1,3 +1,9 @@
+/*
+ * This static musl example validates eventfd and epoll behavior. It starts with
+ * an empty nonblocking eventfd, registers it with epoll, writes a counter value,
+ * and confirms readiness appears and disappears at the correct times.
+ */
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -6,12 +12,14 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 
+/* Prints a stable failure token for the Gradle-side assertion. */
 static int fail(const char *message) {
     puts(message);
     return 1;
 }
 
 int main(void) {
+    /* Empty nonblocking eventfd reads should fail with EAGAIN. */
     int event_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (event_fd < 0) {
         return fail("eventfd-failed");
@@ -23,6 +31,7 @@ int main(void) {
         return fail("eventfd-empty-read-failed");
     }
 
+    /* Register the eventfd and preserve a user data payload through epoll. */
     int epoll_fd = epoll_create1(EPOLL_CLOEXEC);
     if (epoll_fd < 0) {
         return fail("epoll-create-failed");
@@ -36,6 +45,7 @@ int main(void) {
         return fail("epoll-add-failed");
     }
 
+    /* No event should be reported until the eventfd counter is nonzero. */
     struct epoll_event ready_event;
     memset(&ready_event, 0, sizeof(ready_event));
     int ready = epoll_wait(epoll_fd, &ready_event, 1, 0);
@@ -44,6 +54,7 @@ int main(void) {
     }
 
     value = 7;
+    /* Writing to eventfd should make the epoll interest ready for EPOLLIN. */
     if (write(event_fd, &value, sizeof(value)) != sizeof(value)) {
         return fail("eventfd-write-failed");
     }
@@ -58,6 +69,7 @@ int main(void) {
     }
 
     value = 0;
+    /* Reading the counter drains readiness for subsequent zero-timeout waits. */
     if (read(event_fd, &value, sizeof(value)) != sizeof(value) || value != 7) {
         return fail("eventfd-read-failed");
     }

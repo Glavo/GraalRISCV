@@ -1,3 +1,9 @@
+/*
+ * This static musl example validates mutating file-system syscalls. It creates
+ * a directory and file, truncates and reads the file, then renames and removes
+ * both entries through the simulator's host-root sandbox.
+ */
+
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -5,6 +11,7 @@
 #include <unistd.h>
 
 int main(void) {
+    /* Build a disposable working tree inside the guest root. */
     if (mkdir("/work", 0777) != 0) {
         puts("mkdir-failed");
         return 1;
@@ -16,6 +23,7 @@ int main(void) {
         return 2;
     }
 
+    /* Verify write, truncate, seek, and read on the same descriptor. */
     if (write(fd, "abcdef\n", 7) != 7) {
         puts("write-failed");
         close(fd);
@@ -48,6 +56,7 @@ int main(void) {
         return 8;
     }
 
+    /* Rename and remove the file to cover directory entry mutation. */
     if (rename("/work/data.txt", "/work/renamed.txt") != 0) {
         puts("rename-failed");
         return 9;
