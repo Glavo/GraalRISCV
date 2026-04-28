@@ -32,7 +32,7 @@ val linuxStaticEventPollingExampleElf = layout.buildDirectory.file("examples/lin
 val linuxStaticThreadJoinExampleElf = layout.buildDirectory.file("examples/linux-static/thread-join.elf")
 val linuxStaticRuntimeServicesExampleElf = layout.buildDirectory.file("examples/linux-static/runtime-services.elf")
 val linuxStaticProcessSignalsExampleElf = layout.buildDirectory.file("examples/linux-static/process-signals.elf")
-val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
+val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file- io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
 val linuxStaticWorkingDirectoryRoot = layout.buildDirectory.dir("tmp/linux-static-working-directory-root")
@@ -50,7 +50,7 @@ val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }
 
-fun configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
+fun RiscVZigCcTask.configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
     dependsOn(extractZig)
     zigExecutable.set(zigExecutableFile)
     sourceFile.set(layout.projectDirectory.file("examples/linux-static/$sourceFileName"))
