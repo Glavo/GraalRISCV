@@ -152,6 +152,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
 
+    /// The Linux RISC-V syscall number for `get_robust_list`.
+    private static final long SYS_GET_ROBUST_LIST = 100;
+
     /// The Linux RISC-V syscall number for `nanosleep`.
     private static final long SYS_NANOSLEEP = 101;
 
@@ -266,8 +269,14 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
+    /// The Linux RISC-V syscall number for `membarrier`.
+    private static final long SYS_MEMBARRIER = 283;
+
     /// The Linux RISC-V syscall number for `statx`.
     private static final long SYS_STATX = 291;
+
+    /// The Linux RISC-V syscall number for `rseq`.
+    private static final long SYS_RSEQ = 293;
 
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final long SYS_FACCESSAT2 = 439;
@@ -955,6 +964,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `CLOCK_BOOTTIME`.
     private static final long CLOCK_BOOTTIME = 7;
+
+    /// Linux `MEMBARRIER_CMD_QUERY`.
+    private static final long MEMBARRIER_CMD_QUERY = 0;
 
     /// Linux `TIMER_ABSTIME`.
     private static final long TIMER_ABSTIME = 1;
@@ -1676,6 +1688,10 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, setRobustList(state.register(10), state.register(11)));
             return;
         }
+        if (callNumber == SYS_GET_ROBUST_LIST) {
+            state.setRegister(10, getRobustList(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
         if (callNumber == SYS_NANOSLEEP) {
             state.setRegister(10, nanosleep(state.register(10), state.register(11)));
             return;
@@ -1865,6 +1881,10 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
             return;
         }
+        if (callNumber == SYS_MEMBARRIER) {
+            state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
         if (callNumber == SYS_STATX) {
             state.setRegister(10, statx(
                     state.register(10),
@@ -1872,6 +1892,10 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            return;
+        }
+        if (callNumber == SYS_RSEQ) {
+            state.setRegister(10, rseq());
             return;
         }
         if (callNumber == SYS_FACCESSAT2) {
@@ -4055,6 +4079,16 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Reports the robust futex list registered for this single-process guest.
+    private long getRobustList(long processId, long headAddress, long lengthAddress) {
+        if (processId != 0 && !isKnownGuestThreadId(processId)) {
+            return ESRCH;
+        }
+        memory.writeLong(headAddress, robustListHeadAddress);
+        memory.writeLong(lengthAddress, robustListLength);
+        return 0;
+    }
+
     /// Registers or reports the single-threaded alternate signal stack.
     private long sigaltstack(long stackAddress, long oldStackAddress) {
         long newStackPointer = 0;
@@ -4966,6 +5000,19 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         memory.writeBytes(address, bytes, 0, bytes.length);
         return bytes.length;
+    }
+
+    /// Reports no supported Linux `membarrier` commands for runtime capability probes.
+    private static long membarrier(long command, long flags, long cpuId) {
+        if (flags != 0 || cpuId != 0) {
+            return EINVAL;
+        }
+        return command == MEMBARRIER_CMD_QUERY ? 0 : EINVAL;
+    }
+
+    /// Reports that Linux restartable sequences are unavailable to guest runtimes.
+    private static long rseq() {
+        return ENOSYS;
     }
 
     /// Reads a null-terminated UTF-8 path string from guest memory.

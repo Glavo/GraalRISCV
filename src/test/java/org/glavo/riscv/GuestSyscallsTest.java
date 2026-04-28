@@ -212,6 +212,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `set_robust_list`.
     private static final long SYS_SET_ROBUST_LIST = 99;
 
+    /// The Linux RISC-V syscall number for `get_robust_list`.
+    private static final long SYS_GET_ROBUST_LIST = 100;
+
     /// The Linux RISC-V syscall number for `nanosleep`.
     private static final long SYS_NANOSLEEP = 101;
 
@@ -326,8 +329,14 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
+    /// The Linux RISC-V syscall number for `membarrier`.
+    private static final long SYS_MEMBARRIER = 283;
+
     /// The Linux RISC-V syscall number for `statx`.
     private static final long SYS_STATX = 291;
+
+    /// The Linux RISC-V syscall number for `rseq`.
+    private static final long SYS_RSEQ = 293;
 
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final long SYS_FACCESSAT2 = 439;
@@ -851,6 +860,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `CLOCK_BOOTTIME`.
     private static final long CLOCK_BOOTTIME = 7;
+
+    /// Linux `MEMBARRIER_CMD_QUERY`.
+    private static final long MEMBARRIER_CMD_QUERY = 0;
 
     /// Linux `TIMER_ABSTIME`.
     private static final long TIMER_ABSTIME = 1;
@@ -2813,10 +2825,22 @@ public final class GuestSyscallsTest {
     public void setRobustListAcceptsNonNegativeLength() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long headPointerAddress = memory.baseAddress() + 128;
+            long lengthAddress = memory.baseAddress() + 136;
 
             setSyscall(state, SYS_SET_ROBUST_LIST, memory.baseAddress() + 64, 24, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GET_ROBUST_LIST, 0, headPointerAddress, lengthAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(memory.baseAddress() + 64, memory.readLong(headPointerAddress));
+            assertEquals(24, memory.readLong(lengthAddress));
+
+            setSyscall(state, SYS_GET_ROBUST_LIST, 99, headPointerAddress, lengthAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
 
             setSyscall(state, SYS_SET_ROBUST_LIST, memory.baseAddress() + 64, -1, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -3553,6 +3577,30 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
 
             assertArrayEquals(firstBytes, memory.readBytes(memory.baseAddress(), 8));
+        }
+    }
+
+    /// Verifies optional runtime capability syscalls report deterministic fallback results.
+    @Test
+    public void optionalRuntimeCapabilitySyscallsReportUnavailable() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_MEMBARRIER, MEMBARRIER_CMD_QUERY, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MEMBARRIER, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MEMBARRIER, MEMBARRIER_CMD_QUERY, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, memory.baseAddress(), 32, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOSYS, state.register(10));
         }
     }
 

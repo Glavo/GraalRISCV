@@ -22,7 +22,8 @@
 - Keep syscall handling deterministic within one guest process while supporting Linux thread-style `clone` through Truffle
   `Env`-created guest threads.
 - Preserve `--host-root` as the TruffleFile-backed filesystem sandbox root and reject path escapes.
-- Continue broadening file descriptor, memory-management, process, signal, time, and filesystem syscall support after adding `clock_getres` and `clock_nanosleep`.
+- Continue broadening file descriptor, memory-management, process, signal, time, and filesystem syscall support after adding
+  `clock_getres`, `clock_nanosleep`, `get_robust_list`, `membarrier`, and `rseq` fallback behavior.
 - Add Linux flag and edge-case compatibility only when covered by direct tests or acceptance workloads.
 - Keep unsupported syscall diagnostics actionable by including the syscall number, guest PC, and argument registers.
 - Add direct syscall tests for additional success paths, Linux-compatible error returns, filesystem sandboxing, configurable time, and deterministic random behavior.
