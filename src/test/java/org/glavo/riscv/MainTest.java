@@ -368,6 +368,46 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that guest futex waits with relative timeouts report `ETIMEDOUT`.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    public void runsFutexTimeoutProgram() throws Exception {
+        Path elfPath = tempDirectory.resolve("futex-timeout.elf");
+        Files.write(elfPath, ElfTestImages.executable(futexTimeoutCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--max-instructions", "10000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(7, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that a child thread `exit_group` terminates the whole guest process.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    public void cloneThreadExitGroupTerminatesProcess() throws Exception {
+        Path elfPath = tempDirectory.resolve("clone-exit-group.elf");
+        Files.write(elfPath, ElfTestImages.executable(cloneExitGroupCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--max-instructions", "1000000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(29, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
     private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
@@ -554,6 +594,94 @@ public final class MainTest {
         code.putInt(99);
         code.putInt(0);
         code.putInt(0);
+        code.putInt(0);
+        code.putInt(0);
+        code.putInt(0);
+        return Arrays.copyOf(code.array(), childStackOffset);
+    }
+
+    /// Builds a program that expects `futex(FUTEX_WAIT, timeout)` to return `-ETIMEDOUT`.
+    private static byte[] futexTimeoutCode() {
+        int timespecOffset = 0x80;
+        int futexOffset = 0x90;
+        ByteBuffer code = ByteBuffer.allocate(0xa0).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadAddress(code, 5, futexOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 7));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAIT_PRIVATE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 7));
+        putLoadAddress(code, 13, timespecOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, -110));
+        int failBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 7));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int failPosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 21));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        patchInstruction(code, failBranchPosition, bne(10, 5, failPosition - failBranchPosition));
+
+        code.position(timespecOffset);
+        code.putLong(0);
+        code.putLong(1);
+        code.position(futexOffset);
+        code.putInt(0);
+        return code.array();
+    }
+
+    /// Builds a program where a child thread calls `exit_group` while the parent is in a futex wait.
+    private static byte[] cloneExitGroupCode() {
+        int parentTidOffset = 0x200;
+        int childTidOffset = 0x204;
+        int tlsOffset = 0x210;
+        int waitWordOffset = 0x214;
+        int armOffset = 0x218;
+        int childStackOffset = 0x5f0;
+        ByteBuffer code = ByteBuffer.allocate(0x600).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadImmediate(code, 10, THREAD_CLONE_FLAGS);
+        putLoadAddress(code, 11, childStackOffset);
+        putLoadAddress(code, 12, parentTidOffset);
+        putLoadAddress(code, 13, tlsOffset);
+        putLoadAddress(code, 14, childTidOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 220));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int childBranchPosition = reserveInstruction(code);
+
+        putLoadAddress(code, 5, armOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 1));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        putLoadAddress(code, 5, waitWordOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAIT_PRIVATE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 21));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int childPosition = code.position();
+        putLoadAddress(code, 5, armOffset);
+        int armLoopPosition = code.position();
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        ElfTestImages.putInt(code, beq(6, 0, armLoopPosition - (armLoopPosition + Integer.BYTES)));
+        putCountdownLoop(code, 7, 50_000);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 29));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 94));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, childBranchPosition, beq(10, 0, childPosition - childBranchPosition));
+        code.position(parentTidOffset);
+        code.putInt(0);
+        code.putInt(0);
+        code.position(tlsOffset);
         code.putInt(0);
         code.putInt(0);
         code.putInt(0);
