@@ -21,8 +21,8 @@
 
 - Keep syscall handling deterministic within one guest process while supporting Linux thread-style `clone` through Truffle
   `Env`-created guest threads.
-- Harden thread-related syscall coverage with focused tests for `clone` TLS setup, clear-child-TID wakeups, futex timeouts,
-  and process-wide `exit_group` interactions.
+- Harden remaining thread-related syscall coverage with focused tests for futex timeout edge cases and process-wide
+  `exit_group` interactions.
 - Preserve `--host-root` as the TruffleFile-backed filesystem sandbox root and reject path escapes.
 - Broaden file descriptor, memory-management, process, signal, time, and filesystem syscall support as broader static Linux workloads require.
 - Add Linux flag and edge-case compatibility only when covered by direct tests or acceptance workloads.

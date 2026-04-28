@@ -12,6 +12,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,6 +21,47 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /// Tests the command-line entry point.
 @NotNullByDefault
 public final class MainTest {
+    /// Linux `CLONE_VM`.
+    private static final int CLONE_VM = 0x00000100;
+
+    /// Linux `CLONE_FS`.
+    private static final int CLONE_FS = 0x00000200;
+
+    /// Linux `CLONE_FILES`.
+    private static final int CLONE_FILES = 0x00000400;
+
+    /// Linux `CLONE_SIGHAND`.
+    private static final int CLONE_SIGHAND = 0x00000800;
+
+    /// Linux `CLONE_THREAD`.
+    private static final int CLONE_THREAD = 0x00010000;
+
+    /// Linux `CLONE_SETTLS`.
+    private static final int CLONE_SETTLS = 0x00080000;
+
+    /// Linux `CLONE_PARENT_SETTID`.
+    private static final int CLONE_PARENT_SETTID = 0x00100000;
+
+    /// Linux `CLONE_CHILD_CLEARTID`.
+    private static final int CLONE_CHILD_CLEARTID = 0x00200000;
+
+    /// Linux `CLONE_CHILD_SETTID`.
+    private static final int CLONE_CHILD_SETTID = 0x01000000;
+
+    /// Clone flags used by Linux runtimes for shared-address-space threads.
+    private static final int THREAD_CLONE_FLAGS = CLONE_VM
+            | CLONE_FS
+            | CLONE_FILES
+            | CLONE_SIGHAND
+            | CLONE_THREAD
+            | CLONE_SETTLS
+            | CLONE_PARENT_SETTID
+            | CLONE_CHILD_CLEARTID
+            | CLONE_CHILD_SETTID;
+
+    /// Linux `FUTEX_WAIT | FUTEX_PRIVATE_FLAG`.
+    private static final int FUTEX_WAIT_PRIVATE = 128;
+
     /// A temporary directory for generated ELF files.
     @TempDir
     private Path tempDirectory;
@@ -303,6 +345,26 @@ public final class MainTest {
         assertTrue(!diagnostics.contains("Execution failed:"));
     }
 
+    /// Verifies that the CLI can execute a thread-style Linux `clone` program.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    public void runsThreadStyleCloneProgram() throws Exception {
+        Path elfPath = tempDirectory.resolve("clone-thread.elf");
+        Files.write(elfPath, ElfTestImages.executable(cloneThreadCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--max-instructions", "100000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(7, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
     private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
@@ -343,6 +405,78 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         return code.array();
+    }
+
+    /// Builds a program that starts one guest thread and waits for its clear-child-TID futex wakeup.
+    private static byte[] cloneThreadCode() {
+        int resultOffset = 0x180;
+        int parentTidOffset = 0x184;
+        int childTidOffset = 0x188;
+        int tlsOffset = 0x190;
+        int childStackOffset = 0x3f0;
+        ByteBuffer code = ByteBuffer.allocate(0x400).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadImmediate(code, 10, THREAD_CLONE_FLAGS);
+        putLoadAddress(code, 11, childStackOffset);
+        putLoadAddress(code, 12, parentTidOffset);
+        putLoadAddress(code, 13, tlsOffset);
+        putLoadAddress(code, 14, childTidOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 220));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int childBranchPosition = reserveInstruction(code);
+
+        putLoadAddress(code, 5, childTidOffset);
+        int waitLoopPosition = code.position();
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int waitDoneBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAIT_PRIVATE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 6, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int waitLoopJumpPosition = code.position();
+        ElfTestImages.putInt(code, jal(0, waitLoopPosition - waitLoopJumpPosition));
+
+        int waitDonePosition = code.position();
+        putLoadAddress(code, 5, resultOffset);
+        ElfTestImages.putInt(code, lw(10, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int childPosition = code.position();
+        putLoadAddress(code, 5, tlsOffset);
+        int childTlsFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, childTidOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 178));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int childTidFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, resultOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 7));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int childFailPosition = code.position();
+        putLoadAddress(code, 5, resultOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 13));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, childBranchPosition, beq(10, 0, childPosition - childBranchPosition));
+        patchInstruction(code, waitDoneBranchPosition, beq(6, 0, waitDonePosition - waitDoneBranchPosition));
+        patchInstruction(code, childTlsFailBranchPosition, bne(4, 5, childFailPosition - childTlsFailBranchPosition));
+        patchInstruction(code, childTidFailBranchPosition, bne(10, 6, childFailPosition - childTidFailBranchPosition));
+
+        code.position(resultOffset);
+        code.putInt(99);
+        code.putInt(0);
+        code.putInt(0);
+        return Arrays.copyOf(code.array(), childStackOffset);
     }
 
     /// Creates CLI arguments for the many-block loop stress program.
@@ -441,6 +575,11 @@ public final class MainTest {
         return branch(1, rs1, rs2, offset);
     }
 
+    /// Encodes `beq`.
+    private static int beq(int rs1, int rs2, int offset) {
+        return branch(0, rs1, rs2, offset);
+    }
+
     /// Encodes a B-type branch.
     private static int branch(int funct3, int rs1, int rs2, int offset) {
         return (((offset >>> 12) & 0x1) << 31)
@@ -453,6 +592,21 @@ public final class MainTest {
                 | 0x63;
     }
 
+    /// Encodes `lw`.
+    private static int lw(int rd, int offset, int rs1) {
+        return ElfTestImages.iType(0x03, rd, 2, rs1, offset);
+    }
+
+    /// Encodes `sw`.
+    private static int sw(int rs2, int offset, int rs1) {
+        return (((offset >>> 5) & 0x7f) << 25)
+                | (rs2 << 20)
+                | (rs1 << 15)
+                | (2 << 12)
+                | ((offset & 0x1f) << 7)
+                | 0x23;
+    }
+
     /// Encodes `jal`.
     private static int jal(int rd, int offset) {
         return (((offset >>> 20) & 0x1) << 31)
@@ -461,6 +615,37 @@ public final class MainTest {
                 | (((offset >>> 12) & 0xff) << 12)
                 | (rd << 7)
                 | 0x6f;
+    }
+
+    /// Writes instructions that load a small PC-relative address into a register.
+    private static void putLoadAddress(ByteBuffer code, int register, int targetOffset) {
+        int instructionOffset = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.auipc(register, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(register, register, targetOffset - instructionOffset));
+    }
+
+    /// Writes instructions that load a 32-bit immediate into a register.
+    private static void putLoadImmediate(ByteBuffer code, int register, int value) {
+        int high = (value + 0x800) & 0xffff_f000;
+        if (high == 0) {
+            ElfTestImages.putInt(code, ElfTestImages.addi(register, 0, value));
+            return;
+        }
+
+        ElfTestImages.putInt(code, lui(register, high));
+        ElfTestImages.putInt(code, ElfTestImages.addi(register, register, value - high));
+    }
+
+    /// Reserves one 32-bit instruction slot and returns its byte position.
+    private static int reserveInstruction(ByteBuffer code) {
+        int position = code.position();
+        ElfTestImages.putInt(code, 0);
+        return position;
+    }
+
+    /// Replaces a previously reserved instruction slot.
+    private static void patchInstruction(ByteBuffer code, int position, int instruction) {
+        code.putInt(position, instruction);
     }
 
     /// Encodes the supplied 32-bit instructions as raw little-endian code bytes.
