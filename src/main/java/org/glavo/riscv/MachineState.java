@@ -42,7 +42,7 @@ public final class MachineState {
     /// The writable bit mask for `fcsr`.
     private static final int FCSR_MASK = 0xff;
 
-    /// The mutable integer register file.
+    /// The mutable integer register file; `registers[0]` is never written and remains the hardwired zero register.
     private final long[] registers = new long[REGISTER_COUNT];
 
     /// The mutable floating-point register file, stored as raw 64-bit values.
@@ -143,13 +143,11 @@ public final class MachineState {
 
     /// Returns an integer register value.
     public long register(int index) {
-        checkRegisterIndex(index);
-        return index == 0 ? 0 : registers[index];
+        return registers[index];
     }
 
     /// Updates an integer register value, ignoring writes to `x0`.
     public void setRegister(int index, long value) {
-        checkRegisterIndex(index);
         if (index != 0) {
             registers[index] = value;
         }
@@ -157,7 +155,7 @@ public final class MachineState {
 
     /// Returns an integer register value for an already decoded register index.
     long decodedRegister(int index) {
-        return index == 0 ? 0 : registers[index];
+        return registers[index];
     }
 
     /// Updates an integer register value for an already decoded register index, ignoring writes to `x0`.
@@ -304,13 +302,6 @@ public final class MachineState {
             if (value != 0) {
                 throw new ProgramExitException(value == 1 ? 0 : value >>> 1);
             }
-        }
-    }
-
-    /// Validates a register index.
-    private static void checkRegisterIndex(int index) {
-        if (index < 0 || index >= REGISTER_COUNT) {
-            throw new RiscVException("Invalid register index: " + index);
         }
     }
 
