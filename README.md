@@ -1,36 +1,78 @@
 # GraalRISCV
 
-GraalRISCV is an experimental GraalVM Truffle-based RISC-V ELF simulator. It
-targets RV64GC user-mode execution and currently focuses on freestanding ELF
-programs and statically linked Linux RISC-V programs.
+GraalRISCV is a GraalVM Truffle-based RISC-V user-mode ELF simulator. It runs
+RV64GC ELF64 little-endian executables, with current coverage focused on
+freestanding programs and statically linked Linux `riscv64-linux-musl`
+programs.
 
-The project is still in active development. It is not a full system emulator:
-it does not boot Linux, implement privileged mode, emulate devices, or provide
-page tables and interrupts.
+Current practical workloads include:
 
-## Run An ELF
+- freestanding RISC-V C programs, including the built-in `Hello World!` and
+  hot-loop examples
+- statically linked musl `printf` programs
+- statically linked musl programs that use argv, file I/O, directory listing,
+  cwd changes, file mutation, filesystem metadata, positioned I/O,
+  `eventfd`, and `epoll`
+- statically linked musl CoreMark-style benchmark executables
 
-Use the Gradle application task during development:
+The implementation is user-mode oriented. Static executables are the main input
+format today, and the CLI reports unsupported syscall failures with the syscall
+number, guest PC, and argument registers.
+
+## Requirements
+
+- JDK 25
+- The Gradle wrapper included in this repository
+- No host RISC-V GCC toolchain is required for the built-in examples; Gradle
+  downloads and extracts Zig, then uses `zig cc` for RISC-V C examples.
+
+## Run A RISC-V Program
+
+During development, run an ELF directly through Gradle:
 
 ```text
-./gradlew run --args="hello.elf"
+./gradlew run --args="path/to/program.riscv64-musl"
 ```
 
-Create installable launch scripts:
+Pass guest arguments after the ELF path:
+
+```text
+./gradlew run --args="path/to/program.riscv64-musl alpha --beta"
+```
+
+For repeated local runs, build the installable launcher:
 
 ```text
 ./gradlew installDist
-build\install\graalriscv\bin\graalriscv.bat hello.elf
 ```
 
-Create and run the Shadow JAR:
+Windows:
+
+```text
+build\install\graalriscv\bin\graalriscv.bat path\to\program.riscv64-musl
+```
+
+Linux/macOS:
+
+```text
+build/install/graalriscv/bin/graalriscv path/to/program.riscv64-musl
+```
+
+For example, a statically linked `riscv64-linux-musl` CoreMark binary can be run
+with the same launcher:
+
+```text
+build\install\graalriscv\bin\graalriscv.bat path\to\coremark.riscv64-musl
+```
+
+The Shadow JAR is also runnable:
 
 ```text
 ./gradlew shadowJar
-java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -jar build/libs/GraalRISCV-1.0-SNAPSHOT-all.jar hello.elf
+java --enable-native-access=ALL-UNNAMED --sun-misc-unsafe-memory-access=allow -jar build/libs/GraalRISCV-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
 ```
 
-The CLI accepts:
+## CLI Options
 
 ```text
 graalriscv [options] <program.elf> [program-args...]
@@ -47,26 +89,24 @@ Options:
   -h, --help                 Print this help message.
 ```
 
+`--host-root` controls the host directory visible to guest file syscalls. If it
+is omitted, the CLI uses the directory containing the guest program.
+
 ## Supported ELF Inputs
 
 The loader accepts ELF64 little-endian RISC-V executable files with statically
-resolved `PT_LOAD` segments. Loadable segments must have valid file ranges,
-power-of-two `p_align` values, ELF address/offset alignment congruence, readable
-permissions, and non-overlapping guest memory ranges. The entry point must be
-inside an executable `PT_LOAD` segment.
+resolved `PT_LOAD` segments. It validates segment ranges, alignment,
+permissions, overlap, and entry-point placement before execution.
 
-Dynamic linking and runtime relocation processing are not supported. Inputs with
-`PT_INTERP`, `PT_DYNAMIC`, `SHT_DYNAMIC`, `SHT_REL`, or `SHT_RELA` metadata are
-rejected during loading.
+Static Linux and freestanding executables are the intended input shape. Dynamic
+ELF metadata such as `PT_INTERP`, `PT_DYNAMIC`, `SHT_DYNAMIC`, `SHT_REL`, and
+`SHT_RELA` is rejected during loading.
 
 ## Current Linux User-Mode Support
 
 The simulator implements a deterministic single-process subset of the Linux
-RISC-V syscall ABI. The current subset is sufficient for small statically linked
-musl programs, including `printf`, argument passing, basic file I/O, directory
-listing, cwd-aware path resolution, file mutation through a host-root sandbox,
-filesystem status queries, time queries, anonymous memory mappings, and common
-libc process setup and event-polling probes.
+RISC-V syscall ABI for static libc programs. File syscalls are implemented
+through Truffle file APIs and sandboxed under `--host-root`.
 
 Supported syscall families currently include:
 
@@ -89,38 +129,26 @@ Supported syscall families currently include:
 - `getrandom`, which returns deterministic pseudo-random bytes for reproducible
   runs
 
-File syscalls are sandboxed under `--host-root`, which defaults to the current
-working directory. Host file access, directory descriptors, and directory
-listing, working-directory changes, and mutation are implemented through
-Truffle file APIs.
-Unsupported `ecall` failures include the syscall number, guest PC, and argument
-registers.
+## Build The Freestanding C Examples
 
-## Build The Freestanding C Example
-
-Gradle downloads the configured Zig toolchain and uses `zig cc` to build the
-RISC-V ELF:
+Gradle uses the managed Zig toolchain to build the freestanding RISC-V examples:
 
 ```text
 ./gradlew buildHelloWorldExample
 ./gradlew runHelloWorldExample
+./gradlew testHotLoopExample
 ```
 
-The generated ELF is written to:
+Generated ELFs:
 
 ```text
 build/examples/hello/hello.elf
+build/examples/hello/hot-loop.elf
 ```
 
-The example source and linker script live under `examples/hello`.
+The source files and linker script are under `examples/hello`.
 
-The example task uses the same freestanding build flags as the manual workflow:
-
-```text
-zig cc --target=riscv64-freestanding -Xclang -target-feature -Xclang +m -Xclang -target-feature -Xclang +a -Xclang -target-feature -Xclang +c -mabi=lp64 -mcmodel=medany -nostdlib -ffreestanding -fno-sanitize=undefined -fno-builtin -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,-T,examples/hello/linker.ld -Wl,--build-id=none -o build/examples/hello/hello.elf examples/hello/HelloWorld.c
-```
-
-The expected simulator output is:
+Expected `HelloWorld.c` simulator output:
 
 ```text
 Hello World!
@@ -128,11 +156,19 @@ Hello World!
 
 ## Build Static Linux C Examples
 
-The `examples/linux-static` directory contains statically linked Linux musl
-smoke programs. They are built with the Gradle-managed Zig toolchain.
+The `examples/linux-static` directory contains static `riscv64-linux-musl`
+acceptance programs. They are built with Gradle-managed Zig and executed through
+the GraalRISCV CLI.
+
+Run the static musl `printf` example:
 
 ```text
-./gradlew buildLinuxStaticPrintfExample
+./gradlew runLinuxStaticPrintfExample
+```
+
+Run the static Linux smoke checks:
+
+```text
 ./gradlew testLinuxStaticPrintfExample
 ./gradlew testLinuxStaticArgvExample
 ./gradlew testLinuxStaticFileIoExample
@@ -145,23 +181,28 @@ smoke programs. They are built with the Gradle-managed Zig toolchain.
 ./gradlew testLinuxStaticEventPollingExample
 ```
 
-Run every available C smoke check:
+Run every built-in C example check:
 
 ```text
 ./gradlew checkHelloWorldExample
 ```
 
-## CI And Package Smoke Checks
+Generated static Linux ELFs are written under:
 
-Run the no-toolchain package smoke tests:
+```text
+build/examples/linux-static
+```
+
+## Package And CI Smoke Checks
+
+Run package smoke tests that do not require Zig:
 
 ```text
 ./gradlew packageSmokeTest
 ```
 
 This generates a tiny RISC-V ELF fixture under `build/fixtures/smoke`, then runs
-it through both the `installDist` launch script and the packaged Shadow JAR. It
-does not require Zig or any host RISC-V compiler.
+it through both the `installDist` launcher and the packaged Shadow JAR.
 
 Run the local CI verification task:
 
@@ -170,23 +211,27 @@ Run the local CI verification task:
 ```
 
 This compiles main and test sources, runs the unit tests, builds distribution
-artifacts, builds the Shadow JAR, and runs the no-toolchain package smoke checks.
+artifacts, builds the Shadow JAR, and runs no-toolchain package smoke checks.
 
-## Native Image
+## Native Image Packaging
 
-The build includes opt-in native-image packaging tasks:
+The build includes opt-in native-image packaging tasks for environments with a
+GraalVM Native Image toolchain:
 
 ```text
 ./gradlew nativeCompile
 ./gradlew nativeImageSmokeTest
 ```
 
-These tasks require a GraalVM Native Image toolchain.
+JVM mode is the primary path for current performance work.
 
-## Performance Status
+## Performance Work
 
-Performance work is ongoing. Recent profiling removed a large boxed-PC
-allocation hotspot in the decoded block cache and removed a regressive block
-inline-cache dispatch path. The remaining bottlenecks are still in the guest
-instruction dispatch path, especially `InstructionNode.execute`,
-`BlockNode.execute`, and block-cache lookup.
+CoreMark and the freestanding hot-loop example are useful probes for dispatch
+and block-cache performance. The CLI includes `--debug-trace-compilation` for
+Truffle compilation diagnostics, and the Gradle task below runs the hot-loop
+example with those diagnostics enabled:
+
+```text
+./gradlew runHotLoopCompilationTrace
+```
