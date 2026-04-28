@@ -30,256 +30,256 @@ import java.util.Set;
 @NotNullByDefault
 public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getcwd`.
-    private static final long SYS_GETCWD = 17;
+    private static final int SYS_GETCWD = 17;
 
     /// The Linux RISC-V syscall number for `eventfd2`.
-    private static final long SYS_EVENTFD2 = 19;
+    private static final int SYS_EVENTFD2 = 19;
 
     /// The Linux RISC-V syscall number for `epoll_create1`.
-    private static final long SYS_EPOLL_CREATE1 = 20;
+    private static final int SYS_EPOLL_CREATE1 = 20;
 
     /// The Linux RISC-V syscall number for `epoll_ctl`.
-    private static final long SYS_EPOLL_CTL = 21;
+    private static final int SYS_EPOLL_CTL = 21;
 
     /// The Linux RISC-V syscall number for `epoll_pwait`.
-    private static final long SYS_EPOLL_PWAIT = 22;
+    private static final int SYS_EPOLL_PWAIT = 22;
 
     /// The Linux RISC-V syscall number for `dup`.
-    private static final long SYS_DUP = 23;
+    private static final int SYS_DUP = 23;
 
     /// The Linux RISC-V syscall number for `dup3`.
-    private static final long SYS_DUP3 = 24;
+    private static final int SYS_DUP3 = 24;
 
     /// The Linux RISC-V syscall number for `fcntl`.
-    private static final long SYS_FCNTL = 25;
+    private static final int SYS_FCNTL = 25;
 
     /// The Linux RISC-V syscall number for `ioctl`.
-    private static final long SYS_IOCTL = 29;
+    private static final int SYS_IOCTL = 29;
 
     /// The Linux RISC-V syscall number for `mkdirat`.
-    private static final long SYS_MKDIRAT = 34;
+    private static final int SYS_MKDIRAT = 34;
 
     /// The Linux RISC-V syscall number for `unlinkat`.
-    private static final long SYS_UNLINKAT = 35;
+    private static final int SYS_UNLINKAT = 35;
 
     /// The Linux RISC-V syscall number for `renameat`.
-    private static final long SYS_RENAMEAT = 38;
+    private static final int SYS_RENAMEAT = 38;
 
     /// The Linux RISC-V syscall number for `statfs`.
-    private static final long SYS_STATFS = 43;
+    private static final int SYS_STATFS = 43;
 
     /// The Linux RISC-V syscall number for `fstatfs`.
-    private static final long SYS_FSTATFS = 44;
+    private static final int SYS_FSTATFS = 44;
 
     /// The Linux RISC-V syscall number for `truncate`.
-    private static final long SYS_TRUNCATE = 45;
+    private static final int SYS_TRUNCATE = 45;
 
     /// The Linux RISC-V syscall number for `ftruncate`.
-    private static final long SYS_FTRUNCATE = 46;
+    private static final int SYS_FTRUNCATE = 46;
 
     /// The Linux RISC-V syscall number for `faccessat`.
-    private static final long SYS_FACCESSAT = 48;
+    private static final int SYS_FACCESSAT = 48;
 
     /// The Linux RISC-V syscall number for `chdir`.
-    private static final long SYS_CHDIR = 49;
+    private static final int SYS_CHDIR = 49;
 
     /// The Linux RISC-V syscall number for `fchdir`.
-    private static final long SYS_FCHDIR = 50;
+    private static final int SYS_FCHDIR = 50;
 
     /// The Linux RISC-V syscall number for `openat`.
-    private static final long SYS_OPENAT = 56;
+    private static final int SYS_OPENAT = 56;
 
     /// The Linux RISC-V syscall number for `close`.
-    private static final long SYS_CLOSE = 57;
+    private static final int SYS_CLOSE = 57;
 
     /// The Linux RISC-V syscall number for `pipe2`.
-    private static final long SYS_PIPE2 = 59;
+    private static final int SYS_PIPE2 = 59;
 
     /// The Linux RISC-V syscall number for `getdents64`.
-    private static final long SYS_GETDENTS64 = 61;
+    private static final int SYS_GETDENTS64 = 61;
 
     /// The Linux RISC-V syscall number for `lseek`.
-    private static final long SYS_LSEEK = 62;
+    private static final int SYS_LSEEK = 62;
 
     /// The Linux RISC-V syscall number for `read`.
-    private static final long SYS_READ = 63;
+    private static final int SYS_READ = 63;
 
     /// The Linux RISC-V syscall number for `write`.
-    private static final long SYS_WRITE = 64;
+    private static final int SYS_WRITE = 64;
 
     /// The Linux RISC-V syscall number for `readv`.
-    private static final long SYS_READV = 65;
+    private static final int SYS_READV = 65;
 
     /// The Linux RISC-V syscall number for `writev`.
-    private static final long SYS_WRITEV = 66;
+    private static final int SYS_WRITEV = 66;
 
     /// The Linux RISC-V syscall number for `pread64`.
-    private static final long SYS_PREAD64 = 67;
+    private static final int SYS_PREAD64 = 67;
 
     /// The Linux RISC-V syscall number for `pwrite64`.
-    private static final long SYS_PWRITE64 = 68;
+    private static final int SYS_PWRITE64 = 68;
 
     /// The Linux RISC-V syscall number for `readlinkat`.
-    private static final long SYS_READLINKAT = 78;
+    private static final int SYS_READLINKAT = 78;
 
     /// The Linux RISC-V syscall number for `newfstatat`.
-    private static final long SYS_NEWFSTATAT = 79;
+    private static final int SYS_NEWFSTATAT = 79;
 
     /// The Linux RISC-V syscall number for `fstat`.
-    private static final long SYS_FSTAT = 80;
+    private static final int SYS_FSTAT = 80;
 
     /// The Linux RISC-V syscall number for `sync`.
-    private static final long SYS_SYNC = 81;
+    private static final int SYS_SYNC = 81;
 
     /// The Linux RISC-V syscall number for `fsync`.
-    private static final long SYS_FSYNC = 82;
+    private static final int SYS_FSYNC = 82;
 
     /// The Linux RISC-V syscall number for `fdatasync`.
-    private static final long SYS_FDATASYNC = 83;
+    private static final int SYS_FDATASYNC = 83;
 
     /// The Linux RISC-V syscall number for `exit`.
-    private static final long SYS_EXIT = 93;
+    private static final int SYS_EXIT = 93;
 
     /// The Linux RISC-V syscall number for `exit_group`.
-    private static final long SYS_EXIT_GROUP = 94;
+    private static final int SYS_EXIT_GROUP = 94;
 
     /// The Linux RISC-V syscall number for `set_tid_address`.
-    private static final long SYS_SET_TID_ADDRESS = 96;
+    private static final int SYS_SET_TID_ADDRESS = 96;
 
     /// The Linux RISC-V syscall number for `futex`.
-    private static final long SYS_FUTEX = 98;
+    private static final int SYS_FUTEX = 98;
 
     /// The Linux RISC-V syscall number for `set_robust_list`.
-    private static final long SYS_SET_ROBUST_LIST = 99;
+    private static final int SYS_SET_ROBUST_LIST = 99;
 
     /// The Linux RISC-V syscall number for `get_robust_list`.
-    private static final long SYS_GET_ROBUST_LIST = 100;
+    private static final int SYS_GET_ROBUST_LIST = 100;
 
     /// The Linux RISC-V syscall number for `nanosleep`.
-    private static final long SYS_NANOSLEEP = 101;
+    private static final int SYS_NANOSLEEP = 101;
 
     /// The Linux RISC-V syscall number for `clock_gettime`.
-    private static final long SYS_CLOCK_GETTIME = 113;
+    private static final int SYS_CLOCK_GETTIME = 113;
 
     /// The Linux RISC-V syscall number for `clock_getres`.
-    private static final long SYS_CLOCK_GETRES = 114;
+    private static final int SYS_CLOCK_GETRES = 114;
 
     /// The Linux RISC-V syscall number for `clock_nanosleep`.
-    private static final long SYS_CLOCK_NANOSLEEP = 115;
+    private static final int SYS_CLOCK_NANOSLEEP = 115;
 
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
-    private static final long SYS_SCHED_GETAFFINITY = 123;
+    private static final int SYS_SCHED_GETAFFINITY = 123;
 
     /// The Linux RISC-V syscall number for `sched_yield`.
-    private static final long SYS_SCHED_YIELD = 124;
+    private static final int SYS_SCHED_YIELD = 124;
 
     /// The Linux RISC-V syscall number for `kill`.
-    private static final long SYS_KILL = 129;
+    private static final int SYS_KILL = 129;
 
     /// The Linux RISC-V syscall number for `tkill`.
-    private static final long SYS_TKILL = 130;
+    private static final int SYS_TKILL = 130;
 
     /// The Linux RISC-V syscall number for `tgkill`.
-    private static final long SYS_TGKILL = 131;
+    private static final int SYS_TGKILL = 131;
 
     /// The Linux RISC-V syscall number for `sigaltstack`.
-    private static final long SYS_SIGALTSTACK = 132;
+    private static final int SYS_SIGALTSTACK = 132;
 
     /// The Linux RISC-V syscall number for `rt_sigaction`.
-    private static final long SYS_RT_SIGACTION = 134;
+    private static final int SYS_RT_SIGACTION = 134;
 
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
-    private static final long SYS_RT_SIGPROCMASK = 135;
+    private static final int SYS_RT_SIGPROCMASK = 135;
 
     /// The Linux RISC-V syscall number for `times`.
-    private static final long SYS_TIMES = 153;
+    private static final int SYS_TIMES = 153;
 
     /// The Linux RISC-V syscall number for `getpgid`.
-    private static final long SYS_GETPGID = 155;
+    private static final int SYS_GETPGID = 155;
 
     /// The Linux RISC-V syscall number for `setsid`.
-    private static final long SYS_SETSID = 157;
+    private static final int SYS_SETSID = 157;
 
     /// The Linux RISC-V syscall number for `uname`.
-    private static final long SYS_UNAME = 160;
+    private static final int SYS_UNAME = 160;
 
     /// The Linux RISC-V syscall number for `getrusage`.
-    private static final long SYS_GETRUSAGE = 165;
+    private static final int SYS_GETRUSAGE = 165;
 
     /// The Linux RISC-V syscall number for `prctl`.
-    private static final long SYS_PRCTL = 167;
+    private static final int SYS_PRCTL = 167;
 
     /// The Linux RISC-V syscall number for `getcpu`.
-    private static final long SYS_GETCPU = 168;
+    private static final int SYS_GETCPU = 168;
 
     /// The Linux RISC-V syscall number for `gettimeofday`.
-    private static final long SYS_GETTIMEOFDAY = 169;
+    private static final int SYS_GETTIMEOFDAY = 169;
 
     /// The Linux RISC-V syscall number for `getpid`.
-    private static final long SYS_GETPID = 172;
+    private static final int SYS_GETPID = 172;
 
     /// The Linux RISC-V syscall number for `getppid`.
-    private static final long SYS_GETPPID = 173;
+    private static final int SYS_GETPPID = 173;
 
     /// The Linux RISC-V syscall number for `getuid`.
-    private static final long SYS_GETUID = 174;
+    private static final int SYS_GETUID = 174;
 
     /// The Linux RISC-V syscall number for `geteuid`.
-    private static final long SYS_GETEUID = 175;
+    private static final int SYS_GETEUID = 175;
 
     /// The Linux RISC-V syscall number for `getgid`.
-    private static final long SYS_GETGID = 176;
+    private static final int SYS_GETGID = 176;
 
     /// The Linux RISC-V syscall number for `getegid`.
-    private static final long SYS_GETEGID = 177;
+    private static final int SYS_GETEGID = 177;
 
     /// The Linux RISC-V syscall number for `gettid`.
-    private static final long SYS_GETTID = 178;
+    private static final int SYS_GETTID = 178;
 
     /// The Linux RISC-V syscall number for `brk`.
-    private static final long SYS_BRK = 214;
+    private static final int SYS_BRK = 214;
 
     /// The Linux RISC-V syscall number for `munmap`.
-    private static final long SYS_MUNMAP = 215;
+    private static final int SYS_MUNMAP = 215;
 
     /// The Linux RISC-V syscall number for `clone`.
-    private static final long SYS_CLONE = 220;
+    private static final int SYS_CLONE = 220;
 
     /// The Linux RISC-V syscall number for `mmap`.
-    private static final long SYS_MMAP = 222;
+    private static final int SYS_MMAP = 222;
 
     /// The Linux RISC-V syscall number for `mprotect`.
-    private static final long SYS_MPROTECT = 226;
+    private static final int SYS_MPROTECT = 226;
 
     /// The Linux RISC-V syscall number for `madvise`.
-    private static final long SYS_MADVISE = 233;
+    private static final int SYS_MADVISE = 233;
 
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
-    private static final long SYS_RISCV_HWPROBE = 258;
+    private static final int SYS_RISCV_HWPROBE = 258;
 
     /// The Linux RISC-V syscall number for `prlimit64`.
-    private static final long SYS_PRLIMIT64 = 261;
+    private static final int SYS_PRLIMIT64 = 261;
 
     /// The Linux RISC-V syscall number for `syncfs`.
-    private static final long SYS_SYNCFS = 267;
+    private static final int SYS_SYNCFS = 267;
 
     /// The Linux RISC-V syscall number for `renameat2`.
-    private static final long SYS_RENAMEAT2 = 276;
+    private static final int SYS_RENAMEAT2 = 276;
 
     /// The Linux RISC-V syscall number for `getrandom`.
-    private static final long SYS_GETRANDOM = 278;
+    private static final int SYS_GETRANDOM = 278;
 
     /// The Linux RISC-V syscall number for `membarrier`.
-    private static final long SYS_MEMBARRIER = 283;
+    private static final int SYS_MEMBARRIER = 283;
 
     /// The Linux RISC-V syscall number for `statx`.
-    private static final long SYS_STATX = 291;
+    private static final int SYS_STATX = 291;
 
     /// The Linux RISC-V syscall number for `rseq`.
-    private static final long SYS_RSEQ = 293;
+    private static final int SYS_RSEQ = 293;
 
     /// The Linux RISC-V syscall number for `faccessat2`.
-    private static final long SYS_FACCESSAT2 = 439;
+    private static final int SYS_FACCESSAT2 = 439;
 
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
@@ -1484,334 +1484,140 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
     public void handle(MachineState state, long pc) {
         long callNumber = state.register(17);
-        if (callNumber == SYS_GETCWD) {
-            state.setRegister(10, getcwd(state.register(10), state.register(11)));
-            return;
+        if (callNumber != (int) callNumber) {
+            throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
         }
-        if (callNumber == SYS_EVENTFD2) {
-            state.setRegister(10, eventfd2(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_EPOLL_CREATE1) {
-            state.setRegister(10, epollCreate1(state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_EPOLL_CTL) {
-            state.setRegister(10, epollCtl(
+
+        switch ((int) callNumber) {
+            case SYS_GETCWD -> state.setRegister(10, getcwd(state.register(10), state.register(11)));
+            case SYS_EVENTFD2 -> state.setRegister(10, eventfd2(state.register(10), state.register(11)));
+            case SYS_EPOLL_CREATE1 -> state.setRegister(10, epollCreate1(state.register(10)));
+            case SYS_EPOLL_CTL -> state.setRegister(10, epollCtl(
                     (int) state.register(10),
                     (int) state.register(11),
                     (int) state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_EPOLL_PWAIT) {
-            state.setRegister(10, epollPwait(
+            case SYS_EPOLL_PWAIT -> state.setRegister(10, epollPwait(
                     (int) state.register(10),
                     state.register(11),
                     (int) state.register(12),
                     (int) state.register(13),
                     state.register(14),
                     state.register(15)));
-            return;
-        }
-        if (callNumber == SYS_DUP) {
-            state.setRegister(10, dup((int) state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_DUP3) {
-            state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_FCNTL) {
-            state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_IOCTL) {
-            state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_MKDIRAT) {
-            state.setRegister(10, mkdirat(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_UNLINKAT) {
-            state.setRegister(10, unlinkat(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_RENAMEAT) {
-            state.setRegister(10, renameat(
+            case SYS_DUP -> state.setRegister(10, dup((int) state.register(10)));
+            case SYS_DUP3 -> state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
+            case SYS_FCNTL -> state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_IOCTL -> state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_MKDIRAT -> state.setRegister(10, mkdirat(state.register(10), state.register(11), state.register(12)));
+            case SYS_UNLINKAT -> state.setRegister(10, unlinkat(state.register(10), state.register(11), state.register(12)));
+            case SYS_RENAMEAT -> state.setRegister(10, renameat(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_STATFS) {
-            state.setRegister(10, statfs(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_FSTATFS) {
-            state.setRegister(10, fstatfs((int) state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_TRUNCATE) {
-            state.setRegister(10, truncate(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_FTRUNCATE) {
-            state.setRegister(10, ftruncate((int) state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_FACCESSAT) {
-            state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
-            return;
-        }
-        if (callNumber == SYS_CHDIR) {
-            state.setRegister(10, chdir(state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_FCHDIR) {
-            state.setRegister(10, fchdir((int) state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_OPENAT) {
-            state.setRegister(10, openat(
+            case SYS_STATFS -> state.setRegister(10, statfs(state.register(10), state.register(11)));
+            case SYS_FSTATFS -> state.setRegister(10, fstatfs((int) state.register(10), state.register(11)));
+            case SYS_TRUNCATE -> state.setRegister(10, truncate(state.register(10), state.register(11)));
+            case SYS_FTRUNCATE -> state.setRegister(10, ftruncate((int) state.register(10), state.register(11)));
+            case SYS_FACCESSAT -> state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
+            case SYS_CHDIR -> state.setRegister(10, chdir(state.register(10)));
+            case SYS_FCHDIR -> state.setRegister(10, fchdir((int) state.register(10)));
+            case SYS_OPENAT -> state.setRegister(10, openat(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_CLOSE) {
-            state.setRegister(10, close((int) state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_PIPE2) {
-            state.setRegister(10, pipe2(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_GETDENTS64) {
-            state.setRegister(10, getdents64((int) state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_LSEEK) {
-            state.setRegister(10, lseek((int) state.register(10), state.register(11), (int) state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_READ) {
-            state.setRegister(10, read((int) state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_WRITE) {
-            state.setRegister(10, write((int) state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_READV) {
-            state.setRegister(10, readv((int) state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_WRITEV) {
-            state.setRegister(10, writev((int) state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_PREAD64) {
-            state.setRegister(10, pread64(
+            case SYS_CLOSE -> state.setRegister(10, close((int) state.register(10)));
+            case SYS_PIPE2 -> state.setRegister(10, pipe2(state.register(10), state.register(11)));
+            case SYS_GETDENTS64 -> state.setRegister(10, getdents64((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_LSEEK -> state.setRegister(10, lseek((int) state.register(10), state.register(11), (int) state.register(12)));
+            case SYS_READ -> state.setRegister(10, read((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_WRITE -> state.setRegister(10, write((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_READV -> state.setRegister(10, readv((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_WRITEV -> state.setRegister(10, writev((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_PREAD64 -> state.setRegister(10, pread64(
                     (int) state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_PWRITE64) {
-            state.setRegister(10, pwrite64(
+            case SYS_PWRITE64 -> state.setRegister(10, pwrite64(
                     (int) state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_READLINKAT) {
-            state.setRegister(10, readlinkat(
+            case SYS_READLINKAT -> state.setRegister(10, readlinkat(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_NEWFSTATAT) {
-            state.setRegister(10, newfstatat(
+            case SYS_NEWFSTATAT -> state.setRegister(10, newfstatat(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_FSTAT) {
-            state.setRegister(10, fstat((int) state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_SYNC) {
-            state.setRegister(10, sync());
-            return;
-        }
-        if (callNumber == SYS_FSYNC) {
-            state.setRegister(10, fsync((int) state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_FDATASYNC) {
-            state.setRegister(10, fdatasync((int) state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_EXIT_GROUP) {
-            requestProcessExit(state.register(10));
-            throw new ProgramExitException(state.register(10));
-        }
-        if (callNumber == SYS_EXIT) {
-            exitThread(state, state.register(10));
-            return;
-        }
-        if (callNumber == SYS_SET_TID_ADDRESS) {
-            state.setRegister(10, setTidAddress(state, state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_FUTEX) {
-            state.setRegister(10, futex(
+            case SYS_FSTAT -> state.setRegister(10, fstat((int) state.register(10), state.register(11)));
+            case SYS_SYNC -> state.setRegister(10, sync());
+            case SYS_FSYNC -> state.setRegister(10, fsync((int) state.register(10)));
+            case SYS_FDATASYNC -> state.setRegister(10, fdatasync((int) state.register(10)));
+            case SYS_EXIT_GROUP -> {
+                requestProcessExit(state.register(10));
+                throw new ProgramExitException(state.register(10));
+            }
+            case SYS_EXIT -> exitThread(state, state.register(10));
+            case SYS_SET_TID_ADDRESS -> state.setRegister(10, setTidAddress(state, state.register(10)));
+            case SYS_FUTEX -> state.setRegister(10, futex(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13),
                     state.register(14),
                     state.register(15)));
-            return;
-        }
-        if (callNumber == SYS_SET_ROBUST_LIST) {
-            state.setRegister(10, setRobustList(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_GET_ROBUST_LIST) {
-            state.setRegister(10, getRobustList(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_NANOSLEEP) {
-            state.setRegister(10, nanosleep(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_CLOCK_GETTIME) {
-            state.setRegister(10, clockGettime(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_CLOCK_GETRES) {
-            state.setRegister(10, clockGetres(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_CLOCK_NANOSLEEP) {
-            state.setRegister(10, clockNanosleep(
+            case SYS_SET_ROBUST_LIST -> state.setRegister(10, setRobustList(state.register(10), state.register(11)));
+            case SYS_GET_ROBUST_LIST -> state.setRegister(10, getRobustList(state.register(10), state.register(11), state.register(12)));
+            case SYS_NANOSLEEP -> state.setRegister(10, nanosleep(state.register(10), state.register(11)));
+            case SYS_CLOCK_GETTIME -> state.setRegister(10, clockGettime(state.register(10), state.register(11)));
+            case SYS_CLOCK_GETRES -> state.setRegister(10, clockGetres(state.register(10), state.register(11)));
+            case SYS_CLOCK_NANOSLEEP -> state.setRegister(10, clockNanosleep(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_SCHED_GETAFFINITY) {
-            state.setRegister(10, schedGetaffinity(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_SCHED_YIELD) {
-            state.setRegister(10, schedYield());
-            return;
-        }
-        if (callNumber == SYS_KILL) {
-            state.setRegister(10, kill(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_TKILL) {
-            state.setRegister(10, tkill(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_TGKILL) {
-            state.setRegister(10, tgkill(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_SIGALTSTACK) {
-            state.setRegister(10, sigaltstack(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_RT_SIGACTION) {
-            state.setRegister(10, rtSigaction(
+            case SYS_SCHED_GETAFFINITY -> state.setRegister(10, schedGetaffinity(state.register(10), state.register(11), state.register(12)));
+            case SYS_SCHED_YIELD -> state.setRegister(10, schedYield());
+            case SYS_KILL -> state.setRegister(10, kill(state.register(10), state.register(11)));
+            case SYS_TKILL -> state.setRegister(10, tkill(state.register(10), state.register(11)));
+            case SYS_TGKILL -> state.setRegister(10, tgkill(state.register(10), state.register(11), state.register(12)));
+            case SYS_SIGALTSTACK -> state.setRegister(10, sigaltstack(state.register(10), state.register(11)));
+            case SYS_RT_SIGACTION -> state.setRegister(10, rtSigaction(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_RT_SIGPROCMASK) {
-            state.setRegister(10, rtSigprocmask(
+            case SYS_RT_SIGPROCMASK -> state.setRegister(10, rtSigprocmask(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_TIMES) {
-            state.setRegister(10, times(state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_GETPGID) {
-            state.setRegister(10, getpgid(state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_SETSID) {
-            state.setRegister(10, setsid());
-            return;
-        }
-        if (callNumber == SYS_UNAME) {
-            state.setRegister(10, uname(state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_GETRUSAGE) {
-            state.setRegister(10, getrusage(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_PRCTL) {
-            state.setRegister(10, prctl(
+            case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
+            case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
+            case SYS_SETSID -> state.setRegister(10, setsid());
+            case SYS_UNAME -> state.setRegister(10, uname(state.register(10)));
+            case SYS_GETRUSAGE -> state.setRegister(10, getrusage(state.register(10), state.register(11)));
+            case SYS_PRCTL -> state.setRegister(10, prctl(
                     state,
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13),
                     state.register(14)));
-            return;
-        }
-        if (callNumber == SYS_GETCPU) {
-            state.setRegister(10, getcpu(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_GETTIMEOFDAY) {
-            state.setRegister(10, gettimeofday(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_GETPID) {
-            state.setRegister(10, GUEST_PROCESS_ID);
-            return;
-        }
-        if (callNumber == SYS_GETTID) {
-            state.setRegister(10, state.threadId());
-            return;
-        }
-        if (callNumber == SYS_GETPPID) {
-            state.setRegister(10, GUEST_PARENT_PROCESS_ID);
-            return;
-        }
-        if (callNumber == SYS_GETUID || callNumber == SYS_GETEUID) {
-            state.setRegister(10, GUEST_USER_ID);
-            return;
-        }
-        if (callNumber == SYS_GETGID || callNumber == SYS_GETEGID) {
-            state.setRegister(10, GUEST_GROUP_ID);
-            return;
-        }
-        if (callNumber == SYS_CLONE) {
-            state.setRegister(10, clone(
+            case SYS_GETCPU -> state.setRegister(10, getcpu(state.register(10), state.register(11)));
+            case SYS_GETTIMEOFDAY -> state.setRegister(10, gettimeofday(state.register(10), state.register(11)));
+            case SYS_GETPID -> state.setRegister(10, GUEST_PROCESS_ID);
+            case SYS_GETTID -> state.setRegister(10, state.threadId());
+            case SYS_GETPPID -> state.setRegister(10, GUEST_PARENT_PROCESS_ID);
+            case SYS_GETUID, SYS_GETEUID -> state.setRegister(10, GUEST_USER_ID);
+            case SYS_GETGID, SYS_GETEGID -> state.setRegister(10, GUEST_GROUP_ID);
+            case SYS_CLONE -> state.setRegister(10, clone(
                     state,
                     pc,
                     state.register(10),
@@ -1819,94 +1625,51 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
-            return;
-        }
-        if (callNumber == SYS_BRK) {
-            state.setRegister(10, brk(state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_MUNMAP) {
-            state.setRegister(10, munmap(state.register(10), state.register(11)));
-            return;
-        }
-        if (callNumber == SYS_MMAP) {
-            state.setRegister(10, mmap(
+            case SYS_BRK -> state.setRegister(10, brk(state.register(10)));
+            case SYS_MUNMAP -> state.setRegister(10, munmap(state.register(10), state.register(11)));
+            case SYS_MMAP -> state.setRegister(10, mmap(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13),
                     state.register(14),
                     state.register(15)));
-            return;
-        }
-        if (callNumber == SYS_MPROTECT) {
-            state.setRegister(10, mprotect(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_MADVISE) {
-            state.setRegister(10, madvise(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_RISCV_HWPROBE) {
-            state.setRegister(10, riscvHwprobe(
+            case SYS_MPROTECT -> state.setRegister(10, mprotect(state.register(10), state.register(11), state.register(12)));
+            case SYS_MADVISE -> state.setRegister(10, madvise(state.register(10), state.register(11), state.register(12)));
+            case SYS_RISCV_HWPROBE -> state.setRegister(10, riscvHwprobe(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13),
                     state.register(14)));
-            return;
-        }
-        if (callNumber == SYS_PRLIMIT64) {
-            state.setRegister(10, prlimit64(
+            case SYS_PRLIMIT64 -> state.setRegister(10, prlimit64(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
-        }
-        if (callNumber == SYS_SYNCFS) {
-            state.setRegister(10, syncfs((int) state.register(10)));
-            return;
-        }
-        if (callNumber == SYS_RENAMEAT2) {
-            state.setRegister(10, renameat2(
+            case SYS_SYNCFS -> state.setRegister(10, syncfs((int) state.register(10)));
+            case SYS_RENAMEAT2 -> state.setRegister(10, renameat2(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13),
                     state.register(14)));
-            return;
-        }
-        if (callNumber == SYS_GETRANDOM) {
-            state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_MEMBARRIER) {
-            state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
-            return;
-        }
-        if (callNumber == SYS_STATX) {
-            state.setRegister(10, statx(
+            case SYS_GETRANDOM -> state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
+            case SYS_MEMBARRIER -> state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
+            case SYS_STATX -> state.setRegister(10, statx(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13),
                     state.register(14)));
-            return;
-        }
-        if (callNumber == SYS_RSEQ) {
-            state.setRegister(10, rseq());
-            return;
-        }
-        if (callNumber == SYS_FACCESSAT2) {
-            state.setRegister(10, faccessat(
+            case SYS_RSEQ -> state.setRegister(10, rseq());
+            case SYS_FACCESSAT2 -> state.setRegister(10, faccessat(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            return;
+            default -> throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
         }
-        throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
     }
 
     /// Returns true when a syscall may need a full architectural register snapshot.
