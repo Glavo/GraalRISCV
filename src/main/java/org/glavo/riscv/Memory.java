@@ -39,6 +39,9 @@ public final class Memory implements AutoCloseable {
     /// The sparse memory regions created by Linux user-mode memory syscalls.
     private final ArrayList<MappedRegion> mappedRegions = new ArrayList<>();
 
+    /// The most recently accessed sparse memory region.
+    private @Nullable MappedRegion cachedMappedRegion;
+
     /// Creates a memory window at the supplied guest base address.
     public Memory(long baseAddress, long size) {
         if (baseAddress < 0) {
@@ -103,8 +106,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(ValueLayout.JAVA_BYTE, offset);
         }
 
-        MemoryAccess access = access(address, Byte.BYTES);
-        return access.segment().get(ValueLayout.JAVA_BYTE, access.offset());
+        MappedRegion region = mappedRegion(address, Byte.BYTES);
+        return region.segment().get(ValueLayout.JAVA_BYTE, address - region.address());
     }
 
     /// Reads an unsigned byte from guest memory.
@@ -119,8 +122,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(SHORT_LE, offset);
         }
 
-        MemoryAccess access = access(address, Short.BYTES);
-        return access.segment().get(SHORT_LE, access.offset());
+        MappedRegion region = mappedRegion(address, Short.BYTES);
+        return region.segment().get(SHORT_LE, address - region.address());
     }
 
     /// Reads an unsigned little-endian 16-bit value from an aligned guest address.
@@ -135,8 +138,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(INT_LE, offset);
         }
 
-        MemoryAccess access = access(address, Integer.BYTES);
-        return access.segment().get(INT_LE, access.offset());
+        MappedRegion region = mappedRegion(address, Integer.BYTES);
+        return region.segment().get(INT_LE, address - region.address());
     }
 
     /// Reads an unsigned little-endian 32-bit value from an aligned guest address.
@@ -184,9 +187,9 @@ public final class Memory implements AutoCloseable {
                     | (segment.get(ValueLayout.JAVA_BYTE, fastOffset + 3) << 24);
         }
 
-        MemoryAccess access = access(address, Integer.BYTES);
-        MemorySegment accessSegment = access.segment();
-        long offset = access.offset();
+        MappedRegion region = mappedRegion(address, Integer.BYTES);
+        MemorySegment accessSegment = region.segment();
+        long offset = address - region.address();
         return (accessSegment.get(ValueLayout.JAVA_BYTE, offset) & 0xff)
                 | ((accessSegment.get(ValueLayout.JAVA_BYTE, offset + 1) & 0xff) << 8)
                 | ((accessSegment.get(ValueLayout.JAVA_BYTE, offset + 2) & 0xff) << 16)
@@ -200,8 +203,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(LONG_LE, offset);
         }
 
-        MemoryAccess access = access(address, Long.BYTES);
-        return access.segment().get(LONG_LE, access.offset());
+        MappedRegion region = mappedRegion(address, Long.BYTES);
+        return region.segment().get(LONG_LE, address - region.address());
     }
 
     /// Writes a byte to guest memory.
@@ -212,8 +215,8 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MemoryAccess access = access(address, Byte.BYTES);
-        access.segment().set(ValueLayout.JAVA_BYTE, access.offset(), value);
+        MappedRegion region = mappedRegion(address, Byte.BYTES);
+        region.segment().set(ValueLayout.JAVA_BYTE, address - region.address(), value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory.
@@ -224,8 +227,8 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MemoryAccess access = access(address, Short.BYTES);
-        access.segment().set(SHORT_LE, access.offset(), value);
+        MappedRegion region = mappedRegion(address, Short.BYTES);
+        region.segment().set(SHORT_LE, address - region.address(), value);
     }
 
     /// Writes a little-endian 32-bit value to guest memory.
@@ -236,8 +239,8 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MemoryAccess access = access(address, Integer.BYTES);
-        access.segment().set(INT_LE, access.offset(), value);
+        MappedRegion region = mappedRegion(address, Integer.BYTES);
+        region.segment().set(INT_LE, address - region.address(), value);
     }
 
     /// Writes a little-endian 64-bit value to guest memory.
@@ -248,8 +251,8 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MemoryAccess access = access(address, Long.BYTES);
-        access.segment().set(LONG_LE, access.offset(), value);
+        MappedRegion region = mappedRegion(address, Long.BYTES);
+        region.segment().set(LONG_LE, address - region.address(), value);
     }
 
     /// Adds a sparse guest memory region backed by a native memory segment.
@@ -273,6 +276,7 @@ public final class Memory implements AutoCloseable {
             insertionIndex++;
         }
         mappedRegions.add(insertionIndex, region);
+        cachedMappedRegion = region;
         return true;
     }
 
@@ -286,6 +290,7 @@ public final class Memory implements AutoCloseable {
                     + Long.toUnsignedString(address, 16) + ", length=" + length);
         }
 
+        cachedMappedRegion = null;
         long endAddress = address + length;
         for (int index = 0; index < mappedRegions.size(); ) {
             MappedRegion region = mappedRegions.get(index);
@@ -343,6 +348,16 @@ public final class Memory implements AutoCloseable {
         return access;
     }
 
+    /// Returns the sparse region backing a guest range, or throws when it is absent.
+    private MappedRegion mappedRegion(long address, long length) {
+        @Nullable MappedRegion region = findMappedRegion(address, length);
+        if (region == null) {
+            throw new RiscVException("Guest memory access out of range: address=0x"
+                    + Long.toUnsignedString(address, 16) + ", length=" + length);
+        }
+        return region;
+    }
+
     /// Returns the offset inside the initial segment for a scalar access, or `-1` when it starts outside.
     private long initialScalarOffset(long address) {
         long offset = address - baseAddress;
@@ -379,10 +394,31 @@ public final class Memory implements AutoCloseable {
             return new MemoryAccess(segment, offset);
         }
 
+        @Nullable MappedRegion region = findMappedRegion(address, length);
+        if (region != null) {
+            return new MemoryAccess(region.segment(), address - region.address());
+        }
+        return null;
+    }
+
+    /// Finds the sparse region backing a guest range, or null when absent.
+    private @Nullable MappedRegion findMappedRegion(long address, long length) {
+        if (length < 0) {
+            throw new RiscVException("Negative memory access length: " + length);
+        }
+        if (!isValidRange(address, length)) {
+            return null;
+        }
+
+        @Nullable MappedRegion cached = cachedMappedRegion;
+        if (cached != null && containsRange(cached, address, length)) {
+            return cached;
+        }
+
         for (MappedRegion region : mappedRegions) {
-            if (address >= region.address() && address <= region.endAddress()
-                    && length <= region.endAddress() - address) {
-                return new MemoryAccess(region.segment(), address - region.address());
+            if (containsRange(region, address, length)) {
+                cachedMappedRegion = region;
+                return region;
             }
         }
         return null;
@@ -412,6 +448,11 @@ public final class Memory implements AutoCloseable {
     /// Returns true when two half-open address ranges overlap.
     private static boolean rangesOverlap(long firstStart, long firstEnd, long secondStart, long secondEnd) {
         return firstStart < secondEnd && secondStart < firstEnd;
+    }
+
+    /// Returns true when the sparse region fully contains the supplied guest range.
+    private static boolean containsRange(MappedRegion region, long address, long length) {
+        return address >= region.address() && address <= region.endAddress() && length <= region.endAddress() - address;
     }
 
     /// Describes a concrete host segment access for a guest memory range.

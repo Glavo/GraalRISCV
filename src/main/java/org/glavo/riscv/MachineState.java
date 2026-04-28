@@ -66,6 +66,9 @@ public final class MachineState {
     /// The optional `fromhost` symbol guest address.
     private final long fromhostAddress;
 
+    /// Whether guest memory stores can trigger simulator side effects.
+    private final boolean storeSideEffectsEnabled;
+
     /// The syscall handler for guest environment calls.
     private final GuestSyscalls syscalls;
 
@@ -119,6 +122,7 @@ public final class MachineState {
         this.traceStream = traceStream;
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
+        this.storeSideEffectsEnabled = tohostAddress != ElfImage.ABSENT_ADDRESS;
         this.syscalls = syscalls;
     }
 
@@ -281,9 +285,21 @@ public final class MachineState {
         reservationAddress = ElfImage.ABSENT_ADDRESS;
     }
 
+    /// Returns true when guest memory stores need simulator side-effect checks.
+    boolean hasStoreSideEffects() {
+        return storeSideEffectsEnabled;
+    }
+
     /// Handles simulator side effects after a guest memory store.
     public void afterStore(long address, int length) {
-        if (tohostAddress != ElfImage.ABSENT_ADDRESS && Memory.overlaps(address, length, tohostAddress, Long.BYTES)) {
+        if (storeSideEffectsEnabled) {
+            afterStoreWithSideEffects(address, length);
+        }
+    }
+
+    /// Handles simulator side effects after a store when side effects are enabled.
+    void afterStoreWithSideEffects(long address, int length) {
+        if (Memory.overlaps(address, length, tohostAddress, Long.BYTES)) {
             long value = memory.readLong(tohostAddress);
             if (value != 0) {
                 throw new ProgramExitException(value == 1 ? 0 : value >>> 1);

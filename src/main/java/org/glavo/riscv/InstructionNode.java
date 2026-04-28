@@ -246,6 +246,17 @@ public sealed abstract class InstructionNode extends Node {
         executeInstruction(state, nextAddress);
     }
 
+    /// Executes this terminator after exact instruction retirement and returns its target PC.
+    final long executeTerminatorInBlock(MachineState state) {
+        state.beforeInstruction(address, raw);
+        return executeTerminatorInstruction(state, nextAddress);
+    }
+
+    /// Executes this terminator as part of an already retired decoded basic block and returns its target PC.
+    final long executeTerminatorInRetiredBlock(MachineState state) {
+        return executeTerminatorInstruction(state, nextAddress);
+    }
+
     /// Executes this instruction as part of a decoded basic block with frame-backed integer registers.
     final void executeInBlock(VirtualFrame frame, MachineState state) {
         state.beforeInstruction(address, raw);
@@ -255,6 +266,17 @@ public sealed abstract class InstructionNode extends Node {
     /// Executes this instruction as part of an already retired decoded basic block with frame-backed integer registers.
     final void executeInRetiredBlock(VirtualFrame frame, MachineState state) {
         executeInstruction(frame, state, nextAddress);
+    }
+
+    /// Executes this frame-backed terminator after exact instruction retirement and returns its target PC.
+    final long executeTerminatorInBlock(VirtualFrame frame, MachineState state) {
+        state.beforeInstruction(address, raw);
+        return executeTerminatorInstruction(frame, state, nextAddress);
+    }
+
+    /// Executes this frame-backed terminator as part of an already retired decoded block and returns its target PC.
+    final long executeTerminatorInRetiredBlock(VirtualFrame frame, MachineState state) {
+        return executeTerminatorInstruction(frame, state, nextAddress);
     }
 
     /// Executes the operation-specific instruction body.
@@ -267,6 +289,18 @@ public sealed abstract class InstructionNode extends Node {
         RiscVFrameLayout.loadIntegerRegisters(frame, state);
     }
 
+    /// Executes a terminator body and returns the program counter it materialized.
+    protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+        executeInstruction(state, nextPc);
+        return state.pc();
+    }
+
+    /// Executes a frame-backed terminator body and returns the program counter it materialized.
+    protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+        executeInstruction(frame, state, nextPc);
+        return state.pc();
+    }
+
     /// Reads an integer register from the execution frame.
     private static long readRegister(VirtualFrame frame, int register) {
         return RiscVFrameLayout.readX(frame, register);
@@ -275,6 +309,13 @@ public sealed abstract class InstructionNode extends Node {
     /// Writes an integer register into the execution frame.
     private static void writeRegister(VirtualFrame frame, int register, long value) {
         RiscVFrameLayout.writeX(frame, register, value);
+    }
+
+    /// Handles store side effects only when the loaded image exposes side-effect addresses.
+    private static void afterStore(MachineState state, long address, int length) {
+        if (state.hasStoreSideEffects()) {
+            state.afterStoreWithSideEffects(address, length);
+        }
     }
 
     /// Returns true when the instruction body writes `pc` itself.
@@ -392,6 +433,20 @@ public sealed abstract class InstructionNode extends Node {
             writeRegister(frame, rd, nextPc);
             state.setPc(address + immediate);
         }
+
+        /// Writes the link register and returns the PC-relative jump target.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            state.setDecodedRegister(rd, nextPc);
+            return address + immediate;
+        }
+
+        /// Writes the frame link register and returns the PC-relative jump target.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, nextPc);
+            return address + immediate;
+        }
     }
 
     /// Executes `jalr`.
@@ -416,6 +471,22 @@ public sealed abstract class InstructionNode extends Node {
             writeRegister(frame, rd, nextPc);
             state.setPc(target);
         }
+
+        /// Writes the link register and returns the register-relative jump target.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            long target = (state.decodedRegister(rs1) + immediate) & ~1L;
+            state.setDecodedRegister(rd, nextPc);
+            return target;
+        }
+
+        /// Writes the frame link register and returns the register-relative jump target.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            long target = (readRegister(frame, rs1) + immediate) & ~1L;
+            writeRegister(frame, rd, nextPc);
+            return target;
+        }
     }
 
     /// Executes `beq`.
@@ -435,6 +506,18 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             state.setPc(readRegister(frame, rs1) == readRegister(frame, rs2) ? address + immediate : nextPc);
+        }
+
+        /// Returns the branch target selected by the integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            return state.decodedRegister(rs1) == state.decodedRegister(rs2) ? address + immediate : nextPc;
+        }
+
+        /// Returns the branch target selected by the frame integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            return readRegister(frame, rs1) == readRegister(frame, rs2) ? address + immediate : nextPc;
         }
     }
 
@@ -456,6 +539,18 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             state.setPc(readRegister(frame, rs1) != readRegister(frame, rs2) ? address + immediate : nextPc);
         }
+
+        /// Returns the branch target selected by the integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            return state.decodedRegister(rs1) != state.decodedRegister(rs2) ? address + immediate : nextPc;
+        }
+
+        /// Returns the branch target selected by the frame integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            return readRegister(frame, rs1) != readRegister(frame, rs2) ? address + immediate : nextPc;
+        }
     }
 
     /// Executes `blt`.
@@ -475,6 +570,18 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             state.setPc(readRegister(frame, rs1) < readRegister(frame, rs2) ? address + immediate : nextPc);
+        }
+
+        /// Returns the branch target selected by the signed integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            return state.decodedRegister(rs1) < state.decodedRegister(rs2) ? address + immediate : nextPc;
+        }
+
+        /// Returns the branch target selected by the signed frame integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            return readRegister(frame, rs1) < readRegister(frame, rs2) ? address + immediate : nextPc;
         }
     }
 
@@ -496,6 +603,18 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             state.setPc(readRegister(frame, rs1) >= readRegister(frame, rs2) ? address + immediate : nextPc);
         }
+
+        /// Returns the branch target selected by the signed integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            return state.decodedRegister(rs1) >= state.decodedRegister(rs2) ? address + immediate : nextPc;
+        }
+
+        /// Returns the branch target selected by the signed frame integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            return readRegister(frame, rs1) >= readRegister(frame, rs2) ? address + immediate : nextPc;
+        }
     }
 
     /// Executes `bltu`.
@@ -516,6 +635,22 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             state.setPc(Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) < 0 ? address + immediate : nextPc);
         }
+
+        /// Returns the branch target selected by the unsigned integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            return Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0
+                    ? address + immediate
+                    : nextPc;
+        }
+
+        /// Returns the branch target selected by the unsigned frame integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            return Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) < 0
+                    ? address + immediate
+                    : nextPc;
+        }
     }
 
     /// Executes `bgeu`.
@@ -535,6 +670,22 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             state.setPc(Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) >= 0 ? address + immediate : nextPc);
+        }
+
+        /// Returns the branch target selected by the unsigned integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(MachineState state, long nextPc) {
+            return Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) >= 0
+                    ? address + immediate
+                    : nextPc;
+        }
+
+        /// Returns the branch target selected by the unsigned frame integer comparison.
+        @Override
+        protected long executeTerminatorInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            return Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) >= 0
+                    ? address + immediate
+                    : nextPc;
         }
     }
 
@@ -1134,7 +1285,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeByte(storeAddress, (byte) state.decodedRegister(rs2));
-            state.afterStore(storeAddress, Byte.BYTES);
+            afterStore(state, storeAddress, Byte.BYTES);
             state.clearReservation();
         }
 
@@ -1143,7 +1294,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             long storeAddress = readRegister(frame, rs1) + immediate;
             state.memory().writeByte(storeAddress, (byte) readRegister(frame, rs2));
-            state.afterStore(storeAddress, Byte.BYTES);
+            afterStore(state, storeAddress, Byte.BYTES);
             state.clearReservation();
         }
     }
@@ -1160,7 +1311,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeShort(storeAddress, (short) state.decodedRegister(rs2));
-            state.afterStore(storeAddress, Short.BYTES);
+            afterStore(state, storeAddress, Short.BYTES);
             state.clearReservation();
         }
 
@@ -1169,7 +1320,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             long storeAddress = readRegister(frame, rs1) + immediate;
             state.memory().writeShort(storeAddress, (short) readRegister(frame, rs2));
-            state.afterStore(storeAddress, Short.BYTES);
+            afterStore(state, storeAddress, Short.BYTES);
             state.clearReservation();
         }
     }
@@ -1186,7 +1337,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeInt(storeAddress, (int) state.decodedRegister(rs2));
-            state.afterStore(storeAddress, Integer.BYTES);
+            afterStore(state, storeAddress, Integer.BYTES);
             state.clearReservation();
         }
 
@@ -1195,7 +1346,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             long storeAddress = readRegister(frame, rs1) + immediate;
             state.memory().writeInt(storeAddress, (int) readRegister(frame, rs2));
-            state.afterStore(storeAddress, Integer.BYTES);
+            afterStore(state, storeAddress, Integer.BYTES);
             state.clearReservation();
         }
     }
@@ -1212,7 +1363,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeLong(storeAddress, state.decodedRegister(rs2));
-            state.afterStore(storeAddress, Long.BYTES);
+            afterStore(state, storeAddress, Long.BYTES);
             state.clearReservation();
         }
 
@@ -1221,7 +1372,7 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             long storeAddress = readRegister(frame, rs1) + immediate;
             state.memory().writeLong(storeAddress, readRegister(frame, rs2));
-            state.afterStore(storeAddress, Long.BYTES);
+            afterStore(state, storeAddress, Long.BYTES);
             state.clearReservation();
         }
     }
@@ -2078,7 +2229,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeByte(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
         memory.writeByte(address, (byte) state.decodedRegister(rs2));
-        state.afterStore(address, Byte.BYTES);
+        afterStore(state, address, Byte.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2087,7 +2238,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeByte(VirtualFrame frame, MachineState state, Memory memory) {
         long address = readRegister(frame, rs1) + immediate;
         memory.writeByte(address, (byte) readRegister(frame, rs2));
-        state.afterStore(address, Byte.BYTES);
+        afterStore(state, address, Byte.BYTES);
         state.clearReservation();
     }
 
@@ -2095,7 +2246,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeShort(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
         memory.writeShort(address, (short) state.decodedRegister(rs2));
-        state.afterStore(address, Short.BYTES);
+        afterStore(state, address, Short.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2104,7 +2255,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeShort(VirtualFrame frame, MachineState state, Memory memory) {
         long address = readRegister(frame, rs1) + immediate;
         memory.writeShort(address, (short) readRegister(frame, rs2));
-        state.afterStore(address, Short.BYTES);
+        afterStore(state, address, Short.BYTES);
         state.clearReservation();
     }
 
@@ -2112,7 +2263,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeInt(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
         memory.writeInt(address, (int) state.decodedRegister(rs2));
-        state.afterStore(address, Integer.BYTES);
+        afterStore(state, address, Integer.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2121,7 +2272,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeInt(VirtualFrame frame, MachineState state, Memory memory) {
         long address = readRegister(frame, rs1) + immediate;
         memory.writeInt(address, (int) readRegister(frame, rs2));
-        state.afterStore(address, Integer.BYTES);
+        afterStore(state, address, Integer.BYTES);
         state.clearReservation();
     }
 
@@ -2129,7 +2280,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeLong(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
         memory.writeLong(address, state.decodedRegister(rs2));
-        state.afterStore(address, Long.BYTES);
+        afterStore(state, address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2138,7 +2289,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeLong(VirtualFrame frame, MachineState state, Memory memory) {
         long address = readRegister(frame, rs1) + immediate;
         memory.writeLong(address, readRegister(frame, rs2));
-        state.afterStore(address, Long.BYTES);
+        afterStore(state, address, Long.BYTES);
         state.clearReservation();
     }
 
@@ -2146,7 +2297,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeFloatWord(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
         memory.writeInt(address, (int) state.decodedFloatingPointRegister(rs2));
-        state.afterStore(address, Integer.BYTES);
+        afterStore(state, address, Integer.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2155,7 +2306,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeFloatWord(VirtualFrame frame, MachineState state, Memory memory) {
         long address = readRegister(frame, rs1) + immediate;
         memory.writeInt(address, (int) state.decodedFloatingPointRegister(rs2));
-        state.afterStore(address, Integer.BYTES);
+        afterStore(state, address, Integer.BYTES);
         state.clearReservation();
     }
 
@@ -2163,7 +2314,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeFloatDouble(MachineState state, Memory memory, long nextPc) {
         long address = state.decodedRegister(rs1) + immediate;
         memory.writeLong(address, state.decodedFloatingPointRegister(rs2));
-        state.afterStore(address, Long.BYTES);
+        afterStore(state, address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2172,7 +2323,7 @@ public sealed abstract class InstructionNode extends Node {
     private void storeFloatDouble(VirtualFrame frame, MachineState state, Memory memory) {
         long address = readRegister(frame, rs1) + immediate;
         memory.writeLong(address, state.decodedFloatingPointRegister(rs2));
-        state.afterStore(address, Long.BYTES);
+        afterStore(state, address, Long.BYTES);
         state.clearReservation();
     }
 
@@ -2217,7 +2368,7 @@ public sealed abstract class InstructionNode extends Node {
         long address = state.decodedRegister(rs1);
         if (state.hasReservation(address)) {
             memory.writeInt(address, (int) state.decodedRegister(rs2));
-            state.afterStore(address, Integer.BYTES);
+            afterStore(state, address, Integer.BYTES);
             state.setDecodedRegister(rd, 0);
         } else {
             state.setDecodedRegister(rd, 1);
@@ -2231,7 +2382,7 @@ public sealed abstract class InstructionNode extends Node {
         long address = readRegister(frame, rs1);
         if (state.hasReservation(address)) {
             memory.writeInt(address, (int) readRegister(frame, rs2));
-            state.afterStore(address, Integer.BYTES);
+            afterStore(state, address, Integer.BYTES);
             writeRegister(frame, rd, 0);
         } else {
             writeRegister(frame, rd, 1);
@@ -2244,7 +2395,7 @@ public sealed abstract class InstructionNode extends Node {
         long address = state.decodedRegister(rs1);
         if (state.hasReservation(address)) {
             memory.writeLong(address, state.decodedRegister(rs2));
-            state.afterStore(address, Long.BYTES);
+            afterStore(state, address, Long.BYTES);
             state.setDecodedRegister(rd, 0);
         } else {
             state.setDecodedRegister(rd, 1);
@@ -2258,7 +2409,7 @@ public sealed abstract class InstructionNode extends Node {
         long address = readRegister(frame, rs1);
         if (state.hasReservation(address)) {
             memory.writeLong(address, readRegister(frame, rs2));
-            state.afterStore(address, Long.BYTES);
+            afterStore(state, address, Long.BYTES);
             writeRegister(frame, rd, 0);
         } else {
             writeRegister(frame, rd, 1);
@@ -2284,7 +2435,7 @@ public sealed abstract class InstructionNode extends Node {
         };
         memory.writeInt(address, newValue);
         state.setDecodedRegister(rd, oldValue);
-        state.afterStore(address, Integer.BYTES);
+        afterStore(state, address, Integer.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2307,7 +2458,7 @@ public sealed abstract class InstructionNode extends Node {
         };
         memory.writeInt(address, newValue);
         writeRegister(frame, rd, oldValue);
-        state.afterStore(address, Integer.BYTES);
+        afterStore(state, address, Integer.BYTES);
         state.clearReservation();
     }
 
@@ -2329,7 +2480,7 @@ public sealed abstract class InstructionNode extends Node {
         };
         memory.writeLong(address, newValue);
         state.setDecodedRegister(rd, oldValue);
-        state.afterStore(address, Long.BYTES);
+        afterStore(state, address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2352,7 +2503,7 @@ public sealed abstract class InstructionNode extends Node {
         };
         memory.writeLong(address, newValue);
         writeRegister(frame, rd, oldValue);
-        state.afterStore(address, Long.BYTES);
+        afterStore(state, address, Long.BYTES);
         state.clearReservation();
     }
 

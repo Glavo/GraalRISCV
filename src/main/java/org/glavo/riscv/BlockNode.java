@@ -22,10 +22,25 @@ public final class BlockNode extends Node {
     @CompilationFinal
     private final boolean requiresPreciseInstructionRetirement;
 
+    /// Whether the last instruction transfers control out of this block.
+    @CompilationFinal
+    private final boolean endsWithTerminator;
+
+    /// The number of instructions before the final terminator, or all instructions for fall-through blocks.
+    @CompilationFinal
+    private final int straightLineInstructionCount;
+
+    /// The next sequential PC for fall-through blocks.
+    @CompilationFinal
+    private final long fallThroughPc;
+
     /// Creates a decoded basic block.
     public BlockNode(InstructionNode[] instructions) {
         this.instructions = instructions.clone();
         this.instructionCount = instructions.length;
+        this.endsWithTerminator = instructions[instructions.length - 1].isTerminator();
+        this.straightLineInstructionCount = endsWithTerminator ? instructions.length - 1 : instructions.length;
+        this.fallThroughPc = instructions[instructions.length - 1].nextAddress;
 
         boolean preciseRetirement = false;
         for (InstructionNode instruction : instructions) {
@@ -40,48 +55,58 @@ public final class BlockNode extends Node {
     /// Executes every instruction in this decoded block.
     @ExplodeLoop
     public long execute(MachineState state) {
-        if (state.canRetireBlock() && !requiresPreciseInstructionRetirement) {
+        boolean blockRetired = state.canRetireBlock() && !requiresPreciseInstructionRetirement;
+        if (blockRetired) {
             state.retireBlock(instructionCount);
-            for (InstructionNode instruction : instructions) {
-                instruction.executeInRetiredBlock(state);
+            for (int index = 0; index < straightLineInstructionCount; index++) {
+                instructions[index].executeInRetiredBlock(state);
             }
         } else {
-            for (InstructionNode instruction : instructions) {
-                instruction.executeInBlock(state);
+            for (int index = 0; index < straightLineInstructionCount; index++) {
+                instructions[index].executeInBlock(state);
             }
         }
 
-        long nextPc;
-        if (!instructions[instructions.length - 1].isTerminator()) {
-            nextPc = instructions[instructions.length - 1].nextAddress;
+        if (endsWithTerminator) {
+            InstructionNode terminator = instructions[instructionCount - 1];
+            long nextPc = blockRetired
+                    ? terminator.executeTerminatorInRetiredBlock(state)
+                    : terminator.executeTerminatorInBlock(state);
             state.setPc(nextPc);
-        } else {
-            nextPc = state.pc();
+            return nextPc;
         }
+
+        long nextPc = fallThroughPc;
+        state.setPc(nextPc);
         return nextPc;
     }
 
     /// Executes every instruction in this decoded block using frame-backed integer registers.
     @ExplodeLoop
     public long execute(VirtualFrame frame, MachineState state) {
-        if (state.canRetireBlock() && !requiresPreciseInstructionRetirement) {
+        boolean blockRetired = state.canRetireBlock() && !requiresPreciseInstructionRetirement;
+        if (blockRetired) {
             state.retireBlock(instructionCount);
-            for (InstructionNode instruction : instructions) {
-                instruction.executeInRetiredBlock(frame, state);
+            for (int index = 0; index < straightLineInstructionCount; index++) {
+                instructions[index].executeInRetiredBlock(frame, state);
             }
         } else {
-            for (InstructionNode instruction : instructions) {
-                instruction.executeInBlock(frame, state);
+            for (int index = 0; index < straightLineInstructionCount; index++) {
+                instructions[index].executeInBlock(frame, state);
             }
         }
 
-        long nextPc;
-        if (!instructions[instructions.length - 1].isTerminator()) {
-            nextPc = instructions[instructions.length - 1].nextAddress;
+        if (endsWithTerminator) {
+            InstructionNode terminator = instructions[instructionCount - 1];
+            long nextPc = blockRetired
+                    ? terminator.executeTerminatorInRetiredBlock(frame, state)
+                    : terminator.executeTerminatorInBlock(frame, state);
             state.setPc(nextPc);
-        } else {
-            nextPc = state.pc();
+            return nextPc;
         }
+
+        long nextPc = fallThroughPc;
+        state.setPc(nextPc);
         return nextPc;
     }
 }
