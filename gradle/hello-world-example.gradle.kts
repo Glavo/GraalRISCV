@@ -50,7 +50,7 @@ val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }
 
-fun RiscVZigCcTask.configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
+fun configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
     dependsOn(extractZig)
     zigExecutable.set(zigExecutableFile)
     sourceFile.set(layout.projectDirectory.file("examples/linux-static/$sourceFileName"))
