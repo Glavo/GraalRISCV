@@ -116,6 +116,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `pipe2`.
     private static final long SYS_PIPE2 = 59;
 
+    /// The Linux RISC-V syscall number for `getdents64`.
+    private static final long SYS_GETDENTS64 = 61;
+
     /// The Linux RISC-V syscall number for `lseek`.
     private static final long SYS_LSEEK = 62;
 
@@ -286,6 +289,24 @@ public final class GuestSyscallsTest {
 
     /// The expected `st_mode` value for readable host directories.
     private static final int READABLE_DIRECTORY_STAT_MODE = 0040000 | 0555;
+
+    /// The byte offset of `d_off` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_NEXT_OFFSET = 8;
+
+    /// The byte offset of `d_reclen` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_RECORD_LENGTH_OFFSET = 16;
+
+    /// The byte offset of `d_type` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_TYPE_OFFSET = 18;
+
+    /// The byte offset of `d_name` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_NAME_OFFSET = 19;
+
+    /// Linux `DT_DIR` directory entry type.
+    private static final int DIRECTORY_ENTRY_DIRECTORY = 4;
+
+    /// Linux `DT_REG` directory entry type.
+    private static final int DIRECTORY_ENTRY_REGULAR_FILE = 8;
 
     /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE_OFFSET = 48;
@@ -1089,6 +1110,91 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_OPENAT, AT_FDCWD, filePathAddress, O_RDONLY | O_DIRECTORY, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ENOTDIR, state.register(10));
+        }
+    }
+
+    /// Verifies that `getdents64` reads deterministic directory records from directory descriptors.
+    @Test
+    public void getdents64ReadsDirectoryEntries() throws Exception {
+        Files.createDirectories(tempDirectory.resolve("subdir").resolve("nested"));
+        Files.writeString(tempDirectory.resolve("subdir").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 128;
+            writeGuestString(memory, pathAddress, "subdir");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            setSyscall(state, SYS_GETDENTS64, directoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            long bytesRead = state.register(10);
+            assertTrue(bytesRead > 0);
+
+            long cursor = bufferAddress;
+            cursor = assertDirectoryEntry(memory, cursor, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            cursor = assertDirectoryEntry(memory, cursor, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+            cursor = assertDirectoryEntry(memory, cursor, "message.txt", DIRECTORY_ENTRY_REGULAR_FILE, 3);
+            cursor = assertDirectoryEntry(memory, cursor, "nested", DIRECTORY_ENTRY_DIRECTORY, 4);
+            assertEquals(bufferAddress + bytesRead, cursor);
+
+            setSyscall(state, SYS_GETDENTS64, directoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "subdir/message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(4, fileDescriptor);
+
+            setSyscall(state, SYS_GETDENTS64, fileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTDIR, state.register(10));
+
+            writeGuestString(memory, pathAddress, "subdir");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int smallBufferDirectoryFileDescriptor = (int) state.register(10);
+            assertEquals(5, smallBufferDirectoryFileDescriptor);
+
+            setSyscall(state, SYS_GETDENTS64, smallBufferDirectoryFileDescriptor, bufferAddress, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, pathAddress, "subdir");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int partialDirectoryFileDescriptor = (int) state.register(10);
+            assertEquals(6, partialDirectoryFileDescriptor);
+
+            setSyscall(state, SYS_GETDENTS64, partialDirectoryFileDescriptor, bufferAddress, 48);
+            state.syscalls().handle(state, TEST_PC);
+            bytesRead = state.register(10);
+            assertEquals(48, bytesRead);
+            cursor = bufferAddress;
+            cursor = assertDirectoryEntry(memory, cursor, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            cursor = assertDirectoryEntry(memory, cursor, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+            assertEquals(bufferAddress + bytesRead, cursor);
+
+            setSyscall(state, SYS_GETDENTS64, partialDirectoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            bytesRead = state.register(10);
+            assertTrue(bytesRead > 0);
+            cursor = bufferAddress;
+            cursor = assertDirectoryEntry(memory, cursor, "message.txt", DIRECTORY_ENTRY_REGULAR_FILE, 3);
+            cursor = assertDirectoryEntry(memory, cursor, "nested", DIRECTORY_ENTRY_DIRECTORY, 4);
+            assertEquals(bufferAddress + bytesRead, cursor);
         }
     }
 
@@ -2979,6 +3085,16 @@ public final class GuestSyscallsTest {
             bytes[index] = (byte) value;
         }
         return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /// Verifies one `struct linux_dirent64` record and returns the next record address.
+    private static long assertDirectoryEntry(Memory memory, long address, String name, int type, long nextOffset) {
+        int recordLength = memory.readUnsignedShort(address + DIRENT64_RECORD_LENGTH_OFFSET);
+        assertTrue(recordLength >= DIRENT64_NAME_OFFSET + name.length() + 1);
+        assertEquals(nextOffset, memory.readLong(address + DIRENT64_NEXT_OFFSET));
+        assertEquals(type, memory.readUnsignedByte(address + DIRENT64_TYPE_OFFSET));
+        assertEquals(name, readGuestCString(memory, address + DIRENT64_NAME_OFFSET, recordLength - DIRENT64_NAME_OFFSET));
+        return address + recordLength;
     }
 
     /// Writes a Linux RISC-V 64-bit `stack_t` into guest memory.

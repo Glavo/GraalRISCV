@@ -22,7 +22,9 @@ val hotLoopExampleElf = layout.buildDirectory.file("examples/hello/hot-loop.elf"
 val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-static/printf-hello.elf")
 val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-static/argv-echo.elf")
 val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
+val linuxStaticDirectoryListExampleElf = layout.buildDirectory.file("examples/linux-static/directory-list.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
+val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -129,6 +131,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticFileIoExample") {
     description = "Builds examples/linux-static/FileIo.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("FileIo.c", linuxStaticFileIoExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticDirectoryListExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/DirectoryList.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("DirectoryList.c", linuxStaticDirectoryListExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -273,6 +282,52 @@ tasks.register<JavaExec>("testLinuxStaticFileIoExample") {
         val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
         if (fileOutput != "file-data\n") {
             throw GradleException("Unexpected static file I/O host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
+tasks.register<JavaExec>("testLinuxStaticDirectoryListExample") {
+    group = "verification"
+    description = "Compiles a static musl directory listing example and verifies getdents64-backed output."
+
+    dependsOn("classes", "buildLinuxStaticDirectoryListExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticDirectoryListRoot.get().asFile
+        delete(root)
+        val entries = root.resolve("entries")
+        if (!entries.mkdirs()) {
+            throw GradleException("Failed to create example directory: $entries")
+        }
+        entries.resolve("alpha.txt").writeText("alpha\n", StandardCharsets.UTF_8)
+        if (!entries.resolve("nested").mkdirs()) {
+            throw GradleException("Failed to create nested example directory.")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticDirectoryListExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val expectedOutput = "alpha.txt:file\nnested:dir\n"
+        if (actualOutput != expectedOutput) {
+            throw GradleException("Unexpected static directory listing output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static directory listing example wrote to stderr: $actualError")
         }
     }
 }
@@ -432,6 +487,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticPrintfExample",
         "testLinuxStaticArgvExample",
         "testLinuxStaticFileIoExample",
+        "testLinuxStaticDirectoryListExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -443,4 +499,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticPrintfExample")
     dependsOn("testLinuxStaticArgvExample")
     dependsOn("testLinuxStaticFileIoExample")
+    dependsOn("testLinuxStaticDirectoryListExample")
 }

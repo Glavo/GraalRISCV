@@ -71,8 +71,8 @@ Supported syscall families currently include:
 
 - process exit and identity queries
 - `read`, `write`, `readv`, `writev`
-- `openat`, `close`, `fstat`, `newfstatat`, `readlinkat`, `lseek`, `ioctl`,
-  `fcntl`, `dup`, `dup3`, and `pipe2`
+- `openat`, `close`, `fstat`, `newfstatat`, `readlinkat`, `getdents64`,
+  `lseek`, `ioctl`, `fcntl`, `dup`, `dup3`, and `pipe2`
 - `getcwd`, `faccessat`, and `faccessat2`
 - `brk`, `mmap`, `munmap`, `mprotect`, `madvise`, and `riscv_hwprobe`
 - `clock_gettime`, `gettimeofday`, `times`, `nanosleep`, `getrusage`, and
@@ -84,7 +84,8 @@ Supported syscall families currently include:
   runs
 
 File syscalls are sandboxed under `--host-root`, which defaults to the current
-working directory. Host file access is implemented through Truffle file APIs.
+working directory. Host file access, directory descriptors, and directory
+listing are implemented through Truffle file APIs.
 Unsupported `ecall` failures include the syscall number, guest PC, and argument
 registers.
 
@@ -128,6 +129,7 @@ smoke programs. They are built with the Gradle-managed Zig toolchain.
 ./gradlew testLinuxStaticPrintfExample
 ./gradlew testLinuxStaticArgvExample
 ./gradlew testLinuxStaticFileIoExample
+./gradlew testLinuxStaticDirectoryListExample
 ```
 
 Run every available C smoke check:

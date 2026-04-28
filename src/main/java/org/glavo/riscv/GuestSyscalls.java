@@ -51,6 +51,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `pipe2`.
     private static final long SYS_PIPE2 = 59;
 
+    /// The Linux RISC-V syscall number for `getdents64`.
+    private static final long SYS_GETDENTS64 = 61;
+
     /// The Linux RISC-V syscall number for `lseek`.
     private static final long SYS_LSEEK = 62;
 
@@ -260,6 +263,36 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of one Linux RISC-V 64-bit `struct iovec`.
     private static final int IOVEC_SIZE = 16;
+
+    /// The byte offset of `d_ino` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_INODE_OFFSET = 0;
+
+    /// The byte offset of `d_off` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_NEXT_OFFSET = 8;
+
+    /// The byte offset of `d_reclen` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_RECORD_LENGTH_OFFSET = 16;
+
+    /// The byte offset of `d_type` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_TYPE_OFFSET = 18;
+
+    /// The byte offset of `d_name` inside Linux `struct linux_dirent64`.
+    private static final int DIRENT64_NAME_OFFSET = 19;
+
+    /// The record alignment used by Linux `struct linux_dirent64`.
+    private static final int DIRENT64_RECORD_ALIGNMENT = Long.BYTES;
+
+    /// Linux `DT_UNKNOWN` directory entry type.
+    private static final byte DIRECTORY_ENTRY_UNKNOWN = 0;
+
+    /// Linux `DT_DIR` directory entry type.
+    private static final byte DIRECTORY_ENTRY_DIRECTORY = 4;
+
+    /// Linux `DT_REG` directory entry type.
+    private static final byte DIRECTORY_ENTRY_REGULAR_FILE = 8;
+
+    /// Linux `DT_LNK` directory entry type.
+    private static final byte DIRECTORY_ENTRY_SYMBOLIC_LINK = 10;
 
     /// The byte offset of `iov_base` inside `struct iovec`.
     private static final int IOVEC_BASE_OFFSET = 0;
@@ -1190,6 +1223,10 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, pipe2(state.register(10), state.register(11)));
             return;
         }
+        if (callNumber == SYS_GETDENTS64) {
+            state.setRegister(10, getdents64((int) state.register(10), state.register(11), state.register(12)));
+            return;
+        }
         if (callNumber == SYS_LSEEK) {
             state.setRegister(10, lseek((int) state.register(10), state.register(11), (int) state.register(12)));
             return;
@@ -1524,6 +1561,126 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeInt(pipeAddress, (int) readFileDescriptor);
         memory.writeInt(pipeAddress + Integer.BYTES, (int) writeFileDescriptor);
         return 0;
+    }
+
+    /// Reads Linux `struct linux_dirent64` records from an open directory descriptor.
+    private long getdents64(int fileDescriptor, long bufferAddress, long byteCount) {
+        if (byteCount <= 0) {
+            return EINVAL;
+        }
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return ENOTDIR;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isDirectory()) {
+            return ENOTDIR;
+        }
+
+        try {
+            DirectoryEntry[] entries = directoryEntries(openFile);
+            long written = 0;
+            int index = openFile.directoryEntryIndex();
+            while (index < entries.length) {
+                DirectoryEntry entry = entries[index];
+                byte[] name = entry.name().getBytes(StandardCharsets.UTF_8);
+                int recordLength = directoryEntryRecordLength(name.length);
+                if (recordLength > byteCount - written) {
+                    if (written > 0) {
+                        openFile.setDirectoryEntryIndex(index);
+                    }
+                    return written == 0 ? EINVAL : written;
+                }
+
+                writeDirectoryEntry(bufferAddress + written, entry, index + 1L, name, recordLength);
+                written += recordLength;
+                index++;
+            }
+
+            openFile.setDirectoryEntryIndex(index);
+            return written;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Returns the cached entries for an open directory descriptor, loading them on first use.
+    private DirectoryEntry[] directoryEntries(OpenFile openFile) throws IOException {
+        @Nullable DirectoryEntry[] cachedEntries = openFile.directoryEntries();
+        if (cachedEntries != null) {
+            return cachedEntries;
+        }
+
+        @Nullable TruffleFile path = openFile.path();
+        if (path == null) {
+            throw new IOException("Directory descriptor has no path");
+        }
+
+        ArrayList<DirectoryEntry> entries = new ArrayList<>();
+        entries.add(new DirectoryEntry(".", syntheticInode(path), DIRECTORY_ENTRY_DIRECTORY));
+        entries.add(new DirectoryEntry("..", syntheticInode(parentDirectoryForDotDot(path)), DIRECTORY_ENTRY_DIRECTORY));
+
+        ArrayList<DirectoryEntry> childEntries = new ArrayList<>();
+        for (TruffleFile child : path.list()) {
+            childEntries.add(new DirectoryEntry(child.getName(), syntheticInode(child), directoryEntryType(child)));
+        }
+        childEntries.sort((left, right) -> left.name().compareTo(right.name()));
+        entries.addAll(childEntries);
+
+        DirectoryEntry[] result = entries.toArray(DirectoryEntry[]::new);
+        openFile.setDirectoryEntries(result);
+        return result;
+    }
+
+    /// Returns the parent directory represented by the `..` entry without escaping the sandbox root.
+    private TruffleFile parentDirectoryForDotDot(TruffleFile path) {
+        @Nullable TruffleFile root = currentHostRoot();
+        @Nullable TruffleFile parent = path.getParent();
+        if (root != null && parent != null && parent.normalize().startsWith(root)) {
+            return parent.normalize();
+        }
+        return path;
+    }
+
+    /// Returns the Linux directory entry type for a sandboxed host path.
+    private static byte directoryEntryType(TruffleFile path) {
+        try {
+            if (path.isSymbolicLink()) {
+                return DIRECTORY_ENTRY_SYMBOLIC_LINK;
+            }
+            if (path.isDirectory()) {
+                return DIRECTORY_ENTRY_DIRECTORY;
+            }
+            if (path.isRegularFile()) {
+                return DIRECTORY_ENTRY_REGULAR_FILE;
+            }
+            return DIRECTORY_ENTRY_UNKNOWN;
+        } catch (SecurityException exception) {
+            return DIRECTORY_ENTRY_UNKNOWN;
+        }
+    }
+
+    /// Computes the aligned byte length of one Linux `struct linux_dirent64` record.
+    private static int directoryEntryRecordLength(int nameLength) {
+        return (int) alignUp(DIRENT64_NAME_OFFSET + nameLength + 1L, DIRENT64_RECORD_ALIGNMENT);
+    }
+
+    /// Writes one Linux `struct linux_dirent64` record to guest memory.
+    private void writeDirectoryEntry(
+            long address,
+            DirectoryEntry entry,
+            long nextOffset,
+            byte[] name,
+            int recordLength) {
+        memory.clear(address, recordLength);
+        memory.writeLong(address + DIRENT64_INODE_OFFSET, entry.inode());
+        memory.writeLong(address + DIRENT64_NEXT_OFFSET, nextOffset);
+        memory.writeShort(address + DIRENT64_RECORD_LENGTH_OFFSET, (short) recordLength);
+        memory.writeByte(address + DIRENT64_TYPE_OFFSET, entry.type());
+        memory.writeBytes(address + DIRENT64_NAME_OFFSET, name, 0, name.length);
     }
 
     /// Checks access to a sandboxed host path or open file descriptor.
@@ -3679,6 +3836,18 @@ public final class GuestSyscalls implements AutoCloseable {
             long length) {
     }
 
+    /// Describes one cached Linux directory entry for a directory descriptor.
+    private record DirectoryEntry(
+            /// The entry name without a trailing null byte.
+            String name,
+
+            /// The deterministic inode value exposed to the guest.
+            long inode,
+
+            /// The Linux `DT_*` entry type.
+            byte type) {
+    }
+
     /// Stores buffered bytes for a single in-memory pipe.
     private static final class PipeBuffer {
         /// The initial pipe buffer capacity used before the first expansion.
@@ -3807,6 +3976,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
         /// Whether empty pipe reads should return `EAGAIN`.
         private final boolean nonblocking;
+
+        /// The cached directory entries for this descriptor, or null until first `getdents64`.
+        private @Nullable DirectoryEntry[] directoryEntries;
+
+        /// The next directory entry index returned by `getdents64`.
+        private int directoryEntryIndex;
 
         /// The number of guest descriptor table slots sharing this entry.
         private int references = 1;
@@ -3948,6 +4123,26 @@ public final class GuestSyscalls implements AutoCloseable {
         /// Returns true when pipe reads are nonblocking.
         boolean nonblocking() {
             return nonblocking;
+        }
+
+        /// Returns cached directory entries, or null when the descriptor has not been listed yet.
+        @Nullable DirectoryEntry[] directoryEntries() {
+            return directoryEntries;
+        }
+
+        /// Stores cached directory entries for repeated `getdents64` calls.
+        void setDirectoryEntries(DirectoryEntry[] directoryEntries) {
+            this.directoryEntries = directoryEntries;
+        }
+
+        /// Returns the next directory entry index for `getdents64`.
+        int directoryEntryIndex() {
+            return directoryEntryIndex;
+        }
+
+        /// Updates the next directory entry index for `getdents64`.
+        void setDirectoryEntryIndex(int directoryEntryIndex) {
+            this.directoryEntryIndex = directoryEntryIndex;
         }
 
         /// Adds one guest descriptor reference to this entry.
