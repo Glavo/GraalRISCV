@@ -1,6 +1,5 @@
 package org.glavo.riscv;
 
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.math.BigInteger;
@@ -71,45 +70,39 @@ abstract sealed class RiscVInstructionSemantics {
     /// Use the dynamic rounding mode from `frm`.
     private static final int ROUND_DYNAMIC = 7;
 
+    /// Reusable execution context used by the custom micro-bytecode generic operation path.
+    private static final ThreadLocal<ReusableInstructionSemantics> MICRO_EXECUTOR =
+            ThreadLocal.withInitial(ReusableInstructionSemantics::new);
+
     /// The guest address of this instruction.
-    @CompilationFinal
-    protected final long address;
+    protected long address;
 
     /// The original 16-bit or 32-bit instruction bits.
-    @CompilationFinal
-    protected final int raw;
+    protected int raw;
 
     /// The instruction length in bytes.
-    @CompilationFinal
-    protected final int length;
+    protected int length;
 
     /// The sequential guest address following this instruction.
-    @CompilationFinal
-    protected final long nextAddress;
+    protected long nextAddress;
 
     /// The decoded operation.
-    @CompilationFinal
-    protected final RiscVOperation operation;
+    protected RiscVOperation operation;
 
     /// The destination register index, or zero when unused.
-    @CompilationFinal
-    protected final int rd;
+    protected int rd;
 
     /// The first source register index, or zero when unused.
-    @CompilationFinal
-    protected final int rs1;
+    protected int rs1;
 
     /// The second source register index, or zero when unused.
-    @CompilationFinal
-    protected final int rs2;
+    protected int rs2;
 
     /// The decoded immediate or operation-specific small integer.
-    @CompilationFinal
-    protected final long immediate;
+    protected long immediate;
 
     /// Whether this instruction ends the current basic block.
-    @CompilationFinal
-    protected final boolean terminator;
+    protected boolean terminator;
 
     /// Creates a decoded instruction semantic helper.
     protected RiscVInstructionSemantics(
@@ -239,6 +232,22 @@ abstract sealed class RiscVInstructionSemantics {
         create(instruction).execute(state);
     }
 
+    /// Executes decoded metadata supplied by the custom micro-bytecode interpreter.
+    static void executeMicro(
+            MachineState state,
+            RiscVOperation operation,
+            long address,
+            int raw,
+            long nextPc,
+            int rd,
+            int rs1,
+            int rs2,
+            long immediate) {
+        ReusableInstructionSemantics executor = MICRO_EXECUTOR.get();
+        executor.reset(address, raw, (int) (nextPc - address), operation, rd, rs1, rs2, immediate);
+        executor.execute(state);
+    }
+
     /// Returns the instruction length in bytes.
     public int length() {
         return length;
@@ -276,6 +285,62 @@ abstract sealed class RiscVInstructionSemantics {
         return true;
     }
 
+
+    /// Reuses one helper object when generic micro-bytecode operations need complex shared semantics.
+    private static final class ReusableInstructionSemantics extends RiscVInstructionSemantics {
+        /// Creates an empty reusable instruction executor.
+        private ReusableInstructionSemantics() {
+            super(0, 0, Integer.BYTES, RiscVOperation.NOP, 0, 0, 0, 0, false);
+        }
+
+        /// Replaces the decoded metadata before executing one instruction.
+        private void reset(
+                long address,
+                int raw,
+                int length,
+                RiscVOperation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate) {
+            this.address = address;
+            this.raw = raw;
+            this.length = length;
+            this.nextAddress = address + length;
+            this.operation = operation;
+            this.rd = rd;
+            this.rs1 = rs1;
+            this.rs2 = rs2;
+            this.immediate = immediate;
+            this.terminator = false;
+        }
+
+        /// Executes the current decoded operation through the existing shared semantic groups.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            Memory memory = state.memory();
+            switch (operation) {
+                case NOP, FENCE, FENCE_I, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU,
+                        CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, ECALL, EBREAK -> executeControl(state, nextPc);
+                case LB, LH, LW, LD, LBU, LHU, LWU -> executeLoad(state, memory, nextPc);
+                case FLW, FLD -> executeFloatingPointLoad(state, memory, nextPc);
+                case SB, SH, SW, SD -> executeStore(state, memory, nextPc);
+                case FSW, FSD -> executeFloatingPointStore(state, memory, nextPc);
+                case ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI, ADDIW, SLLIW, SRLIW, SRAIW ->
+                        executeImmediateInteger(state, nextPc);
+                case ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, ADDW, SUBW, SLLW, SRLW, SRAW ->
+                        executeRegisterInteger(state, nextPc);
+                case MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, MULW, DIVW, DIVUW, REMW, REMUW ->
+                        executeMultiplyDivide(state, nextPc);
+                case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
+                        FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
+                        FMV_X_FP, FMV_FP_X -> executeFloatingPointOperation(state, nextPc);
+                case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
+                        AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
+                        AMOMIN_D, AMOMAX_D, AMOMINU_D, AMOMAXU_D -> executeAtomic(state, memory, nextPc);
+            }
+        }
+    }
 
     /// Base class for decoded instructions with direct operation bodies.
     private abstract static sealed class DirectInstructionSemantics extends RiscVInstructionSemantics {

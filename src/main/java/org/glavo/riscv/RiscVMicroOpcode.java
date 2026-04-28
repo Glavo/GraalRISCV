@@ -5,8 +5,8 @@ import org.jetbrains.annotations.NotNullByDefault;
 /// Defines the compact opcodes used by the custom RISC-V micro-bytecode interpreter.
 @NotNullByDefault
 final class RiscVMicroOpcode {
-    /// Delegates a low-frequency or complex instruction to its semantic helper.
-    static final byte EXECUTE_SEMANTICS = 0;
+    /// Executes an operation that is not yet expanded into a dedicated micro-op body.
+    static final byte EXECUTE_OPERATION = 0;
 
     /// Advances `pc` for no-op control instructions.
     static final byte ADVANCE_PC = 1;

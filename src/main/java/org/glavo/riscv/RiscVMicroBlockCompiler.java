@@ -4,8 +4,6 @@ import com.oracle.truffle.api.RootCallTarget;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
-import java.util.ArrayList;
-
 /// Compiles decoded RISC-V basic blocks into custom micro-bytecode call targets.
 @NotNullByDefault
 final class RiscVMicroBlockCompiler {
@@ -18,17 +16,18 @@ final class RiscVMicroBlockCompiler {
         DecodedInstruction @Unmodifiable [] instructions = block.instructions();
         int instructionCount = instructions.length;
         byte[] opcodes = new byte[instructionCount];
+        RiscVOperation[] operations = new RiscVOperation[instructionCount];
         int[] operands = new int[instructionCount];
         int[] raws = new int[instructionCount];
         long[] addresses = new long[instructionCount];
         long[] nextPcs = new long[instructionCount];
         long[] immediates = new long[instructionCount];
-        ArrayList<RiscVInstructionSemantics> semantics = new ArrayList<>();
 
         for (int index = 0; index < instructionCount; index++) {
             DecodedInstruction instruction = instructions[index];
-            opcodes[index] = opcode(instruction.operation());
-            operands[index] = operand(instruction, opcodes[index], semantics);
+            operations[index] = instruction.operation();
+            opcodes[index] = opcode(operations[index]);
+            operands[index] = RiscVMicroBlockRootNode.packRegisters(instruction.rd(), instruction.rs1(), instruction.rs2());
             raws[index] = instruction.raw();
             addresses[index] = instruction.address();
             nextPcs[index] = instruction.nextAddress();
@@ -38,12 +37,12 @@ final class RiscVMicroBlockCompiler {
         RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(
                 language,
                 opcodes,
+                operations,
                 operands,
                 raws,
                 addresses,
                 nextPcs,
-                immediates,
-                semantics.toArray(RiscVInstructionSemantics[]::new));
+                immediates);
         return root.getCallTarget();
     }
 
@@ -100,20 +99,7 @@ final class RiscVMicroBlockCompiler {
             case SLLW -> RiscVMicroOpcode.SLLW;
             case SRLW -> RiscVMicroOpcode.SRLW;
             case SRAW -> RiscVMicroOpcode.SRAW;
-            default -> RiscVMicroOpcode.EXECUTE_SEMANTICS;
+            default -> RiscVMicroOpcode.EXECUTE_OPERATION;
         };
-    }
-
-    /// Computes the packed operand for a micro-op.
-    private static int operand(
-            DecodedInstruction instruction,
-            byte opcode,
-            ArrayList<RiscVInstructionSemantics> semantics) {
-        if (opcode == RiscVMicroOpcode.EXECUTE_SEMANTICS) {
-            int index = semantics.size();
-            semantics.add(RiscVInstructionSemantics.create(instruction));
-            return index;
-        }
-        return RiscVMicroBlockRootNode.packRegisters(instruction.rd(), instruction.rs1(), instruction.rs2());
     }
 }

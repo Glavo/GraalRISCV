@@ -24,5 +24,6 @@
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue profiling custom micro-bytecode dispatch, memory access, block-cache lookup, and compiled-block layout costs with hot-loop and CoreMark probes.
-- Extend direct micro-bytecode opcodes beyond RV64I hot paths when focused profiling shows helper dispatch is still material.
+- Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
+- Investigate register staging for the custom micro-bytecode executor after correctness remains stable.
 - Keep rejected performance experiments documented outside `PLANS.md`.
