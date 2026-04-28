@@ -83,6 +83,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENOSYS` as a raw negative syscall result.
     private static final long ENOSYS = -38;
 
+    /// Linux `ENOTSUP` as a raw negative syscall result.
+    private static final long ENOTSUP = -95;
+
     /// Linux `ENOTEMPTY` as a raw negative syscall result.
     private static final long ENOTEMPTY = -39;
 
@@ -214,6 +217,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `clock_gettime`.
     private static final long SYS_CLOCK_GETTIME = 113;
+
+    /// The Linux RISC-V syscall number for `clock_getres`.
+    private static final long SYS_CLOCK_GETRES = 114;
+
+    /// The Linux RISC-V syscall number for `clock_nanosleep`.
+    private static final long SYS_CLOCK_NANOSLEEP = 115;
 
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
@@ -834,8 +843,17 @@ public final class GuestSyscallsTest {
     /// Linux `CLOCK_MONOTONIC`.
     private static final long CLOCK_MONOTONIC = 1;
 
+    /// Linux `CLOCK_PROCESS_CPUTIME_ID`.
+    private static final long CLOCK_PROCESS_CPUTIME_ID = 2;
+
+    /// Linux `CLOCK_THREAD_CPUTIME_ID`.
+    private static final long CLOCK_THREAD_CPUTIME_ID = 3;
+
     /// Linux `CLOCK_BOOTTIME`.
     private static final long CLOCK_BOOTTIME = 7;
+
+    /// Linux `TIMER_ABSTIME`.
+    private static final long TIMER_ABSTIME = 1;
 
     /// Linux `PR_SET_PDEATHSIG`.
     private static final long PR_SET_PDEATHSIG = 1;
@@ -3157,6 +3175,33 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies deterministic clock resolution reporting for supported clocks.
+    @Test
+    public void clockGetresReportsSupportedClockResolution() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long timespecAddress = memory.baseAddress() + 64;
+
+            memory.writeLong(timespecAddress, -1);
+            memory.writeLong(timespecAddress + Long.BYTES, -1);
+            setSyscall(state, SYS_CLOCK_GETRES, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(timespecAddress));
+            assertEquals(1, memory.readLong(timespecAddress + Long.BYTES));
+
+            setSyscall(state, SYS_CLOCK_GETRES, CLOCK_MONOTONIC, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(timespecAddress, -1);
+            setSyscall(state, SYS_CLOCK_GETRES, 99, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+            assertEquals(-1, memory.readLong(timespecAddress));
+        }
+    }
+
     /// Verifies that `gettimeofday` uses the configured guest clock.
     @Test
     public void gettimeofdayUsesConfiguredClock() {
@@ -3182,6 +3227,54 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETTIMEOFDAY, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies `clock_nanosleep` validation and deterministic elapsed clock handling.
+    @Test
+    public void clockNanosleepHandlesRelativeAndAbsoluteRequests() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            Clock fixedClock = Clock.fixed(
+                    Instant.ofEpochSecond(1_700_000_000L, 123_456_789L),
+                    ZoneOffset.UTC);
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            long requestAddress = memory.baseAddress() + 64;
+            long remainingAddress = memory.baseAddress() + 80;
+
+            memory.writeLong(requestAddress, 0);
+            memory.writeLong(requestAddress + Long.BYTES, 0);
+            setSyscall(state, SYS_CLOCK_NANOSLEEP, CLOCK_MONOTONIC, 0, requestAddress, remainingAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(requestAddress, 1_699_999_999L);
+            memory.writeLong(requestAddress + Long.BYTES, 999_999_999L);
+            setSyscall(state, SYS_CLOCK_NANOSLEEP, CLOCK_REALTIME, TIMER_ABSTIME, requestAddress, remainingAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(requestAddress, 0);
+            memory.writeLong(requestAddress + Long.BYTES, 1_000_000_000L);
+            setSyscall(state, SYS_CLOCK_NANOSLEEP, CLOCK_MONOTONIC, 0, requestAddress, remainingAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(requestAddress + Long.BYTES, 0);
+            setSyscall(state, SYS_CLOCK_NANOSLEEP, 99, 0, requestAddress, remainingAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_NANOSLEEP, CLOCK_MONOTONIC, 2, requestAddress, remainingAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_NANOSLEEP, CLOCK_THREAD_CPUTIME_ID, 0, requestAddress, remainingAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_NANOSLEEP, CLOCK_PROCESS_CPUTIME_ID, 0, requestAddress, remainingAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
         }
     }
 
