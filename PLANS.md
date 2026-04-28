@@ -37,9 +37,9 @@
 - Record any non-Windows Zig download, extraction, or linker troubleshooting that is needed after real-toolchain verification.
 - Keep `ciCheck` covering compile, tests, package artifacts, no-toolchain smoke checks, and the new static Linux C acceptance checks when Zig is available.
 - Keep native-image packaging available through the opt-in `nativeCompile` and `nativeImageSmokeTest` tasks, and add it to CI only after Native Image toolchain availability is explicit.
-- Continue profiling now that Gradle uses a project-local Polyglot resource cache, the root execution loop uses a Truffle `LoopNode`, scalar initial-memory accesses delegate alignment and range checks to `MemorySegment`, decoded instructions are split into operation-group node subclasses, and selected hot integer/control/load/store operations have direct instruction nodes.
-- Continue profiling phase changes after the current hot-block promotion cache reduced hot-loop OSR code size and avoided AST invalidation on compiled misses.
-- Investigate remaining compiled-code deopt behavior after hot loops exit into cold code.
+- Continue profiling now that Gradle uses a project-local Polyglot resource cache, the root execution loop uses a Truffle `LoopNode`, scalar initial-memory accesses delegate alignment and range checks to `MemorySegment`, decoded instructions are split into operation-group node subclasses, selected hot integer/control/load/store operations have direct instruction nodes, and compiled dispatch misses run cold block batches through a boundary without repeated OSR deoptimization.
+- Continue profiling phase changes after the current hot-block promotion cache reduced hot-loop OSR code size and avoided AST invalidation or repeated deoptimization on compiled misses.
+- Investigate remaining compiled-code behavior after hot loops exit into cold code.
 - Keep the hot-loop compilation trace task as the current performance regression probe and expand it when broader Linux workloads become stable.
 - Keep CLI behavior stable while internal execution nodes evolve.
 - Track release notes for supported ISA subsets, ELF limitations, syscall coverage, and known unsupported workloads.

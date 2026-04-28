@@ -51,7 +51,6 @@ public final class BlockDispatchNode extends Node {
         }
 
         if (CompilerDirectives.inCompiledCode()) {
-            CompilerDirectives.transferToInterpreter();
             root.executeColdBlocksUntilCached(memory, state, this);
             return;
         }

@@ -2,6 +2,7 @@ package org.glavo.riscv;
 
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
@@ -11,6 +12,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -280,6 +282,27 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that compiled dispatch misses can run cold block batches without repeated OSR deoptimization.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    public void compiledDispatchRunsProgramsWithManyLoopBlocks() throws Exception {
+        Path elfPath = tempDirectory.resolve("dispatch-stress.elf");
+        Files.write(elfPath, ElfTestImages.executable(dispatchStressCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                dispatchStressArguments(elfPath),
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        String diagnostics = err.toString(StandardCharsets.UTF_8);
+        assertEquals(0, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(!diagnostics.contains("Execution failed:"));
+    }
+
     /// Builds a freestanding Hello World program using the same ABI as a compiled C program would use.
     private static byte[] helloWorldCode() {
         byte[] message = "Hello World!\n".getBytes(StandardCharsets.UTF_8);
@@ -296,6 +319,53 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put(message);
         return code.array();
+    }
+
+    /// Builds a loop with more distinct basic blocks than the dispatch inline cache limit.
+    private static byte[] dispatchStressCode() {
+        int blockCount = 40;
+        int loopIterations = 12_000;
+        int loopStartOffset = Integer.BYTES * 2;
+        int loopInstructionCount = (blockCount * 2) + 2;
+        ByteBuffer code = ByteBuffer
+                .allocate((Integer.BYTES * (2 + loopInstructionCount + 3)))
+                .order(ByteOrder.LITTLE_ENDIAN);
+
+        ElfTestImages.putInt(code, lui(5, 0x3000));
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 5, loopIterations - 0x3000));
+        for (int index = 0; index < blockCount; index++) {
+            ElfTestImages.putInt(code, ElfTestImages.addi(6, 6, 1));
+            ElfTestImages.putInt(code, jal(0, Integer.BYTES));
+        }
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 5, -1));
+        ElfTestImages.putInt(code, bne(5, 0, loopStartOffset - code.position()));
+        ElfTestImages.putInt(code, ElfTestImages.andi(10, 6, 0xff));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        return code.array();
+    }
+
+    /// Creates CLI arguments for the dispatch stress program.
+    private static String[] dispatchStressArguments(Path elfPath) {
+        if (runningOnGraalVm()) {
+            return new String[]{
+                    "--debug-trace-compilation",
+                    "--max-instructions", "2000000",
+                    elfPath.toString()
+            };
+        }
+
+        return new String[]{
+                "--max-instructions", "2000000",
+                elfPath.toString()
+        };
+    }
+
+    /// Returns true when the current VM is a GraalVM distribution with engine compilation options.
+    private static boolean runningOnGraalVm() {
+        String vendor = System.getProperty("java.vm.vendor", "");
+        String name = System.getProperty("java.vm.name", "");
+        return vendor.contains("GraalVM") || name.contains("GraalVM");
     }
 
     /// Builds a program that exits with the `CLOCK_REALTIME` seconds value.
@@ -359,6 +429,38 @@ public final class MainTest {
                 ElfTestImages.addi(16, 0, 7),
                 ElfTestImages.addi(17, 0, 2047),
                 ElfTestImages.ecall());
+    }
+
+    /// Encodes `lui`.
+    private static int lui(int rd, int immediate) {
+        return (immediate & 0xffff_f000) | (rd << 7) | 0x37;
+    }
+
+    /// Encodes `bne`.
+    private static int bne(int rs1, int rs2, int offset) {
+        return branch(1, rs1, rs2, offset);
+    }
+
+    /// Encodes a B-type branch.
+    private static int branch(int funct3, int rs1, int rs2, int offset) {
+        return (((offset >>> 12) & 0x1) << 31)
+                | (((offset >>> 5) & 0x3f) << 25)
+                | (rs2 << 20)
+                | (rs1 << 15)
+                | (funct3 << 12)
+                | (((offset >>> 1) & 0xf) << 8)
+                | (((offset >>> 11) & 0x1) << 7)
+                | 0x63;
+    }
+
+    /// Encodes `jal`.
+    private static int jal(int rd, int offset) {
+        return (((offset >>> 20) & 0x1) << 31)
+                | (((offset >>> 1) & 0x3ff) << 21)
+                | (((offset >>> 11) & 0x1) << 20)
+                | (((offset >>> 12) & 0xff) << 12)
+                | (rd << 7)
+                | 0x6f;
     }
 
     /// Encodes the supplied 32-bit instructions as raw little-endian code bytes.
