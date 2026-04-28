@@ -4,7 +4,7 @@
 
 ### 1. Implement user-mode RV64GC instruction support
 
-- Keep the current RV64IMAC behavior stable while adding the missing RV64GC pieces.
+- Preserve the audited RV64GC user-mode opcode coverage for RV64I, M, A, F, D, C, Zicsr, and Zifencei while tightening edge semantics.
 - Complete the remaining floating-point exception-flag edge cases and settle the NaN payload preservation policy.
 - Add focused decoder and execution tests for remaining exact exception-flag edge cases and NaN payload behavior.
 
