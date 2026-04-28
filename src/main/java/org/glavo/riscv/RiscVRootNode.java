@@ -21,7 +21,7 @@ public final class RiscVRootNode extends RootNode {
 
     /// Creates a root node for a parsed ELF image.
     public RiscVRootNode(RiscVLanguage language, ElfImage image) {
-        super(language);
+        super(language, RiscVFrameLayout.newDescriptor());
         this.image = image;
     }
 
@@ -31,11 +31,13 @@ public final class RiscVRootNode extends RootNode {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
         try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
             MachineState state = createState(context, memory);
+            RiscVFrameLayout.loadIntegerRegisters(frame, state);
             try {
                 while (true) {
-                    blockFor(memory, state.pc()).execute(state);
+                    blockFor(memory, state.pc()).execute(frame, state);
                 }
             } finally {
+                RiscVFrameLayout.spillIntegerRegisters(frame, state);
                 state.syscalls().close();
             }
         } catch (ProgramExitException exit) {

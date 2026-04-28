@@ -1,6 +1,7 @@
 package org.glavo.riscv;
 
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import org.jetbrains.annotations.NotNullByDefault;
 
@@ -231,8 +232,31 @@ public sealed abstract class InstructionNode extends Node {
         executeInstruction(state, nextAddress);
     }
 
+    /// Executes this instruction as part of a decoded basic block with frame-backed integer registers.
+    final void executeInBlock(VirtualFrame frame, MachineState state) {
+        state.beforeInstruction(address, raw);
+        executeInstruction(frame, state, nextAddress);
+    }
+
     /// Executes the operation-specific instruction body.
     protected abstract void executeInstruction(MachineState state, long nextPc);
+
+    /// Executes the operation-specific instruction body using frame-backed integer registers.
+    protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+        RiscVFrameLayout.spillIntegerRegisters(frame, state);
+        executeInstruction(state, nextPc);
+        RiscVFrameLayout.loadIntegerRegisters(frame, state);
+    }
+
+    /// Reads an integer register from the execution frame.
+    private static long readRegister(VirtualFrame frame, int register) {
+        return RiscVFrameLayout.readX(frame, register);
+    }
+
+    /// Writes an integer register into the execution frame.
+    private static void writeRegister(VirtualFrame frame, int register, long value) {
+        RiscVFrameLayout.writeX(frame, register, value);
+    }
 
     /// Returns true when the instruction body writes `pc` itself.
     protected boolean writesProgramCounterInBody() {
@@ -273,6 +297,11 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
         }
+
+        /// Advances the program counter in the enclosing block.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+        }
     }
 
     /// Executes `lui`.
@@ -286,6 +315,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, immediate);
+        }
+
+        /// Writes the immediate value to the destination frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, immediate);
         }
     }
 
@@ -301,6 +336,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, address + immediate);
         }
+
+        /// Writes the PC-relative immediate value to the destination frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, address + immediate);
+        }
     }
 
     /// Executes `jal`.
@@ -314,6 +355,13 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, nextPc);
+            state.setPc(address + immediate);
+        }
+
+        /// Writes the link register and jumps to the PC-relative target using frame registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, nextPc);
             state.setPc(address + immediate);
         }
     }
@@ -332,6 +380,14 @@ public sealed abstract class InstructionNode extends Node {
             state.setDecodedRegister(rd, nextPc);
             state.setPc(target);
         }
+
+        /// Writes the link register and jumps to the register-relative target using frame registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            long target = (readRegister(frame, rs1) + immediate) & ~1L;
+            writeRegister(frame, rd, nextPc);
+            state.setPc(target);
+        }
     }
 
     /// Executes `beq`.
@@ -345,6 +401,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) == state.decodedRegister(rs2) ? address + immediate : nextPc);
+        }
+
+        /// Branches when both source frame registers are equal.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            state.setPc(readRegister(frame, rs1) == readRegister(frame, rs2) ? address + immediate : nextPc);
         }
     }
 
@@ -360,6 +422,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) != state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
+
+        /// Branches when both source frame registers differ.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            state.setPc(readRegister(frame, rs1) != readRegister(frame, rs2) ? address + immediate : nextPc);
+        }
     }
 
     /// Executes `blt`.
@@ -373,6 +441,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) < state.decodedRegister(rs2) ? address + immediate : nextPc);
+        }
+
+        /// Branches when the first source frame register is signed-less-than the second.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            state.setPc(readRegister(frame, rs1) < readRegister(frame, rs2) ? address + immediate : nextPc);
         }
     }
 
@@ -388,6 +462,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) >= state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
+
+        /// Branches when the first source frame register is signed-greater-or-equal to the second.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            state.setPc(readRegister(frame, rs1) >= readRegister(frame, rs2) ? address + immediate : nextPc);
+        }
     }
 
     /// Executes `bltu`.
@@ -402,6 +482,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setPc(Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0 ? address + immediate : nextPc);
         }
+
+        /// Branches when the first source frame register is unsigned-less-than the second.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            state.setPc(Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) < 0 ? address + immediate : nextPc);
+        }
     }
 
     /// Executes `bgeu`.
@@ -415,6 +501,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setPc(Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) >= 0 ? address + immediate : nextPc);
+        }
+
+        /// Branches when the first source frame register is unsigned-greater-or-equal to the second.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            state.setPc(Long.compareUnsigned(readRegister(frame, rs1), readRegister(frame, rs2)) >= 0 ? address + immediate : nextPc);
         }
     }
 
@@ -431,6 +523,15 @@ public sealed abstract class InstructionNode extends Node {
             state.syscalls().handle(state, address);
             state.setPc(nextPc);
         }
+
+        /// Dispatches the environment call after synchronizing frame registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            RiscVFrameLayout.spillIntegerRegisters(frame, state);
+            state.syscalls().handle(state, address);
+            RiscVFrameLayout.loadIntegerRegisters(frame, state);
+            state.setPc(nextPc);
+        }
     }
 
     /// Executes `ebreak`.
@@ -443,6 +544,12 @@ public sealed abstract class InstructionNode extends Node {
         /// Terminates the program with a zero exit status.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
+            throw new ProgramExitException(0);
+        }
+
+        /// Terminates the program with a zero exit status.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
             throw new ProgramExitException(0);
         }
     }
@@ -459,6 +566,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) + immediate);
         }
+
+        /// Adds a sign-extended immediate to a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) + immediate);
+        }
     }
 
     /// Executes `xori`.
@@ -472,6 +585,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ immediate);
+        }
+
+        /// Xors a frame register with a sign-extended immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) ^ immediate);
         }
     }
 
@@ -487,6 +606,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) | immediate);
         }
+
+        /// Ors a frame register with a sign-extended immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) | immediate);
+        }
     }
 
     /// Executes `andi`.
@@ -500,6 +625,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) & immediate);
+        }
+
+        /// Ands a frame register with a sign-extended immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) & immediate);
         }
     }
 
@@ -515,6 +646,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) << immediate);
         }
+
+        /// Shifts a frame register left by the decoded immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) << immediate);
+        }
     }
 
     /// Executes `srli`.
@@ -528,6 +665,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> immediate);
+        }
+
+        /// Shifts a frame register right logically by the decoded immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) >>> immediate);
         }
     }
 
@@ -543,6 +686,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >> immediate);
         }
+
+        /// Shifts a frame register right arithmetically by the decoded immediate.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) >> immediate);
+        }
     }
 
     /// Executes `addiw`.
@@ -556,6 +705,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) (state.decodedRegister(rs1) + immediate));
+        }
+
+        /// Adds an immediate in word width and sign-extends the frame result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) (readRegister(frame, rs1) + immediate));
         }
     }
 
@@ -571,6 +726,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) + state.decodedRegister(rs2));
         }
+
+        /// Adds two source frame registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) + readRegister(frame, rs2));
+        }
     }
 
     /// Executes `sub`.
@@ -584,6 +745,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) - state.decodedRegister(rs2));
+        }
+
+        /// Subtracts the second source frame register from the first.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) - readRegister(frame, rs2));
         }
     }
 
@@ -599,6 +766,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ state.decodedRegister(rs2));
         }
+
+        /// Xors two source frame registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) ^ readRegister(frame, rs2));
+        }
     }
 
     /// Executes `or`.
@@ -612,6 +785,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) | state.decodedRegister(rs2));
+        }
+
+        /// Ors two source frame registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) | readRegister(frame, rs2));
         }
     }
 
@@ -627,6 +806,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) & state.decodedRegister(rs2));
         }
+
+        /// Ands two source frame registers.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) & readRegister(frame, rs2));
+        }
     }
 
     /// Executes `sll`.
@@ -640,6 +825,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x3f));
+        }
+
+        /// Shifts the first source frame register left by the masked second source register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) << (readRegister(frame, rs2) & 0x3f));
         }
     }
 
@@ -655,6 +846,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x3f));
         }
+
+        /// Shifts the first source frame register right logically by the masked second source register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) >>> (readRegister(frame, rs2) & 0x3f));
+        }
     }
 
     /// Executes `sra`.
@@ -668,6 +865,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x3f));
+        }
+
+        /// Shifts the first source frame register right arithmetically by the masked second source register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) >> (readRegister(frame, rs2) & 0x3f));
         }
     }
 
@@ -683,6 +886,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) + (int) state.decodedRegister(rs2));
         }
+
+        /// Adds two source frame registers in word width and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) + (int) readRegister(frame, rs2));
+        }
     }
 
     /// Executes `subw`.
@@ -696,6 +905,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) - (int) state.decodedRegister(rs2));
+        }
+
+        /// Subtracts two source frame registers in word width and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) - (int) readRegister(frame, rs2));
         }
     }
 
@@ -711,6 +926,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) * state.decodedRegister(rs2));
         }
+
+        /// Multiplies two source frame registers and keeps the low 64 bits.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, readRegister(frame, rs1) * readRegister(frame, rs2));
+        }
     }
 
     /// Executes `mulw`.
@@ -724,6 +945,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) * (int) state.decodedRegister(rs2));
+        }
+
+        /// Multiplies two source frame registers in word width and sign-extends the result.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, (int) readRegister(frame, rs1) * (int) readRegister(frame, rs2));
         }
     }
 
@@ -739,6 +966,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readByte(state.decodedRegister(rs1) + immediate));
         }
+
+        /// Loads a sign-extended byte value into a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, state.memory().readByte(readRegister(frame, rs1) + immediate));
+        }
     }
 
     /// Executes `lh`.
@@ -752,6 +985,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readShort(state.decodedRegister(rs1) + immediate));
+        }
+
+        /// Loads a sign-extended 16-bit value into a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, state.memory().readShort(readRegister(frame, rs1) + immediate));
         }
     }
 
@@ -767,6 +1006,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readInt(state.decodedRegister(rs1) + immediate));
         }
+
+        /// Loads a sign-extended 32-bit value into a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, state.memory().readInt(readRegister(frame, rs1) + immediate));
+        }
     }
 
     /// Executes `ld`.
@@ -780,6 +1025,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readLong(state.decodedRegister(rs1) + immediate));
+        }
+
+        /// Loads a 64-bit value into a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, state.memory().readLong(readRegister(frame, rs1) + immediate));
         }
     }
 
@@ -795,6 +1046,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedByte(state.decodedRegister(rs1) + immediate));
         }
+
+        /// Loads a zero-extended byte value into a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, state.memory().readUnsignedByte(readRegister(frame, rs1) + immediate));
+        }
     }
 
     /// Executes `lhu`.
@@ -808,6 +1065,12 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedShort(state.decodedRegister(rs1) + immediate));
+        }
+
+        /// Loads a zero-extended 16-bit value into a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, state.memory().readUnsignedShort(readRegister(frame, rs1) + immediate));
         }
     }
 
@@ -823,6 +1086,12 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedInt(state.decodedRegister(rs1) + immediate));
         }
+
+        /// Loads a zero-extended 32-bit value into a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            writeRegister(frame, rd, state.memory().readUnsignedInt(readRegister(frame, rs1) + immediate));
+        }
     }
 
     /// Executes `sb`.
@@ -837,6 +1106,15 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeByte(storeAddress, (byte) state.decodedRegister(rs2));
+            state.afterStore(storeAddress, Byte.BYTES);
+            state.clearReservation();
+        }
+
+        /// Stores a byte value from a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            long storeAddress = readRegister(frame, rs1) + immediate;
+            state.memory().writeByte(storeAddress, (byte) readRegister(frame, rs2));
             state.afterStore(storeAddress, Byte.BYTES);
             state.clearReservation();
         }
@@ -857,6 +1135,15 @@ public sealed abstract class InstructionNode extends Node {
             state.afterStore(storeAddress, Short.BYTES);
             state.clearReservation();
         }
+
+        /// Stores a 16-bit value from a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            long storeAddress = readRegister(frame, rs1) + immediate;
+            state.memory().writeShort(storeAddress, (short) readRegister(frame, rs2));
+            state.afterStore(storeAddress, Short.BYTES);
+            state.clearReservation();
+        }
     }
 
     /// Executes `sw`.
@@ -874,6 +1161,15 @@ public sealed abstract class InstructionNode extends Node {
             state.afterStore(storeAddress, Integer.BYTES);
             state.clearReservation();
         }
+
+        /// Stores a 32-bit value from a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            long storeAddress = readRegister(frame, rs1) + immediate;
+            state.memory().writeInt(storeAddress, (int) readRegister(frame, rs2));
+            state.afterStore(storeAddress, Integer.BYTES);
+            state.clearReservation();
+        }
     }
 
     /// Executes `sd`.
@@ -888,6 +1184,15 @@ public sealed abstract class InstructionNode extends Node {
         protected void executeInstruction(MachineState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeLong(storeAddress, state.decodedRegister(rs2));
+            state.afterStore(storeAddress, Long.BYTES);
+            state.clearReservation();
+        }
+
+        /// Stores a 64-bit value from a frame register.
+        @Override
+        protected void executeInstruction(VirtualFrame frame, MachineState state, long nextPc) {
+            long storeAddress = readRegister(frame, rs1) + immediate;
+            state.memory().writeLong(storeAddress, readRegister(frame, rs2));
             state.afterStore(storeAddress, Long.BYTES);
             state.clearReservation();
         }
