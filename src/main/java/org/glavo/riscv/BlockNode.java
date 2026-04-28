@@ -22,7 +22,10 @@ public final class BlockNode extends Node {
     @ExplodeLoop
     public void execute(MachineState state) {
         for (InstructionNode instruction : instructions) {
-            instruction.execute(state);
+            instruction.executeInBlock(state);
+        }
+        if (!instructions[instructions.length - 1].isTerminator()) {
+            state.setPc(instructions[instructions.length - 1].nextAddress);
         }
     }
 }

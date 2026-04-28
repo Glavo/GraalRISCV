@@ -220,10 +220,24 @@ public sealed abstract class InstructionNode extends Node {
     public final void execute(MachineState state) {
         state.beforeInstruction(address, raw);
         executeInstruction(state, nextAddress);
+        if (!terminator && !writesProgramCounterInBody()) {
+            state.setPc(nextAddress);
+        }
+    }
+
+    /// Executes this instruction as part of a decoded basic block.
+    final void executeInBlock(MachineState state) {
+        state.beforeInstruction(address, raw);
+        executeInstruction(state, nextAddress);
     }
 
     /// Executes the operation-specific instruction body.
     protected abstract void executeInstruction(MachineState state, long nextPc);
+
+    /// Returns true when the instruction body writes `pc` itself.
+    protected boolean writesProgramCounterInBody() {
+        return true;
+    }
 
     /// Base class for decoded instructions with direct operation bodies.
     private abstract static sealed class DirectInstructionNode extends InstructionNode {
@@ -240,6 +254,12 @@ public sealed abstract class InstructionNode extends Node {
                 boolean terminator) {
             super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
         }
+
+        /// Returns true for control-transfer bodies that still materialize `pc`.
+        @Override
+        protected boolean writesProgramCounterInBody() {
+            return terminator;
+        }
     }
 
     /// Advances the program counter for no-op control instructions.
@@ -252,7 +272,6 @@ public sealed abstract class InstructionNode extends Node {
         /// Advances the program counter.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setPc(nextPc);
         }
     }
 
@@ -267,7 +286,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -282,7 +300,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, address + immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -441,7 +458,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) + immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -456,7 +472,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -471,7 +486,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) | immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -486,7 +500,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) & immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -501,7 +514,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) << immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -516,7 +528,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -531,7 +542,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >> immediate);
-            state.setPc(nextPc);
         }
     }
 
@@ -546,7 +556,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) (state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -561,7 +570,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) + state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -576,7 +584,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) - state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -591,7 +598,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -606,7 +612,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) | state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -621,7 +626,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) & state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -636,7 +640,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x3f));
-            state.setPc(nextPc);
         }
     }
 
@@ -651,7 +654,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x3f));
-            state.setPc(nextPc);
         }
     }
 
@@ -666,7 +668,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x3f));
-            state.setPc(nextPc);
         }
     }
 
@@ -681,7 +682,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) + (int) state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -696,7 +696,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) - (int) state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -711,7 +710,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) * state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -726,7 +724,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) * (int) state.decodedRegister(rs2));
-            state.setPc(nextPc);
         }
     }
 
@@ -741,7 +738,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readByte(state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -756,7 +752,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readShort(state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -771,7 +766,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readInt(state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -786,7 +780,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readLong(state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -801,7 +794,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedByte(state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -816,7 +808,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedShort(state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -831,7 +822,6 @@ public sealed abstract class InstructionNode extends Node {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedInt(state.decodedRegister(rs1) + immediate));
-            state.setPc(nextPc);
         }
     }
 
@@ -849,7 +839,6 @@ public sealed abstract class InstructionNode extends Node {
             state.memory().writeByte(storeAddress, (byte) state.decodedRegister(rs2));
             state.afterStore(storeAddress, Byte.BYTES);
             state.clearReservation();
-            state.setPc(nextPc);
         }
     }
 
@@ -867,7 +856,6 @@ public sealed abstract class InstructionNode extends Node {
             state.memory().writeShort(storeAddress, (short) state.decodedRegister(rs2));
             state.afterStore(storeAddress, Short.BYTES);
             state.clearReservation();
-            state.setPc(nextPc);
         }
     }
 
@@ -885,7 +873,6 @@ public sealed abstract class InstructionNode extends Node {
             state.memory().writeInt(storeAddress, (int) state.decodedRegister(rs2));
             state.afterStore(storeAddress, Integer.BYTES);
             state.clearReservation();
-            state.setPc(nextPc);
         }
     }
 
@@ -903,7 +890,6 @@ public sealed abstract class InstructionNode extends Node {
             state.memory().writeLong(storeAddress, state.decodedRegister(rs2));
             state.afterStore(storeAddress, Long.BYTES);
             state.clearReservation();
-            state.setPc(nextPc);
         }
     }
 
