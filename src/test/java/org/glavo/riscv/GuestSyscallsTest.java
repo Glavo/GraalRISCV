@@ -287,6 +287,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
+    /// The Linux RISC-V syscall number for `statx`.
+    private static final long SYS_STATX = 291;
+
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final long SYS_FACCESSAT2 = 439;
 
@@ -322,6 +325,9 @@ public final class GuestSyscallsTest {
 
     /// The expected `st_mode` value for readable host directories.
     private static final int READABLE_DIRECTORY_STAT_MODE = 0040000 | 0555;
+
+    /// The expected `stx_mode` value for symbolic links.
+    private static final int SYMBOLIC_LINK_STAT_MODE = 0120000 | 0777;
 
     /// The byte offset of `d_off` inside Linux `struct linux_dirent64`.
     private static final int DIRENT64_NEXT_OFFSET = 8;
@@ -374,6 +380,54 @@ public final class GuestSyscallsTest {
     /// The byte offset of `f_flags` inside Linux generic 64-bit `struct statfs`.
     private static final int STATFS_FLAGS_OFFSET = 80;
 
+    /// The byte offset of `stx_mask` inside Linux generic `struct statx`.
+    private static final int STATX_MASK_OFFSET = 0;
+
+    /// The byte offset of `stx_blksize` inside Linux generic `struct statx`.
+    private static final int STATX_BLOCK_SIZE_OFFSET = 4;
+
+    /// The byte offset of `stx_attributes` inside Linux generic `struct statx`.
+    private static final int STATX_ATTRIBUTES_OFFSET = 8;
+
+    /// The byte offset of `stx_nlink` inside Linux generic `struct statx`.
+    private static final int STATX_LINK_COUNT_OFFSET = 16;
+
+    /// The byte offset of `stx_uid` inside Linux generic `struct statx`.
+    private static final int STATX_UID_OFFSET = 20;
+
+    /// The byte offset of `stx_gid` inside Linux generic `struct statx`.
+    private static final int STATX_GID_OFFSET = 24;
+
+    /// The byte offset of `stx_mode` inside Linux generic `struct statx`.
+    private static final int STATX_MODE_OFFSET = 28;
+
+    /// The byte offset of `stx_ino` inside Linux generic `struct statx`.
+    private static final int STATX_INODE_OFFSET = 32;
+
+    /// The byte offset of `stx_size` inside Linux generic `struct statx`.
+    private static final int STATX_FILE_SIZE_OFFSET = 40;
+
+    /// The byte offset of `stx_blocks` inside Linux generic `struct statx`.
+    private static final int STATX_BLOCK_COUNT_OFFSET = 48;
+
+    /// The byte offset of `stx_attributes_mask` inside Linux generic `struct statx`.
+    private static final int STATX_ATTRIBUTES_MASK_OFFSET = 56;
+
+    /// The byte offset of `stx_dev_major` inside Linux generic `struct statx`.
+    private static final int STATX_DEVICE_MAJOR_OFFSET = 136;
+
+    /// The byte offset of `stx_dev_minor` inside Linux generic `struct statx`.
+    private static final int STATX_DEVICE_MINOR_OFFSET = 140;
+
+    /// The byte offset of `stx_mnt_id` inside Linux generic `struct statx`.
+    private static final int STATX_MOUNT_ID_OFFSET = 144;
+
+    /// The Linux `STATX_BASIC_STATS` bit mask.
+    private static final int STATX_BASIC_STATS_MASK = 0x0000_07ff;
+
+    /// The deterministic mount id returned by `statx`.
+    private static final long STATX_SYNTHETIC_MOUNT_ID = 1;
+
     /// The synthetic filesystem magic returned by `statfs`.
     private static final long STATFS_MAGIC = 0x0102_1994L;
 
@@ -398,8 +452,20 @@ public final class GuestSyscallsTest {
     /// Linux `AT_REMOVEDIR`.
     private static final long AT_REMOVEDIR = 0x200;
 
+    /// Linux `AT_NO_AUTOMOUNT`.
+    private static final long AT_NO_AUTOMOUNT = 0x800;
+
     /// Linux `AT_EMPTY_PATH`.
     private static final long AT_EMPTY_PATH = 0x1000;
+
+    /// Linux `AT_SYMLINK_NOFOLLOW`.
+    private static final long AT_SYMLINK_NOFOLLOW = 0x100;
+
+    /// Linux `AT_STATX_FORCE_SYNC`.
+    private static final long AT_STATX_FORCE_SYNC = 0x2000;
+
+    /// Linux `AT_STATX_DONT_SYNC`.
+    private static final long AT_STATX_DONT_SYNC = 0x4000;
 
     /// Linux `F_OK` access mode.
     private static final long F_OK = 0;
@@ -1158,6 +1224,184 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FSTATFS, 99, statfsAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `statx` reports sandboxed host files, descriptors, and deterministic metadata.
+    @Test
+    public void statxReportsSandboxedHostMetadata() throws Exception {
+        Files.createDirectories(tempDirectory.resolve("directory"));
+        Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long statxAddress = memory.baseAddress() + 512;
+            long pipeAddress = memory.baseAddress() + 1024;
+
+            writeGuestString(memory, pathAddress, "directory/message.txt");
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    AT_FDCWD,
+                    pathAddress,
+                    AT_NO_AUTOMOUNT | AT_STATX_DONT_SYNC,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, READ_WRITE_REGULAR_FILE_STAT_MODE, 9);
+
+            writeGuestString(memory, pathAddress, "directory");
+            setSyscall(state, SYS_STATX, AT_FDCWD, pathAddress, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    AT_FDCWD,
+                    pathAddress,
+                    AT_EMPTY_PATH | AT_STATX_FORCE_SYNC,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+
+            setSyscall(state, SYS_STATX, 1, pathAddress, AT_EMPTY_PATH, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, STANDARD_STREAM_STAT_MODE, 0);
+
+            setSyscall(state, SYS_STATX, AT_FDCWD, pathAddress, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "directory");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    directoryFileDescriptor,
+                    pathAddress,
+                    AT_EMPTY_PATH,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+
+            writeGuestString(memory, pathAddress, "message.txt");
+            setSyscall(state, SYS_OPENAT, directoryFileDescriptor, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(4, fileDescriptor);
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    fileDescriptor,
+                    pathAddress,
+                    AT_EMPTY_PATH,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, REGULAR_FILE_STAT_MODE, 9);
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            assertEquals(5, readFileDescriptor);
+
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    readFileDescriptor,
+                    pathAddress,
+                    AT_EMPTY_PATH,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, PIPE_STAT_MODE, 0);
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_STATX, AT_FDCWD, pathAddress, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "../escape");
+            setSyscall(state, SYS_STATX, AT_FDCWD, pathAddress, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "directory/message.txt");
+            setSyscall(state, SYS_STATX, AT_FDCWD, pathAddress, 0x4000_0000L, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, pathAddress, "message.txt");
+            setSyscall(state, SYS_STATX, 99, pathAddress, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `statx` can report symbolic links without following them when the host supports links.
+    @Test
+    public void statxReportsSandboxedSymlinkMetadata() throws Exception {
+        try {
+            Files.createSymbolicLink(tempDirectory.resolve("link.txt"), Path.of("target.txt"));
+        } catch (IOException | UnsupportedOperationException exception) {
+            assumeTrue(false, "Host filesystem does not allow symbolic link creation");
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long statxAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "link.txt");
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    AT_FDCWD,
+                    pathAddress,
+                    AT_SYMLINK_NOFOLLOW,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, SYMBOLIC_LINK_STAT_MODE, "target.txt".length());
         }
     }
 
@@ -3557,6 +3801,24 @@ public final class GuestSyscallsTest {
         assertEquals(STATFS_NAME_MAX, memory.readLong(address + STATFS_NAME_LENGTH_OFFSET));
         assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_FRAGMENT_SIZE_OFFSET));
         assertEquals(0, memory.readLong(address + STATFS_FLAGS_OFFSET));
+    }
+
+    /// Verifies the deterministic `struct statx` values exposed by the simulator.
+    private static void assertStatx(Memory memory, long address, int mode, long size) {
+        assertEquals(STATX_BASIC_STATS_MASK, memory.readInt(address + STATX_MASK_OFFSET));
+        assertEquals(STATFS_BLOCK_SIZE, memory.readInt(address + STATX_BLOCK_SIZE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATX_ATTRIBUTES_OFFSET));
+        assertEquals(1, memory.readInt(address + STATX_LINK_COUNT_OFFSET));
+        assertEquals(1000, memory.readInt(address + STATX_UID_OFFSET));
+        assertEquals(1000, memory.readInt(address + STATX_GID_OFFSET));
+        assertEquals(mode, memory.readUnsignedShort(address + STATX_MODE_OFFSET));
+        assertTrue(memory.readLong(address + STATX_INODE_OFFSET) > 0);
+        assertEquals(size, memory.readLong(address + STATX_FILE_SIZE_OFFSET));
+        assertEquals((size + 511L) / 512L, memory.readLong(address + STATX_BLOCK_COUNT_OFFSET));
+        assertEquals(0, memory.readLong(address + STATX_ATTRIBUTES_MASK_OFFSET));
+        assertEquals(0, memory.readInt(address + STATX_DEVICE_MAJOR_OFFSET));
+        assertEquals(0, memory.readInt(address + STATX_DEVICE_MINOR_OFFSET));
+        assertEquals(STATX_SYNTHETIC_MOUNT_ID, memory.readLong(address + STATX_MOUNT_ID_OFFSET));
     }
 
     /// Writes a Linux RISC-V 64-bit `stack_t` into guest memory.

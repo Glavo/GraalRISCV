@@ -229,6 +229,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
+    /// The Linux RISC-V syscall number for `statx`.
+    private static final long SYS_STATX = 291;
+
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final long SYS_FACCESSAT2 = 439;
 
@@ -364,11 +367,24 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `AT_REMOVEDIR`.
     private static final long AT_REMOVEDIR = 0x200;
 
+    /// Linux `AT_NO_AUTOMOUNT`.
+    private static final long AT_NO_AUTOMOUNT = 0x800;
+
     /// Linux `AT_EMPTY_PATH`.
     private static final long AT_EMPTY_PATH = 0x1000;
 
+    /// Linux `AT_STATX_FORCE_SYNC`.
+    private static final long AT_STATX_FORCE_SYNC = 0x2000;
+
+    /// Linux `AT_STATX_DONT_SYNC`.
+    private static final long AT_STATX_DONT_SYNC = 0x4000;
+
     /// Linux `newfstatat` flags accepted by this simulator.
     private static final long SUPPORTED_NEWFSTATAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+
+    /// Linux `statx` flags accepted by this simulator.
+    private static final long SUPPORTED_STATX_FLAGS =
+            AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC;
 
     /// Linux `faccessat2` flags accepted by this simulator.
     private static final long SUPPORTED_FACCESSAT2_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH;
@@ -450,6 +466,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of Linux generic 64-bit `struct statfs`.
     private static final int STATFS_SIZE = 120;
+
+    /// The byte size of Linux generic `struct statx`.
+    private static final int STATX_SIZE = 256;
 
     /// The byte size of one Linux `struct utsname` field.
     private static final int UTSNAME_FIELD_SIZE = 65;
@@ -993,6 +1012,57 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The byte offset of `f_flags` inside Linux generic 64-bit `struct statfs`.
     private static final int STATFS_FLAGS_OFFSET = 80;
 
+    /// The byte offset of `stx_mask` inside Linux generic `struct statx`.
+    private static final int STATX_MASK_OFFSET = 0;
+
+    /// The byte offset of `stx_blksize` inside Linux generic `struct statx`.
+    private static final int STATX_BLOCK_SIZE_OFFSET = 4;
+
+    /// The byte offset of `stx_attributes` inside Linux generic `struct statx`.
+    private static final int STATX_ATTRIBUTES_OFFSET = 8;
+
+    /// The byte offset of `stx_nlink` inside Linux generic `struct statx`.
+    private static final int STATX_LINK_COUNT_OFFSET = 16;
+
+    /// The byte offset of `stx_uid` inside Linux generic `struct statx`.
+    private static final int STATX_UID_OFFSET = 20;
+
+    /// The byte offset of `stx_gid` inside Linux generic `struct statx`.
+    private static final int STATX_GID_OFFSET = 24;
+
+    /// The byte offset of `stx_mode` inside Linux generic `struct statx`.
+    private static final int STATX_MODE_OFFSET = 28;
+
+    /// The byte offset of `stx_ino` inside Linux generic `struct statx`.
+    private static final int STATX_INODE_OFFSET = 32;
+
+    /// The byte offset of `stx_size` inside Linux generic `struct statx`.
+    private static final int STATX_FILE_SIZE_OFFSET = 40;
+
+    /// The byte offset of `stx_blocks` inside Linux generic `struct statx`.
+    private static final int STATX_BLOCK_COUNT_OFFSET = 48;
+
+    /// The byte offset of `stx_attributes_mask` inside Linux generic `struct statx`.
+    private static final int STATX_ATTRIBUTES_MASK_OFFSET = 56;
+
+    /// The byte offset of `stx_dev_major` inside Linux generic `struct statx`.
+    private static final int STATX_DEVICE_MAJOR_OFFSET = 136;
+
+    /// The byte offset of `stx_dev_minor` inside Linux generic `struct statx`.
+    private static final int STATX_DEVICE_MINOR_OFFSET = 140;
+
+    /// The byte offset of `stx_mnt_id` inside Linux generic `struct statx`.
+    private static final int STATX_MOUNT_ID_OFFSET = 144;
+
+    /// The Linux `STATX_BASIC_STATS` bit mask returned by this simulator.
+    private static final int STATX_BASIC_STATS_MASK = 0x0000_07ff;
+
+    /// The deterministic mount id returned by `statx`.
+    private static final long STATX_SYNTHETIC_MOUNT_ID = 1;
+
+    /// The attribute mask returned by `statx`.
+    private static final long STATX_ATTRIBUTES_MASK = 0;
+
     /// The Linux `S_IFCHR` file type bit used for character devices.
     private static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
 
@@ -1002,11 +1072,17 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux `S_IFDIR` file type bit used for directories.
     private static final int STAT_MODE_DIRECTORY = 0040000;
 
+    /// The Linux `S_IFLNK` file type bit used for symbolic links.
+    private static final int STAT_MODE_SYMBOLIC_LINK = 0120000;
+
     /// The Linux `S_IFREG` file type bit used for regular files.
     private static final int STAT_MODE_REGULAR_FILE = 0100000;
 
     /// The file permission bits exposed for standard streams.
     private static final int STAT_MODE_READ_WRITE_ALL = 0666;
+
+    /// The file permission bits exposed for symbolic links.
+    private static final int STAT_MODE_ALL = 0777;
 
     /// The file permission bits exposed for read-only host files.
     private static final int STAT_MODE_READ_ALL = 0444;
@@ -1583,6 +1659,15 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_GETRANDOM) {
             state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_STATX) {
+            state.setRegister(10, statx(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             return;
         }
         if (callNumber == SYS_FACCESSAT2) {
@@ -2677,6 +2762,85 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
+    /// Writes a Linux generic `struct statx` for a path or file descriptor.
+    private long statx(
+            long directoryFileDescriptor,
+            long pathAddress,
+            long flags,
+            long requestedMask,
+            long statxAddress) {
+        if ((flags & ~SUPPORTED_STATX_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+
+        if (guestPath.isEmpty()) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return ENOENT;
+            }
+            if (directoryFileDescriptor == AT_FDCWD) {
+                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                return currentDirectory == null
+                        ? EACCES
+                        : statxHostFile(currentDirectory, statxAddress, flags, requestedMask);
+            }
+            return statxFileDescriptor((int) directoryFileDescriptor, requestedMask, statxAddress);
+        }
+
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+        return statxHostFile(hostFile, statxAddress, flags, requestedMask);
+    }
+
+    /// Writes a Linux generic `struct statx` for a file descriptor.
+    private long statxFileDescriptor(int fileDescriptor, long requestedMask, long statxAddress) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor >= 0) {
+            writeStatx(statxAddress, standardFileDescriptor + 1L, STANDARD_STREAM_STAT_MODE, 0, requestedMask);
+            return 0;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (openFile.isPipe()) {
+            int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
+                    | (openFile.writable() ? 0222 : 0);
+            writeStatx(statxAddress, fileDescriptor + 1L, STAT_MODE_FIFO | permissions, 0, requestedMask);
+            return 0;
+        }
+        if (openFile.isDirectory()) {
+            writeStatx(
+                    statxAddress,
+                    fileDescriptor + 1L,
+                    STAT_MODE_DIRECTORY | STAT_MODE_READ_EXECUTE_ALL,
+                    0,
+                    requestedMask);
+            return 0;
+        }
+
+        try {
+            long size = openFile.channel().size();
+            int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
+                    | (openFile.writable() ? 0222 : 0);
+            writeStatx(statxAddress, fileDescriptor + 1L, STAT_MODE_REGULAR_FILE | permissions, size, requestedMask);
+            return 0;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest statx syscall failed", exception);
+        }
+    }
+
     /// Writes a deterministic Linux generic 64-bit `struct statfs` for a sandboxed path.
     private long statfs(long pathAddress, long statfsAddress) {
         @Nullable String guestPath = readGuestPath(pathAddress);
@@ -2758,6 +2922,58 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
+    /// Writes a Linux generic `struct statx` for a sandboxed host file.
+    private long statxHostFile(TruffleFile hostFile, long statxAddress, long flags, long requestedMask) {
+        try {
+            if (!pathEntryExists(hostFile)) {
+                return ENOENT;
+            }
+            if ((flags & AT_SYMLINK_NOFOLLOW) != 0 && hostFile.isSymbolicLink()) {
+                String target = hostFile.readSymbolicLink().toString();
+                long size = target.getBytes(StandardCharsets.UTF_8).length;
+                writeStatx(
+                        statxAddress,
+                        syntheticInode(hostFile),
+                        STAT_MODE_SYMBOLIC_LINK | STAT_MODE_ALL,
+                        size,
+                        requestedMask);
+                return 0;
+            }
+            if (!hostFile.exists()) {
+                return ENOENT;
+            }
+            if (!canonicalFileStaysBelowHostRoot(hostFile)) {
+                return EACCES;
+            }
+
+            if (hostFile.isDirectory()) {
+                int permissions = hostFile.isReadable() ? STAT_MODE_READ_EXECUTE_ALL : 0;
+                writeStatx(
+                        statxAddress,
+                        syntheticInode(hostFile),
+                        STAT_MODE_DIRECTORY | permissions,
+                        0,
+                        requestedMask);
+                return 0;
+            }
+            if (hostFile.isRegularFile()) {
+                long size = hostFile.size();
+                int permissions = (hostFile.isReadable() ? STAT_MODE_READ_ALL : 0)
+                        | (hostFile.isWritable() ? 0222 : 0);
+                writeStatx(
+                        statxAddress,
+                        syntheticInode(hostFile),
+                        STAT_MODE_REGULAR_FILE | permissions,
+                        size,
+                        requestedMask);
+                return 0;
+            }
+            return ENODEV;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
     /// Writes the shared subset of Linux generic 64-bit `struct stat` fields.
     private void writeStat(long statAddress, long inode, int mode, long size) {
         memory.clear(statAddress, STAT_SIZE);
@@ -2767,6 +2983,29 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeLong(statAddress + STAT_SIZE_OFFSET, size);
         memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
         memory.writeLong(statAddress + STAT_BLOCK_COUNT_OFFSET, (size + 511L) / 512L);
+    }
+
+    /// Writes deterministic Linux generic `struct statx` fields.
+    private void writeStatx(long statxAddress, long inode, int mode, long size, long requestedMask) {
+        int returnedMask = (int) (requestedMask & STATX_BASIC_STATS_MASK);
+        if (returnedMask == 0) {
+            returnedMask = STATX_BASIC_STATS_MASK;
+        }
+        memory.clear(statxAddress, STATX_SIZE);
+        memory.writeInt(statxAddress + STATX_MASK_OFFSET, returnedMask);
+        memory.writeInt(statxAddress + STATX_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
+        memory.writeLong(statxAddress + STATX_ATTRIBUTES_OFFSET, 0);
+        memory.writeInt(statxAddress + STATX_LINK_COUNT_OFFSET, 1);
+        memory.writeInt(statxAddress + STATX_UID_OFFSET, (int) GUEST_USER_ID);
+        memory.writeInt(statxAddress + STATX_GID_OFFSET, (int) GUEST_GROUP_ID);
+        memory.writeShort(statxAddress + STATX_MODE_OFFSET, (short) mode);
+        memory.writeLong(statxAddress + STATX_INODE_OFFSET, inode);
+        memory.writeLong(statxAddress + STATX_FILE_SIZE_OFFSET, size);
+        memory.writeLong(statxAddress + STATX_BLOCK_COUNT_OFFSET, (size + 511L) / 512L);
+        memory.writeLong(statxAddress + STATX_ATTRIBUTES_MASK_OFFSET, STATX_ATTRIBUTES_MASK);
+        memory.writeInt(statxAddress + STATX_DEVICE_MAJOR_OFFSET, 0);
+        memory.writeInt(statxAddress + STATX_DEVICE_MINOR_OFFSET, 0);
+        memory.writeLong(statxAddress + STATX_MOUNT_ID_OFFSET, STATX_SYNTHETIC_MOUNT_ID);
     }
 
     /// Writes deterministic Linux generic 64-bit `struct statfs` fields.

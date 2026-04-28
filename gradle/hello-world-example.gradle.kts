@@ -26,11 +26,13 @@ val linuxStaticDirectoryListExampleElf = layout.buildDirectory.file("examples/li
 val linuxStaticFileMutationExampleElf = layout.buildDirectory.file("examples/linux-static/file-mutation.elf")
 val linuxStaticWorkingDirectoryExampleElf = layout.buildDirectory.file("examples/linux-static/working-directory.elf")
 val linuxStaticFilesystemStatusExampleElf = layout.buildDirectory.file("examples/linux-static/filesystem-status.elf")
+val linuxStaticStatxMetadataExampleElf = layout.buildDirectory.file("examples/linux-static/statx-metadata.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
 val linuxStaticWorkingDirectoryRoot = layout.buildDirectory.dir("tmp/linux-static-working-directory-root")
 val linuxStaticFilesystemStatusRoot = layout.buildDirectory.dir("tmp/linux-static-filesystem-status-root")
+val linuxStaticStatxMetadataRoot = layout.buildDirectory.dir("tmp/linux-static-statx-metadata-root")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -165,6 +167,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticFilesystemStatusExample") {
     description = "Builds examples/linux-static/FilesystemStatus.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("FilesystemStatus.c", linuxStaticFilesystemStatusExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticStatxMetadataExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/StatxMetadata.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("StatxMetadata.c", linuxStaticStatxMetadataExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -496,6 +505,52 @@ tasks.register<JavaExec>("testLinuxStaticFilesystemStatusExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticStatxMetadataExample") {
+    group = "verification"
+    description = "Compiles a static musl statx example and verifies sandboxed metadata output."
+
+    dependsOn("classes", "buildLinuxStaticStatxMetadataExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticStatxMetadataRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticStatxMetadataExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "statx-ok\n") {
+            throw GradleException("Unexpected static statx output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static statx example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticStatxMetadataRoot.get().file("statx.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "statx-data\n") {
+            throw GradleException("Unexpected static statx host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -655,6 +710,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticFileMutationExample",
         "testLinuxStaticWorkingDirectoryExample",
         "testLinuxStaticFilesystemStatusExample",
+        "testLinuxStaticStatxMetadataExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -670,4 +726,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticFileMutationExample")
     dependsOn("testLinuxStaticWorkingDirectoryExample")
     dependsOn("testLinuxStaticFilesystemStatusExample")
+    dependsOn("testLinuxStaticStatxMetadataExample")
 }

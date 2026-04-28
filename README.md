@@ -74,7 +74,7 @@ Supported syscall families currently include:
 - `read`, `write`, `readv`, `writev`
 - `openat`, `close`, `fstat`, `newfstatat`, `readlinkat`, `getdents64`,
   `mkdirat`, `unlinkat`, `renameat`, `renameat2`, `truncate`, `ftruncate`,
-  `statfs`, `fstatfs`, `lseek`, `ioctl`, `fcntl`, `dup`, `dup3`, and `pipe2`
+  `statfs`, `fstatfs`, `statx`, `lseek`, `ioctl`, `fcntl`, `dup`, `dup3`, and `pipe2`
 - `getcwd`, `chdir`, `fchdir`, `faccessat`, and `faccessat2`
 - `brk`, `mmap`, `munmap`, `mprotect`, `madvise`, and `riscv_hwprobe`
 - `clock_gettime`, `gettimeofday`, `times`, `nanosleep`, `getrusage`, and
@@ -136,6 +136,7 @@ smoke programs. They are built with the Gradle-managed Zig toolchain.
 ./gradlew testLinuxStaticFileMutationExample
 ./gradlew testLinuxStaticWorkingDirectoryExample
 ./gradlew testLinuxStaticFilesystemStatusExample
+./gradlew testLinuxStaticStatxMetadataExample
 ```
 
 Run every available C smoke check:
