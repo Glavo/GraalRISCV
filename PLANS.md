@@ -30,7 +30,8 @@
 ### 4. Add static Linux C acceptance examples
 
 - Keep no-toolchain package smoke tests available so basic CI remains possible without Zig.
-- Add broader static Linux acceptance examples as syscall and ELF coverage grows.
+- Continue adding broader static Linux acceptance examples beyond the current pthread join smoke check as syscall and
+  ELF coverage grows.
 
 ### 5. Keep build, CI, and documentation current
 

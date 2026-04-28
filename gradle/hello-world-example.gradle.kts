@@ -29,6 +29,7 @@ val linuxStaticFilesystemStatusExampleElf = layout.buildDirectory.file("examples
 val linuxStaticStatxMetadataExampleElf = layout.buildDirectory.file("examples/linux-static/statx-metadata.elf")
 val linuxStaticPositionedIoExampleElf = layout.buildDirectory.file("examples/linux-static/positioned-io.elf")
 val linuxStaticEventPollingExampleElf = layout.buildDirectory.file("examples/linux-static/event-polling.elf")
+val linuxStaticThreadJoinExampleElf = layout.buildDirectory.file("examples/linux-static/thread-join.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
@@ -191,6 +192,14 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticEventPollingExample") {
     description = "Builds examples/linux-static/EventPolling.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("EventPolling.c", linuxStaticEventPollingExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticThreadJoinExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/ThreadJoin.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("ThreadJoin.c", linuxStaticThreadJoinExampleElf)
+    additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie", "-pthread"))
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -647,6 +656,39 @@ tasks.register<JavaExec>("testLinuxStaticEventPollingExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticThreadJoinExample") {
+    group = "verification"
+    description = "Compiles a static musl pthread example and verifies clone/futex-backed joins."
+
+    dependsOn("classes", "buildLinuxStaticThreadJoinExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticThreadJoinExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "thread-join-ok\n") {
+            throw GradleException("Unexpected static pthread output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static pthread example wrote to stderr: $actualError")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -809,6 +851,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticStatxMetadataExample",
         "testLinuxStaticPositionedIoExample",
         "testLinuxStaticEventPollingExample",
+        "testLinuxStaticThreadJoinExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -827,4 +870,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticStatxMetadataExample")
     dependsOn("testLinuxStaticPositionedIoExample")
     dependsOn("testLinuxStaticEventPollingExample")
+    dependsOn("testLinuxStaticThreadJoinExample")
 }

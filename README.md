@@ -115,9 +115,11 @@ Supported syscall families currently include:
 - `brk`, `mmap`, `munmap`, `mprotect`, `madvise`, and `riscv_hwprobe`
 - `clock_gettime`, `gettimeofday`, `times`, `nanosleep`, `getrusage`, and
   `prlimit64`
-- deterministic single-thread compatibility for `clone`, `futex`,
-  `set_tid_address`, `set_robust_list`, signal-mask setup, signal-action setup,
-  `sigaltstack`, `sched_getaffinity`, `sched_yield`, and process-group probes
+- deterministic compatibility for `set_tid_address`, `set_robust_list`,
+  signal-mask setup, signal-action setup, `sigaltstack`,
+  `sched_getaffinity`, `sched_yield`, and process-group probes
+- Linux thread-style `clone` and futex paths used by simple static musl pthread
+  joins
 - `getrandom`, which returns deterministic pseudo-random bytes for reproducible
   runs
 
@@ -171,6 +173,7 @@ Run the static Linux smoke checks:
 ./gradlew testLinuxStaticStatxMetadataExample
 ./gradlew testLinuxStaticPositionedIoExample
 ./gradlew testLinuxStaticEventPollingExample
+./gradlew testLinuxStaticThreadJoinExample
 ```
 
 Run every built-in C example check:
