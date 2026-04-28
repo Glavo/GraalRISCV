@@ -62,6 +62,9 @@ public final class MainTest {
     /// Linux `FUTEX_WAIT | FUTEX_PRIVATE_FLAG`.
     private static final int FUTEX_WAIT_PRIVATE = 128;
 
+    /// Linux `FUTEX_WAKE | FUTEX_PRIVATE_FLAG`.
+    private static final int FUTEX_WAKE_PRIVATE = 129;
+
     /// A temporary directory for generated ELF files.
     @TempDir
     private Path tempDirectory;
@@ -355,7 +358,7 @@ public final class MainTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         int exitCode = Main.run(
-                new String[]{"--max-instructions", "100000", elfPath.toString()},
+                new String[]{"--max-instructions", "1000000", elfPath.toString()},
                 new ByteArrayInputStream(new byte[0]),
                 out,
                 err);
@@ -407,14 +410,17 @@ public final class MainTest {
         return code.array();
     }
 
-    /// Builds a program that starts one guest thread and waits for its clear-child-TID futex wakeup.
+    /// Builds a program that starts one guest thread and validates futex wakeups and clear-child-TID completion.
     private static byte[] cloneThreadCode() {
-        int resultOffset = 0x180;
-        int parentTidOffset = 0x184;
-        int childTidOffset = 0x188;
-        int tlsOffset = 0x190;
-        int childStackOffset = 0x3f0;
-        ByteBuffer code = ByteBuffer.allocate(0x400).order(ByteOrder.LITTLE_ENDIAN);
+        int resultOffset = 0x300;
+        int parentTidOffset = 0x304;
+        int childTidOffset = 0x308;
+        int tlsOffset = 0x310;
+        int readyOffset = 0x314;
+        int releaseOffset = 0x318;
+        int readyArmOffset = 0x31c;
+        int childStackOffset = 0x7f0;
+        ByteBuffer code = ByteBuffer.allocate(0x800).order(ByteOrder.LITTLE_ENDIAN);
 
         putLoadImmediate(code, 10, THREAD_CLONE_FLAGS);
         putLoadAddress(code, 11, childStackOffset);
@@ -425,18 +431,50 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         int childBranchPosition = reserveInstruction(code);
 
+        ElfTestImages.putInt(code, ElfTestImages.addi(7, 10, 0));
+        putLoadAddress(code, 5, parentTidOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int parentTidFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, childTidOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int parentChildTidFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, readyOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int readyRaceBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, readyArmOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 1));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        putLoadAddress(code, 5, readyOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAIT_PRIVATE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int readyWaitFailBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int readyValueFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, releaseOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 1));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAKE_PRIVATE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
         putLoadAddress(code, 5, childTidOffset);
         int waitLoopPosition = code.position();
         ElfTestImages.putInt(code, lw(6, 0, 5));
-        int waitDoneBranchPosition = reserveInstruction(code);
+        int childTidRaceBranchPosition = reserveInstruction(code);
         ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
         ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAIT_PRIVATE));
         ElfTestImages.putInt(code, ElfTestImages.addi(12, 6, 0));
         ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
-        int waitLoopJumpPosition = code.position();
-        ElfTestImages.putInt(code, jal(0, waitLoopPosition - waitLoopJumpPosition));
+        int childTidWaitFailBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int childTidValueFailBranchPosition = reserveInstruction(code);
 
         int waitDonePosition = code.position();
         putLoadAddress(code, 5, resultOffset);
@@ -444,7 +482,17 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
 
+        int parentFailPosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 21));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
         int childPosition = code.position();
+        putLoadAddress(code, 5, readyArmOffset);
+        int readyArmLoopPosition = code.position();
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        ElfTestImages.putInt(code, beq(6, 0, readyArmLoopPosition - (readyArmLoopPosition + Integer.BYTES)));
+        putCountdownLoop(code, 7, 50_000);
         putLoadAddress(code, 5, tlsOffset);
         int childTlsFailBranchPosition = reserveInstruction(code);
         putLoadAddress(code, 5, childTidOffset);
@@ -452,6 +500,28 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 178));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         int childTidFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, readyOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 1));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAKE_PRIVATE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        putLoadAddress(code, 5, releaseOffset);
+        int releaseLoopPosition = code.position();
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int releaseDoneBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, FUTEX_WAIT_PRIVATE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 98));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int releaseLoopJumpPosition = code.position();
+        ElfTestImages.putInt(code, jal(0, releaseLoopPosition - releaseLoopJumpPosition));
+        int releaseDonePosition = code.position();
+        putCountdownLoop(code, 7, 50_000);
         putLoadAddress(code, 5, resultOffset);
         ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 7));
         ElfTestImages.putInt(code, sw(6, 0, 5));
@@ -463,17 +533,28 @@ public final class MainTest {
         putLoadAddress(code, 5, resultOffset);
         ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 13));
         ElfTestImages.putInt(code, sw(6, 0, 5));
-        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
-        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 13));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 94));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
 
         patchInstruction(code, childBranchPosition, beq(10, 0, childPosition - childBranchPosition));
-        patchInstruction(code, waitDoneBranchPosition, beq(6, 0, waitDonePosition - waitDoneBranchPosition));
+        patchInstruction(code, parentTidFailBranchPosition, bne(6, 7, parentFailPosition - parentTidFailBranchPosition));
+        patchInstruction(code, parentChildTidFailBranchPosition, bne(6, 7, parentFailPosition - parentChildTidFailBranchPosition));
+        patchInstruction(code, readyRaceBranchPosition, bne(6, 0, parentFailPosition - readyRaceBranchPosition));
+        patchInstruction(code, readyWaitFailBranchPosition, bne(10, 0, parentFailPosition - readyWaitFailBranchPosition));
+        patchInstruction(code, readyValueFailBranchPosition, beq(6, 0, parentFailPosition - readyValueFailBranchPosition));
+        patchInstruction(code, childTidRaceBranchPosition, beq(6, 0, parentFailPosition - childTidRaceBranchPosition));
+        patchInstruction(code, childTidWaitFailBranchPosition, bne(10, 0, parentFailPosition - childTidWaitFailBranchPosition));
+        patchInstruction(code, childTidValueFailBranchPosition, bne(6, 0, parentFailPosition - childTidValueFailBranchPosition));
         patchInstruction(code, childTlsFailBranchPosition, bne(4, 5, childFailPosition - childTlsFailBranchPosition));
         patchInstruction(code, childTidFailBranchPosition, bne(10, 6, childFailPosition - childTidFailBranchPosition));
+        patchInstruction(code, releaseDoneBranchPosition, bne(6, 0, releaseDonePosition - releaseDoneBranchPosition));
 
         code.position(resultOffset);
         code.putInt(99);
+        code.putInt(0);
+        code.putInt(0);
+        code.putInt(0);
         code.putInt(0);
         code.putInt(0);
         return Arrays.copyOf(code.array(), childStackOffset);
@@ -634,6 +715,14 @@ public final class MainTest {
 
         ElfTestImages.putInt(code, lui(register, high));
         ElfTestImages.putInt(code, ElfTestImages.addi(register, register, value - high));
+    }
+
+    /// Writes a simple countdown loop using the supplied register as the counter.
+    private static void putCountdownLoop(ByteBuffer code, int register, int count) {
+        putLoadImmediate(code, register, count);
+        int loopPosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(register, register, -1));
+        ElfTestImages.putInt(code, bne(register, 0, loopPosition - code.position()));
     }
 
     /// Reserves one 32-bit instruction slot and returns its byte position.
