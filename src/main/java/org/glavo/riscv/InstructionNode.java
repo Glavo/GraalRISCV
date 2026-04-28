@@ -75,6 +75,10 @@ public sealed abstract class InstructionNode extends Node {
     @CompilationFinal
     protected final int length;
 
+    /// The sequential guest address following this instruction.
+    @CompilationFinal
+    protected final long nextAddress;
+
     /// The decoded operation.
     @CompilationFinal
     protected final Operation operation;
@@ -113,6 +117,7 @@ public sealed abstract class InstructionNode extends Node {
         this.address = address;
         this.raw = raw;
         this.length = length;
+        this.nextAddress = address + length;
         this.operation = operation;
         this.rd = rd;
         this.rs1 = rs1;
@@ -214,7 +219,7 @@ public sealed abstract class InstructionNode extends Node {
     /// Executes this instruction against the supplied architectural state.
     public final void execute(MachineState state) {
         state.beforeInstruction(address, raw);
-        executeInstruction(state, address + length);
+        executeInstruction(state, nextAddress);
     }
 
     /// Executes the operation-specific instruction body.
@@ -261,7 +266,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Writes the upper immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, immediate);
+            state.setDecodedRegister(rd, immediate);
             state.setPc(nextPc);
         }
     }
@@ -276,7 +281,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Writes the PC-relative upper immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, address + immediate);
+            state.setDecodedRegister(rd, address + immediate);
             state.setPc(nextPc);
         }
     }
@@ -291,7 +296,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Writes the link register and jumps to the PC-relative target.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, nextPc);
+            state.setDecodedRegister(rd, nextPc);
             state.setPc(address + immediate);
         }
     }
@@ -306,8 +311,8 @@ public sealed abstract class InstructionNode extends Node {
         /// Writes the link register and jumps to the register-relative target.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            long target = (state.register(rs1) + immediate) & ~1L;
-            state.setRegister(rd, nextPc);
+            long target = (state.decodedRegister(rs1) + immediate) & ~1L;
+            state.setDecodedRegister(rd, nextPc);
             state.setPc(target);
         }
     }
@@ -322,7 +327,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Branches when both source registers are equal.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setPc(state.register(rs1) == state.register(rs2) ? address + immediate : nextPc);
+            state.setPc(state.decodedRegister(rs1) == state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
     }
 
@@ -336,7 +341,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Branches when both source registers differ.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setPc(state.register(rs1) != state.register(rs2) ? address + immediate : nextPc);
+            state.setPc(state.decodedRegister(rs1) != state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
     }
 
@@ -350,7 +355,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Branches when the first source register is signed-less-than the second.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setPc(state.register(rs1) < state.register(rs2) ? address + immediate : nextPc);
+            state.setPc(state.decodedRegister(rs1) < state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
     }
 
@@ -364,7 +369,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Branches when the first source register is signed-greater-or-equal to the second.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setPc(state.register(rs1) >= state.register(rs2) ? address + immediate : nextPc);
+            state.setPc(state.decodedRegister(rs1) >= state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
     }
 
@@ -378,7 +383,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Branches when the first source register is unsigned-less-than the second.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setPc(Long.compareUnsigned(state.register(rs1), state.register(rs2)) < 0 ? address + immediate : nextPc);
+            state.setPc(Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0 ? address + immediate : nextPc);
         }
     }
 
@@ -392,7 +397,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Branches when the first source register is unsigned-greater-or-equal to the second.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setPc(Long.compareUnsigned(state.register(rs1), state.register(rs2)) >= 0 ? address + immediate : nextPc);
+            state.setPc(Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) >= 0 ? address + immediate : nextPc);
         }
     }
 
@@ -435,7 +440,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Adds a sign-extended immediate to a register.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) + immediate);
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) + immediate);
             state.setPc(nextPc);
         }
     }
@@ -450,7 +455,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Xors a register with a sign-extended immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) ^ immediate);
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ immediate);
             state.setPc(nextPc);
         }
     }
@@ -465,7 +470,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Ors a register with a sign-extended immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) | immediate);
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) | immediate);
             state.setPc(nextPc);
         }
     }
@@ -480,7 +485,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Ands a register with a sign-extended immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) & immediate);
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) & immediate);
             state.setPc(nextPc);
         }
     }
@@ -495,7 +500,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Shifts a register left by the decoded immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) << immediate);
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) << immediate);
             state.setPc(nextPc);
         }
     }
@@ -510,7 +515,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Shifts a register right logically by the decoded immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) >>> immediate);
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> immediate);
             state.setPc(nextPc);
         }
     }
@@ -525,7 +530,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Shifts a register right arithmetically by the decoded immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) >> immediate);
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) >> immediate);
             state.setPc(nextPc);
         }
     }
@@ -540,7 +545,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Adds an immediate in word width and sign-extends the result.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, (int) (state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, (int) (state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -555,7 +560,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Adds two source registers.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) + state.register(rs2));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) + state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -570,7 +575,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Subtracts the second source register from the first.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) - state.register(rs2));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) - state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -585,7 +590,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Xors two source registers.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) ^ state.register(rs2));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -600,7 +605,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Ors two source registers.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) | state.register(rs2));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) | state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -615,7 +620,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Ands two source registers.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) & state.register(rs2));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) & state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -630,7 +635,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Shifts the first source register left by the masked second source register.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) << (state.register(rs2) & 0x3f));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x3f));
             state.setPc(nextPc);
         }
     }
@@ -645,7 +650,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Shifts the first source register right logically by the masked second source register.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) >>> (state.register(rs2) & 0x3f));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x3f));
             state.setPc(nextPc);
         }
     }
@@ -660,7 +665,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Shifts the first source register right arithmetically by the masked second source register.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) >> (state.register(rs2) & 0x3f));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x3f));
             state.setPc(nextPc);
         }
     }
@@ -675,7 +680,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Adds two source registers in word width and sign-extends the result.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, (int) state.register(rs1) + (int) state.register(rs2));
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) + (int) state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -690,7 +695,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Subtracts two source registers in word width and sign-extends the result.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, (int) state.register(rs1) - (int) state.register(rs2));
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) - (int) state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -705,7 +710,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Multiplies two source registers and keeps the low 64 bits.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.register(rs1) * state.register(rs2));
+            state.setDecodedRegister(rd, state.decodedRegister(rs1) * state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -720,7 +725,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Multiplies two source registers in word width and sign-extends the result.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, (int) state.register(rs1) * (int) state.register(rs2));
+            state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) * (int) state.decodedRegister(rs2));
             state.setPc(nextPc);
         }
     }
@@ -735,7 +740,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Loads a sign-extended byte.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.memory().readByte(state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, state.memory().readByte(state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -750,7 +755,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Loads a sign-extended halfword.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.memory().readShort(state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, state.memory().readShort(state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -765,7 +770,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Loads a sign-extended word.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.memory().readInt(state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, state.memory().readInt(state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -780,7 +785,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Loads a doubleword.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.memory().readLong(state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, state.memory().readLong(state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -795,7 +800,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Loads a zero-extended byte.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.memory().readUnsignedByte(state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, state.memory().readUnsignedByte(state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -810,7 +815,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Loads a zero-extended halfword.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.memory().readUnsignedShort(state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, state.memory().readUnsignedShort(state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -825,7 +830,7 @@ public sealed abstract class InstructionNode extends Node {
         /// Loads a zero-extended word.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setRegister(rd, state.memory().readUnsignedInt(state.register(rs1) + immediate));
+            state.setDecodedRegister(rd, state.memory().readUnsignedInt(state.decodedRegister(rs1) + immediate));
             state.setPc(nextPc);
         }
     }
@@ -840,8 +845,8 @@ public sealed abstract class InstructionNode extends Node {
         /// Stores a byte.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            long storeAddress = state.register(rs1) + immediate;
-            state.memory().writeByte(storeAddress, (byte) state.register(rs2));
+            long storeAddress = state.decodedRegister(rs1) + immediate;
+            state.memory().writeByte(storeAddress, (byte) state.decodedRegister(rs2));
             state.afterStore(storeAddress, Byte.BYTES);
             state.clearReservation();
             state.setPc(nextPc);
@@ -858,8 +863,8 @@ public sealed abstract class InstructionNode extends Node {
         /// Stores a halfword.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            long storeAddress = state.register(rs1) + immediate;
-            state.memory().writeShort(storeAddress, (short) state.register(rs2));
+            long storeAddress = state.decodedRegister(rs1) + immediate;
+            state.memory().writeShort(storeAddress, (short) state.decodedRegister(rs2));
             state.afterStore(storeAddress, Short.BYTES);
             state.clearReservation();
             state.setPc(nextPc);
@@ -876,8 +881,8 @@ public sealed abstract class InstructionNode extends Node {
         /// Stores a word.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            long storeAddress = state.register(rs1) + immediate;
-            state.memory().writeInt(storeAddress, (int) state.register(rs2));
+            long storeAddress = state.decodedRegister(rs1) + immediate;
+            state.memory().writeInt(storeAddress, (int) state.decodedRegister(rs2));
             state.afterStore(storeAddress, Integer.BYTES);
             state.clearReservation();
             state.setPc(nextPc);
@@ -894,8 +899,8 @@ public sealed abstract class InstructionNode extends Node {
         /// Stores a doubleword.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            long storeAddress = state.register(rs1) + immediate;
-            state.memory().writeLong(storeAddress, state.register(rs2));
+            long storeAddress = state.decodedRegister(rs1) + immediate;
+            state.memory().writeLong(storeAddress, state.decodedRegister(rs2));
             state.afterStore(storeAddress, Long.BYTES);
             state.clearReservation();
             state.setPc(nextPc);
@@ -1137,31 +1142,31 @@ public sealed abstract class InstructionNode extends Node {
         switch (operation) {
             case NOP, FENCE, FENCE_I -> state.setPc(nextPc);
             case LUI -> {
-                state.setRegister(rd, immediate);
+                state.setDecodedRegister(rd, immediate);
                 state.setPc(nextPc);
             }
             case AUIPC -> {
-                state.setRegister(rd, address + immediate);
+                state.setDecodedRegister(rd, address + immediate);
                 state.setPc(nextPc);
             }
             case JAL -> {
-                state.setRegister(rd, nextPc);
+                state.setDecodedRegister(rd, nextPc);
                 state.setPc(address + immediate);
             }
             case JALR -> {
-                long target = (state.register(rs1) + immediate) & ~1L;
-                state.setRegister(rd, nextPc);
+                long target = (state.decodedRegister(rs1) + immediate) & ~1L;
+                state.setDecodedRegister(rd, nextPc);
                 state.setPc(target);
             }
-            case BEQ -> branch(state, state.register(rs1) == state.register(rs2), nextPc);
-            case BNE -> branch(state, state.register(rs1) != state.register(rs2), nextPc);
-            case BLT -> branch(state, state.register(rs1) < state.register(rs2), nextPc);
-            case BGE -> branch(state, state.register(rs1) >= state.register(rs2), nextPc);
-            case BLTU -> branch(state, Long.compareUnsigned(state.register(rs1), state.register(rs2)) < 0, nextPc);
-            case BGEU -> branch(state, Long.compareUnsigned(state.register(rs1), state.register(rs2)) >= 0, nextPc);
-            case CSRRW -> writeControlStatusRegister(state, nextPc, state.register(rs1));
-            case CSRRS -> setClearControlStatusRegister(state, nextPc, state.register(rs1), true);
-            case CSRRC -> setClearControlStatusRegister(state, nextPc, state.register(rs1), false);
+            case BEQ -> branch(state, state.decodedRegister(rs1) == state.decodedRegister(rs2), nextPc);
+            case BNE -> branch(state, state.decodedRegister(rs1) != state.decodedRegister(rs2), nextPc);
+            case BLT -> branch(state, state.decodedRegister(rs1) < state.decodedRegister(rs2), nextPc);
+            case BGE -> branch(state, state.decodedRegister(rs1) >= state.decodedRegister(rs2), nextPc);
+            case BLTU -> branch(state, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0, nextPc);
+            case BGEU -> branch(state, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) >= 0, nextPc);
+            case CSRRW -> writeControlStatusRegister(state, nextPc, state.decodedRegister(rs1));
+            case CSRRS -> setClearControlStatusRegister(state, nextPc, state.decodedRegister(rs1), true);
+            case CSRRC -> setClearControlStatusRegister(state, nextPc, state.decodedRegister(rs1), false);
             case CSRRWI -> writeControlStatusRegister(state, nextPc, rs1);
             case CSRRSI -> setClearControlStatusRegister(state, nextPc, rs1, true);
             case CSRRCI -> setClearControlStatusRegister(state, nextPc, rs1, false);
@@ -1217,19 +1222,19 @@ public sealed abstract class InstructionNode extends Node {
     /// Executes integer register-immediate operations.
     protected final void executeImmediateInteger(MachineState state, long nextPc) {
         switch (operation) {
-            case ADDI -> binaryImmediate(state, nextPc, state.register(rs1) + immediate);
-            case SLTI -> binaryImmediate(state, nextPc, state.register(rs1) < immediate ? 1 : 0);
-            case SLTIU -> binaryImmediate(state, nextPc, Long.compareUnsigned(state.register(rs1), immediate) < 0 ? 1 : 0);
-            case XORI -> binaryImmediate(state, nextPc, state.register(rs1) ^ immediate);
-            case ORI -> binaryImmediate(state, nextPc, state.register(rs1) | immediate);
-            case ANDI -> binaryImmediate(state, nextPc, state.register(rs1) & immediate);
-            case SLLI -> binaryImmediate(state, nextPc, state.register(rs1) << immediate);
-            case SRLI -> binaryImmediate(state, nextPc, state.register(rs1) >>> immediate);
-            case SRAI -> binaryImmediate(state, nextPc, state.register(rs1) >> immediate);
-            case ADDIW -> wordImmediate(state, nextPc, (int) (state.register(rs1) + immediate));
-            case SLLIW -> wordImmediate(state, nextPc, (int) state.register(rs1) << immediate);
-            case SRLIW -> wordImmediate(state, nextPc, (int) state.register(rs1) >>> immediate);
-            case SRAIW -> wordImmediate(state, nextPc, (int) state.register(rs1) >> immediate);
+            case ADDI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) + immediate);
+            case SLTI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) < immediate ? 1 : 0);
+            case SLTIU -> binaryImmediate(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), immediate) < 0 ? 1 : 0);
+            case XORI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) ^ immediate);
+            case ORI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) | immediate);
+            case ANDI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) & immediate);
+            case SLLI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) << immediate);
+            case SRLI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) >>> immediate);
+            case SRAI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) >> immediate);
+            case ADDIW -> wordImmediate(state, nextPc, (int) (state.decodedRegister(rs1) + immediate));
+            case SLLIW -> wordImmediate(state, nextPc, (int) state.decodedRegister(rs1) << immediate);
+            case SRLIW -> wordImmediate(state, nextPc, (int) state.decodedRegister(rs1) >>> immediate);
+            case SRAIW -> wordImmediate(state, nextPc, (int) state.decodedRegister(rs1) >> immediate);
             default -> throw unexpectedOperationGroup("immediate integer");
         }
     }
@@ -1237,21 +1242,21 @@ public sealed abstract class InstructionNode extends Node {
     /// Executes integer register-register operations.
     protected final void executeRegisterInteger(MachineState state, long nextPc) {
         switch (operation) {
-            case ADD -> binaryRegister(state, nextPc, state.register(rs1) + state.register(rs2));
-            case SUB -> binaryRegister(state, nextPc, state.register(rs1) - state.register(rs2));
-            case SLL -> binaryRegister(state, nextPc, state.register(rs1) << (state.register(rs2) & 0x3f));
-            case SLT -> binaryRegister(state, nextPc, state.register(rs1) < state.register(rs2) ? 1 : 0);
-            case SLTU -> binaryRegister(state, nextPc, Long.compareUnsigned(state.register(rs1), state.register(rs2)) < 0 ? 1 : 0);
-            case XOR -> binaryRegister(state, nextPc, state.register(rs1) ^ state.register(rs2));
-            case SRL -> binaryRegister(state, nextPc, state.register(rs1) >>> (state.register(rs2) & 0x3f));
-            case SRA -> binaryRegister(state, nextPc, state.register(rs1) >> (state.register(rs2) & 0x3f));
-            case OR -> binaryRegister(state, nextPc, state.register(rs1) | state.register(rs2));
-            case AND -> binaryRegister(state, nextPc, state.register(rs1) & state.register(rs2));
-            case ADDW -> wordRegister(state, nextPc, (int) state.register(rs1) + (int) state.register(rs2));
-            case SUBW -> wordRegister(state, nextPc, (int) state.register(rs1) - (int) state.register(rs2));
-            case SLLW -> wordRegister(state, nextPc, (int) state.register(rs1) << (state.register(rs2) & 0x1f));
-            case SRLW -> wordRegister(state, nextPc, (int) state.register(rs1) >>> (state.register(rs2) & 0x1f));
-            case SRAW -> wordRegister(state, nextPc, (int) state.register(rs1) >> (state.register(rs2) & 0x1f));
+            case ADD -> binaryRegister(state, nextPc, state.decodedRegister(rs1) + state.decodedRegister(rs2));
+            case SUB -> binaryRegister(state, nextPc, state.decodedRegister(rs1) - state.decodedRegister(rs2));
+            case SLL -> binaryRegister(state, nextPc, state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x3f));
+            case SLT -> binaryRegister(state, nextPc, state.decodedRegister(rs1) < state.decodedRegister(rs2) ? 1 : 0);
+            case SLTU -> binaryRegister(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0 ? 1 : 0);
+            case XOR -> binaryRegister(state, nextPc, state.decodedRegister(rs1) ^ state.decodedRegister(rs2));
+            case SRL -> binaryRegister(state, nextPc, state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x3f));
+            case SRA -> binaryRegister(state, nextPc, state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x3f));
+            case OR -> binaryRegister(state, nextPc, state.decodedRegister(rs1) | state.decodedRegister(rs2));
+            case AND -> binaryRegister(state, nextPc, state.decodedRegister(rs1) & state.decodedRegister(rs2));
+            case ADDW -> wordRegister(state, nextPc, (int) state.decodedRegister(rs1) + (int) state.decodedRegister(rs2));
+            case SUBW -> wordRegister(state, nextPc, (int) state.decodedRegister(rs1) - (int) state.decodedRegister(rs2));
+            case SLLW -> wordRegister(state, nextPc, (int) state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x1f));
+            case SRLW -> wordRegister(state, nextPc, (int) state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x1f));
+            case SRAW -> wordRegister(state, nextPc, (int) state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x1f));
             default -> throw unexpectedOperationGroup("register integer");
         }
     }
@@ -1259,19 +1264,19 @@ public sealed abstract class InstructionNode extends Node {
     /// Executes RV64M multiply and divide operations.
     protected final void executeMultiplyDivide(MachineState state, long nextPc) {
         switch (operation) {
-            case MUL -> binaryRegister(state, nextPc, state.register(rs1) * state.register(rs2));
-            case MULH -> binaryRegister(state, nextPc, Math.multiplyHigh(state.register(rs1), state.register(rs2)));
-            case MULHSU -> binaryRegister(state, nextPc, multiplyHighSignedUnsigned(state.register(rs1), state.register(rs2)));
-            case MULHU -> binaryRegister(state, nextPc, Math.unsignedMultiplyHigh(state.register(rs1), state.register(rs2)));
-            case DIV -> binaryRegister(state, nextPc, divideSigned(state.register(rs1), state.register(rs2)));
-            case DIVU -> binaryRegister(state, nextPc, divideUnsigned(state.register(rs1), state.register(rs2)));
-            case REM -> binaryRegister(state, nextPc, remainderSigned(state.register(rs1), state.register(rs2)));
-            case REMU -> binaryRegister(state, nextPc, remainderUnsigned(state.register(rs1), state.register(rs2)));
-            case MULW -> wordRegister(state, nextPc, (int) state.register(rs1) * (int) state.register(rs2));
-            case DIVW -> wordRegister(state, nextPc, divideSignedWord((int) state.register(rs1), (int) state.register(rs2)));
-            case DIVUW -> wordRegister(state, nextPc, divideUnsignedWord((int) state.register(rs1), (int) state.register(rs2)));
-            case REMW -> wordRegister(state, nextPc, remainderSignedWord((int) state.register(rs1), (int) state.register(rs2)));
-            case REMUW -> wordRegister(state, nextPc, remainderUnsignedWord((int) state.register(rs1), (int) state.register(rs2)));
+            case MUL -> binaryRegister(state, nextPc, state.decodedRegister(rs1) * state.decodedRegister(rs2));
+            case MULH -> binaryRegister(state, nextPc, Math.multiplyHigh(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MULHSU -> binaryRegister(state, nextPc, multiplyHighSignedUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MULHU -> binaryRegister(state, nextPc, Math.unsignedMultiplyHigh(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case DIV -> binaryRegister(state, nextPc, divideSigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case DIVU -> binaryRegister(state, nextPc, divideUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case REM -> binaryRegister(state, nextPc, remainderSigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case REMU -> binaryRegister(state, nextPc, remainderUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MULW -> wordRegister(state, nextPc, (int) state.decodedRegister(rs1) * (int) state.decodedRegister(rs2));
+            case DIVW -> wordRegister(state, nextPc, divideSignedWord((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            case DIVUW -> wordRegister(state, nextPc, divideUnsignedWord((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            case REMW -> wordRegister(state, nextPc, remainderSignedWord((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            case REMUW -> wordRegister(state, nextPc, remainderUnsignedWord((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
             default -> throw unexpectedOperationGroup("multiply/divide");
         }
     }
@@ -1295,7 +1300,7 @@ public sealed abstract class InstructionNode extends Node {
             case FMAX -> floatingPointMinimumMaximum(state, nextPc, false);
             case FCVT_S_D -> {
                 int roundingMode = effectiveRoundingMode(state);
-                long bits = state.floatingPointRegister(rs1);
+                long bits = state.decodedFloatingPointRegister(rs1);
                 if (isSignalingDoubleNaN(bits)) {
                     state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
                 }
@@ -1316,24 +1321,24 @@ public sealed abstract class InstructionNode extends Node {
             case FLT -> floatingPointCompare(state, nextPc, CompareKind.LESS_THAN);
             case FLE -> floatingPointCompare(state, nextPc, CompareKind.LESS_THAN_OR_EQUAL);
             case FCLASS -> {
-                state.setRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
+                state.setDecodedRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
                         ? classifySingle(readSingleBits(state, rs1))
-                        : classifyDouble(state.floatingPointRegister(rs1)));
+                        : classifyDouble(state.decodedFloatingPointRegister(rs1)));
                 state.setPc(nextPc);
             }
             case FCVT_INT_FP -> convertFloatingPointToInteger(state, nextPc);
             case FCVT_FP_INT -> convertIntegerToFloatingPoint(state, nextPc);
             case FMV_X_FP -> {
-                state.setRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
+                state.setDecodedRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
                         ? (int) readSingleBits(state, rs1)
-                        : state.floatingPointRegister(rs1));
+                        : state.decodedFloatingPointRegister(rs1));
                 state.setPc(nextPc);
             }
             case FMV_FP_X -> {
                 if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
-                    writeSingleBits(state, rd, (int) state.register(rs1));
+                    writeSingleBits(state, rd, (int) state.decodedRegister(rs1));
                 } else {
-                    writeDoubleBits(state, rd, state.register(rs1));
+                    writeDoubleBits(state, rd, state.decodedRegister(rs1));
                 }
                 state.setPc(nextPc);
             }
@@ -1384,7 +1389,7 @@ public sealed abstract class InstructionNode extends Node {
     private void writeControlStatusRegister(MachineState state, long nextPc, long value) {
         long oldValue = rd == 0 ? 0 : state.readControlStatusRegister((int) immediate);
         state.writeControlStatusRegister((int) immediate, value);
-        state.setRegister(rd, oldValue);
+        state.setDecodedRegister(rd, oldValue);
         state.setPc(nextPc);
     }
 
@@ -1394,92 +1399,92 @@ public sealed abstract class InstructionNode extends Node {
         if (mask != 0) {
             state.writeControlStatusRegister((int) immediate, setBits ? oldValue | mask : oldValue & ~mask);
         }
-        state.setRegister(rd, oldValue);
+        state.setDecodedRegister(rd, oldValue);
         state.setPc(nextPc);
     }
 
     /// Writes an immediate arithmetic result and advances the program counter.
     private void binaryImmediate(MachineState state, long nextPc, long value) {
-        state.setRegister(rd, value);
+        state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
 
     /// Writes a sign-extended 32-bit immediate arithmetic result and advances the program counter.
     private void wordImmediate(MachineState state, long nextPc, int value) {
-        state.setRegister(rd, value);
+        state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
 
     /// Writes a register arithmetic result and advances the program counter.
     private void binaryRegister(MachineState state, long nextPc, long value) {
-        state.setRegister(rd, value);
+        state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
 
     /// Writes a sign-extended 32-bit register arithmetic result and advances the program counter.
     private void wordRegister(MachineState state, long nextPc, int value) {
-        state.setRegister(rd, value);
+        state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
 
     /// Loads a sign-extended byte value.
     private void loadByte(MachineState state, Memory memory, long nextPc) {
-        state.setRegister(rd, memory.readByte(state.register(rs1) + immediate));
+        state.setDecodedRegister(rd, memory.readByte(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a sign-extended 16-bit value.
     private void loadShort(MachineState state, Memory memory, long nextPc) {
-        state.setRegister(rd, memory.readShort(state.register(rs1) + immediate));
+        state.setDecodedRegister(rd, memory.readShort(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a sign-extended 32-bit value.
     private void loadInt(MachineState state, Memory memory, long nextPc) {
-        state.setRegister(rd, memory.readInt(state.register(rs1) + immediate));
+        state.setDecodedRegister(rd, memory.readInt(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a 64-bit value.
     private void loadLong(MachineState state, Memory memory, long nextPc) {
-        state.setRegister(rd, memory.readLong(state.register(rs1) + immediate));
+        state.setDecodedRegister(rd, memory.readLong(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a zero-extended byte value.
     private void loadUnsignedByte(MachineState state, Memory memory, long nextPc) {
-        state.setRegister(rd, memory.readUnsignedByte(state.register(rs1) + immediate));
+        state.setDecodedRegister(rd, memory.readUnsignedByte(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a zero-extended 16-bit value.
     private void loadUnsignedShort(MachineState state, Memory memory, long nextPc) {
-        state.setRegister(rd, memory.readUnsignedShort(state.register(rs1) + immediate));
+        state.setDecodedRegister(rd, memory.readUnsignedShort(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a zero-extended 32-bit value.
     private void loadUnsignedInt(MachineState state, Memory memory, long nextPc) {
-        state.setRegister(rd, memory.readUnsignedInt(state.register(rs1) + immediate));
+        state.setDecodedRegister(rd, memory.readUnsignedInt(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a 32-bit floating-point value and NaN-boxes it in a 64-bit FP register.
     private void loadFloatWord(MachineState state, Memory memory, long nextPc) {
-        state.setFloatingPointRegister(rd, 0xffff_ffff_0000_0000L | memory.readUnsignedInt(state.register(rs1) + immediate));
+        state.setDecodedFloatingPointRegister(rd, 0xffff_ffff_0000_0000L | memory.readUnsignedInt(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a 64-bit floating-point value as raw bits.
     private void loadFloatDouble(MachineState state, Memory memory, long nextPc) {
-        state.setFloatingPointRegister(rd, memory.readLong(state.register(rs1) + immediate));
+        state.setDecodedFloatingPointRegister(rd, memory.readLong(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Stores a byte value.
     private void storeByte(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1) + immediate;
-        memory.writeByte(address, (byte) state.register(rs2));
+        long address = state.decodedRegister(rs1) + immediate;
+        memory.writeByte(address, (byte) state.decodedRegister(rs2));
         state.afterStore(address, Byte.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1487,8 +1492,8 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Stores a 16-bit value.
     private void storeShort(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1) + immediate;
-        memory.writeShort(address, (short) state.register(rs2));
+        long address = state.decodedRegister(rs1) + immediate;
+        memory.writeShort(address, (short) state.decodedRegister(rs2));
         state.afterStore(address, Short.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1496,8 +1501,8 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Stores a 32-bit value.
     private void storeInt(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1) + immediate;
-        memory.writeInt(address, (int) state.register(rs2));
+        long address = state.decodedRegister(rs1) + immediate;
+        memory.writeInt(address, (int) state.decodedRegister(rs2));
         state.afterStore(address, Integer.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1505,8 +1510,8 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Stores a 64-bit value.
     private void storeLong(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1) + immediate;
-        memory.writeLong(address, state.register(rs2));
+        long address = state.decodedRegister(rs1) + immediate;
+        memory.writeLong(address, state.decodedRegister(rs2));
         state.afterStore(address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1514,8 +1519,8 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Stores the low 32 bits of a floating-point register.
     private void storeFloatWord(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1) + immediate;
-        memory.writeInt(address, (int) state.floatingPointRegister(rs2));
+        long address = state.decodedRegister(rs1) + immediate;
+        memory.writeInt(address, (int) state.decodedFloatingPointRegister(rs2));
         state.afterStore(address, Integer.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1523,8 +1528,8 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Stores a 64-bit floating-point register as raw bits.
     private void storeFloatDouble(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1) + immediate;
-        memory.writeLong(address, state.floatingPointRegister(rs2));
+        long address = state.decodedRegister(rs1) + immediate;
+        memory.writeLong(address, state.decodedFloatingPointRegister(rs2));
         state.afterStore(address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1538,29 +1543,29 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Loads and reserves a 32-bit memory word.
     private void lrWord(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1);
-        state.setRegister(rd, memory.readInt(address));
+        long address = state.decodedRegister(rs1);
+        state.setDecodedRegister(rd, memory.readInt(address));
         state.reserve(address);
         state.setPc(nextPc);
     }
 
     /// Loads and reserves a 64-bit memory doubleword.
     private void lrDouble(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1);
-        state.setRegister(rd, memory.readLong(address));
+        long address = state.decodedRegister(rs1);
+        state.setDecodedRegister(rd, memory.readLong(address));
         state.reserve(address);
         state.setPc(nextPc);
     }
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
     private void scWord(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1);
+        long address = state.decodedRegister(rs1);
         if (state.hasReservation(address)) {
-            memory.writeInt(address, (int) state.register(rs2));
+            memory.writeInt(address, (int) state.decodedRegister(rs2));
             state.afterStore(address, Integer.BYTES);
-            state.setRegister(rd, 0);
+            state.setDecodedRegister(rd, 0);
         } else {
-            state.setRegister(rd, 1);
+            state.setDecodedRegister(rd, 1);
         }
         state.clearReservation();
         state.setPc(nextPc);
@@ -1568,13 +1573,13 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
     private void scDouble(MachineState state, Memory memory, long nextPc) {
-        long address = state.register(rs1);
+        long address = state.decodedRegister(rs1);
         if (state.hasReservation(address)) {
-            memory.writeLong(address, state.register(rs2));
+            memory.writeLong(address, state.decodedRegister(rs2));
             state.afterStore(address, Long.BYTES);
-            state.setRegister(rd, 0);
+            state.setDecodedRegister(rd, 0);
         } else {
-            state.setRegister(rd, 1);
+            state.setDecodedRegister(rd, 1);
         }
         state.clearReservation();
         state.setPc(nextPc);
@@ -1582,9 +1587,9 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Executes a 32-bit AMO instruction.
     private void amoWord(MachineState state, Memory memory, long nextPc, AmoKind kind) {
-        long address = state.register(rs1);
+        long address = state.decodedRegister(rs1);
         int oldValue = memory.readInt(address);
-        int source = (int) state.register(rs2);
+        int source = (int) state.decodedRegister(rs2);
         int newValue = switch (kind) {
             case SWAP -> source;
             case ADD -> oldValue + source;
@@ -1597,7 +1602,7 @@ public sealed abstract class InstructionNode extends Node {
             case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
         };
         memory.writeInt(address, newValue);
-        state.setRegister(rd, oldValue);
+        state.setDecodedRegister(rd, oldValue);
         state.afterStore(address, Integer.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1605,9 +1610,9 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Executes a 64-bit AMO instruction.
     private void amoDouble(MachineState state, Memory memory, long nextPc, AmoKind kind) {
-        long address = state.register(rs1);
+        long address = state.decodedRegister(rs1);
         long oldValue = memory.readLong(address);
-        long source = state.register(rs2);
+        long source = state.decodedRegister(rs2);
         long newValue = switch (kind) {
             case SWAP -> source;
             case ADD -> oldValue + source;
@@ -1620,7 +1625,7 @@ public sealed abstract class InstructionNode extends Node {
             case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
         };
         memory.writeLong(address, newValue);
-        state.setRegister(rd, oldValue);
+        state.setDecodedRegister(rd, oldValue);
         state.afterStore(address, Long.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
@@ -1645,9 +1650,9 @@ public sealed abstract class InstructionNode extends Node {
             float result = roundSingleResult(state, exact, Math.fma(effectiveLeft, right, effectiveAddend), roundingMode);
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
-            long leftBits = state.floatingPointRegister(rs1);
-            long rightBits = state.floatingPointRegister(rs2);
-            long addendBits = state.floatingPointRegister(rs3);
+            long leftBits = state.decodedFloatingPointRegister(rs1);
+            long rightBits = state.decodedFloatingPointRegister(rs2);
+            long addendBits = state.decodedFloatingPointRegister(rs3);
             updateInvalidFlagForSignalingDoubleNaNs(state, leftBits, rightBits, addendBits);
             double left = Double.longBitsToDouble(leftBits);
             double right = Double.longBitsToDouble(rightBits);
@@ -1692,8 +1697,8 @@ public sealed abstract class InstructionNode extends Node {
             float result = roundSingleResult(state, exact, nearest, roundingMode);
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
-            long leftBits = state.floatingPointRegister(rs1);
-            long rightBits = state.floatingPointRegister(rs2);
+            long leftBits = state.decodedFloatingPointRegister(rs1);
+            long rightBits = state.decodedFloatingPointRegister(rs2);
             updateInvalidFlagForSignalingDoubleNaNs(state, leftBits, rightBits);
             double left = Double.longBitsToDouble(leftBits);
             double right = Double.longBitsToDouble(rightBits);
@@ -1728,7 +1733,7 @@ public sealed abstract class InstructionNode extends Node {
             }
             writeSingleBits(state, rd, canonicalizeSingleBits((float) Math.sqrt(value)));
         } else {
-            long bits = state.floatingPointRegister(rs1);
+            long bits = state.decodedFloatingPointRegister(rs1);
             if (isSignalingDoubleNaN(bits)) {
                 state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             }
@@ -1753,8 +1758,8 @@ public sealed abstract class InstructionNode extends Node {
             };
             writeSingleBits(state, rd, (left & 0x7fff_ffff) | sign);
         } else {
-            long left = state.floatingPointRegister(rs1);
-            long right = state.floatingPointRegister(rs2);
+            long left = state.decodedFloatingPointRegister(rs1);
+            long right = state.decodedFloatingPointRegister(rs2);
             long sign = switch (kind) {
                 case COPY -> right & Long.MIN_VALUE;
                 case NEGATE -> ~right & Long.MIN_VALUE;
@@ -1773,8 +1778,8 @@ public sealed abstract class InstructionNode extends Node {
                     : maximumSingleBits(state, readSingleBits(state, rs1), readSingleBits(state, rs2)));
         } else {
             writeDoubleBits(state, rd, minimum
-                    ? minimumDoubleBits(state, state.floatingPointRegister(rs1), state.floatingPointRegister(rs2))
-                    : maximumDoubleBits(state, state.floatingPointRegister(rs1), state.floatingPointRegister(rs2)));
+                    ? minimumDoubleBits(state, state.decodedFloatingPointRegister(rs1), state.decodedFloatingPointRegister(rs2))
+                    : maximumDoubleBits(state, state.decodedFloatingPointRegister(rs1), state.decodedFloatingPointRegister(rs2)));
         }
         state.setPc(nextPc);
     }
@@ -1790,22 +1795,22 @@ public sealed abstract class InstructionNode extends Node {
                 if (kind != CompareKind.EQUAL || isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
                     state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
                 }
-                state.setRegister(rd, 0);
+                state.setDecodedRegister(rd, 0);
             } else {
-                state.setRegister(rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
+                state.setDecodedRegister(rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
             }
         } else {
-            long leftBits = state.floatingPointRegister(rs1);
-            long rightBits = state.floatingPointRegister(rs2);
+            long leftBits = state.decodedFloatingPointRegister(rs1);
+            long rightBits = state.decodedFloatingPointRegister(rs2);
             double left = Double.longBitsToDouble(leftBits);
             double right = Double.longBitsToDouble(rightBits);
             if (Double.isNaN(left) || Double.isNaN(right)) {
                 if (kind != CompareKind.EQUAL || isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
                     state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
                 }
-                state.setRegister(rd, 0);
+                state.setDecodedRegister(rd, 0);
             } else {
-                state.setRegister(rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
+                state.setDecodedRegister(rd, compareFloatingPoint(left, right, kind) ? 1 : 0);
             }
         }
         state.setPc(nextPc);
@@ -1816,10 +1821,10 @@ public sealed abstract class InstructionNode extends Node {
         int roundingMode = effectiveRoundingMode(state);
         double value = floatingPointFormat() == SINGLE_FLOAT_FORMAT ? readSingle(state, rs1) : readDouble(state, rs1);
         switch (rs2) {
-            case 0 -> state.setRegister(rd, (int) convertToSignedInteger(state, value, roundingMode, Integer.MIN_VALUE, 0x1.0p31));
-            case 1 -> state.setRegister(rd, (int) convertToUnsignedInteger(state, value, roundingMode, 0x1.0p32));
-            case 2 -> state.setRegister(rd, convertToSignedInteger(state, value, roundingMode, Long.MIN_VALUE, 0x1.0p63));
-            case 3 -> state.setRegister(rd, convertToUnsignedInteger(state, value, roundingMode, 0x1.0p64));
+            case 0 -> state.setDecodedRegister(rd, (int) convertToSignedInteger(state, value, roundingMode, Integer.MIN_VALUE, 0x1.0p31));
+            case 1 -> state.setDecodedRegister(rd, (int) convertToUnsignedInteger(state, value, roundingMode, 0x1.0p32));
+            case 2 -> state.setDecodedRegister(rd, convertToSignedInteger(state, value, roundingMode, Long.MIN_VALUE, 0x1.0p63));
+            case 3 -> state.setDecodedRegister(rd, convertToUnsignedInteger(state, value, roundingMode, 0x1.0p64));
             default -> throw unexpectedConversionSelector();
         }
         state.setPc(nextPc);
@@ -1828,7 +1833,7 @@ public sealed abstract class InstructionNode extends Node {
     /// Converts an integer register value to a floating-point register.
     private void convertIntegerToFloatingPoint(MachineState state, long nextPc) {
         checkEffectiveRoundingMode(state);
-        long value = state.register(rs1);
+        long value = state.decodedRegister(rs1);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             float result = switch (rs2) {
                 case 0 -> (float) (int) value;
@@ -2015,7 +2020,7 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
     private static int readSingleBits(MachineState state, int register) {
-        long value = state.floatingPointRegister(register);
+        long value = state.decodedFloatingPointRegister(register);
         return (value & SINGLE_NAN_BOX_MASK) == SINGLE_NAN_BOX_MASK ? (int) value : CANONICAL_SINGLE_NAN;
     }
 
@@ -2026,17 +2031,17 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Reads a double-precision register as a Java double.
     private static double readDouble(MachineState state, int register) {
-        return Double.longBitsToDouble(state.floatingPointRegister(register));
+        return Double.longBitsToDouble(state.decodedFloatingPointRegister(register));
     }
 
     /// Writes raw single-precision bits to a NaN-boxed floating-point register.
     private static void writeSingleBits(MachineState state, int register, int bits) {
-        state.setFloatingPointRegister(register, SINGLE_NAN_BOX_MASK | (bits & 0xffff_ffffL));
+        state.setDecodedFloatingPointRegister(register, SINGLE_NAN_BOX_MASK | (bits & 0xffff_ffffL));
     }
 
     /// Writes raw double-precision bits to a floating-point register.
     private static void writeDoubleBits(MachineState state, int register, long bits) {
-        state.setFloatingPointRegister(register, bits);
+        state.setDecodedFloatingPointRegister(register, bits);
     }
 
     /// Canonicalizes a single-precision NaN result.

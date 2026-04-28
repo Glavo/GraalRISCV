@@ -151,6 +151,18 @@ public final class MachineState {
         }
     }
 
+    /// Returns an integer register value for an already decoded register index.
+    long decodedRegister(int index) {
+        return index == 0 ? 0 : registers[index];
+    }
+
+    /// Updates an integer register value for an already decoded register index, ignoring writes to `x0`.
+    void setDecodedRegister(int index, long value) {
+        if (index != 0) {
+            registers[index] = value;
+        }
+    }
+
     /// Returns the raw 64-bit value of a floating-point register.
     public long floatingPointRegister(int index) {
         checkFloatingPointRegisterIndex(index);
@@ -160,6 +172,16 @@ public final class MachineState {
     /// Updates the raw 64-bit value of a floating-point register.
     public void setFloatingPointRegister(int index, long value) {
         checkFloatingPointRegisterIndex(index);
+        floatingPointRegisters[index] = value;
+    }
+
+    /// Returns a raw floating-point register value for an already decoded register index.
+    long decodedFloatingPointRegister(int index) {
+        return floatingPointRegisters[index];
+    }
+
+    /// Updates a raw floating-point register value for an already decoded register index.
+    void setDecodedFloatingPointRegister(int index, long value) {
         floatingPointRegisters[index] = value;
     }
 

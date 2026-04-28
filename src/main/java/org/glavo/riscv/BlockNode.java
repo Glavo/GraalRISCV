@@ -18,14 +18,11 @@ public final class BlockNode extends Node {
         this.instructions = instructions.clone();
     }
 
-    /// Executes this block until it reaches the block terminator.
+    /// Executes every instruction in this decoded block.
     @ExplodeLoop
     public void execute(MachineState state) {
         for (InstructionNode instruction : instructions) {
             instruction.execute(state);
-            if (instruction.isTerminator()) {
-                return;
-            }
         }
     }
 }
