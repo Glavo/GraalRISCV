@@ -36,6 +36,9 @@ public final class Memory implements AutoCloseable {
     /// The byte size of the initial contiguous guest memory segment.
     private final long size;
 
+    /// The exclusive end address of the initial contiguous guest memory segment.
+    private final long endAddress;
+
     /// The sparse memory regions created by Linux user-mode memory syscalls.
     private final ArrayList<MappedRegion> mappedRegions = new ArrayList<>();
 
@@ -58,6 +61,7 @@ public final class Memory implements AutoCloseable {
         this.arena = Arena.ofConfined();
         this.segment = arena.allocate(size, Long.BYTES);
         this.size = size;
+        this.endAddress = baseAddress + size;
     }
 
     /// Returns the inclusive base address of the memory window.
@@ -72,7 +76,7 @@ public final class Memory implements AutoCloseable {
 
     /// Returns the exclusive end address of the memory window.
     public long endAddress() {
-        return baseAddress + size;
+        return endAddress;
     }
 
     /// Copies bytes from a host array into guest memory.
@@ -360,9 +364,8 @@ public final class Memory implements AutoCloseable {
 
     /// Returns the offset inside the initial segment for a scalar access, or `-1` when it starts outside.
     private long initialScalarOffset(long address) {
-        long offset = address - baseAddress;
-        if (address >= baseAddress && offset >= 0 && offset < size) {
-            return offset;
+        if (address >= baseAddress && address < endAddress) {
+            return address - baseAddress;
         }
         return -1;
     }
@@ -373,9 +376,8 @@ public final class Memory implements AutoCloseable {
             throw new RiscVException("Negative memory access length: " + length);
         }
 
-        long offset = address - baseAddress;
-        if (address >= baseAddress && offset >= 0 && offset <= size - length) {
-            return offset;
+        if (address >= baseAddress && address <= endAddress - length) {
+            return address - baseAddress;
         }
         return -1;
     }
@@ -385,13 +387,14 @@ public final class Memory implements AutoCloseable {
         if (length < 0) {
             throw new RiscVException("Negative memory access length: " + length);
         }
-        if (!isValidRange(address, length)) {
-            return null;
+
+        long offset = initialOffset(address, length);
+        if (offset >= 0) {
+            return new MemoryAccess(segment, offset);
         }
 
-        long offset = address - baseAddress;
-        if (address >= baseAddress && offset >= 0 && offset <= size - length) {
-            return new MemoryAccess(segment, offset);
+        if (!isValidRange(address, length)) {
+            return null;
         }
 
         @Nullable MappedRegion region = findMappedRegion(address, length);
@@ -426,7 +429,7 @@ public final class Memory implements AutoCloseable {
 
     /// Returns true when the supplied guest range overlaps the initial memory segment.
     private boolean overlapsInitialMemory(long address, long length) {
-        return rangesOverlap(address, address + length, baseAddress, endAddress());
+        return rangesOverlap(address, address + length, baseAddress, endAddress);
     }
 
     /// Returns the first sparse region overlapped by the supplied guest range.

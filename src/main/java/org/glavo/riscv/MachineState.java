@@ -57,6 +57,9 @@ public final class MachineState {
     /// Whether instruction tracing is enabled.
     private final boolean trace;
 
+    /// Whether this state can retire whole decoded blocks without per-instruction checks.
+    private final boolean canRetireBlock;
+
     /// The stream used for instruction trace output.
     private final PrintStream traceStream;
 
@@ -119,6 +122,7 @@ public final class MachineState {
         this.memory = memory;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
+        this.canRetireBlock = maxInstructions == 0 && !trace;
         this.traceStream = traceStream;
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
@@ -238,7 +242,7 @@ public final class MachineState {
 
     /// Records one guest instruction retirement and enforces the instruction budget.
     public void beforeInstruction(long address, int raw) {
-        if (maxInstructions == 0 && !trace) {
+        if (canRetireBlock) {
             instructionCount++;
             return;
         }
@@ -248,7 +252,7 @@ public final class MachineState {
 
     /// Returns true when guest instructions can be retired in block-sized batches.
     boolean canRetireBlock() {
-        return maxInstructions == 0 && !trace;
+        return canRetireBlock;
     }
 
     /// Records multiple guest instruction retirements for an already decoded block.

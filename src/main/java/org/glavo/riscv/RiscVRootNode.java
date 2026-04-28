@@ -36,7 +36,6 @@ public final class RiscVRootNode extends RootNode {
             try {
                 return executeGuestLoop(frame, memory, state);
             } finally {
-                RiscVFrameLayout.spillIntegerRegisters(frame, state);
                 state.syscalls().close();
             }
         } catch (ProgramExitException exit) {
