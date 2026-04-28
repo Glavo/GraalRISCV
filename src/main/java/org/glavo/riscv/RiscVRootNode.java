@@ -370,8 +370,10 @@ public final class RiscVRootNode extends RootNode {
 
         /// Hashes a guest program counter for open addressing.
         private static int hash(long value) {
-            long hash = value >>> 1;
+            long hash = value ^ (value >>> 32);
             hash ^= hash >>> 16;
+            hash *= 0x9e37_79b9_7f4a_7c15L;
+            hash ^= hash >>> 32;
             return (int) hash;
         }
     }
