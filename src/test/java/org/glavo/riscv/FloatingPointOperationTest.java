@@ -56,6 +56,9 @@ public final class FloatingPointOperationTest {
     /// The canonical double-precision quiet NaN bit pattern.
     private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
 
+    /// The canonical single-precision quiet NaN bit pattern.
+    private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
+
     /// The Linux syscall register.
     private static final int SYSCALL_REGISTER = 17;
 
@@ -120,6 +123,44 @@ public final class FloatingPointOperationTest {
             assertEquals(Double.doubleToRawLongBits(2.0d), machine.state().floatingPointRegister(11));
             assertEquals(Double.doubleToRawLongBits(-2.0d), machine.state().floatingPointRegister(12));
             assertEquals(Double.doubleToRawLongBits(-10.0d), machine.state().floatingPointRegister(13));
+        }
+    }
+
+    /// Verifies FMA invalid-operation flags distinguish exact infinite products from rounded overflow.
+    @Test
+    public void fusedMultiplyAddInvalidFlagUsesExactProduct() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fmaddS(4, 1, 2, 3, 0),
+                    fmaddD(8, 5, 6, 7, 0),
+                    csrrs(RESULT_REGISTER, FFLAGS_CSR, 0),
+                    fmaddS(9, 10, 11, 12, 0),
+                    fmaddD(13, 14, 15, 16, 0),
+                    csrrs(SECOND_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeSingleBits(machine.state(), 1, Float.floatToRawIntBits(Float.MAX_VALUE));
+            writeSingleBits(machine.state(), 2, Float.floatToRawIntBits(2.0f));
+            writeSingleBits(machine.state(), 3, Float.floatToRawIntBits(Float.NEGATIVE_INFINITY));
+            writeDouble(machine.state(), 5, Double.MAX_VALUE);
+            writeDouble(machine.state(), 6, 2.0d);
+            writeDouble(machine.state(), 7, Double.NEGATIVE_INFINITY);
+            writeSingleBits(machine.state(), 10, Float.floatToRawIntBits(Float.POSITIVE_INFINITY));
+            writeSingleBits(machine.state(), 11, Float.floatToRawIntBits(2.0f));
+            writeSingleBits(machine.state(), 12, Float.floatToRawIntBits(Float.NEGATIVE_INFINITY));
+            writeDouble(machine.state(), 14, Double.POSITIVE_INFINITY);
+            writeDouble(machine.state(), 15, 2.0d);
+            writeDouble(machine.state(), 16, Double.NEGATIVE_INFINITY);
+
+            runDecodedProgram(machine);
+
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Float.NEGATIVE_INFINITY)), machine.state().floatingPointRegister(4));
+            assertEquals(Double.doubleToRawLongBits(Double.NEGATIVE_INFINITY), machine.state().floatingPointRegister(8));
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+            assertEquals(boxedSingle(CANONICAL_SINGLE_NAN), machine.state().floatingPointRegister(9));
+            assertEquals(CANONICAL_DOUBLE_NAN, machine.state().floatingPointRegister(13));
+            assertEquals(0x10, machine.state().register(SECOND_RESULT_REGISTER));
         }
     }
 

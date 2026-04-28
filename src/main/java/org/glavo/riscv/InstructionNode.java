@@ -3128,9 +3128,9 @@ public sealed abstract class InstructionNode extends Node {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             return;
         }
-        float product = left * right;
-        if (Float.isInfinite(product) && Float.isInfinite(addend)
-                && Math.copySign(1.0f, product) != Math.copySign(1.0f, addend)) {
+        if (Float.isInfinite(addend)
+                && (Float.isInfinite(left) || Float.isInfinite(right))
+                && productSign(left, right) != Math.copySign(1.0f, addend)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
     }
@@ -3141,11 +3141,21 @@ public sealed abstract class InstructionNode extends Node {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             return;
         }
-        double product = left * right;
-        if (Double.isInfinite(product) && Double.isInfinite(addend)
-                && Math.copySign(1.0d, product) != Math.copySign(1.0d, addend)) {
+        if (Double.isInfinite(addend)
+                && (Double.isInfinite(left) || Double.isInfinite(right))
+                && productSign(left, right) != Math.copySign(1.0d, addend)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
+    }
+
+    /// Returns the sign of the exact product of two single-precision operands.
+    private static float productSign(float left, float right) {
+        return Math.copySign(1.0f, left) == Math.copySign(1.0f, right) ? 1.0f : -1.0f;
+    }
+
+    /// Returns the sign of the exact product of two double-precision operands.
+    private static double productSign(double left, double right) {
+        return Math.copySign(1.0d, left) == Math.copySign(1.0d, right) ? 1.0d : -1.0d;
     }
 
     /// Rounds a single-precision arithmetic result and records single-precision arithmetic flags.
