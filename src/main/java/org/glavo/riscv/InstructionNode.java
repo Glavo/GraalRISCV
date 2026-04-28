@@ -1646,8 +1646,19 @@ public sealed abstract class InstructionNode extends Node {
             float effectiveLeft = negateProduct ? -left : left;
             float effectiveAddend = subtractAddend ? -addend : addend;
             updateInvalidFlagForFusedMultiplyAdd(state, effectiveLeft, right, effectiveAddend);
-            double exact = ((double) effectiveLeft * (double) right) + (double) effectiveAddend;
-            float result = roundSingleResult(state, exact, Math.fma(effectiveLeft, right, effectiveAddend), roundingMode);
+            float nearest = Math.fma(effectiveLeft, right, effectiveAddend);
+            float result;
+            if (Float.isFinite(left) && Float.isFinite(right) && Float.isFinite(addend)) {
+                result = roundSingleExactBinaryResult(state,
+                        exactSingleFusedMultiplyAdd(leftBits, rightBits, addendBits, negateProduct, subtractAddend),
+                        nearest,
+                        roundingMode);
+            } else {
+                result = roundSingleResult(state,
+                        ((double) effectiveLeft * (double) right) + (double) effectiveAddend,
+                        nearest,
+                        roundingMode);
+            }
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
             long leftBits = state.decodedFloatingPointRegister(rs1);
@@ -1660,8 +1671,17 @@ public sealed abstract class InstructionNode extends Node {
             double effectiveLeft = negateProduct ? -left : left;
             double effectiveAddend = subtractAddend ? -addend : addend;
             updateInvalidFlagForFusedMultiplyAdd(state, effectiveLeft, right, effectiveAddend);
-            double result = Math.fma(effectiveLeft, right, effectiveAddend);
-            updateDoubleArithmeticFlags(state, effectiveLeft, right, effectiveAddend, result);
+            double nearest = Math.fma(effectiveLeft, right, effectiveAddend);
+            double result;
+            if (Double.isFinite(left) && Double.isFinite(right) && Double.isFinite(addend)) {
+                result = roundDoubleResult(state,
+                        exactDoubleFusedMultiplyAdd(leftBits, rightBits, addendBits, negateProduct, subtractAddend),
+                        nearest,
+                        roundingMode);
+            } else {
+                result = nearest;
+                updateDoubleArithmeticFlags(state, effectiveLeft, right, effectiveAddend, result);
+            }
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
@@ -1694,7 +1714,14 @@ public sealed abstract class InstructionNode extends Node {
                 case '/' -> left / right;
                 default -> throw unexpectedFloatingPointOperator(operator);
             };
-            float result = roundSingleResult(state, exact, nearest, roundingMode);
+            float result;
+            if (Float.isFinite(left) && Float.isFinite(right) && (operator != '/' || right != 0.0f)) {
+                result = operator == '/'
+                        ? roundSingleRationalResult(state, exactSingleDivision(leftBits, rightBits), nearest, roundingMode)
+                        : roundSingleExactBinaryResult(state, exactSingleArithmetic(leftBits, rightBits, operator), nearest, roundingMode);
+            } else {
+                result = roundSingleResult(state, exact, nearest, roundingMode);
+            }
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
             long leftBits = state.decodedFloatingPointRegister(rs1);
@@ -1706,14 +1733,22 @@ public sealed abstract class InstructionNode extends Node {
             if (operator == '/') {
                 updateDivideByZeroFlag(state, left, right);
             }
-            double result = switch (operator) {
+            double nearest = switch (operator) {
                 case '+' -> left + right;
                 case '-' -> left - right;
                 case '*' -> left * right;
                 case '/' -> left / right;
                 default -> throw unexpectedFloatingPointOperator(operator);
             };
-            updateDoubleArithmeticFlags(state, left, right, operator, result);
+            double result;
+            if (Double.isFinite(left) && Double.isFinite(right) && (operator != '/' || right != 0.0d)) {
+                result = operator == '/'
+                        ? roundDoubleRationalResult(state, exactDoubleDivision(leftBits, rightBits), nearest, roundingMode)
+                        : roundDoubleResult(state, exactDoubleArithmetic(leftBits, rightBits, operator), nearest, roundingMode);
+            } else {
+                result = nearest;
+                updateDoubleArithmeticFlags(state, left, right, operator, result);
+            }
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
@@ -1721,7 +1756,7 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Executes a floating-point square-root operation.
     private void floatingPointSquareRoot(MachineState state, long nextPc) {
-        checkEffectiveRoundingMode(state);
+        int roundingMode = effectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int bits = readSingleBits(state, rs1);
             if (isSignalingSingleNaN(bits)) {
@@ -1731,7 +1766,11 @@ public sealed abstract class InstructionNode extends Node {
             if (value < 0.0f) {
                 state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             }
-            writeSingleBits(state, rd, canonicalizeSingleBits((float) Math.sqrt(value)));
+            float nearest = (float) Math.sqrt(value);
+            float result = Float.isFinite(value) && value >= 0.0f
+                    ? roundSingleSquareRootResult(state, exactSingleValue(bits), nearest, roundingMode)
+                    : nearest;
+            writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
             long bits = state.decodedFloatingPointRegister(rs1);
             if (isSignalingDoubleNaN(bits)) {
@@ -1741,7 +1780,11 @@ public sealed abstract class InstructionNode extends Node {
             if (value < 0.0d) {
                 state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             }
-            writeDoubleBits(state, rd, canonicalizeDoubleBits(Math.sqrt(value)));
+            double nearest = Math.sqrt(value);
+            double result = Double.isFinite(value) && value >= 0.0d
+                    ? roundDoubleSquareRootResult(state, exactDoubleValue(bits), nearest, roundingMode)
+                    : nearest;
+            writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
     }
@@ -1832,25 +1875,20 @@ public sealed abstract class InstructionNode extends Node {
 
     /// Converts an integer register value to a floating-point register.
     private void convertIntegerToFloatingPoint(MachineState state, long nextPc) {
-        checkEffectiveRoundingMode(state);
+        int roundingMode = effectiveRoundingMode(state);
         long value = state.decodedRegister(rs1);
+        ExactBinaryValue exact = switch (rs2) {
+            case 0 -> exactIntegerValue(BigInteger.valueOf((int) value));
+            case 1 -> exactIntegerValue(BigInteger.valueOf(value & 0xffff_ffffL));
+            case 2 -> exactIntegerValue(BigInteger.valueOf(value));
+            case 3 -> exactIntegerValue(unsignedLongToBigInteger(value));
+            default -> throw unexpectedConversionSelector();
+        };
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
-            float result = switch (rs2) {
-                case 0 -> (float) (int) value;
-                case 1 -> (float) (value & 0xffff_ffffL);
-                case 2 -> (float) value;
-                case 3 -> unsignedLongToBigInteger(value).floatValue();
-                default -> throw unexpectedConversionSelector();
-            };
+            float result = roundSingleExactBinaryResult(state, exact, exact.significand().floatValue(), roundingMode);
             writeSingleBits(state, rd, canonicalizeSingleBits(result));
         } else {
-            double result = switch (rs2) {
-                case 0 -> (double) (int) value;
-                case 1 -> (double) (value & 0xffff_ffffL);
-                case 2 -> (double) value;
-                case 3 -> unsignedLongToBigInteger(value).doubleValue();
-                default -> throw unexpectedConversionSelector();
-            };
+            double result = roundDoubleResult(state, exact, exact.significand().doubleValue(), roundingMode);
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
         state.setPc(nextPc);
@@ -1942,44 +1980,425 @@ public sealed abstract class InstructionNode extends Node {
             return nearest;
         }
 
-        float rounded = nearest;
-        if ((double) nearest != exact) {
-            rounded = switch (roundingMode) {
-                case ROUND_NEAREST_EVEN, ROUND_NEAREST_MAX_MAGNITUDE -> nearest;
-                case ROUND_TOWARD_ZERO -> {
-                    if (exact > 0.0d && nearest > exact) {
-                        yield Math.nextDown(nearest);
-                    }
-                    if (exact < 0.0d && nearest < exact) {
-                        yield Math.nextUp(nearest);
-                    }
-                    yield nearest;
-                }
-                case ROUND_DOWN -> nearest > exact ? Math.nextDown(nearest) : nearest;
-                case ROUND_UP -> nearest < exact ? Math.nextUp(nearest) : nearest;
-                default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
-            };
+        return roundSingleExactBinaryResult(state, exactDoubleValue(Double.doubleToRawLongBits(exact)), nearest, roundingMode);
+    }
+
+    /// Rounds a finite exact binary value to single precision and records arithmetic flags.
+    private static float roundSingleExactBinaryResult(
+            MachineState state,
+            ExactBinaryValue exact,
+            float nearest,
+            int roundingMode) {
+        if (exact.signum() == 0) {
+            return nearest;
         }
 
-        updateSingleArithmeticFlags(state, exact, rounded);
+        boolean overflow = Float.isInfinite(nearest);
+        boolean inexact = true;
+        float rounded;
+        if (overflow) {
+            rounded = roundSingleOverflow(exact.signum(), roundingMode);
+        } else {
+            int comparison = compareBinaryValues(exact, exactSingleValue(Float.floatToRawIntBits(nearest)));
+            inexact = comparison != 0;
+            rounded = comparison == 0 ? nearest : roundSingleInexact(exact, nearest, roundingMode, comparison);
+        }
+
+        updateSingleExactArithmeticFlags(state, exact.signum(), rounded, inexact, overflow);
         return rounded;
     }
 
-    /// Records single-precision arithmetic flags using a higher-precision exact value.
-    private static void updateSingleArithmeticFlags(MachineState state, double exact, float rounded) {
-        if (Double.isNaN(exact) || Double.isInfinite(exact)) {
-            return;
+    /// Rounds an inexact finite exact binary value to single precision.
+    private static float roundSingleInexact(ExactBinaryValue exact, float nearest, int roundingMode, int comparison) {
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> nearest;
+            case ROUND_TOWARD_ZERO -> {
+                if (exact.signum() > 0 && comparison < 0) {
+                    yield Math.nextDown(nearest);
+                }
+                if (exact.signum() < 0 && comparison > 0) {
+                    yield Math.nextUp(nearest);
+                }
+                yield nearest;
+            }
+            case ROUND_DOWN -> comparison < 0 ? Math.nextDown(nearest) : nearest;
+            case ROUND_UP -> comparison > 0 ? Math.nextUp(nearest) : nearest;
+            case ROUND_NEAREST_MAX_MAGNITUDE -> roundSingleNearestMaxMagnitude(exact, nearest, comparison);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Rounds a single-precision overflow according to the requested rounding mode.
+    private static float roundSingleOverflow(int exactSign, int roundingMode) {
+        if (exactSign > 0) {
+            return switch (roundingMode) {
+                case ROUND_NEAREST_EVEN, ROUND_UP, ROUND_NEAREST_MAX_MAGNITUDE -> Float.POSITIVE_INFINITY;
+                case ROUND_TOWARD_ZERO, ROUND_DOWN -> Float.MAX_VALUE;
+                default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+            };
+        }
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN, ROUND_DOWN, ROUND_NEAREST_MAX_MAGNITUDE -> Float.NEGATIVE_INFINITY;
+            case ROUND_TOWARD_ZERO, ROUND_UP -> -Float.MAX_VALUE;
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Applies RMM tie handling for a single-precision result already rounded with RNE.
+    private static float roundSingleNearestMaxMagnitude(ExactBinaryValue exact, float nearest, int comparison) {
+        float lower = comparison > 0 ? nearest : Math.nextDown(nearest);
+        float upper = comparison > 0 ? Math.nextUp(nearest) : nearest;
+        if (Float.isInfinite(lower) || Float.isInfinite(upper)) {
+            return nearest;
         }
 
-        boolean inexact = (double) rounded != exact;
-        if (Float.isInfinite(rounded)) {
+        ExactBinaryValue lowerValue = exactSingleValue(Float.floatToRawIntBits(lower));
+        ExactBinaryValue upperValue = exactSingleValue(Float.floatToRawIntBits(upper));
+        ExactBinaryValue lowerDistance = subtractBinaryValues(exact, lowerValue);
+        ExactBinaryValue upperDistance = subtractBinaryValues(upperValue, exact);
+        if (compareBinaryMagnitudes(lowerDistance, upperDistance) == 0) {
+            return exact.signum() < 0 ? lower : upper;
+        }
+        return nearest;
+    }
+
+    /// Rounds a finite exact rational value to single precision and records arithmetic flags.
+    private static float roundSingleRationalResult(
+            MachineState state,
+            ExactRationalValue exact,
+            float nearest,
+            int roundingMode) {
+        if (exact.signum() == 0) {
+            return nearest;
+        }
+
+        boolean overflow = Float.isInfinite(nearest);
+        boolean inexact = true;
+        float rounded;
+        if (overflow) {
+            rounded = roundSingleOverflow(exact.signum(), roundingMode);
+        } else {
+            int comparison = compareRationalToBinary(exact, exactSingleValue(Float.floatToRawIntBits(nearest)));
+            inexact = comparison != 0;
+            rounded = comparison == 0 ? nearest : roundSingleRationalInexact(exact, nearest, roundingMode, comparison);
+        }
+
+        updateSingleExactArithmeticFlags(state, exact.signum(), rounded, inexact, overflow);
+        return rounded;
+    }
+
+    /// Rounds an inexact finite exact rational value to single precision.
+    private static float roundSingleRationalInexact(
+            ExactRationalValue exact,
+            float nearest,
+            int roundingMode,
+            int comparison) {
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> nearest;
+            case ROUND_TOWARD_ZERO -> {
+                if (exact.signum() > 0 && comparison < 0) {
+                    yield Math.nextDown(nearest);
+                }
+                if (exact.signum() < 0 && comparison > 0) {
+                    yield Math.nextUp(nearest);
+                }
+                yield nearest;
+            }
+            case ROUND_DOWN -> comparison < 0 ? Math.nextDown(nearest) : nearest;
+            case ROUND_UP -> comparison > 0 ? Math.nextUp(nearest) : nearest;
+            case ROUND_NEAREST_MAX_MAGNITUDE -> roundSingleRationalNearestMaxMagnitude(exact, nearest, comparison);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Applies RMM tie handling for an exact rational single-precision result already rounded with RNE.
+    private static float roundSingleRationalNearestMaxMagnitude(
+            ExactRationalValue exact,
+            float nearest,
+            int comparison) {
+        float lower = comparison > 0 ? nearest : Math.nextDown(nearest);
+        float upper = comparison > 0 ? Math.nextUp(nearest) : nearest;
+        if (Float.isInfinite(lower) || Float.isInfinite(upper)) {
+            return nearest;
+        }
+
+        ExactBinaryValue lowerValue = exactSingleValue(Float.floatToRawIntBits(lower));
+        ExactBinaryValue upperValue = exactSingleValue(Float.floatToRawIntBits(upper));
+        if (compareRationalDistances(exact, lowerValue, upperValue) == 0) {
+            return exact.signum() < 0 ? lower : upper;
+        }
+        return nearest;
+    }
+
+    /// Records single-precision flags for an exact binary source value.
+    private static void updateSingleExactArithmeticFlags(
+            MachineState state,
+            int exactSign,
+            float rounded,
+            boolean inexact,
+            boolean overflow) {
+        if (!inexact) {
+            return;
+        }
+        if (overflow || Float.isInfinite(rounded)) {
             state.addFloatingPointFlags(FLOATING_POINT_OVERFLOW | FLOATING_POINT_INEXACT);
             return;
         }
-        if (inexact) {
-            state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        if (exactSign != 0 && (rounded == 0.0f || Math.abs(rounded) < Float.MIN_NORMAL)) {
+            state.addFloatingPointFlags(FLOATING_POINT_UNDERFLOW);
         }
-        if (inexact && exact != 0.0d && (rounded == 0.0f || Math.abs(rounded) < Float.MIN_NORMAL)) {
+    }
+
+    /// Rounds a finite single-precision square root and records arithmetic flags.
+    private static float roundSingleSquareRootResult(
+            MachineState state,
+            ExactBinaryValue radicand,
+            float nearest,
+            int roundingMode) {
+        if (radicand.signum() == 0) {
+            return nearest;
+        }
+
+        int comparison = compareSquareRootToBinary(radicand, exactSingleValue(Float.floatToRawIntBits(nearest)));
+        if (comparison == 0) {
+            return nearest;
+        }
+
+        float rounded = switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> nearest;
+            case ROUND_TOWARD_ZERO, ROUND_DOWN -> comparison < 0 ? Math.nextDown(nearest) : nearest;
+            case ROUND_UP -> comparison > 0 ? Math.nextUp(nearest) : nearest;
+            case ROUND_NEAREST_MAX_MAGNITUDE -> roundSingleSquareRootNearestMaxMagnitude(radicand, nearest, comparison);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+        state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        return rounded;
+    }
+
+    /// Applies RMM tie handling for a single-precision square root already rounded with RNE.
+    private static float roundSingleSquareRootNearestMaxMagnitude(
+            ExactBinaryValue radicand,
+            float nearest,
+            int comparison) {
+        float lower = comparison > 0 ? nearest : Math.nextDown(nearest);
+        float upper = comparison > 0 ? Math.nextUp(nearest) : nearest;
+        if (Float.isInfinite(lower) || Float.isInfinite(upper)) {
+            return nearest;
+        }
+
+        ExactBinaryValue midpoint = halveBinaryValue(addBinaryValues(
+                exactSingleValue(Float.floatToRawIntBits(lower)),
+                exactSingleValue(Float.floatToRawIntBits(upper))));
+        return compareSquareRootToBinary(radicand, midpoint) == 0 ? upper : nearest;
+    }
+
+    /// Rounds a finite exact binary value to double precision and records arithmetic flags.
+    private static double roundDoubleResult(
+            MachineState state,
+            ExactBinaryValue exact,
+            double nearest,
+            int roundingMode) {
+        if (exact.signum() == 0) {
+            return nearest;
+        }
+
+        boolean overflow = Double.isInfinite(nearest);
+        boolean inexact = true;
+        double rounded;
+        if (overflow) {
+            rounded = roundDoubleOverflow(exact.signum(), roundingMode);
+        } else {
+            int comparison = compareBinaryValues(exact, exactDoubleValue(Double.doubleToRawLongBits(nearest)));
+            inexact = comparison != 0;
+            rounded = comparison == 0 ? nearest : roundDoubleInexact(exact, nearest, roundingMode, comparison);
+        }
+
+        updateDoubleExactArithmeticFlags(state, exact.signum(), rounded, inexact, overflow);
+        return rounded;
+    }
+
+    /// Rounds an inexact finite exact binary value to double precision.
+    private static double roundDoubleInexact(ExactBinaryValue exact, double nearest, int roundingMode, int comparison) {
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> nearest;
+            case ROUND_TOWARD_ZERO -> {
+                if (exact.signum() > 0 && comparison < 0) {
+                    yield Math.nextDown(nearest);
+                }
+                if (exact.signum() < 0 && comparison > 0) {
+                    yield Math.nextUp(nearest);
+                }
+                yield nearest;
+            }
+            case ROUND_DOWN -> comparison < 0 ? Math.nextDown(nearest) : nearest;
+            case ROUND_UP -> comparison > 0 ? Math.nextUp(nearest) : nearest;
+            case ROUND_NEAREST_MAX_MAGNITUDE -> roundDoubleNearestMaxMagnitude(exact, nearest, comparison);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Rounds a double-precision overflow according to the requested rounding mode.
+    private static double roundDoubleOverflow(int exactSign, int roundingMode) {
+        if (exactSign > 0) {
+            return switch (roundingMode) {
+                case ROUND_NEAREST_EVEN, ROUND_UP, ROUND_NEAREST_MAX_MAGNITUDE -> Double.POSITIVE_INFINITY;
+                case ROUND_TOWARD_ZERO, ROUND_DOWN -> Double.MAX_VALUE;
+                default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+            };
+        }
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN, ROUND_DOWN, ROUND_NEAREST_MAX_MAGNITUDE -> Double.NEGATIVE_INFINITY;
+            case ROUND_TOWARD_ZERO, ROUND_UP -> -Double.MAX_VALUE;
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Applies RMM tie handling for a double-precision result already rounded with RNE.
+    private static double roundDoubleNearestMaxMagnitude(ExactBinaryValue exact, double nearest, int comparison) {
+        double lower = comparison > 0 ? nearest : Math.nextDown(nearest);
+        double upper = comparison > 0 ? Math.nextUp(nearest) : nearest;
+        if (Double.isInfinite(lower) || Double.isInfinite(upper)) {
+            return nearest;
+        }
+
+        ExactBinaryValue lowerValue = exactDoubleValue(Double.doubleToRawLongBits(lower));
+        ExactBinaryValue upperValue = exactDoubleValue(Double.doubleToRawLongBits(upper));
+        ExactBinaryValue lowerDistance = subtractBinaryValues(exact, lowerValue);
+        ExactBinaryValue upperDistance = subtractBinaryValues(upperValue, exact);
+        if (compareBinaryMagnitudes(lowerDistance, upperDistance) == 0) {
+            return exact.signum() < 0 ? lower : upper;
+        }
+        return nearest;
+    }
+
+    /// Rounds a finite double-precision square root and records arithmetic flags.
+    private static double roundDoubleSquareRootResult(
+            MachineState state,
+            ExactBinaryValue radicand,
+            double nearest,
+            int roundingMode) {
+        if (radicand.signum() == 0) {
+            return nearest;
+        }
+
+        int comparison = compareSquareRootToBinary(radicand, exactDoubleValue(Double.doubleToRawLongBits(nearest)));
+        if (comparison == 0) {
+            return nearest;
+        }
+
+        double rounded = switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> nearest;
+            case ROUND_TOWARD_ZERO, ROUND_DOWN -> comparison < 0 ? Math.nextDown(nearest) : nearest;
+            case ROUND_UP -> comparison > 0 ? Math.nextUp(nearest) : nearest;
+            case ROUND_NEAREST_MAX_MAGNITUDE -> roundDoubleSquareRootNearestMaxMagnitude(radicand, nearest, comparison);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+        state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        return rounded;
+    }
+
+    /// Applies RMM tie handling for a double-precision square root already rounded with RNE.
+    private static double roundDoubleSquareRootNearestMaxMagnitude(
+            ExactBinaryValue radicand,
+            double nearest,
+            int comparison) {
+        double lower = comparison > 0 ? nearest : Math.nextDown(nearest);
+        double upper = comparison > 0 ? Math.nextUp(nearest) : nearest;
+        if (Double.isInfinite(lower) || Double.isInfinite(upper)) {
+            return nearest;
+        }
+
+        ExactBinaryValue midpoint = halveBinaryValue(addBinaryValues(
+                exactDoubleValue(Double.doubleToRawLongBits(lower)),
+                exactDoubleValue(Double.doubleToRawLongBits(upper))));
+        return compareSquareRootToBinary(radicand, midpoint) == 0 ? upper : nearest;
+    }
+
+    /// Rounds a finite exact rational value to double precision and records arithmetic flags.
+    private static double roundDoubleRationalResult(
+            MachineState state,
+            ExactRationalValue exact,
+            double nearest,
+            int roundingMode) {
+        if (exact.signum() == 0) {
+            return nearest;
+        }
+
+        boolean overflow = Double.isInfinite(nearest);
+        boolean inexact = true;
+        double rounded;
+        if (overflow) {
+            rounded = roundDoubleOverflow(exact.signum(), roundingMode);
+        } else {
+            int comparison = compareRationalToBinary(exact, exactDoubleValue(Double.doubleToRawLongBits(nearest)));
+            inexact = comparison != 0;
+            rounded = comparison == 0 ? nearest : roundDoubleRationalInexact(exact, nearest, roundingMode, comparison);
+        }
+
+        updateDoubleExactArithmeticFlags(state, exact.signum(), rounded, inexact, overflow);
+        return rounded;
+    }
+
+    /// Rounds an inexact finite exact rational value to double precision.
+    private static double roundDoubleRationalInexact(
+            ExactRationalValue exact,
+            double nearest,
+            int roundingMode,
+            int comparison) {
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> nearest;
+            case ROUND_TOWARD_ZERO -> {
+                if (exact.signum() > 0 && comparison < 0) {
+                    yield Math.nextDown(nearest);
+                }
+                if (exact.signum() < 0 && comparison > 0) {
+                    yield Math.nextUp(nearest);
+                }
+                yield nearest;
+            }
+            case ROUND_DOWN -> comparison < 0 ? Math.nextDown(nearest) : nearest;
+            case ROUND_UP -> comparison > 0 ? Math.nextUp(nearest) : nearest;
+            case ROUND_NEAREST_MAX_MAGNITUDE -> roundDoubleRationalNearestMaxMagnitude(exact, nearest, comparison);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Applies RMM tie handling for an exact rational double-precision result already rounded with RNE.
+    private static double roundDoubleRationalNearestMaxMagnitude(
+            ExactRationalValue exact,
+            double nearest,
+            int comparison) {
+        double lower = comparison > 0 ? nearest : Math.nextDown(nearest);
+        double upper = comparison > 0 ? Math.nextUp(nearest) : nearest;
+        if (Double.isInfinite(lower) || Double.isInfinite(upper)) {
+            return nearest;
+        }
+
+        ExactBinaryValue lowerValue = exactDoubleValue(Double.doubleToRawLongBits(lower));
+        ExactBinaryValue upperValue = exactDoubleValue(Double.doubleToRawLongBits(upper));
+        if (compareRationalDistances(exact, lowerValue, upperValue) == 0) {
+            return exact.signum() < 0 ? lower : upper;
+        }
+        return nearest;
+    }
+
+    /// Records double-precision flags for an exact binary source value.
+    private static void updateDoubleExactArithmeticFlags(
+            MachineState state,
+            int exactSign,
+            double rounded,
+            boolean inexact,
+            boolean overflow) {
+        if (!inexact) {
+            return;
+        }
+        if (overflow || Double.isInfinite(rounded)) {
+            state.addFloatingPointFlags(FLOATING_POINT_OVERFLOW | FLOATING_POINT_INEXACT);
+            return;
+        }
+        state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        if (exactSign != 0 && (rounded == 0.0d || Math.abs(rounded) < Double.MIN_NORMAL)) {
             state.addFloatingPointFlags(FLOATING_POINT_UNDERFLOW);
         }
     }
@@ -2015,6 +2434,244 @@ public sealed abstract class InstructionNode extends Node {
         }
         if (Double.isFinite(result) && result != 0.0d && Math.abs(result) < Double.MIN_NORMAL) {
             state.addFloatingPointFlags(FLOATING_POINT_UNDERFLOW | FLOATING_POINT_INEXACT);
+        }
+    }
+
+    /// Returns the exact finite result of a single-precision add, subtract, or multiply operation.
+    private static ExactBinaryValue exactSingleArithmetic(int leftBits, int rightBits, char operator) {
+        ExactBinaryValue left = exactSingleValue(leftBits);
+        ExactBinaryValue right = exactSingleValue(rightBits);
+        return switch (operator) {
+            case '+' -> addBinaryValues(left, right);
+            case '-' -> addBinaryValues(left, right.negate());
+            case '*' -> multiplyBinaryValues(left, right);
+            default -> throw new AssertionError("Unexpected floating-point operator: " + operator);
+        };
+    }
+
+    /// Returns the exact finite result of a single-precision division operation.
+    private static ExactRationalValue exactSingleDivision(int leftBits, int rightBits) {
+        ExactBinaryValue left = exactSingleValue(leftBits);
+        ExactBinaryValue right = exactSingleValue(rightBits);
+        BigInteger numerator = left.significand();
+        BigInteger denominator = right.significand();
+        if (denominator.signum() < 0) {
+            numerator = numerator.negate();
+            denominator = denominator.negate();
+        }
+        return new ExactRationalValue(numerator, denominator, left.exponent() - right.exponent());
+    }
+
+    /// Returns the exact finite result of a single-precision fused multiply-add operation.
+    private static ExactBinaryValue exactSingleFusedMultiplyAdd(
+            int leftBits,
+            int rightBits,
+            int addendBits,
+            boolean negateProduct,
+            boolean subtractAddend) {
+        ExactBinaryValue product = multiplyBinaryValues(exactSingleValue(leftBits), exactSingleValue(rightBits));
+        if (negateProduct) {
+            product = product.negate();
+        }
+        ExactBinaryValue addend = exactSingleValue(addendBits);
+        if (subtractAddend) {
+            addend = addend.negate();
+        }
+        return addBinaryValues(product, addend);
+    }
+
+    /// Returns the exact finite result of a double-precision add, subtract, or multiply operation.
+    private static ExactBinaryValue exactDoubleArithmetic(long leftBits, long rightBits, char operator) {
+        ExactBinaryValue left = exactDoubleValue(leftBits);
+        ExactBinaryValue right = exactDoubleValue(rightBits);
+        return switch (operator) {
+            case '+' -> addBinaryValues(left, right);
+            case '-' -> addBinaryValues(left, right.negate());
+            case '*' -> multiplyBinaryValues(left, right);
+            default -> throw new AssertionError("Unexpected floating-point operator: " + operator);
+        };
+    }
+
+    /// Returns the exact finite result of a double-precision division operation.
+    private static ExactRationalValue exactDoubleDivision(long leftBits, long rightBits) {
+        ExactBinaryValue left = exactDoubleValue(leftBits);
+        ExactBinaryValue right = exactDoubleValue(rightBits);
+        BigInteger numerator = left.significand();
+        BigInteger denominator = right.significand();
+        if (denominator.signum() < 0) {
+            numerator = numerator.negate();
+            denominator = denominator.negate();
+        }
+        return new ExactRationalValue(numerator, denominator, left.exponent() - right.exponent());
+    }
+
+    /// Returns the exact finite result of a double-precision fused multiply-add operation.
+    private static ExactBinaryValue exactDoubleFusedMultiplyAdd(
+            long leftBits,
+            long rightBits,
+            long addendBits,
+            boolean negateProduct,
+            boolean subtractAddend) {
+        ExactBinaryValue product = multiplyBinaryValues(exactDoubleValue(leftBits), exactDoubleValue(rightBits));
+        if (negateProduct) {
+            product = product.negate();
+        }
+        ExactBinaryValue addend = exactDoubleValue(addendBits);
+        if (subtractAddend) {
+            addend = addend.negate();
+        }
+        return addBinaryValues(product, addend);
+    }
+
+    /// Returns the exact binary value of an integer conversion source.
+    private static ExactBinaryValue exactIntegerValue(BigInteger value) {
+        return new ExactBinaryValue(value, 0);
+    }
+
+    /// Returns the exact binary value represented by finite single-precision bits.
+    private static ExactBinaryValue exactSingleValue(int bits) {
+        int fraction = bits & 0x007f_ffff;
+        int exponentBits = (bits >>> 23) & 0xff;
+        BigInteger significand;
+        int exponent;
+        if (exponentBits == 0) {
+            significand = BigInteger.valueOf(fraction);
+            exponent = -149;
+        } else {
+            significand = BigInteger.valueOf((1 << 23) | fraction);
+            exponent = exponentBits - 150;
+        }
+        return bits < 0 ? new ExactBinaryValue(significand.negate(), exponent) : new ExactBinaryValue(significand, exponent);
+    }
+
+    /// Returns the exact binary value represented by finite double-precision bits.
+    private static ExactBinaryValue exactDoubleValue(long bits) {
+        long fraction = bits & 0x000f_ffff_ffff_ffffL;
+        int exponentBits = (int) ((bits >>> 52) & 0x7ff);
+        BigInteger significand;
+        int exponent;
+        if (exponentBits == 0) {
+            significand = BigInteger.valueOf(fraction);
+            exponent = -1074;
+        } else {
+            significand = BigInteger.valueOf((1L << 52) | fraction);
+            exponent = exponentBits - 1075;
+        }
+        return bits < 0 ? new ExactBinaryValue(significand.negate(), exponent) : new ExactBinaryValue(significand, exponent);
+    }
+
+    /// Adds two exact binary values.
+    private static ExactBinaryValue addBinaryValues(ExactBinaryValue left, ExactBinaryValue right) {
+        int exponent = Math.min(left.exponent(), right.exponent());
+        BigInteger significand = scaleSignificand(left, exponent).add(scaleSignificand(right, exponent));
+        return new ExactBinaryValue(significand, exponent);
+    }
+
+    /// Subtracts two exact binary values.
+    private static ExactBinaryValue subtractBinaryValues(ExactBinaryValue left, ExactBinaryValue right) {
+        int exponent = Math.min(left.exponent(), right.exponent());
+        BigInteger significand = scaleSignificand(left, exponent).subtract(scaleSignificand(right, exponent));
+        return new ExactBinaryValue(significand, exponent);
+    }
+
+    /// Multiplies two exact binary values.
+    private static ExactBinaryValue multiplyBinaryValues(ExactBinaryValue left, ExactBinaryValue right) {
+        return new ExactBinaryValue(left.significand().multiply(right.significand()), left.exponent() + right.exponent());
+    }
+
+    /// Halves an exact binary value.
+    private static ExactBinaryValue halveBinaryValue(ExactBinaryValue value) {
+        return new ExactBinaryValue(value.significand(), value.exponent() - 1);
+    }
+
+    /// Compares two exact binary values numerically.
+    private static int compareBinaryValues(ExactBinaryValue left, ExactBinaryValue right) {
+        int exponent = Math.min(left.exponent(), right.exponent());
+        return scaleSignificand(left, exponent).compareTo(scaleSignificand(right, exponent));
+    }
+
+    /// Compares the magnitudes of two exact binary values.
+    private static int compareBinaryMagnitudes(ExactBinaryValue left, ExactBinaryValue right) {
+        return compareBinaryValues(left.abs(), right.abs());
+    }
+
+    /// Compares a square root of an exact binary value with a non-negative exact binary candidate.
+    private static int compareSquareRootToBinary(ExactBinaryValue radicand, ExactBinaryValue candidate) {
+        return -Integer.signum(compareBinaryValues(multiplyBinaryValues(candidate, candidate), radicand));
+    }
+
+    /// Compares an exact rational value with an exact binary value.
+    private static int compareRationalToBinary(ExactRationalValue left, ExactBinaryValue right) {
+        int exponent = Math.min(left.exponent(), right.exponent());
+        BigInteger scaledLeft = left.numerator().shiftLeft(left.exponent() - exponent);
+        BigInteger scaledRight = scaleSignificand(right, exponent).multiply(left.denominator());
+        return scaledLeft.compareTo(scaledRight);
+    }
+
+    /// Compares the distances from an exact rational value to its neighboring binary values.
+    private static int compareRationalDistances(
+            ExactRationalValue exact,
+            ExactBinaryValue lower,
+            ExactBinaryValue upper) {
+        int exponent = Math.min(exact.exponent(), Math.min(lower.exponent(), upper.exponent()));
+        BigInteger scaledExact = exact.numerator().shiftLeft(exact.exponent() - exponent);
+        BigInteger scaledLower = scaleSignificand(lower, exponent).multiply(exact.denominator());
+        BigInteger scaledUpper = scaleSignificand(upper, exponent).multiply(exact.denominator());
+        BigInteger lowerDistance = scaledExact.subtract(scaledLower).abs();
+        BigInteger upperDistance = scaledUpper.subtract(scaledExact).abs();
+        return lowerDistance.compareTo(upperDistance);
+    }
+
+    /// Scales a significand to the requested binary exponent.
+    private static BigInteger scaleSignificand(ExactBinaryValue value, int exponent) {
+        return value.significand().shiftLeft(value.exponent() - exponent);
+    }
+
+    /// An exact signed binary value represented as `significand * 2^exponent`.
+    @NotNullByDefault
+    private record ExactBinaryValue(
+            /// The signed integer significand.
+            BigInteger significand,
+
+            /// The binary exponent applied to the significand.
+            int exponent) {
+        /// Returns the sign of this exact value.
+        private int signum() {
+            return significand.signum();
+        }
+
+        /// Returns this value with its sign inverted.
+        private ExactBinaryValue negate() {
+            return new ExactBinaryValue(significand.negate(), exponent);
+        }
+
+        /// Returns this value with a non-negative significand.
+        private ExactBinaryValue abs() {
+            return significand.signum() < 0 ? negate() : this;
+        }
+    }
+
+    /// An exact signed rational binary value represented as `numerator * 2^exponent / denominator`.
+    @NotNullByDefault
+    private record ExactRationalValue(
+            /// The signed integer numerator.
+            BigInteger numerator,
+
+            /// The positive integer denominator.
+            BigInteger denominator,
+
+            /// The binary exponent applied to the numerator.
+            int exponent) {
+        /// Creates an exact rational binary value.
+        private ExactRationalValue {
+            if (denominator.signum() <= 0) {
+                throw new AssertionError("Exact rational denominator must be positive");
+            }
+        }
+
+        /// Returns the sign of this exact value.
+        private int signum() {
+            return numerator.signum();
         }
     }
 

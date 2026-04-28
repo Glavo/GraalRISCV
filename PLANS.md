@@ -5,9 +5,8 @@
 ### 1. Implement user-mode RV64GC instruction support
 
 - Keep the current RV64IMAC behavior stable while adding the missing RV64GC pieces.
-- Finish double-precision directed rounding beyond the default Java IEEE operations and audit remaining RMM tie cases.
 - Complete the remaining floating-point exception-flag edge cases and settle the NaN payload preservation policy.
-- Add focused decoder and execution tests for remaining double-precision rounding, exact exception-flag edge cases, and NaN payload behavior.
+- Add focused decoder and execution tests for remaining exact exception-flag edge cases and NaN payload behavior.
 
 ### 2. Support static Linux user-mode programs
 

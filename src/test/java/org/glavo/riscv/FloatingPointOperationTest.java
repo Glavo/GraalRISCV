@@ -123,6 +123,50 @@ public final class FloatingPointOperationTest {
         }
     }
 
+    /// Verifies double-precision directed rounding and exact arithmetic exception flags.
+    @Test
+    public void doubleArithmeticRoundingModesAndExceptionFlagsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    faddD(3, 1, 2, 2),
+                    faddD(4, 1, 2, 3),
+                    faddD(5, 6, 7, 4),
+                    fmulD(8, 9, 10, 2),
+                    fmulD(15, 16, 17, 0),
+                    fmaddD(18, 1, 1, 2, 3),
+                    fdivD(19, 9, 17, 2),
+                    fdivD(20, 1, 21, 3),
+                    fsqrtD(22, 23, 3),
+                    csrrs(RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeDouble(machine.state(), 1, 1.0d);
+            writeDouble(machine.state(), 2, 0x1.0p-53d);
+            writeDouble(machine.state(), 6, -1.0d);
+            writeDouble(machine.state(), 7, -0x1.0p-53d);
+            writeDouble(machine.state(), 9, Double.MAX_VALUE);
+            writeDouble(machine.state(), 10, 2.0d);
+            writeDouble(machine.state(), 16, Double.MIN_VALUE);
+            writeDouble(machine.state(), 17, 0.5d);
+            writeDouble(machine.state(), 21, 3.0d);
+            writeDouble(machine.state(), 23, Math.nextUp(1.0d));
+
+            runDecodedProgram(machine);
+
+            assertEquals(Double.doubleToRawLongBits(1.0d), machine.state().floatingPointRegister(3));
+            assertEquals(Double.doubleToRawLongBits(Math.nextUp(1.0d)), machine.state().floatingPointRegister(4));
+            assertEquals(Double.doubleToRawLongBits(Math.nextDown(-1.0d)), machine.state().floatingPointRegister(5));
+            assertEquals(Double.doubleToRawLongBits(Double.MAX_VALUE), machine.state().floatingPointRegister(8));
+            assertEquals(Double.doubleToRawLongBits(0.0d), machine.state().floatingPointRegister(15));
+            assertEquals(Double.doubleToRawLongBits(Math.nextUp(1.0d)), machine.state().floatingPointRegister(18));
+            assertEquals(Double.doubleToRawLongBits(Double.MAX_VALUE), machine.state().floatingPointRegister(19));
+            assertEquals(Double.doubleToRawLongBits(Math.nextUp(1.0d / 3.0d)), machine.state().floatingPointRegister(20));
+            assertEquals(Double.doubleToRawLongBits(Math.nextUp(1.0d)), machine.state().floatingPointRegister(22));
+            assertEquals(0x07, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
     /// Verifies single-precision sign injection and signed zero min/max behavior.
     @Test
     public void singleSignInjectionAndMinimumMaximumUseRawBits() {
@@ -174,6 +218,30 @@ public final class FloatingPointOperationTest {
             assertEquals(-3, machine.state().register(SECOND_RESULT_REGISTER));
             assertEquals(Double.doubleToRawLongBits(-3.0d), machine.state().floatingPointRegister(3));
             assertEquals(boxedSingle(Float.floatToRawIntBits(42.0f)), machine.state().floatingPointRegister(4));
+        }
+    }
+
+    /// Verifies integer to floating-point conversions honor explicit rounding modes.
+    @Test
+    public void integerToFloatingPointConversionRoundingModesAndFlagsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fcvtDL(1, LEFT_INTEGER_REGISTER, 2),
+                    fcvtDL(2, LEFT_INTEGER_REGISTER, 3),
+                    fcvtSL(3, RIGHT_INTEGER_REGISTER, 3),
+                    csrrs(RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(LEFT_INTEGER_REGISTER, Long.MAX_VALUE);
+            machine.state().setRegister(RIGHT_INTEGER_REGISTER, 0x0100_0001L);
+
+            runDecodedProgram(machine);
+
+            assertEquals(Double.doubleToRawLongBits(Math.nextDown(0x1.0p63d)), machine.state().floatingPointRegister(1));
+            assertEquals(Double.doubleToRawLongBits(0x1.0p63d), machine.state().floatingPointRegister(2));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextUp(0x1.0p24f))), machine.state().floatingPointRegister(3));
+            assertEquals(0x01, machine.state().register(RESULT_REGISTER));
         }
     }
 
@@ -282,6 +350,10 @@ public final class FloatingPointOperationTest {
                     fmulS(8, 9, 10, 0),
                     fcvtSD(11, 12, 2),
                     fcvtSD(13, 12, 3),
+                    faddS(14, 1, 15, 4),
+                    fsqrtS(16, 17, 3),
+                    fdivS(18, 1, 19, 2),
+                    fmaddS(20, 1, 1, 15, 4),
                     csrrs(RESULT_REGISTER, FFLAGS_CSR, 0),
                     ElfTestImages.ecall());
             prepareExit(machine.state());
@@ -291,6 +363,9 @@ public final class FloatingPointOperationTest {
             writeSingleBits(machine.state(), 7, Float.floatToRawIntBits(2.0f));
             writeSingleBits(machine.state(), 9, 1);
             writeSingleBits(machine.state(), 10, Float.floatToRawIntBits(0.5f));
+            writeSingleBits(machine.state(), 15, Float.floatToRawIntBits(0x1.0p-24f));
+            writeSingleBits(machine.state(), 17, Float.floatToRawIntBits(Math.nextUp(1.0f)));
+            writeSingleBits(machine.state(), 19, Float.floatToRawIntBits(3.0f));
             writeDouble(machine.state(), 12, 1.0d + 0x1.0p-25d);
 
             runDecodedProgram(machine);
@@ -301,6 +376,10 @@ public final class FloatingPointOperationTest {
             assertEquals(boxedSingle(0), machine.state().floatingPointRegister(8));
             assertEquals(boxedSingle(Float.floatToRawIntBits(1.0f)), machine.state().floatingPointRegister(11));
             assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextUp(1.0f))), machine.state().floatingPointRegister(13));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextUp(1.0f))), machine.state().floatingPointRegister(14));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextUp(1.0f))), machine.state().floatingPointRegister(16));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextDown(1.0f / 3.0f))), machine.state().floatingPointRegister(18));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(Math.nextUp(1.0f))), machine.state().floatingPointRegister(20));
             assertEquals(0x07, machine.state().register(RESULT_REGISTER));
         }
     }
@@ -383,6 +462,11 @@ public final class FloatingPointOperationTest {
         return opFp(0x01, rd, 0, rs1, rs2);
     }
 
+    /// Encodes `fadd.d` with an explicit rounding mode.
+    private static int faddD(int rd, int rs1, int rs2, int roundingMode) {
+        return opFp(0x01, rd, roundingMode, rs1, rs2);
+    }
+
     /// Encodes `fadd.s`.
     private static int faddS(int rd, int rs1, int rs2, int roundingMode) {
         return opFp(0x00, rd, roundingMode, rs1, rs2);
@@ -398,9 +482,19 @@ public final class FloatingPointOperationTest {
         return opFp(0x09, rd, 0, rs1, rs2);
     }
 
+    /// Encodes `fmul.d` with an explicit rounding mode.
+    private static int fmulD(int rd, int rs1, int rs2, int roundingMode) {
+        return opFp(0x09, rd, roundingMode, rs1, rs2);
+    }
+
     /// Encodes `fmul.s`.
     private static int fmulS(int rd, int rs1, int rs2, int roundingMode) {
         return opFp(0x08, rd, roundingMode, rs1, rs2);
+    }
+
+    /// Encodes `fdiv.s` with an explicit rounding mode.
+    private static int fdivS(int rd, int rs1, int rs2, int roundingMode) {
+        return opFp(0x0c, rd, roundingMode, rs1, rs2);
     }
 
     /// Encodes `fdiv.d`.
@@ -408,9 +502,24 @@ public final class FloatingPointOperationTest {
         return opFp(0x0d, rd, 0, rs1, rs2);
     }
 
+    /// Encodes `fdiv.d` with an explicit rounding mode.
+    private static int fdivD(int rd, int rs1, int rs2, int roundingMode) {
+        return opFp(0x0d, rd, roundingMode, rs1, rs2);
+    }
+
     /// Encodes `fsqrt.d`.
     private static int fsqrtD(int rd, int rs1) {
         return opFp(0x2d, rd, 0, rs1, 0);
+    }
+
+    /// Encodes `fsqrt.d` with an explicit rounding mode.
+    private static int fsqrtD(int rd, int rs1, int roundingMode) {
+        return opFp(0x2d, rd, roundingMode, rs1, 0);
+    }
+
+    /// Encodes `fsqrt.s` with an explicit rounding mode.
+    private static int fsqrtS(int rd, int rs1, int roundingMode) {
+        return opFp(0x2c, rd, roundingMode, rs1, 0);
     }
 
     /// Encodes `fmin.s`.
@@ -468,6 +577,16 @@ public final class FloatingPointOperationTest {
         return opFp(0x69, rd, 0, rs1, 2);
     }
 
+    /// Encodes `fcvt.d.l` with an explicit rounding mode.
+    private static int fcvtDL(int rd, int rs1, int roundingMode) {
+        return opFp(0x69, rd, roundingMode, rs1, 2);
+    }
+
+    /// Encodes `fcvt.s.l` with an explicit rounding mode.
+    private static int fcvtSL(int rd, int rs1, int roundingMode) {
+        return opFp(0x68, rd, roundingMode, rs1, 2);
+    }
+
     /// Encodes `fcvt.s.w`.
     private static int fcvtSW(int rd, int rs1) {
         return opFp(0x68, rd, 0, rs1, 0);
@@ -518,6 +637,16 @@ public final class FloatingPointOperationTest {
         return fma(0x43, rd, rs1, rs2, rs3, 1);
     }
 
+    /// Encodes `fmadd.s` with an explicit rounding mode.
+    private static int fmaddS(int rd, int rs1, int rs2, int rs3, int roundingMode) {
+        return fma(0x43, rd, rs1, rs2, rs3, 0, roundingMode);
+    }
+
+    /// Encodes `fmadd.d` with an explicit rounding mode.
+    private static int fmaddD(int rd, int rs1, int rs2, int rs3, int roundingMode) {
+        return fma(0x43, rd, rs1, rs2, rs3, 1, roundingMode);
+    }
+
     /// Encodes `fmsub.d`.
     private static int fmsubD(int rd, int rs1, int rs2, int rs3) {
         return fma(0x47, rd, rs1, rs2, rs3, 1);
@@ -550,7 +679,12 @@ public final class FloatingPointOperationTest {
 
     /// Encodes a fused floating-point instruction.
     private static int fma(int opcode, int rd, int rs1, int rs2, int rs3, int format) {
-        return (rs3 << 27) | (format << 25) | (rs2 << 20) | (rs1 << 15) | (rd << 7) | opcode;
+        return fma(opcode, rd, rs1, rs2, rs3, format, 0);
+    }
+
+    /// Encodes a fused floating-point instruction with an explicit rounding mode.
+    private static int fma(int opcode, int rd, int rs1, int rs2, int rs3, int format, int roundingMode) {
+        return (rs3 << 27) | (format << 25) | (rs2 << 20) | (rs1 << 15) | (roundingMode << 12) | (rd << 7) | opcode;
     }
 
     /// Owns a floating-point operation test machine and its closeable resources.
