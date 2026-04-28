@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -33,16 +34,42 @@ public final class RiscVRootNode extends RootNode {
             MachineState state = createState(context, memory);
             RiscVFrameLayout.loadIntegerRegisters(frame, state);
             try {
-                long pc = state.pc();
-                while (true) {
-                    pc = blockFor(memory, pc).execute(frame, state);
-                }
+                return executeGuestLoop(frame, memory, state);
             } finally {
                 RiscVFrameLayout.spillIntegerRegisters(frame, state);
                 state.syscalls().close();
             }
         } catch (ProgramExitException exit) {
             return exit.exitCode();
+        }
+    }
+
+    /// Runs the decoded-block dispatch loop for an initialized guest state.
+    private int executeGuestLoop(VirtualFrame frame, Memory memory, MachineState state) {
+        long pc = state.pc();
+        long primaryPc = 0;
+        long secondaryPc = 0;
+        @Nullable BlockNode primaryBlock = null;
+        @Nullable BlockNode secondaryBlock = null;
+
+        while (true) {
+            BlockNode block;
+            if (primaryBlock != null && pc == primaryPc) {
+                block = primaryBlock;
+            } else if (secondaryBlock != null && pc == secondaryPc) {
+                block = secondaryBlock;
+                secondaryBlock = primaryBlock;
+                secondaryPc = primaryPc;
+                primaryBlock = block;
+                primaryPc = pc;
+            } else {
+                block = blockFor(memory, pc);
+                secondaryBlock = primaryBlock;
+                secondaryPc = primaryPc;
+                primaryBlock = block;
+                primaryPc = pc;
+            }
+            pc = block.execute(frame, state);
         }
     }
 
@@ -97,12 +124,7 @@ public final class RiscVRootNode extends RootNode {
 
     /// Returns a decoded block, creating it on first use.
     private BlockNode blockFor(Memory memory, long pc) {
-        BlockNode block = blocks.get(pc);
-        if (block == null) {
-            block = RiscVDecoder.decodeBlock(memory, pc);
-            blocks.put(pc, block);
-        }
-        return block;
+        return blocks.getOrDecode(memory, pc);
     }
 
     /// Ensures a loaded ELF segment fits in guest memory.
@@ -228,24 +250,25 @@ public final class RiscVRootNode extends RootNode {
         /// The number of occupied cache slots.
         private int size;
 
-        /// Returns the cached block for a guest program counter, or null when it is absent.
-        private @Nullable BlockNode get(long pc) {
+        /// Returns the cached block for a guest program counter, decoding it on a cache miss.
+        private BlockNode getOrDecode(Memory memory, long pc) {
             int slot = findSlot(pc, keys, values);
-            return values[slot];
-        }
+            BlockNode block = values[slot];
+            if (block != null) {
+                return block;
+            }
 
-        /// Associates a guest program counter with a decoded block cache entry.
-        private void put(long pc, BlockNode block) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
             if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
                 grow();
+                slot = findSlot(pc, keys, values);
             }
 
-            int slot = findSlot(pc, keys, values);
-            if (values[slot] == null) {
-                size++;
-            }
+            block = RiscVDecoder.decodeBlock(memory, pc);
             keys[slot] = pc;
             values[slot] = block;
+            size++;
+            return block;
         }
 
         /// Doubles the cache capacity and reinserts all existing entries.
