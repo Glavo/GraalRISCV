@@ -286,7 +286,7 @@ public final class RiscVRootNode extends RootNode {
         /// The resize threshold denominator for the cache load factor.
         private static final int LOAD_FACTOR_DENOMINATOR = 2;
 
-        /// The language instance used to create bytecode block roots.
+        /// The language instance used to create micro-bytecode block roots.
         private final RiscVLanguage language;
 
         /// Guest program counters stored in cache slots.
@@ -331,7 +331,7 @@ public final class RiscVRootNode extends RootNode {
             }
 
             DecodedBlock decodedBlock = RiscVDecoder.decodeBlock(memory, pc);
-            block = RiscVBytecodeBlockCompiler.compile(language, decodedBlock);
+            block = RiscVMicroBlockCompiler.compile(language, decodedBlock);
             keys[slot] = pc;
             values[slot] = block;
             size++;
