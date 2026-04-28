@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryNotEmptyException;
@@ -100,6 +101,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `writev`.
     private static final long SYS_WRITEV = 66;
 
+    /// The Linux RISC-V syscall number for `pread64`.
+    private static final long SYS_PREAD64 = 67;
+
+    /// The Linux RISC-V syscall number for `pwrite64`.
+    private static final long SYS_PWRITE64 = 68;
+
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final long SYS_READLINKAT = 78;
 
@@ -108,6 +115,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `fstat`.
     private static final long SYS_FSTAT = 80;
+
+    /// The Linux RISC-V syscall number for `sync`.
+    private static final long SYS_SYNC = 81;
+
+    /// The Linux RISC-V syscall number for `fsync`.
+    private static final long SYS_FSYNC = 82;
+
+    /// The Linux RISC-V syscall number for `fdatasync`.
+    private static final long SYS_FDATASYNC = 83;
 
     /// The Linux RISC-V syscall number for `exit`.
     private static final long SYS_EXIT = 93;
@@ -222,6 +238,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final long SYS_PRLIMIT64 = 261;
+
+    /// The Linux RISC-V syscall number for `syncfs`.
+    private static final long SYS_SYNCFS = 267;
 
     /// The Linux RISC-V syscall number for `renameat2`.
     private static final long SYS_RENAMEAT2 = 276;
@@ -1454,6 +1473,22 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, writev((int) state.register(10), state.register(11), state.register(12)));
             return;
         }
+        if (callNumber == SYS_PREAD64) {
+            state.setRegister(10, pread64(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_PWRITE64) {
+            state.setRegister(10, pwrite64(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            return;
+        }
         if (callNumber == SYS_READLINKAT) {
             state.setRegister(10, readlinkat(
                     state.register(10),
@@ -1472,6 +1507,18 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (callNumber == SYS_FSTAT) {
             state.setRegister(10, fstat((int) state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_SYNC) {
+            state.setRegister(10, sync());
+            return;
+        }
+        if (callNumber == SYS_FSYNC) {
+            state.setRegister(10, fsync((int) state.register(10)));
+            return;
+        }
+        if (callNumber == SYS_FDATASYNC) {
+            state.setRegister(10, fdatasync((int) state.register(10)));
             return;
         }
         if (callNumber == SYS_EXIT || callNumber == SYS_EXIT_GROUP) {
@@ -1646,6 +1693,10 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_SYNCFS) {
+            state.setRegister(10, syncfs((int) state.register(10)));
             return;
         }
         if (callNumber == SYS_RENAMEAT2) {
@@ -2568,6 +2619,79 @@ public final class GuestSyscalls implements AutoCloseable {
         return total;
     }
 
+    /// Reads bytes from a host file at a fixed offset without changing the descriptor offset.
+    private long pread64(int fileDescriptor, long address, long length, long offset) {
+        if (length < 0 || offset < 0) {
+            return EINVAL;
+        }
+        if (length > Integer.MAX_VALUE) {
+            throw new RiscVException("Guest pread64 syscall buffer is too large: " + length);
+        }
+        if (length == 0) {
+            return 0;
+        }
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
+            return ESPIPE;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.readable()) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (!openFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        try {
+            byte[] buffer = new byte[(int) length];
+            int count = readHostFileAt(openFile.channel(), offset, ByteBuffer.wrap(buffer));
+            if (count < 0) {
+                return 0;
+            }
+
+            memory.writeBytes(address, buffer, 0, count);
+            return count;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest pread64 syscall failed", exception);
+        }
+    }
+
+    /// Writes guest memory bytes to a host file at a fixed offset without changing the descriptor offset.
+    private long pwrite64(int fileDescriptor, long address, long length, long offset) {
+        if (length < 0 || offset < 0) {
+            return EINVAL;
+        }
+        if (length > Integer.MAX_VALUE) {
+            throw new RiscVException("Guest pwrite64 syscall buffer is too large: " + length);
+        }
+        if (length == 0) {
+            return 0;
+        }
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
+            return fileDescriptor == 0 ? EBADF : ESPIPE;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.writable()) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (!openFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        try {
+            return writeHostFileAt(openFile, memory.readBytes(address, length), offset);
+        } catch (IOException exception) {
+            throw new RiscVException("Guest pwrite64 syscall failed", exception);
+        }
+    }
+
     /// Writes all bytes to an open host file or pipe endpoint.
     private static long writeOpenFile(OpenFile openFile, byte[] bytes) throws IOException {
         if (openFile.isPipeWriter()) {
@@ -2582,6 +2706,33 @@ public final class GuestSyscalls implements AutoCloseable {
             openFile.channel().write(buffer);
         }
         return bytes.length;
+    }
+
+    /// Reads bytes at a fixed host file offset while preserving the channel position.
+    private static int readHostFileAt(SeekableByteChannel channel, long offset, ByteBuffer buffer) throws IOException {
+        long position = channel.position();
+        try {
+            channel.position(offset);
+            return channel.read(buffer);
+        } finally {
+            channel.position(position);
+        }
+    }
+
+    /// Writes bytes at a fixed host file offset while preserving the channel position.
+    private static long writeHostFileAt(OpenFile openFile, byte[] bytes, long offset) throws IOException {
+        SeekableByteChannel channel = openFile.channel();
+        long position = channel.position();
+        try {
+            channel.position(openFile.append() ? channel.size() : offset);
+            ByteBuffer buffer = ByteBuffer.wrap(bytes);
+            while (buffer.hasRemaining()) {
+                channel.write(buffer);
+            }
+            return bytes.length;
+        } finally {
+            channel.position(position);
+        }
     }
 
     /// Handles `close` for standard streams and guest-opened file descriptors.
@@ -2759,6 +2910,59 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         } catch (IOException exception) {
             throw new RiscVException("Guest fstat syscall failed", exception);
+        }
+    }
+
+    /// Handles Linux `sync`, which is a process-wide best-effort flush.
+    private static long sync() {
+        return 0;
+    }
+
+    /// Flushes host file metadata and data for a guest file descriptor.
+    private long fsync(int fileDescriptor) {
+        return syncFileDescriptor(fileDescriptor, true);
+    }
+
+    /// Flushes host file data for a guest file descriptor.
+    private long fdatasync(int fileDescriptor) {
+        return syncFileDescriptor(fileDescriptor, false);
+    }
+
+    /// Flushes the sandbox filesystem referenced by a guest file descriptor.
+    private long syncfs(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return 0;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        return openFile == null ? EBADF : 0;
+    }
+
+    /// Flushes a regular host file channel when the backing implementation supports it.
+    private long syncFileDescriptor(int fileDescriptor, boolean metadata) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return EINVAL;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (openFile.isPipe()) {
+            return EINVAL;
+        }
+        if (openFile.isDirectory()) {
+            return 0;
+        }
+
+        try {
+            SeekableByteChannel channel = openFile.channel();
+            if (channel instanceof FileChannel fileChannel) {
+                fileChannel.force(metadata);
+            }
+            return 0;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest file sync syscall failed", exception);
         }
     }
 

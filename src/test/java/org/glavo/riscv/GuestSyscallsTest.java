@@ -164,6 +164,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `writev`.
     private static final long SYS_WRITEV = 66;
 
+    /// The Linux RISC-V syscall number for `pread64`.
+    private static final long SYS_PREAD64 = 67;
+
+    /// The Linux RISC-V syscall number for `pwrite64`.
+    private static final long SYS_PWRITE64 = 68;
+
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final long SYS_READLINKAT = 78;
 
@@ -172,6 +178,15 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `fstat`.
     private static final long SYS_FSTAT = 80;
+
+    /// The Linux RISC-V syscall number for `sync`.
+    private static final long SYS_SYNC = 81;
+
+    /// The Linux RISC-V syscall number for `fsync`.
+    private static final long SYS_FSYNC = 82;
+
+    /// The Linux RISC-V syscall number for `fdatasync`.
+    private static final long SYS_FDATASYNC = 83;
 
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final long SYS_SET_TID_ADDRESS = 96;
@@ -280,6 +295,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final long SYS_PRLIMIT64 = 261;
+
+    /// The Linux RISC-V syscall number for `syncfs`.
+    private static final long SYS_SYNCFS = 267;
 
     /// The Linux RISC-V syscall number for `renameat2`.
     private static final long SYS_RENAMEAT2 = 276;
@@ -2017,6 +2035,127 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
             assertEquals("file!data\n", Files.readString(tempDirectory.resolve("output.txt"), StandardCharsets.UTF_8));
+        }
+    }
+
+    /// Verifies positioned host file reads and writes without moving the descriptor offset.
+    @Test
+    public void positionedFileIoPreservesDescriptorOffset() throws Exception {
+        Files.writeString(tempDirectory.resolve("positioned.txt"), "0123456789", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 128;
+            long pipeAddress = memory.baseAddress() + 512;
+            writeGuestString(memory, pathAddress, "positioned.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_PREAD64, fileDescriptor, bufferAddress, 4, 5);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertArrayEquals("5678".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 4));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            memory.writeBytes(bufferAddress, "AB".getBytes(StandardCharsets.UTF_8), 0, 2);
+            setSyscall(state, SYS_PWRITE64, fileDescriptor, bufferAddress, 2, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_FDATASYNC, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FSYNC, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SYNCFS, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SYNC, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals("0123AB6789", Files.readString(tempDirectory.resolve("positioned.txt"), StandardCharsets.UTF_8));
+
+            writeGuestString(memory, pathAddress, "positioned.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int readOnlyFileDescriptor = (int) state.register(10);
+            assertEquals(3, readOnlyFileDescriptor);
+
+            memory.writeBytes(bufferAddress, "!".getBytes(StandardCharsets.UTF_8), 0, 1);
+            setSyscall(state, SYS_PWRITE64, readOnlyFileDescriptor, bufferAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_PREAD64, readOnlyFileDescriptor, bufferAddress, 1, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, pathAddress, ".");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(4, directoryFileDescriptor);
+
+            setSyscall(state, SYS_PREAD64, directoryFileDescriptor, bufferAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EISDIR, state.register(10));
+
+            setSyscall(state, SYS_FSYNC, directoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
+            assertEquals(5, readFileDescriptor);
+            assertEquals(6, writeFileDescriptor);
+
+            setSyscall(state, SYS_PREAD64, readFileDescriptor, bufferAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESPIPE, state.register(10));
+
+            setSyscall(state, SYS_PWRITE64, writeFileDescriptor, bufferAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESPIPE, state.register(10));
+
+            setSyscall(state, SYS_FSYNC, readFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SYNCFS, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
         }
     }
 

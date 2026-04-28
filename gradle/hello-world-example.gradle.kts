@@ -27,12 +27,14 @@ val linuxStaticFileMutationExampleElf = layout.buildDirectory.file("examples/lin
 val linuxStaticWorkingDirectoryExampleElf = layout.buildDirectory.file("examples/linux-static/working-directory.elf")
 val linuxStaticFilesystemStatusExampleElf = layout.buildDirectory.file("examples/linux-static/filesystem-status.elf")
 val linuxStaticStatxMetadataExampleElf = layout.buildDirectory.file("examples/linux-static/statx-metadata.elf")
+val linuxStaticPositionedIoExampleElf = layout.buildDirectory.file("examples/linux-static/positioned-io.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
 val linuxStaticWorkingDirectoryRoot = layout.buildDirectory.dir("tmp/linux-static-working-directory-root")
 val linuxStaticFilesystemStatusRoot = layout.buildDirectory.dir("tmp/linux-static-filesystem-status-root")
 val linuxStaticStatxMetadataRoot = layout.buildDirectory.dir("tmp/linux-static-statx-metadata-root")
+val linuxStaticPositionedIoRoot = layout.buildDirectory.dir("tmp/linux-static-positioned-io-root")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -174,6 +176,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticStatxMetadataExample") {
     description = "Builds examples/linux-static/StatxMetadata.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("StatxMetadata.c", linuxStaticStatxMetadataExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticPositionedIoExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/PositionedIo.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("PositionedIo.c", linuxStaticPositionedIoExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -551,6 +560,52 @@ tasks.register<JavaExec>("testLinuxStaticStatxMetadataExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticPositionedIoExample") {
+    group = "verification"
+    description = "Compiles a static musl positioned I/O example and verifies pread/pwrite behavior."
+
+    dependsOn("classes", "buildLinuxStaticPositionedIoExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticPositionedIoRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticPositionedIoExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "positioned-io-ok\n") {
+            throw GradleException("Unexpected static positioned I/O output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static positioned I/O example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticPositionedIoRoot.get().file("positioned.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "0123AB6789") {
+            throw GradleException("Unexpected static positioned I/O host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -711,6 +766,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticWorkingDirectoryExample",
         "testLinuxStaticFilesystemStatusExample",
         "testLinuxStaticStatxMetadataExample",
+        "testLinuxStaticPositionedIoExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -727,4 +783,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticWorkingDirectoryExample")
     dependsOn("testLinuxStaticFilesystemStatusExample")
     dependsOn("testLinuxStaticStatxMetadataExample")
+    dependsOn("testLinuxStaticPositionedIoExample")
 }
