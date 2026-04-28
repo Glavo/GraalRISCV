@@ -83,6 +83,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENOSYS` as a raw negative syscall result.
     private static final long ENOSYS = -38;
 
+    /// Linux `ENOTEMPTY` as a raw negative syscall result.
+    private static final long ENOTEMPTY = -39;
+
     /// Linux `ESPIPE` as a raw negative syscall result.
     private static final long ESPIPE = -29;
 
@@ -103,6 +106,21 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `mkdirat`.
+    private static final long SYS_MKDIRAT = 34;
+
+    /// The Linux RISC-V syscall number for `unlinkat`.
+    private static final long SYS_UNLINKAT = 35;
+
+    /// The Linux RISC-V syscall number for `renameat`.
+    private static final long SYS_RENAMEAT = 38;
+
+    /// The Linux RISC-V syscall number for `truncate`.
+    private static final long SYS_TRUNCATE = 45;
+
+    /// The Linux RISC-V syscall number for `ftruncate`.
+    private static final long SYS_FTRUNCATE = 46;
 
     /// The Linux RISC-V syscall number for `faccessat`.
     private static final long SYS_FACCESSAT = 48;
@@ -251,6 +269,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final long SYS_PRLIMIT64 = 261;
 
+    /// The Linux RISC-V syscall number for `renameat2`.
+    private static final long SYS_RENAMEAT2 = 276;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -316,6 +337,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `AT_EACCESS`.
     private static final long AT_EACCESS = 0x200;
+
+    /// Linux `AT_REMOVEDIR`.
+    private static final long AT_REMOVEDIR = 0x200;
 
     /// Linux `AT_EMPTY_PATH`.
     private static final long AT_EMPTY_PATH = 0x1000;
@@ -1489,6 +1513,170 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
             assertEquals("file!data\n", Files.readString(tempDirectory.resolve("output.txt"), StandardCharsets.UTF_8));
+        }
+    }
+
+    /// Verifies path mutation syscalls for sandboxed files and directories.
+    @Test
+    public void fileMutationSyscallsStaySandboxed() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long newPathAddress = memory.baseAddress() + 128;
+            long bufferAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "work");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.isDirectory(tempDirectory.resolve("work")));
+
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EEXIST, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            writeGuestString(memory, pathAddress, "nested");
+            setSyscall(state, SYS_MKDIRAT, directoryFileDescriptor, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.isDirectory(tempDirectory.resolve("work").resolve("nested")));
+
+            writeGuestString(memory, pathAddress, "../../escape");
+            setSyscall(state, SYS_MKDIRAT, directoryFileDescriptor, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "nested/data.txt");
+            setSyscall(state, SYS_OPENAT, directoryFileDescriptor, pathAddress, O_RDWR | O_CREAT | O_TRUNC, 0644);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(4, fileDescriptor);
+
+            memory.writeBytes(bufferAddress, "abcdef".getBytes(StandardCharsets.UTF_8), 0, 6);
+            setSyscall(state, SYS_WRITE, fileDescriptor, bufferAddress, 6);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+
+            setSyscall(state, SYS_FTRUNCATE, fileDescriptor, 8, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 6, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals(0, memory.readUnsignedByte(bufferAddress));
+            assertEquals(0, memory.readUnsignedByte(bufferAddress + 1));
+
+            setSyscall(state, SYS_FTRUNCATE, fileDescriptor, 3, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertArrayEquals("abc".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 3));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "nested/data.txt");
+            writeGuestString(memory, newPathAddress, "work/renamed.txt");
+            setSyscall(state, SYS_RENAMEAT, directoryFileDescriptor, pathAddress, AT_FDCWD, newPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.notExists(tempDirectory.resolve("work").resolve("nested").resolve("data.txt")));
+            assertEquals("abc", Files.readString(tempDirectory.resolve("work").resolve("renamed.txt"), StandardCharsets.UTF_8));
+
+            writeGuestString(memory, pathAddress, "work/renamed.txt");
+            setSyscall(state, SYS_TRUNCATE, pathAddress, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals("ab", Files.readString(tempDirectory.resolve("work").resolve("renamed.txt"), StandardCharsets.UTF_8));
+
+            writeGuestString(memory, newPathAddress, "work/final.txt");
+            setSyscall(state, SYS_RENAMEAT2, AT_FDCWD, pathAddress, AT_FDCWD, newPathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.notExists(tempDirectory.resolve("work").resolve("renamed.txt")));
+            assertEquals("ab", Files.readString(tempDirectory.resolve("work").resolve("final.txt"), StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_RENAMEAT2, AT_FDCWD, newPathAddress, AT_FDCWD, pathAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work/nonempty");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work/nonempty/child");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work/nonempty");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, AT_REMOVEDIR);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTEMPTY, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, directoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work/final.txt");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.notExists(tempDirectory.resolve("work").resolve("final.txt")));
+
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work/nested");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EISDIR, state.register(10));
+
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, AT_REMOVEDIR);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work/nonempty/child");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, AT_REMOVEDIR);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work/nonempty");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, AT_REMOVEDIR);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "work");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, AT_REMOVEDIR);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.notExists(tempDirectory.resolve("work")));
         }
     }
 

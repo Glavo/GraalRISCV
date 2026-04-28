@@ -12,7 +12,11 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryNotEmptyException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.InvalidPathException;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Duration;
@@ -38,6 +42,21 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `mkdirat`.
+    private static final long SYS_MKDIRAT = 34;
+
+    /// The Linux RISC-V syscall number for `unlinkat`.
+    private static final long SYS_UNLINKAT = 35;
+
+    /// The Linux RISC-V syscall number for `renameat`.
+    private static final long SYS_RENAMEAT = 38;
+
+    /// The Linux RISC-V syscall number for `truncate`.
+    private static final long SYS_TRUNCATE = 45;
+
+    /// The Linux RISC-V syscall number for `ftruncate`.
+    private static final long SYS_FTRUNCATE = 46;
 
     /// The Linux RISC-V syscall number for `faccessat`.
     private static final long SYS_FACCESSAT = 48;
@@ -192,6 +211,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final long SYS_PRLIMIT64 = 261;
 
+    /// The Linux RISC-V syscall number for `renameat2`.
+    private static final long SYS_RENAMEAT2 = 276;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
@@ -248,6 +270,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `ENOSYS` as a raw negative syscall result.
     private static final long ENOSYS = -38;
+
+    /// Linux `ENOTEMPTY` as a raw negative syscall result.
+    private static final long ENOTEMPTY = -39;
 
     /// Linux `ESPIPE` as a raw negative syscall result.
     private static final long ESPIPE = -29;
@@ -323,6 +348,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `AT_EACCESS`.
     private static final long AT_EACCESS = 0x200;
+
+    /// Linux `AT_REMOVEDIR`.
+    private static final long AT_REMOVEDIR = 0x200;
 
     /// Linux `AT_EMPTY_PATH`.
     private static final long AT_EMPTY_PATH = 0x1000;
@@ -1203,6 +1231,30 @@ public final class GuestSyscalls implements AutoCloseable {
             state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
             return;
         }
+        if (callNumber == SYS_MKDIRAT) {
+            state.setRegister(10, mkdirat(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_UNLINKAT) {
+            state.setRegister(10, unlinkat(state.register(10), state.register(11), state.register(12)));
+            return;
+        }
+        if (callNumber == SYS_RENAMEAT) {
+            state.setRegister(10, renameat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_TRUNCATE) {
+            state.setRegister(10, truncate(state.register(10), state.register(11)));
+            return;
+        }
+        if (callNumber == SYS_FTRUNCATE) {
+            state.setRegister(10, ftruncate((int) state.register(10), state.register(11)));
+            return;
+        }
         if (callNumber == SYS_FACCESSAT) {
             state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
             return;
@@ -1439,6 +1491,15 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            return;
+        }
+        if (callNumber == SYS_RENAMEAT2) {
+            state.setRegister(10, renameat2(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             return;
         }
         if (callNumber == SYS_GETRANDOM) {
@@ -1763,6 +1824,248 @@ public final class GuestSyscalls implements AutoCloseable {
             if ((mode & X_OK) != 0 && !hostFile.isExecutable()) {
                 return EACCES;
             }
+            return 0;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Creates a directory below the configured host root without applying guest mode bits.
+    private long mkdirat(long directoryFileDescriptor, long pathAddress, long mode) {
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+
+        long parentError = validateSandboxedParent(hostFile);
+        if (parentError != 0) {
+            return parentError;
+        }
+
+        try {
+            if (pathEntryExists(hostFile)) {
+                return EEXIST;
+            }
+            hostFile.createDirectory();
+            return 0;
+        } catch (FileAlreadyExistsException exception) {
+            return EEXIST;
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Removes a file or empty directory below the configured host root.
+    private long unlinkat(long directoryFileDescriptor, long pathAddress, long flags) {
+        if ((flags & ~AT_REMOVEDIR) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+
+        long parentError = validateSandboxedParent(hostFile);
+        if (parentError != 0) {
+            return parentError;
+        }
+
+        boolean removeDirectory = (flags & AT_REMOVEDIR) != 0;
+        try {
+            boolean symbolicLink = hostFile.isSymbolicLink();
+            if (!pathEntryExists(hostFile)) {
+                return ENOENT;
+            }
+            if (removeDirectory) {
+                if (symbolicLink || !hostFile.isDirectory()) {
+                    return ENOTDIR;
+                }
+            } else if (!symbolicLink && hostFile.isDirectory()) {
+                return EISDIR;
+            }
+
+            hostFile.delete();
+            return 0;
+        } catch (NoSuchFileException exception) {
+            return ENOENT;
+        } catch (DirectoryNotEmptyException exception) {
+            return ENOTEMPTY;
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Renames a sandboxed host path to another sandboxed host path.
+    private long renameat(
+            long oldDirectoryFileDescriptor,
+            long oldPathAddress,
+            long newDirectoryFileDescriptor,
+            long newPathAddress) {
+        @Nullable String oldGuestPath = readGuestPath(oldPathAddress);
+        if (oldGuestPath == null) {
+            return ENAMETOOLONG;
+        }
+        @Nullable String newGuestPath = readGuestPath(newPathAddress);
+        if (newGuestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (oldGuestPath.isEmpty() || newGuestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        if (!canResolvePathFrom(oldDirectoryFileDescriptor, oldGuestPath)
+                || !canResolvePathFrom(newDirectoryFileDescriptor, newGuestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TruffleFile oldHostFile = resolveHostFile(oldDirectoryFileDescriptor, oldGuestPath);
+        @Nullable TruffleFile newHostFile = resolveHostFile(newDirectoryFileDescriptor, newGuestPath);
+        if (oldHostFile == null || newHostFile == null) {
+            return EACCES;
+        }
+
+        long oldParentError = validateSandboxedParent(oldHostFile);
+        if (oldParentError != 0) {
+            return oldParentError;
+        }
+        long newParentError = validateSandboxedParent(newHostFile);
+        if (newParentError != 0) {
+            return newParentError;
+        }
+
+        try {
+            if (!pathEntryExists(oldHostFile)) {
+                return ENOENT;
+            }
+
+            boolean oldDirectory = !oldHostFile.isSymbolicLink() && oldHostFile.isDirectory();
+            if (pathEntryExists(newHostFile)) {
+                boolean newDirectory = !newHostFile.isSymbolicLink() && newHostFile.isDirectory();
+                if (oldDirectory && !newDirectory) {
+                    return ENOTDIR;
+                }
+                if (!oldDirectory && newDirectory) {
+                    return EISDIR;
+                }
+            }
+
+            oldHostFile.move(newHostFile, StandardCopyOption.REPLACE_EXISTING);
+            return 0;
+        } catch (NoSuchFileException exception) {
+            return ENOENT;
+        } catch (DirectoryNotEmptyException exception) {
+            return ENOTEMPTY;
+        } catch (FileAlreadyExistsException exception) {
+            return EEXIST;
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Handles `renameat2` without Linux-specific nonzero rename flags.
+    private long renameat2(
+            long oldDirectoryFileDescriptor,
+            long oldPathAddress,
+            long newDirectoryFileDescriptor,
+            long newPathAddress,
+            long flags) {
+        if (flags != 0) {
+            return EINVAL;
+        }
+        return renameat(oldDirectoryFileDescriptor, oldPathAddress, newDirectoryFileDescriptor, newPathAddress);
+    }
+
+    /// Truncates a sandboxed host file selected by path.
+    private long truncate(long pathAddress, long length) {
+        if (length < 0) {
+            return EINVAL;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+
+        try {
+            if (!pathEntryExists(hostFile)) {
+                return ENOENT;
+            }
+            if (!canonicalFileStaysBelowHostRoot(hostFile)) {
+                return EACCES;
+            }
+            if (hostFile.isDirectory()) {
+                return EISDIR;
+            }
+            if (!hostFile.isRegularFile()) {
+                return ENODEV;
+            }
+            if (!hostFile.isWritable()) {
+                return EACCES;
+            }
+
+            try (SeekableByteChannel channel = hostFile.newByteChannel(EnumSet.of(StandardOpenOption.WRITE))) {
+                resizeHostChannel(channel, length);
+            }
+            return 0;
+        } catch (NoSuchFileException exception) {
+            return ENOENT;
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Truncates the open host file referenced by a guest file descriptor.
+    private long ftruncate(int fileDescriptor, long length) {
+        if (length < 0) {
+            return EINVAL;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isHostFile()) {
+            return EINVAL;
+        }
+        if (!openFile.writable()) {
+            return EBADF;
+        }
+
+        try {
+            resizeHostChannel(openFile.channel(), length);
             return 0;
         } catch (IOException | SecurityException exception) {
             return EACCES;
@@ -3328,6 +3631,55 @@ public final class GuestSyscalls implements AutoCloseable {
             return false;
         }
         return hostFile.getCanonicalFile().startsWith(root.getCanonicalFile());
+    }
+
+    /// Validates that a file's parent directory exists inside the host-root sandbox.
+    private long validateSandboxedParent(TruffleFile hostFile) {
+        try {
+            @Nullable TruffleFile root = currentHostRoot();
+            if (root == null) {
+                return EACCES;
+            }
+
+            @Nullable TruffleFile parent = hostFile.getParent();
+            if (parent == null) {
+                return EACCES;
+            }
+            if (!parent.exists()) {
+                return ENOENT;
+            }
+            if (!parent.isDirectory()) {
+                return ENOTDIR;
+            }
+            if (!parent.getCanonicalFile().startsWith(root.getCanonicalFile())) {
+                return EACCES;
+            }
+            return 0;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Returns true when the host path names an existing entry or a symbolic link.
+    private static boolean pathEntryExists(TruffleFile hostFile) {
+        return hostFile.exists() || hostFile.isSymbolicLink();
+    }
+
+    /// Resizes a writable host file channel while preserving its current offset.
+    private static void resizeHostChannel(SeekableByteChannel channel, long length) throws IOException {
+        long position = channel.position();
+        try {
+            long size = channel.size();
+            if (length <= size) {
+                channel.truncate(length);
+                return;
+            }
+
+            channel.position(length - 1);
+            channel.write(ByteBuffer.wrap(new byte[]{0}));
+        } finally {
+            channel.position(position);
+        }
     }
 
     /// Returns the resolved host root, creating it through the Truffle environment on first use.

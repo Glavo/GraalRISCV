@@ -20,15 +20,15 @@
 
 - Keep syscall handling deterministic and single-process unless a later plan explicitly expands that boundary.
 - Preserve `--host-root` as the TruffleFile-backed filesystem sandbox root and reject path escapes.
-- Broaden file descriptor support beyond the current regular-file read/write/create/truncate/append, directory fd, `getdents64`, descriptor duplication, in-memory `pipe2`, and minimal `fcntl` baseline, including additional Linux flags when needed.
-- Add syscall implementations as broader static Linux workloads require beyond the current `clone` parent-return compatibility, `dup`/`dup3`, `faccessat`/`faccessat2`, `fcntl`, `futex` single-thread compatibility, `getcpu`, `getcwd`, `getdents64`, `getpgid`, `getppid`, `getrusage`, `gettimeofday`, `kill`/`tkill`/`tgkill` validation, `madvise`, `mprotect`, `nanosleep`, `newfstatat`, `pipe2`, `prctl`, `prlimit64`, `readlinkat`, `riscv_hwprobe`, `sched_getaffinity`, `sched_yield`, `setsid`, `sigaltstack`, `times`, `uname`, and user/group identity syscall baseline.
+- Broaden file descriptor support beyond the current regular-file read/write/create/truncate/append, directory creation/removal, path rename/unlink, directory fd, `getdents64`, descriptor duplication, in-memory `pipe2`, and minimal `fcntl` baseline, including additional Linux flags when needed.
+- Add syscall implementations as broader static Linux workloads require beyond the current `clone` parent-return compatibility, `dup`/`dup3`, `faccessat`/`faccessat2`, `fcntl`, `ftruncate`, `futex` single-thread compatibility, `getcpu`, `getcwd`, `getdents64`, `getpgid`, `getppid`, `getrusage`, `gettimeofday`, `kill`/`tkill`/`tgkill` validation, `madvise`, `mkdirat`, `mprotect`, `nanosleep`, `newfstatat`, `pipe2`, `prctl`, `prlimit64`, `readlinkat`, `renameat`/`renameat2`, `riscv_hwprobe`, `sched_getaffinity`, `sched_yield`, `setsid`, `sigaltstack`, `times`, `truncate`, `uname`, `unlinkat`, and user/group identity syscall baseline.
 - Keep unsupported syscall diagnostics actionable by including the syscall number, guest PC, and argument registers.
 - Add direct syscall tests for success paths, Linux-compatible error returns, filesystem sandboxing, configurable time, and deterministic random behavior.
 
 ### 4. Add static Linux C acceptance examples
 
 - Keep no-toolchain package smoke tests available so basic CI remains possible without Zig.
-- Add broader static Linux acceptance examples as syscall coverage grows beyond the current `printf`, `argc`/`argv`, sandboxed file I/O, and directory listing smoke paths.
+- Add broader static Linux acceptance examples as syscall coverage grows beyond the current `printf`, `argc`/`argv`, sandboxed file I/O, directory listing, and file mutation smoke paths.
 
 ### 5. Keep build, CI, and documentation current
 

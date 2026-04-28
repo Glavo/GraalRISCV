@@ -23,8 +23,10 @@ val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-sta
 val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-static/argv-echo.elf")
 val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
 val linuxStaticDirectoryListExampleElf = layout.buildDirectory.file("examples/linux-static/directory-list.elf")
+val linuxStaticFileMutationExampleElf = layout.buildDirectory.file("examples/linux-static/file-mutation.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
+val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -138,6 +140,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticDirectoryListExample") {
     description = "Builds examples/linux-static/DirectoryList.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("DirectoryList.c", linuxStaticDirectoryListExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticFileMutationExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/FileMutation.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("FileMutation.c", linuxStaticFileMutationExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -332,6 +341,51 @@ tasks.register<JavaExec>("testLinuxStaticDirectoryListExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticFileMutationExample") {
+    group = "verification"
+    description = "Compiles a static musl file mutation example and verifies sandboxed host-root changes."
+
+    dependsOn("classes", "buildLinuxStaticFileMutationExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticFileMutationRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileMutationExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "mutations-ok\n") {
+            throw GradleException("Unexpected static file mutation output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static file mutation example wrote to stderr: $actualError")
+        }
+
+        val workDirectory = linuxStaticFileMutationRoot.get().file("work").asFile
+        if (workDirectory.exists()) {
+            throw GradleException("Static file mutation example left work directory behind: $workDirectory")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -488,6 +542,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticArgvExample",
         "testLinuxStaticFileIoExample",
         "testLinuxStaticDirectoryListExample",
+        "testLinuxStaticFileMutationExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -500,4 +555,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticArgvExample")
     dependsOn("testLinuxStaticFileIoExample")
     dependsOn("testLinuxStaticDirectoryListExample")
+    dependsOn("testLinuxStaticFileMutationExample")
 }
