@@ -31,6 +31,7 @@ val linuxStaticPositionedIoExampleElf = layout.buildDirectory.file("examples/lin
 val linuxStaticEventPollingExampleElf = layout.buildDirectory.file("examples/linux-static/event-polling.elf")
 val linuxStaticThreadJoinExampleElf = layout.buildDirectory.file("examples/linux-static/thread-join.elf")
 val linuxStaticRuntimeServicesExampleElf = layout.buildDirectory.file("examples/linux-static/runtime-services.elf")
+val linuxStaticProcessSignalsExampleElf = layout.buildDirectory.file("examples/linux-static/process-signals.elf")
 val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
 val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
@@ -208,6 +209,13 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticRuntimeServicesExample") {
     description = "Builds examples/linux-static/RuntimeServices.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("RuntimeServices.c", linuxStaticRuntimeServicesExampleElf)
+}
+
+tasks.register<RiscVZigCcTask>("buildLinuxStaticProcessSignalsExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/ProcessSignals.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("ProcessSignals.c", linuxStaticProcessSignalsExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -730,6 +738,39 @@ tasks.register<JavaExec>("testLinuxStaticRuntimeServicesExample") {
     }
 }
 
+tasks.register<JavaExec>("testLinuxStaticProcessSignalsExample") {
+    group = "verification"
+    description = "Compiles a static musl process and signal setup example and verifies process, signal, and prctl syscalls."
+
+    dependsOn("classes", "buildLinuxStaticProcessSignalsExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticProcessSignalsExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "process-signals-ok\n") {
+            throw GradleException("Unexpected static process signals output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static process signals example wrote to stderr: $actualError")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
     description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
@@ -894,6 +935,7 @@ tasks.register("checkHelloWorldExample") {
         "testLinuxStaticEventPollingExample",
         "testLinuxStaticThreadJoinExample",
         "testLinuxStaticRuntimeServicesExample",
+        "testLinuxStaticProcessSignalsExample",
         "runHelloWorldExample",
         "runHelloWorldInstalledExample",
         "runHelloWorldShadowJarExample"
@@ -914,4 +956,5 @@ tasks.named("check") {
     dependsOn("testLinuxStaticEventPollingExample")
     dependsOn("testLinuxStaticThreadJoinExample")
     dependsOn("testLinuxStaticRuntimeServicesExample")
+    dependsOn("testLinuxStaticProcessSignalsExample")
 }

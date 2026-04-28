@@ -175,6 +175,7 @@ Run the static Linux smoke checks:
 ./gradlew testLinuxStaticEventPollingExample
 ./gradlew testLinuxStaticThreadJoinExample
 ./gradlew testLinuxStaticRuntimeServicesExample
+./gradlew testLinuxStaticProcessSignalsExample
 ```
 
 Run every built-in C example check:
