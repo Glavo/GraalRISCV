@@ -17,8 +17,8 @@ val javaToolchains = extensions.getByType<JavaToolchainService>()
 val mainClassName = applicationExtension.mainClass.get()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
-val helloWorldExampleElf = layout.buildDirectory.file("examples/hello/hello.elf")
-val hotLoopExampleElf = layout.buildDirectory.file("examples/hello/hot-loop.elf")
+val helloWorldExampleElf = layout.buildDirectory.file("examples/freestanding/hello.elf")
+val hotLoopExampleElf = layout.buildDirectory.file("examples/freestanding/hot-loop.elf")
 val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-static/printf-hello.elf")
 val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-static/argv-echo.elf")
 val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
@@ -101,12 +101,12 @@ val extractZig by tasks.registering {
 
 tasks.register<RiscVZigCcTask>("buildHelloWorldExample") {
     group = "verification"
-    description = "Builds examples/hello/HelloWorld.c for RISC-V with the Gradle-managed Zig toolchain."
+    description = "Builds examples/freestanding/HelloWorld.c for RISC-V with the Gradle-managed Zig toolchain."
 
     dependsOn(extractZig)
     zigExecutable.set(zigExecutableFile)
-    sourceFile.set(layout.projectDirectory.file("examples/hello/HelloWorld.c"))
-    linkerScript.set(layout.projectDirectory.file("examples/hello/linker.ld"))
+    sourceFile.set(layout.projectDirectory.file("examples/freestanding/HelloWorld.c"))
+    linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
     outputFile.set(helloWorldExampleElf)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
@@ -114,12 +114,12 @@ tasks.register<RiscVZigCcTask>("buildHelloWorldExample") {
 
 tasks.register<RiscVZigCcTask>("buildHotLoopExample") {
     group = "verification"
-    description = "Builds examples/hello/HotLoop.c for RISC-V with the Gradle-managed Zig toolchain."
+    description = "Builds examples/freestanding/HotLoop.c for RISC-V with the Gradle-managed Zig toolchain."
 
     dependsOn(extractZig)
     zigExecutable.set(zigExecutableFile)
-    sourceFile.set(layout.projectDirectory.file("examples/hello/HotLoop.c"))
-    linkerScript.set(layout.projectDirectory.file("examples/hello/linker.ld"))
+    sourceFile.set(layout.projectDirectory.file("examples/freestanding/HotLoop.c"))
+    linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
     outputFile.set(hotLoopExampleElf)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))

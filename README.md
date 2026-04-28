@@ -136,11 +136,11 @@ Gradle uses the managed Zig toolchain to build the freestanding RISC-V examples:
 Generated ELFs:
 
 ```text
-build/examples/hello/hello.elf
-build/examples/hello/hot-loop.elf
+build/examples/freestanding/hello.elf
+build/examples/freestanding/hot-loop.elf
 ```
 
-The source files and linker script are under `examples/hello`.
+The source files and linker script are under `examples/freestanding`.
 
 Expected `HelloWorld.c` simulator output:
 
