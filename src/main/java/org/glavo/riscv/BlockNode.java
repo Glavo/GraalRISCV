@@ -14,30 +14,74 @@ public final class BlockNode extends Node {
     @CompilationFinal(dimensions = 1)
     private final InstructionNode[] instructions;
 
+    /// The number of instructions in this decoded block.
+    @CompilationFinal
+    private final int instructionCount;
+
+    /// Whether any instruction needs exact per-instruction retirement.
+    @CompilationFinal
+    private final boolean requiresPreciseInstructionRetirement;
+
     /// Creates a decoded basic block.
     public BlockNode(InstructionNode[] instructions) {
         this.instructions = instructions.clone();
+        this.instructionCount = instructions.length;
+
+        boolean preciseRetirement = false;
+        for (InstructionNode instruction : instructions) {
+            if (instruction.requiresPreciseInstructionRetirement()) {
+                preciseRetirement = true;
+                break;
+            }
+        }
+        this.requiresPreciseInstructionRetirement = preciseRetirement;
     }
 
     /// Executes every instruction in this decoded block.
     @ExplodeLoop
-    public void execute(MachineState state) {
-        for (InstructionNode instruction : instructions) {
-            instruction.executeInBlock(state);
+    public long execute(MachineState state) {
+        if (state.canRetireBlock() && !requiresPreciseInstructionRetirement) {
+            state.retireBlock(instructionCount);
+            for (InstructionNode instruction : instructions) {
+                instruction.executeInRetiredBlock(state);
+            }
+        } else {
+            for (InstructionNode instruction : instructions) {
+                instruction.executeInBlock(state);
+            }
         }
+
+        long nextPc;
         if (!instructions[instructions.length - 1].isTerminator()) {
-            state.setPc(instructions[instructions.length - 1].nextAddress);
+            nextPc = instructions[instructions.length - 1].nextAddress;
+            state.setPc(nextPc);
+        } else {
+            nextPc = state.pc();
         }
+        return nextPc;
     }
 
     /// Executes every instruction in this decoded block using frame-backed integer registers.
     @ExplodeLoop
-    public void execute(VirtualFrame frame, MachineState state) {
-        for (InstructionNode instruction : instructions) {
-            instruction.executeInBlock(frame, state);
+    public long execute(VirtualFrame frame, MachineState state) {
+        if (state.canRetireBlock() && !requiresPreciseInstructionRetirement) {
+            state.retireBlock(instructionCount);
+            for (InstructionNode instruction : instructions) {
+                instruction.executeInRetiredBlock(frame, state);
+            }
+        } else {
+            for (InstructionNode instruction : instructions) {
+                instruction.executeInBlock(frame, state);
+            }
         }
+
+        long nextPc;
         if (!instructions[instructions.length - 1].isTerminator()) {
-            state.setPc(instructions[instructions.length - 1].nextAddress);
+            nextPc = instructions[instructions.length - 1].nextAddress;
+            state.setPc(nextPc);
+        } else {
+            nextPc = state.pc();
         }
+        return nextPc;
     }
 }

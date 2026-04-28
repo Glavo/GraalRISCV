@@ -33,8 +33,9 @@ public final class RiscVRootNode extends RootNode {
             MachineState state = createState(context, memory);
             RiscVFrameLayout.loadIntegerRegisters(frame, state);
             try {
+                long pc = state.pc();
                 while (true) {
-                    blockFor(memory, state.pc()).execute(frame, state);
+                    pc = blockFor(memory, pc).execute(frame, state);
                 }
             } finally {
                 RiscVFrameLayout.spillIntegerRegisters(frame, state);

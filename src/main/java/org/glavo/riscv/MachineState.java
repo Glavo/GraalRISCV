@@ -244,6 +244,16 @@ public final class MachineState {
         beforeInstructionChecked(address, raw);
     }
 
+    /// Returns true when guest instructions can be retired in block-sized batches.
+    boolean canRetireBlock() {
+        return maxInstructions == 0 && !trace;
+    }
+
+    /// Records multiple guest instruction retirements for an already decoded block.
+    void retireBlock(int retiredInstructions) {
+        instructionCount += retiredInstructions;
+    }
+
     /// Records one guest instruction retirement on configurations that need checks or tracing.
     private void beforeInstructionChecked(long address, int raw) {
         if (maxInstructions > 0 && instructionCount >= maxInstructions) {

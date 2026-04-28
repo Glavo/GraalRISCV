@@ -46,6 +46,15 @@ public sealed abstract class InstructionNode extends Node {
     /// The floating-point divide-by-zero exception flag.
     private static final int FLOATING_POINT_DIVIDE_BY_ZERO = 0x08;
 
+    /// The `cycle` user counter CSR address.
+    private static final int CYCLE_CSR = 0xc00;
+
+    /// The `time` user counter CSR address.
+    private static final int TIME_CSR = 0xc01;
+
+    /// The `instret` user counter CSR address.
+    private static final int INSTRET_CSR = 0xc02;
+
     /// Round to nearest, ties to even.
     private static final int ROUND_NEAREST_EVEN = 0;
 
@@ -232,9 +241,19 @@ public sealed abstract class InstructionNode extends Node {
         executeInstruction(state, nextAddress);
     }
 
+    /// Executes this instruction as part of an already retired decoded basic block.
+    final void executeInRetiredBlock(MachineState state) {
+        executeInstruction(state, nextAddress);
+    }
+
     /// Executes this instruction as part of a decoded basic block with frame-backed integer registers.
     final void executeInBlock(VirtualFrame frame, MachineState state) {
         state.beforeInstruction(address, raw);
+        executeInstruction(frame, state, nextAddress);
+    }
+
+    /// Executes this instruction as part of an already retired decoded basic block with frame-backed integer registers.
+    final void executeInRetiredBlock(VirtualFrame frame, MachineState state) {
         executeInstruction(frame, state, nextAddress);
     }
 
@@ -261,6 +280,15 @@ public sealed abstract class InstructionNode extends Node {
     /// Returns true when the instruction body writes `pc` itself.
     protected boolean writesProgramCounterInBody() {
         return true;
+    }
+
+    /// Returns true when this instruction needs exact per-instruction retirement.
+    boolean requiresPreciseInstructionRetirement() {
+        return switch (operation) {
+            case CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
+                    immediate == CYCLE_CSR || immediate == TIME_CSR || immediate == INSTRET_CSR;
+            default -> false;
+        };
     }
 
     /// Base class for decoded instructions with direct operation bodies.
