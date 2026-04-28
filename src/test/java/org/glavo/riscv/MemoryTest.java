@@ -27,4 +27,17 @@ public final class MemoryTest {
             assertThrows(IllegalArgumentException.class, () -> memory.readInt(Memory.DEFAULT_BASE_ADDRESS + 2));
         }
     }
+
+    /// Verifies that instruction fetches can read from 16-bit-aligned addresses.
+    @Test
+    public void readsInstructionIntFromHalfwordAlignedAddress() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 2, (byte) 0x13);
+            memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 3, (byte) 0x05);
+            memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 4, (byte) 0x00);
+            memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 5, (byte) 0x00);
+
+            assertEquals(0x0000_0513, memory.readInstructionInt(Memory.DEFAULT_BASE_ADDRESS + 2));
+        }
+    }
 }

@@ -21,6 +21,9 @@ public final class Memory implements AutoCloseable {
     /// The little-endian 32-bit layout used for aligned guest accesses.
     private static final ValueLayout.OfInt INT_LE = ValueLayout.JAVA_INT.withOrder(ByteOrder.LITTLE_ENDIAN);
 
+    /// The little-endian 32-bit layout used for 16-bit-aligned instruction fetches.
+    private static final ValueLayout.OfInt INSTRUCTION_INT_LE = INT_LE.withByteAlignment(1);
+
     /// The little-endian 64-bit layout used for aligned guest accesses.
     private static final ValueLayout.OfLong LONG_LE = ValueLayout.JAVA_LONG.withOrder(ByteOrder.LITTLE_ENDIAN);
 
@@ -185,19 +188,11 @@ public final class Memory implements AutoCloseable {
     public int readInstructionInt(long address) {
         long fastOffset = initialScalarOffset(address);
         if (fastOffset >= 0) {
-            return (segment.get(ValueLayout.JAVA_BYTE, fastOffset) & 0xff)
-                    | ((segment.get(ValueLayout.JAVA_BYTE, fastOffset + 1) & 0xff) << 8)
-                    | ((segment.get(ValueLayout.JAVA_BYTE, fastOffset + 2) & 0xff) << 16)
-                    | (segment.get(ValueLayout.JAVA_BYTE, fastOffset + 3) << 24);
+            return segment.get(INSTRUCTION_INT_LE, fastOffset);
         }
 
         MappedRegion region = mappedRegion(address, Integer.BYTES);
-        MemorySegment accessSegment = region.segment();
-        long offset = address - region.address();
-        return (accessSegment.get(ValueLayout.JAVA_BYTE, offset) & 0xff)
-                | ((accessSegment.get(ValueLayout.JAVA_BYTE, offset + 1) & 0xff) << 8)
-                | ((accessSegment.get(ValueLayout.JAVA_BYTE, offset + 2) & 0xff) << 16)
-                | (accessSegment.get(ValueLayout.JAVA_BYTE, offset + 3) << 24);
+        return region.segment().get(INSTRUCTION_INT_LE, address - region.address());
     }
 
     /// Reads a signed little-endian 64-bit value from guest memory.
