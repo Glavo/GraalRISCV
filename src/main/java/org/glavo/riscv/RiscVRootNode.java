@@ -13,8 +13,6 @@ import com.oracle.truffle.api.nodes.RootNode;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.HashMap;
-
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
@@ -41,7 +39,7 @@ public final class RiscVRootNode extends RootNode {
     private final ElfImage image;
 
     /// The lazily populated block cache for this execution root.
-    private final HashMap<Long, CachedBlock> blocks = new HashMap<>();
+    private final BlockCache blocks = new BlockCache();
 
     /// The Truffle loop node that repeatedly dispatches guest basic blocks.
     @Child
@@ -273,6 +271,85 @@ public final class RiscVRootNode extends RootNode {
         FrameDescriptor.Builder builder = FrameDescriptor.newBuilder(EXECUTION_FRAME_SLOT_COUNT);
         builder.addSlots(EXECUTION_FRAME_SLOT_COUNT, FrameSlotKind.Static);
         return builder.build();
+    }
+
+    /// Stores decoded guest blocks in a primitive long-keyed open-addressing map.
+    @NotNullByDefault
+    private static final class BlockCache {
+        /// The initial number of slots in the decoded block cache.
+        private static final int INITIAL_CAPACITY = 256;
+
+        /// The resize threshold numerator for the cache load factor.
+        private static final int LOAD_FACTOR_NUMERATOR = 1;
+
+        /// The resize threshold denominator for the cache load factor.
+        private static final int LOAD_FACTOR_DENOMINATOR = 2;
+
+        /// Guest program counters stored in cache slots.
+        private long[] keys = new long[INITIAL_CAPACITY];
+
+        /// Cache values stored in the slot matching `keys`.
+        private @Nullable CachedBlock[] values = new CachedBlock[INITIAL_CAPACITY];
+
+        /// The number of occupied cache slots.
+        private int size;
+
+        /// Returns the cached block for a guest program counter, or null when it is absent.
+        private @Nullable CachedBlock get(long pc) {
+            int slot = findSlot(pc, keys, values);
+            return values[slot];
+        }
+
+        /// Associates a guest program counter with a decoded block cache entry.
+        private void put(long pc, CachedBlock block) {
+            if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
+                grow();
+            }
+
+            int slot = findSlot(pc, keys, values);
+            if (values[slot] == null) {
+                size++;
+            }
+            keys[slot] = pc;
+            values[slot] = block;
+        }
+
+        /// Doubles the cache capacity and reinserts all existing entries.
+        private void grow() {
+            long[] oldKeys = keys;
+            @Nullable CachedBlock[] oldValues = values;
+            keys = new long[oldKeys.length << 1];
+            values = new CachedBlock[keys.length];
+
+            for (int index = 0; index < oldValues.length; index++) {
+                CachedBlock block = oldValues[index];
+                if (block != null) {
+                    int slot = findSlot(oldKeys[index], keys, values);
+                    keys[slot] = oldKeys[index];
+                    values[slot] = block;
+                }
+            }
+        }
+
+        /// Finds the cache slot containing the key or the first empty slot for it.
+        private static int findSlot(long pc, long[] keys, @Nullable CachedBlock[] values) {
+            int mask = values.length - 1;
+            int slot = hash(pc) & mask;
+            while (true) {
+                CachedBlock block = values[slot];
+                if (block == null || keys[slot] == pc) {
+                    return slot;
+                }
+                slot = (slot + 1) & mask;
+            }
+        }
+
+        /// Hashes a guest program counter for open addressing.
+        private static int hash(long value) {
+            long hash = value >>> 1;
+            hash ^= hash >>> 16;
+            return (int) hash;
+        }
     }
 
     /// Stores execution metadata for one decoded block cache entry.
