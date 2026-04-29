@@ -302,6 +302,33 @@ public final class RiscVMicroOpcode {
     /// Executes `amomaxu.d`.
     public static final byte AMOMAXU_D = 97;
 
+    /// Executes `fsgnj.s` or `fsgnj.d`.
+    public static final byte FSGNJ = 98;
+
+    /// Executes `fsgnjn.s` or `fsgnjn.d`.
+    public static final byte FSGNJN = 99;
+
+    /// Executes `fsgnjx.s` or `fsgnjx.d`.
+    public static final byte FSGNJX = 100;
+
+    /// Executes `fclass.s` or `fclass.d`.
+    public static final byte FCLASS = 101;
+
+    /// Executes `fmv.x.w` or `fmv.x.d`.
+    public static final byte FMV_X_FP = 102;
+
+    /// Executes `fmv.w.x` or `fmv.d.x`.
+    public static final byte FMV_FP_X = 103;
+
+    /// Executes `feq.s` or `feq.d`.
+    public static final byte FEQ = 104;
+
+    /// Executes `flt.s` or `flt.d`.
+    public static final byte FLT = 105;
+
+    /// Executes `fle.s` or `fle.d`.
+    public static final byte FLE = 106;
+
     /// Prevents construction of this constants class.
     private RiscVMicroOpcode() {
     }

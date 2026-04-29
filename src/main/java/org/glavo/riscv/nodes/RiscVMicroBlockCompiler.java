@@ -141,6 +141,15 @@ final class RiscVMicroBlockCompiler {
             case FLD -> RiscVMicroOpcode.FLD;
             case FSW -> RiscVMicroOpcode.FSW;
             case FSD -> RiscVMicroOpcode.FSD;
+            case FSGNJ -> RiscVMicroOpcode.FSGNJ;
+            case FSGNJN -> RiscVMicroOpcode.FSGNJN;
+            case FSGNJX -> RiscVMicroOpcode.FSGNJX;
+            case FCLASS -> RiscVMicroOpcode.FCLASS;
+            case FMV_X_FP -> RiscVMicroOpcode.FMV_X_FP;
+            case FMV_FP_X -> RiscVMicroOpcode.FMV_FP_X;
+            case FEQ -> RiscVMicroOpcode.FEQ;
+            case FLT -> RiscVMicroOpcode.FLT;
+            case FLE -> RiscVMicroOpcode.FLE;
             case LR_W -> RiscVMicroOpcode.LR_W;
             case LR_D -> RiscVMicroOpcode.LR_D;
             case SC_W -> RiscVMicroOpcode.SC_W;

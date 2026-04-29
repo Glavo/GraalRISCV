@@ -41,6 +41,21 @@ final class RiscVMicroBlockNode extends Node {
     /// Bit shift for the second source register in a packed operand.
     private static final int RS2_SHIFT = 10;
 
+    /// The immediate bit offset used for the packed floating-point format field.
+    private static final int FLOATING_POINT_FORMAT_SHIFT = 3;
+
+    /// The packed format value for single-precision floating-point operations.
+    private static final int SINGLE_FLOAT_FORMAT = 0;
+
+    /// The mask for a NaN-boxed single-precision value in an RV64 floating-point register.
+    private static final long SINGLE_NAN_BOX_MASK = 0xffff_ffff_0000_0000L;
+
+    /// The canonical single-precision quiet NaN bit pattern.
+    private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
+
+    /// The floating-point invalid-operation exception flag.
+    private static final int FLOATING_POINT_INVALID_OPERATION = 0x10;
+
     /// The compact opcode stream for this block.
     @CompilationFinal(dimensions = 1)
     private final byte @Unmodifiable [] opcodes;
@@ -373,6 +388,15 @@ final class RiscVMicroBlockNode extends Node {
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
+            case RiscVMicroOpcode.FSGNJ -> floatingPointSignInjection(state, index, operand, mode, SignInjectionKind.COPY);
+            case RiscVMicroOpcode.FSGNJN -> floatingPointSignInjection(state, index, operand, mode, SignInjectionKind.NEGATE);
+            case RiscVMicroOpcode.FSGNJX -> floatingPointSignInjection(state, index, operand, mode, SignInjectionKind.XOR);
+            case RiscVMicroOpcode.FCLASS -> floatingPointClassify(state, registers, index, operand, mode);
+            case RiscVMicroOpcode.FMV_X_FP -> moveFloatingPointToInteger(state, registers, index, operand, mode);
+            case RiscVMicroOpcode.FMV_FP_X -> moveIntegerToFloatingPoint(state, registers, index, operand, mode);
+            case RiscVMicroOpcode.FEQ -> floatingPointCompare(state, registers, index, operand, mode, CompareKind.EQUAL);
+            case RiscVMicroOpcode.FLT -> floatingPointCompare(state, registers, index, operand, mode, CompareKind.LESS_THAN);
+            case RiscVMicroOpcode.FLE -> floatingPointCompare(state, registers, index, operand, mode, CompareKind.LESS_THAN_OR_EQUAL);
             case RiscVMicroOpcode.LR_W -> lrWord(state, memory, access, registers, index, operand, mode);
             case RiscVMicroOpcode.LR_D -> lrDouble(state, memory, access, registers, index, operand, mode);
             case RiscVMicroOpcode.SC_W -> scWord(state, memory, access, registers, index, operand, mode);
@@ -497,6 +521,106 @@ final class RiscVMicroBlockNode extends Node {
             state.writeControlStatusRegister((int) immediates[index], setBits ? oldValue | mask : oldValue & ~mask);
         }
         writeRegister(registers, rd(operand), oldValue);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a bit-level floating-point sign-injection instruction.
+    private void floatingPointSignInjection(
+            MachineState state,
+            int index,
+            int operand,
+            byte mode,
+            SignInjectionKind kind) {
+        beginInstruction(state, index, mode);
+        if (floatingPointFormat(index) == SINGLE_FLOAT_FORMAT) {
+            int left = readSingleBits(state, rs1(operand));
+            int right = readSingleBits(state, rs2(operand));
+            int sign = switch (kind) {
+                case COPY -> right & 0x8000_0000;
+                case NEGATE -> ~right & 0x8000_0000;
+                case XOR -> (left ^ right) & 0x8000_0000;
+            };
+            writeSingleBits(state, rd(operand), (left & 0x7fff_ffff) | sign);
+        } else {
+            long left = state.decodedFloatingPointRegister(rs1(operand));
+            long right = state.decodedFloatingPointRegister(rs2(operand));
+            long sign = switch (kind) {
+                case COPY -> right & Long.MIN_VALUE;
+                case NEGATE -> ~right & Long.MIN_VALUE;
+                case XOR -> (left ^ right) & Long.MIN_VALUE;
+            };
+            state.setDecodedFloatingPointRegister(rd(operand), (left & Long.MAX_VALUE) | sign);
+        }
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a floating-point classify instruction.
+    private void floatingPointClassify(MachineState state, long[] registers, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        long result = floatingPointFormat(index) == SINGLE_FLOAT_FORMAT
+                ? classifySingle(readSingleBits(state, rs1(operand)))
+                : classifyDouble(state.decodedFloatingPointRegister(rs1(operand)));
+        writeRegister(registers, rd(operand), result);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a raw floating-point-to-integer register move instruction.
+    private void moveFloatingPointToInteger(MachineState state, long[] registers, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        long value = floatingPointFormat(index) == SINGLE_FLOAT_FORMAT
+                ? (int) readSingleBits(state, rs1(operand))
+                : state.decodedFloatingPointRegister(rs1(operand));
+        writeRegister(registers, rd(operand), value);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a raw integer-to-floating-point register move instruction.
+    private void moveIntegerToFloatingPoint(MachineState state, long[] registers, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        if (floatingPointFormat(index) == SINGLE_FLOAT_FORMAT) {
+            writeSingleBits(state, rd(operand), (int) registers[rs1(operand)]);
+        } else {
+            state.setDecodedFloatingPointRegister(rd(operand), registers[rs1(operand)]);
+        }
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a floating-point comparison instruction.
+    private void floatingPointCompare(
+            MachineState state,
+            long[] registers,
+            int index,
+            int operand,
+            byte mode,
+            CompareKind kind) {
+        beginInstruction(state, index, mode);
+        if (floatingPointFormat(index) == SINGLE_FLOAT_FORMAT) {
+            int leftBits = readSingleBits(state, rs1(operand));
+            int rightBits = readSingleBits(state, rs2(operand));
+            float left = Float.intBitsToFloat(leftBits);
+            float right = Float.intBitsToFloat(rightBits);
+            if (Float.isNaN(left) || Float.isNaN(right)) {
+                if (kind != CompareKind.EQUAL || isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                writeRegister(registers, rd(operand), 0);
+            } else {
+                writeRegister(registers, rd(operand), compareFloatingPoint(left, right, kind) ? 1 : 0);
+            }
+        } else {
+            long leftBits = state.decodedFloatingPointRegister(rs1(operand));
+            long rightBits = state.decodedFloatingPointRegister(rs2(operand));
+            double left = Double.longBitsToDouble(leftBits);
+            double right = Double.longBitsToDouble(rightBits);
+            if (Double.isNaN(left) || Double.isNaN(right)) {
+                if (kind != CompareKind.EQUAL || isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+                }
+                writeRegister(registers, rd(operand), 0);
+            } else {
+                writeRegister(registers, rd(operand), compareFloatingPoint(left, right, kind) ? 1 : 0);
+            }
+        }
         finishInstruction(state, index, mode);
     }
 
@@ -728,6 +852,85 @@ final class RiscVMicroBlockNode extends Node {
         return Math.multiplyHigh(signed, unsigned) + (unsigned < 0 ? signed : 0);
     }
 
+    /// Returns the packed floating-point format for a decoded instruction.
+    private int floatingPointFormat(int index) {
+        return (int) ((immediates[index] >>> FLOATING_POINT_FORMAT_SHIFT) & 0x3);
+    }
+
+    /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
+    private static int readSingleBits(MachineState state, int register) {
+        long value = state.decodedFloatingPointRegister(register);
+        return (value & SINGLE_NAN_BOX_MASK) == SINGLE_NAN_BOX_MASK ? (int) value : CANONICAL_SINGLE_NAN;
+    }
+
+    /// Writes raw single-precision bits to a NaN-boxed floating-point register.
+    private static void writeSingleBits(MachineState state, int register, int bits) {
+        state.setDecodedFloatingPointRegister(register, SINGLE_NAN_BOX_MASK | (bits & 0xffff_ffffL));
+    }
+
+    /// Classifies raw single-precision bits.
+    private static int classifySingle(int bits) {
+        int exponent = bits & 0x7f80_0000;
+        int fraction = bits & 0x007f_ffff;
+        boolean negative = bits < 0;
+        if (exponent == 0x7f80_0000) {
+            if (fraction == 0) {
+                return negative ? 1 : 1 << 7;
+            }
+            return (fraction & 0x0040_0000) == 0 ? 1 << 8 : 1 << 9;
+        }
+        if (exponent == 0) {
+            if (fraction == 0) {
+                return negative ? 1 << 3 : 1 << 4;
+            }
+            return negative ? 1 << 2 : 1 << 5;
+        }
+        return negative ? 1 << 1 : 1 << 6;
+    }
+
+    /// Classifies raw double-precision bits.
+    private static int classifyDouble(long bits) {
+        long exponent = bits & 0x7ff0_0000_0000_0000L;
+        long fraction = bits & 0x000f_ffff_ffff_ffffL;
+        boolean negative = bits < 0;
+        if (exponent == 0x7ff0_0000_0000_0000L) {
+            if (fraction == 0) {
+                return negative ? 1 : 1 << 7;
+            }
+            return (fraction & 0x0008_0000_0000_0000L) == 0 ? 1 << 8 : 1 << 9;
+        }
+        if (exponent == 0) {
+            if (fraction == 0) {
+                return negative ? 1 << 3 : 1 << 4;
+            }
+            return negative ? 1 << 2 : 1 << 5;
+        }
+        return negative ? 1 << 1 : 1 << 6;
+    }
+
+    /// Returns true for a signaling single-precision NaN bit pattern.
+    private static boolean isSignalingSingleNaN(int bits) {
+        return (bits & 0x7f80_0000) == 0x7f80_0000
+                && (bits & 0x007f_ffff) != 0
+                && (bits & 0x0040_0000) == 0;
+    }
+
+    /// Returns true for a signaling double-precision NaN bit pattern.
+    private static boolean isSignalingDoubleNaN(long bits) {
+        return (bits & 0x7ff0_0000_0000_0000L) == 0x7ff0_0000_0000_0000L
+                && (bits & 0x000f_ffff_ffff_ffffL) != 0
+                && (bits & 0x0008_0000_0000_0000L) == 0;
+    }
+
+    /// Compares two finite-or-infinite floating-point values.
+    private static boolean compareFloatingPoint(double left, double right, CompareKind kind) {
+        return switch (kind) {
+            case EQUAL -> left == right;
+            case LESS_THAN -> left < right;
+            case LESS_THAN_OR_EQUAL -> left <= right;
+        };
+    }
+
     /// The AMO operation selected by one atomic memory instruction.
     private enum AmoKind {
         /// Stores the source value.
@@ -748,6 +951,26 @@ final class RiscVMicroBlockNode extends Node {
         MINU,
         /// Stores the unsigned maximum.
         MAXU
+    }
+
+    /// The sign source used by a floating-point sign-injection instruction.
+    private enum SignInjectionKind {
+        /// Copies the second operand sign bit.
+        COPY,
+        /// Copies the inverted second operand sign bit.
+        NEGATE,
+        /// Xors both operand sign bits.
+        XOR
+    }
+
+    /// The relation tested by a floating-point comparison instruction.
+    private enum CompareKind {
+        /// Tests equality.
+        EQUAL,
+        /// Tests less-than.
+        LESS_THAN,
+        /// Tests less-than-or-equal.
+        LESS_THAN_OR_EQUAL
     }
 
     /// Packs decoded register indexes into one integer operand.
