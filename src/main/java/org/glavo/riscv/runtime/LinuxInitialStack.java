@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Glavo
+// SPDX-License-Identifier: MPL-2.0
+
 package org.glavo.riscv.runtime;
 
 import org.glavo.riscv.exception.RiscVException;
