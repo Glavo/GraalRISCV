@@ -1,10 +1,11 @@
-package org.glavo.riscv;
+package org.glavo.riscv.parser;
 
 import net.fornwall.jelf.ElfException;
 import net.fornwall.jelf.ElfFile;
 import net.fornwall.jelf.ElfSectionHeader;
 import net.fornwall.jelf.ElfSegment;
 import net.fornwall.jelf.ElfSymbol;
+import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.nio.ByteBuffer;

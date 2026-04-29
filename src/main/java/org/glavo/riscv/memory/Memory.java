@@ -1,6 +1,7 @@
-package org.glavo.riscv;
+package org.glavo.riscv.memory;
 
 import com.oracle.truffle.api.ContextThreadLocal;
+import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -56,7 +57,7 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Creates a memory window with a Truffle context-thread-local sparse-region cache.
-    Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
+    public Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
         if (baseAddress < 0) {
             throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
         }
@@ -486,12 +487,12 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Stores mutable sparse memory lookup state for one Truffle context and host thread.
-    static final class MappedRegionCache {
+    public static final class MappedRegionCache {
         /// The cached sparse region and the immutable snapshot it belongs to.
         private @Nullable RegionCache region;
 
         /// Creates an empty sparse memory lookup cache.
-        MappedRegionCache() {
+        public MappedRegionCache() {
         }
 
         /// Returns the cached sparse region, or null when the cache is empty.

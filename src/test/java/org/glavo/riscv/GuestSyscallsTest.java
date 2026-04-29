@@ -1,5 +1,9 @@
 package org.glavo.riscv;
 
+import org.glavo.riscv.exception.*;
+import org.glavo.riscv.memory.*;
+import org.glavo.riscv.parser.*;
+import org.glavo.riscv.runtime.*;
 import com.oracle.truffle.api.TruffleFile;
 import org.graalvm.polyglot.io.FileSystem;
 import org.jetbrains.annotations.NotNullByDefault;

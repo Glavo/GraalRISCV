@@ -1,5 +1,9 @@
 package org.glavo.riscv;
 
+import org.glavo.riscv.exception.*;
+import org.glavo.riscv.memory.*;
+import org.glavo.riscv.parser.*;
+import org.glavo.riscv.runtime.*;
 import net.fornwall.jelf.ElfSectionHeader;
 import net.fornwall.jelf.ElfSegment;
 import org.jetbrains.annotations.NotNullByDefault;

@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import org.glavo.riscv.exception.RiscVException;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;

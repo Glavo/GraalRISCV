@@ -1,8 +1,13 @@
-package org.glavo.riscv;
+package org.glavo.riscv.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
+import org.glavo.riscv.RiscVLanguage;
+import org.glavo.riscv.exception.ProgramExitException;
+import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.exception.ThreadExitException;
+import org.glavo.riscv.memory.Memory;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -3433,7 +3438,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Throws when another guest thread has failed or process termination has been requested.
-    void checkProcessStatus() {
+    public void checkProcessStatus() {
         if (!processStatusPollingRequired) {
             return;
         }
@@ -3454,7 +3459,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Requests process-wide termination and wakes all guest threads blocked in host waits.
-    void requestProcessExit(long exitCode) {
+    public void requestProcessExit(long exitCode) {
         synchronized (threadLock) {
             if (!processExitRequested) {
                 processExitRequested = true;
@@ -3466,13 +3471,13 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Records that a guest thread exited and returns the process exit code once it is known.
-    long completeThreadExit(MachineState state, long exitCode) {
+    public long completeThreadExit(MachineState state, long exitCode) {
         recordThreadExit(state, exitCode);
         return waitForProcessExit();
     }
 
     /// Records a guest thread exit and performs Linux clear-child-TID wakeup side effects.
-    void recordThreadExit(MachineState state, long exitCode) {
+    public void recordThreadExit(MachineState state, long exitCode) {
         synchronized (threadLock) {
             clearChildTidAndWake(state);
             if (liveThreadCount > 0) {
@@ -3489,7 +3494,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Records a host-side failure from a guest thread and wakes the process owner.
-    void recordThreadFailure(Throwable throwable) {
+    public void recordThreadFailure(Throwable throwable) {
         synchronized (threadLock) {
             if (threadFailure == null) {
                 threadFailure = throwable;
@@ -3502,7 +3507,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Joins all guest host threads before the shared guest memory is closed.
-    void joinGuestThreads() {
+    public void joinGuestThreads() {
         while (true) {
             Thread[] threads;
             synchronized (threadLock) {

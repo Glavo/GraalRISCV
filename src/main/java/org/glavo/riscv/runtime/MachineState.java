@@ -1,6 +1,10 @@
-package org.glavo.riscv;
+package org.glavo.riscv.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import org.glavo.riscv.exception.ProgramExitException;
+import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.parser.ElfImage;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.io.OutputStream;
@@ -166,12 +170,12 @@ public final class MachineState {
     }
 
     /// Returns an integer register value for an already decoded register index.
-    long decodedRegister(int index) {
+    public long decodedRegister(int index) {
         return registers[index];
     }
 
     /// Updates an integer register value for an already decoded register index, ignoring writes to `x0`.
-    void setDecodedRegister(int index, long value) {
+    public void setDecodedRegister(int index, long value) {
         if (index != 0) {
             registers[index] = value;
         }
@@ -190,12 +194,12 @@ public final class MachineState {
     }
 
     /// Returns a raw floating-point register value for an already decoded register index.
-    long decodedFloatingPointRegister(int index) {
+    public long decodedFloatingPointRegister(int index) {
         return floatingPointRegisters[index];
     }
 
     /// Updates a raw floating-point register value for an already decoded register index.
-    void setDecodedFloatingPointRegister(int index, long value) {
+    public void setDecodedFloatingPointRegister(int index, long value) {
         floatingPointRegisters[index] = value;
     }
 
@@ -303,22 +307,22 @@ public final class MachineState {
     }
 
     /// Returns true when guest instructions can be retired in block-sized batches.
-    boolean canRetireBlock() {
+    public boolean canRetireBlock() {
         return canRetireBlock;
     }
 
     /// Records multiple guest instruction retirements for an already decoded block.
-    void retireBlock(int retiredInstructions) {
+    public void retireBlock(int retiredInstructions) {
         instructionCount += retiredInstructions;
     }
 
     /// Records one guest instruction retirement without budget or trace checks.
-    void retireInstructionUnchecked() {
+    public void retireInstructionUnchecked() {
         instructionCount++;
     }
 
     /// Records one guest instruction retirement on configurations that need checks or tracing.
-    void beforeInstructionChecked(long address, int raw) {
+    public void beforeInstructionChecked(long address, int raw) {
         if (maxInstructions > 0 && instructionCount >= maxInstructions) {
             throw new RiscVException("Guest instruction limit exceeded: " + maxInstructions
                     + ", pc=0x" + Long.toUnsignedString(address, 16));
@@ -346,7 +350,7 @@ public final class MachineState {
     }
 
     /// Returns true when guest memory stores need simulator side-effect checks.
-    boolean hasStoreSideEffects() {
+    public boolean hasStoreSideEffects() {
         return storeSideEffectsEnabled;
     }
 
@@ -358,7 +362,7 @@ public final class MachineState {
     }
 
     /// Handles simulator side effects after a store when side effects are enabled.
-    void afterStoreWithSideEffects(long address, int length) {
+    public void afterStoreWithSideEffects(long address, int length) {
         if (Memory.overlaps(address, length, tohostAddress, Long.BYTES)) {
             long value = memory.readLong(tohostAddress);
             if (value != 0) {

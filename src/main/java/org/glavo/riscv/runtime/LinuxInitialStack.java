@@ -1,5 +1,8 @@
-package org.glavo.riscv;
+package org.glavo.riscv.runtime;
 
+import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.parser.ElfImage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 

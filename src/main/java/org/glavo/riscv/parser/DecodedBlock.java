@@ -1,4 +1,4 @@
-package org.glavo.riscv;
+package org.glavo.riscv.parser;
 
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;

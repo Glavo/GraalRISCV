@@ -1,5 +1,9 @@
 package org.glavo.riscv;
 
+import org.glavo.riscv.exception.*;
+import org.glavo.riscv.memory.*;
+import org.glavo.riscv.parser.*;
+import org.glavo.riscv.runtime.*;
 import org.jetbrains.annotations.NotNullByDefault;
 
 /// Executes decoded blocks in unit tests without using the production dispatch cache.

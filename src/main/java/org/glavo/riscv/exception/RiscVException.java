@@ -1,4 +1,4 @@
-package org.glavo.riscv;
+package org.glavo.riscv.exception;
 
 import org.jetbrains.annotations.NotNullByDefault;
 

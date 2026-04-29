@@ -2,6 +2,8 @@ package org.glavo.riscv;
 
 import com.oracle.truffle.api.ContextThreadLocal;
 import com.oracle.truffle.api.TruffleLanguage;
+import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.memory.Memory;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
@@ -118,7 +120,7 @@ public final class RiscVContext {
     }
 
     /// Returns the sparse memory lookup cache for the current Truffle context and host thread.
-    ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache() {
+    public ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache() {
         return mappedRegionCache;
     }
 }

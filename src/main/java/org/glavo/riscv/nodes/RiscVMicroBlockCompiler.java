@@ -1,6 +1,11 @@
-package org.glavo.riscv;
+package org.glavo.riscv.nodes;
 
 import com.oracle.truffle.api.RootCallTarget;
+import org.glavo.riscv.RiscVLanguage;
+import org.glavo.riscv.constants.RiscVMicroOpcode;
+import org.glavo.riscv.parser.DecodedBlock;
+import org.glavo.riscv.parser.DecodedInstruction;
+import org.glavo.riscv.parser.RiscVOperation;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
