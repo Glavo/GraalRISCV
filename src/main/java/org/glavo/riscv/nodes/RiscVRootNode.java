@@ -789,7 +789,7 @@ public final class RiscVRootNode extends RootNode {
         private static final int INITIAL_CAPACITY = 64;
 
         /// The maximum number of decoded blocks included in one trace.
-        private static final int MAX_TRACE_BLOCKS = 16;
+        private static final int MAX_TRACE_BLOCKS = 64;
 
         /// The resize threshold numerator for the trace cache load factor.
         private static final int LOAD_FACTOR_NUMERATOR = 1;
@@ -850,7 +850,7 @@ public final class RiscVRootNode extends RootNode {
 
             TraceEntry trace = new TraceEntry(
                     start.pc(),
-                    new RiscVMicroTraceRootNode(language, result.targets(), result.expectedNextPcs()).getCallTarget());
+                    new RiscVMicroTraceRootNode(language, result.decodedBlocks(), result.expectedNextPcs()).getCallTarget());
             keys[slot] = start.pc();
             values[slot] = trace;
             size++;
@@ -858,7 +858,7 @@ public final class RiscVRootNode extends RootNode {
 
         /// Builds one linear trace by following currently hot successor edges.
         private TraceBuildResult buildTrace(Memory memory, BlockCache blocks, BlockEntry start) {
-            RootCallTarget[] targets = new RootCallTarget[MAX_TRACE_BLOCKS];
+            DecodedBlock[] decodedBlocks = new DecodedBlock[MAX_TRACE_BLOCKS];
             long[] expectedNextPcs = new long[MAX_TRACE_BLOCKS - 1];
             long[] pcs = new long[MAX_TRACE_BLOCKS];
             int count = 0;
@@ -866,7 +866,7 @@ public final class RiscVRootNode extends RootNode {
 
             while (count < MAX_TRACE_BLOCKS && current.isTraceable()) {
                 pcs[count] = current.pc();
-                targets[count] = current.target();
+                decodedBlocks[count] = current.decodedBlock();
                 count++;
 
                 if (count == MAX_TRACE_BLOCKS) {
@@ -891,11 +891,11 @@ public final class RiscVRootNode extends RootNode {
                 current = successor;
             }
 
-            RootCallTarget[] trimmedTargets = new RootCallTarget[count];
-            System.arraycopy(targets, 0, trimmedTargets, 0, count);
+            DecodedBlock[] trimmedDecodedBlocks = new DecodedBlock[count];
+            System.arraycopy(decodedBlocks, 0, trimmedDecodedBlocks, 0, count);
             long[] trimmedExpectedNextPcs = new long[Math.max(0, count - 1)];
             System.arraycopy(expectedNextPcs, 0, trimmedExpectedNextPcs, 0, trimmedExpectedNextPcs.length);
-            return new TraceBuildResult(trimmedTargets, trimmedExpectedNextPcs);
+            return new TraceBuildResult(trimmedDecodedBlocks, trimmedExpectedNextPcs);
         }
 
         /// Returns true when the supplied PC is already present in the trace prefix.
@@ -950,15 +950,15 @@ public final class RiscVRootNode extends RootNode {
 
     /// Stores temporary trace build arrays trimmed to the number of selected blocks.
     ///
-    /// @param targets the block call targets in trace order
+    /// @param decodedBlocks the decoded blocks in trace order
     /// @param expectedNextPcs the expected successor PCs between adjacent trace blocks
     @NotNullByDefault
     private record TraceBuildResult(
-            RootCallTarget @Unmodifiable [] targets,
+            DecodedBlock @Unmodifiable [] decodedBlocks,
             long @Unmodifiable [] expectedNextPcs) {
         /// Returns the number of blocks in this trace.
         private int blockCount() {
-            return targets.length;
+            return decodedBlocks.length;
         }
     }
 

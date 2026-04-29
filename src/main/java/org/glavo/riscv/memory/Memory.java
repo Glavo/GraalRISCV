@@ -308,8 +308,8 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
-        @Nullable Page page = readPage(address, Byte.BYTES, false);
-        return page == null ? 0 : UNSAFE.getByte(page.baseObject(), page.byteOffset(pageOffset(address)));
+        Page page = readPage(address, Byte.BYTES, false);
+        return UNSAFE.getByte(page.baseObject(), page.byteOffset(pageOffset(address)));
     }
 
     /// Reads an unsigned byte from guest memory.
@@ -320,11 +320,7 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
         if (isSinglePageAccess(address, Short.BYTES)) {
-            @Nullable Page page = readPage(address, Short.BYTES, false);
-            if (page == null) {
-                return 0;
-            }
-
+            Page page = readPage(address, Short.BYTES, false);
             short value = UNSAFE.getShort(page.baseObject(), page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
         }
@@ -340,11 +336,7 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
         if (isSinglePageAccess(address, Integer.BYTES)) {
-            @Nullable Page page = readPage(address, Integer.BYTES, false);
-            if (page == null) {
-                return 0;
-            }
-
+            Page page = readPage(address, Integer.BYTES, false);
             int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
@@ -360,11 +352,7 @@ public final class Memory implements AutoCloseable {
     /// Reads a little-endian 32-bit instruction from a guest address.
     public int readInstructionInt(long address) {
         if (isSinglePageAccess(address, Integer.BYTES)) {
-            @Nullable Page page = readPage(address, Integer.BYTES, true);
-            if (page == null) {
-                return 0;
-            }
-
+            Page page = readPage(address, Integer.BYTES, true);
             int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
@@ -375,11 +363,7 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 64-bit value from guest memory.
     public long readLong(long address) {
         if (isSinglePageAccess(address, Long.BYTES)) {
-            @Nullable Page page = readPage(address, Long.BYTES, false);
-            if (page == null) {
-                return 0;
-            }
-
+            Page page = readPage(address, Long.BYTES, false);
             long value = UNSAFE.getLong(page.baseObject(), page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
         }
@@ -408,15 +392,13 @@ public final class Memory implements AutoCloseable {
 
             long pageEnd = pageEnd(cursor);
             int count = checkedPageByteCount(cursor, Math.min(end, Math.min(mappedEnd, pageEnd)) - cursor);
-            @Nullable Page page = readPage(cursor, count, false);
-            if (page != null) {
-                UNSAFE.copyMemory(
-                        page.baseObject(),
-                        page.byteOffset(pageOffset(cursor)),
-                        result,
-                        Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) destinationOffset,
-                        count);
-            }
+            Page page = readPage(cursor, count, false);
+            UNSAFE.copyMemory(
+                    page.baseObject(),
+                    page.byteOffset(pageOffset(cursor)),
+                    result,
+                    Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) destinationOffset,
+                    count);
             cursor += count;
             destinationOffset += count;
         }
@@ -712,8 +694,8 @@ public final class Memory implements AutoCloseable {
     private long readLittleEndianByBytes(long address, int byteCount, @Nullable MappedRegionCache cache) {
         long value = 0;
         for (int index = 0; index < byteCount; index++) {
-            @Nullable Page page = readPage(address + index, Byte.BYTES, false, cache);
-            int b = page == null ? 0 : UNSAFE.getByte(page.baseObject(), page.byteOffset(pageOffset(address + index))) & 0xff;
+            Page page = readPage(address + index, Byte.BYTES, false, cache);
+            int b = UNSAFE.getByte(page.baseObject(), page.byteOffset(pageOffset(address + index))) & 0xff;
             value |= (long) b << (index * Byte.SIZE);
         }
         return value;
@@ -754,13 +736,13 @@ public final class Memory implements AutoCloseable {
         return true;
     }
 
-    /// Returns the committed page for a read access, or null for mapped zero-fill memory.
-    private @Nullable Page readPage(long address, int length, boolean instruction) {
+    /// Returns the committed page for a read access, or the shared zero-fill page for uncommitted mapped memory.
+    private Page readPage(long address, int length, boolean instruction) {
         return readPage(address, length, instruction, currentMappedRegionCache());
     }
 
     /// Returns the committed page for a read access using the supplied software TLB.
-    private @Nullable Page readPage(long address, int length, boolean instruction, @Nullable MappedRegionCache cache) {
+    private Page readPage(long address, int length, boolean instruction, @Nullable MappedRegionCache cache) {
         long requiredProtection = instruction ? PROTECTION_EXECUTE : PROTECTION_READ;
         long pageNumber = pageNumber(address);
         @Nullable Page page = cachedPage(pageNumber, address, length, requiredProtection, instruction, cache);
@@ -1040,8 +1022,8 @@ public final class Memory implements AutoCloseable {
 
         /// Reads a signed byte from guest memory.
         public byte readByte(long address) {
-            @Nullable Page page = memory.readPage(address, Byte.BYTES, false, cache);
-            return page == null ? 0 : UNSAFE.getByte(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
+            Page page = memory.readPage(address, Byte.BYTES, false, cache);
+            return UNSAFE.getByte(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
         }
 
         /// Reads an unsigned byte from guest memory.
@@ -1052,11 +1034,7 @@ public final class Memory implements AutoCloseable {
         /// Reads a signed little-endian 16-bit value from guest memory.
         public short readShort(long address) {
             if (memory.isSinglePageAccess(address, Short.BYTES)) {
-                @Nullable Page page = memory.readPage(address, Short.BYTES, false, cache);
-                if (page == null) {
-                    return 0;
-                }
-
+                Page page = memory.readPage(address, Short.BYTES, false, cache);
                 short value = UNSAFE.getShort(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
                 return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
             }
@@ -1072,11 +1050,7 @@ public final class Memory implements AutoCloseable {
         /// Reads a signed little-endian 32-bit value from guest memory.
         public int readInt(long address) {
             if (memory.isSinglePageAccess(address, Integer.BYTES)) {
-                @Nullable Page page = memory.readPage(address, Integer.BYTES, false, cache);
-                if (page == null) {
-                    return 0;
-                }
-
+                Page page = memory.readPage(address, Integer.BYTES, false, cache);
                 int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
                 return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             }
@@ -1092,11 +1066,7 @@ public final class Memory implements AutoCloseable {
         /// Reads a little-endian 32-bit instruction from a guest address.
         public int readInstructionInt(long address) {
             if (memory.isSinglePageAccess(address, Integer.BYTES)) {
-                @Nullable Page page = memory.readPage(address, Integer.BYTES, true, cache);
-                if (page == null) {
-                    return 0;
-                }
-
+                Page page = memory.readPage(address, Integer.BYTES, true, cache);
                 int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
                 return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             }
@@ -1107,11 +1077,7 @@ public final class Memory implements AutoCloseable {
         /// Reads a signed little-endian 64-bit value from guest memory.
         public long readLong(long address) {
             if (memory.isSinglePageAccess(address, Long.BYTES)) {
-                @Nullable Page page = memory.readPage(address, Long.BYTES, false, cache);
-                if (page == null) {
-                    return 0;
-                }
-
+                Page page = memory.readPage(address, Long.BYTES, false, cache);
                 long value = UNSAFE.getLong(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
                 return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
             }
