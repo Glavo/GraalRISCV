@@ -1314,8 +1314,8 @@ public final class Memory implements AutoCloseable {
         /// VarHandle used to publish and read radix node entries.
         private static final VarHandle ENTRY_HANDLE = MethodHandles.arrayElementVarHandle(Object[].class);
 
-        /// The root radix node.
-        private final Node root = new Node();
+        /// The root radix array.
+        private final Object[] root = new Object[LEVEL_SIZE];
 
         /// The bit shift used by the root radix level for this memory window.
         private final int rootShift;
@@ -1330,36 +1330,36 @@ public final class Memory implements AutoCloseable {
 
         /// Returns the committed page for a guest page number, or null when absent.
         private @Nullable Page get(long pageNumber) {
-            Node node = root;
+            Object[] node = root;
             if (!fitsTable(pageNumber)) {
                 return null;
             }
             for (int shift = rootShift; shift > 0; shift -= LEVEL_BITS) {
-                @Nullable Object child = ENTRY_HANDLE.getAcquire(node.entries, levelIndex(pageNumber, shift));
+                @Nullable Object child = ENTRY_HANDLE.getAcquire(node, levelIndex(pageNumber, shift));
                 if (child == null) {
                     return null;
                 }
-                node = (Node) child;
+                node = (Object[]) child;
             }
-            return (Page) ENTRY_HANDLE.getAcquire(node.entries, levelIndex(pageNumber, 0));
+            return (Page) ENTRY_HANDLE.getAcquire(node, levelIndex(pageNumber, 0));
         }
 
         /// Stores a committed page for a guest page number.
         private void put(long pageNumber, Page page) {
-            Node node = root;
+            Object[] node = root;
             if (!fitsTable(pageNumber)) {
                 throw new RiscVException("Guest page number is outside the configured page table: " + pageNumber);
             }
             for (int shift = rootShift; shift > 0; shift -= LEVEL_BITS) {
                 int index = levelIndex(pageNumber, shift);
-                @Nullable Object child = ENTRY_HANDLE.getAcquire(node.entries, index);
+                @Nullable Object child = ENTRY_HANDLE.getAcquire(node, index);
                 if (child == null) {
-                    child = new Node();
-                    ENTRY_HANDLE.setRelease(node.entries, index, child);
+                    child = new Object[LEVEL_SIZE];
+                    ENTRY_HANDLE.setRelease(node, index, child);
                 }
-                node = (Node) child;
+                node = (Object[]) child;
             }
-            ENTRY_HANDLE.setRelease(node.entries, levelIndex(pageNumber, 0), page);
+            ENTRY_HANDLE.setRelease(node, levelIndex(pageNumber, 0), page);
         }
 
         /// Removes, closes, and counts pages with guest page numbers in the supplied half-open range.
@@ -1382,7 +1382,7 @@ public final class Memory implements AutoCloseable {
 
         /// Removes pages from a radix subtree intersecting the supplied page range.
         private static long removeRange(
-                Node node,
+                Object[] node,
                 int shift,
                 long nodeBase,
                 long startPageNumber,
@@ -1392,7 +1392,7 @@ public final class Memory implements AutoCloseable {
                 int endIndex = leafEndIndex(nodeBase, endPageNumber);
                 long removedPages = 0;
                 for (int index = startIndex; index < endIndex; index++) {
-                    @Nullable Object entry = ENTRY_HANDLE.getAndSet(node.entries, index, null);
+                    @Nullable Object entry = ENTRY_HANDLE.getAndSet(node, index, null);
                     if (entry instanceof Page page) {
                         page.close();
                         removedPages++;
@@ -1405,23 +1405,23 @@ public final class Memory implements AutoCloseable {
             int endIndex = subtreeEndIndex(shift, nodeBase, endPageNumber);
             long removedPages = 0;
             for (int index = startIndex; index < endIndex; index++) {
-                @Nullable Object entry = ENTRY_HANDLE.getAcquire(node.entries, index);
-                if (!(entry instanceof Node child)) {
+                @Nullable Object entry = ENTRY_HANDLE.getAcquire(node, index);
+                if (!(entry instanceof Object[] child)) {
                     continue;
                 }
                 long childBase = nodeBase + ((long) index << shift);
                 removedPages += removeRange(child, shift - LEVEL_BITS, childBase, startPageNumber, endPageNumber);
                 if (isEmpty(child)) {
-                    ENTRY_HANDLE.setRelease(node.entries, index, null);
+                    ENTRY_HANDLE.setRelease(node, index, null);
                 }
             }
             return removedPages;
         }
 
         /// Closes and clears every committed page in a radix subtree.
-        private static void closeAndClear(Node node, int shift) {
+        private static void closeAndClear(Object[] node, int shift) {
             for (int index = 0; index < LEVEL_SIZE; index++) {
-                @Nullable Object entry = ENTRY_HANDLE.getAndSet(node.entries, index, null);
+                @Nullable Object entry = ENTRY_HANDLE.getAndSet(node, index, null);
                 if (entry == null) {
                     continue;
                 }
@@ -1430,15 +1430,15 @@ public final class Memory implements AutoCloseable {
                         page.close();
                     }
                 } else {
-                    closeAndClear((Node) entry, shift - LEVEL_BITS);
+                    closeAndClear((Object[]) entry, shift - LEVEL_BITS);
                 }
             }
         }
 
-        /// Returns true when a radix node contains no published entries.
-        private static boolean isEmpty(Node node) {
+        /// Returns true when a radix array contains no published entries.
+        private static boolean isEmpty(Object[] node) {
             for (int index = 0; index < LEVEL_SIZE; index++) {
-                if (ENTRY_HANDLE.getAcquire(node.entries, index) != null) {
+                if (ENTRY_HANDLE.getAcquire(node, index) != null) {
                     return false;
                 }
             }
@@ -1476,11 +1476,6 @@ public final class Memory implements AutoCloseable {
             return (int) Math.min(LEVEL_SIZE, index);
         }
 
-        /// One lazily allocated radix page-table node.
-        private static final class Node {
-            /// Published child nodes or leaf pages.
-            private final Object[] entries = new Object[LEVEL_SIZE];
-        }
     }
 
     /// Stores mutable software TLB state for one Truffle context and host thread.
