@@ -37,8 +37,8 @@ public final class Memory implements AutoCloseable {
     /// The Unsafe instance used to access heap page backing without MemorySegment overhead.
     private static final Unsafe UNSAFE = lookupUnsafe();
 
-    /// The byte offset of the first element in a Java long array.
-    private static final long LONG_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
+    /// The byte offset of the first element in a Java long array used by the default heap page allocator.
+    private static final long HEAP_LONG_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
 
     /// Whether the host CPU uses little-endian primitive layout.
     private static final boolean NATIVE_LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
@@ -265,7 +265,7 @@ public final class Memory implements AutoCloseable {
             int count = checkedPageByteCount(cursor, Math.min(end, Math.min(mappedEnd, pageEnd)) - cursor);
             @Nullable Page page = pages.get(pageNumber(cursor));
             if (page != null) {
-                UNSAFE.setMemory(page.data, pageByteOffset(cursor), count, (byte) 0);
+                UNSAFE.setMemory(page.baseObject, page.byteOffset(pageOffset(cursor)), count, (byte) 0);
             }
             cursor += count;
         }
@@ -274,7 +274,7 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
         @Nullable Page page = readPage(address, Byte.BYTES, false);
-        return page == null ? 0 : UNSAFE.getByte(page.data, pageByteOffset(address));
+        return page == null ? 0 : UNSAFE.getByte(page.baseObject, page.byteOffset(pageOffset(address)));
     }
 
     /// Reads an unsigned byte from guest memory.
@@ -290,7 +290,7 @@ public final class Memory implements AutoCloseable {
                 return 0;
             }
 
-            short value = UNSAFE.getShort(page.data, pageByteOffset(address));
+            short value = UNSAFE.getShort(page.baseObject, page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
         }
 
@@ -310,7 +310,7 @@ public final class Memory implements AutoCloseable {
                 return 0;
             }
 
-            int value = UNSAFE.getInt(page.data, pageByteOffset(address));
+            int value = UNSAFE.getInt(page.baseObject, page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
@@ -330,7 +330,7 @@ public final class Memory implements AutoCloseable {
                 return 0;
             }
 
-            int value = UNSAFE.getInt(page.data, pageByteOffset(address));
+            int value = UNSAFE.getInt(page.baseObject, page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
@@ -345,7 +345,7 @@ public final class Memory implements AutoCloseable {
                 return 0;
             }
 
-            long value = UNSAFE.getLong(page.data, pageByteOffset(address));
+            long value = UNSAFE.getLong(page.baseObject, page.byteOffset(pageOffset(address)));
             return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
         }
 
@@ -376,8 +376,8 @@ public final class Memory implements AutoCloseable {
             @Nullable Page page = readPage(cursor, count, false);
             if (page != null) {
                 UNSAFE.copyMemory(
-                        page.data,
-                        pageByteOffset(cursor),
+                        page.baseObject,
+                        page.byteOffset(pageOffset(cursor)),
                         result,
                         Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) destinationOffset,
                         count);
@@ -404,8 +404,8 @@ public final class Memory implements AutoCloseable {
             UNSAFE.copyMemory(
                     source,
                     Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) sourceOffset,
-                    page.data,
-                    pageByteOffset(cursor),
+                    page.baseObject,
+                    page.byteOffset(pageOffset(cursor)),
                     count);
             cursor += count;
             sourceOffset += count;
@@ -415,7 +415,7 @@ public final class Memory implements AutoCloseable {
     /// Writes a byte to guest memory.
     public void writeByte(long address, byte value) {
         Page page = writePage(address, Byte.BYTES);
-        UNSAFE.putByte(page.data, pageByteOffset(address), value);
+        UNSAFE.putByte(page.baseObject, page.byteOffset(pageOffset(address)), value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory.
@@ -423,7 +423,7 @@ public final class Memory implements AutoCloseable {
         if (isSinglePageAccess(address, Short.BYTES)) {
             Page page = writePage(address, Short.BYTES);
             short stored = NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-            UNSAFE.putShort(page.data, pageByteOffset(address), stored);
+            UNSAFE.putShort(page.baseObject, page.byteOffset(pageOffset(address)), stored);
             return;
         }
 
@@ -435,7 +435,7 @@ public final class Memory implements AutoCloseable {
         if (isSinglePageAccess(address, Integer.BYTES)) {
             Page page = writePage(address, Integer.BYTES);
             int stored = NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-            UNSAFE.putInt(page.data, pageByteOffset(address), stored);
+            UNSAFE.putInt(page.baseObject, page.byteOffset(pageOffset(address)), stored);
             return;
         }
 
@@ -447,7 +447,7 @@ public final class Memory implements AutoCloseable {
         if (isSinglePageAccess(address, Long.BYTES)) {
             Page page = writePage(address, Long.BYTES);
             long stored = NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-            UNSAFE.putLong(page.data, pageByteOffset(address), stored);
+            UNSAFE.putLong(page.baseObject, page.byteOffset(pageOffset(address)), stored);
             return;
         }
 
@@ -671,7 +671,7 @@ public final class Memory implements AutoCloseable {
             throw new RiscVException("Guest committed page limit exceeded: limit=" + maxCommittedPages);
         }
 
-        page = new Page(new long[pageWords]);
+        page = Page.heap(pageWords);
         pages.put(pageNumber, page);
         committedPages++;
         return page;
@@ -740,9 +740,9 @@ public final class Memory implements AutoCloseable {
         return address >>> pageShift;
     }
 
-    /// Returns the Unsafe byte offset inside a page's long-array backing.
-    private long pageByteOffset(long address) {
-        return LONG_ARRAY_BASE_OFFSET + (address & pageMask);
+    /// Returns the byte offset inside the guest page containing the supplied address.
+    private long pageOffset(long address) {
+        return address & pageMask;
     }
 
     /// Returns the exclusive end address of the page containing the supplied address.
@@ -893,15 +893,34 @@ public final class Memory implements AutoCloseable {
         }
     }
 
-    /// Stores one committed heap-backed guest page.
+    /// Stores one committed guest page as an Unsafe base object and byte offset.
     @NotNullByDefault
     private static final class Page {
-        /// The heap long-array backing this guest page.
-        private final long[] data;
+        /// The Unsafe base object, or null when `baseOffset` is an absolute native address.
+        private final @Nullable Object baseObject;
 
-        /// Creates a committed guest page backed by a zero-filled long array.
-        private Page(long[] data) {
-            this.data = data;
+        /// The Unsafe byte offset for the first byte in this page.
+        private final long baseOffset;
+
+        /// The object kept alive for backings whose access base is not enough to retain ownership.
+        private final @Nullable Object owner;
+
+        /// Creates a committed guest page backed by an Unsafe base object and byte offset.
+        private Page(@Nullable Object baseObject, long baseOffset, @Nullable Object owner) {
+            this.baseObject = baseObject;
+            this.baseOffset = baseOffset;
+            this.owner = owner;
+        }
+
+        /// Creates a committed guest page backed by a zero-filled heap long array.
+        private static Page heap(int pageWords) {
+            long[] data = new long[pageWords];
+            return new Page(data, HEAP_LONG_ARRAY_BASE_OFFSET, data);
+        }
+
+        /// Returns the Unsafe byte offset for an access at the supplied page-relative byte offset.
+        private long byteOffset(long pageOffset) {
+            return baseOffset + pageOffset;
         }
     }
 

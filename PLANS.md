@@ -14,7 +14,7 @@
 - Harden the new Linux-like paged virtual memory implementation; do not reintroduce a long-term `MemorySegment` fallback.
 - Treat `memorySize` as the guest virtual address window size, not as an eager host-memory allocation size.
 - Continue moving ELF segments, stack, `brk`, anonymous `mmap`, `munmap`, `mprotect`, and `madvise` behavior toward one VMA and page-table implementation, reducing remaining syscall-side mapping duplication.
-- Extend lazy page commit, committed-page limits, configurable base page size, and HugeTLB pool handling with broader Linux edge-case coverage.
+- Extend lazy page commit, committed-page limits, configurable base page size, HugeTLB pool handling, and future non-heap or file-mapped page backings with broader Linux edge-case coverage.
 - Preserve freestanding examples and existing static musl coverage while broadening toward larger libc and language-runtime programs.
 
 ### 3. Expand syscall compatibility

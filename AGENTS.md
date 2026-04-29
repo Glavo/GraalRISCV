@@ -47,7 +47,8 @@ These rules apply to all Java code written or modified in this repository.
 
 - The `Memory` implementation should target Linux-like paged virtual memory.
 - Do not add or keep a long-term `MemorySegment` backend.
-- Use heap `long[]` pages as the default backing store so host-side page data is aligned.
+- Use heap `long[]` pages as the default backing allocation so host-side page data is aligned.
+- Store page backing as an Unsafe base object plus byte offset, not as a direct `long[]` field, so native and file-mapped backings can be added later.
 - Access page backing through `jdk.internal.misc.Unsafe`.
 - Support lazy page commit, a configurable committed-page limit, software ITLB and DTLB fast paths, configurable base page size, and an independent HugeTLB pool.
 - `MAP_HUGETLB` must consume the configured huge-page pool.

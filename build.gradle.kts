@@ -44,6 +44,7 @@ tasks.shadowJar {
     manifest.attributes(
         "Main-Class" to mainClassName,
         "Enable-Native-Access" to "ALL-UNNAMED",
+        "Add-Opens" to "java.base/jdk.internal.misc"
     )
 }
 
