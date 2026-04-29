@@ -69,11 +69,6 @@ public final class MemoryAccess {
         this.cache = cache;
     }
 
-    /// Reads a signed byte from guest memory.
-    public byte readByte(long address) {
-        return readByte(address, memory.layout());
-    }
-
     /// Reads a signed byte from guest memory using explicit page-layout constants.
     public byte readByte(long address, MemoryLayout layout) {
         long pageOffset = layout.pageOffset(address);
@@ -81,19 +76,9 @@ public final class MemoryAccess {
         return MemoryUnsafe.UNSAFE.getByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
     }
 
-    /// Reads an unsigned byte from guest memory.
-    public int readUnsignedByte(long address) {
-        return readByte(address) & 0xff;
-    }
-
     /// Reads an unsigned byte from guest memory using explicit page-layout constants.
     public int readUnsignedByte(long address, MemoryLayout layout) {
         return readByte(address, layout) & 0xff;
-    }
-
-    /// Reads a signed little-endian 16-bit value from guest memory.
-    public short readShort(long address) {
-        return readShort(address, memory.layout());
     }
 
     /// Reads a signed little-endian 16-bit value from guest memory using explicit page-layout constants.
@@ -108,19 +93,9 @@ public final class MemoryAccess {
         return (short) memory.readLittleEndianByBytes(address, Short.BYTES, cache, layout);
     }
 
-    /// Reads an unsigned little-endian 16-bit value from guest memory.
-    public int readUnsignedShort(long address) {
-        return readShort(address) & 0xffff;
-    }
-
     /// Reads an unsigned little-endian 16-bit value from guest memory using explicit page-layout constants.
     public int readUnsignedShort(long address, MemoryLayout layout) {
         return readShort(address, layout) & 0xffff;
-    }
-
-    /// Reads a signed little-endian 32-bit value from guest memory.
-    public int readInt(long address) {
-        return readInt(address, memory.layout());
     }
 
     /// Reads a signed little-endian 32-bit value from guest memory using explicit page-layout constants.
@@ -135,36 +110,9 @@ public final class MemoryAccess {
         return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache, layout);
     }
 
-    /// Reads an unsigned little-endian 32-bit value from guest memory.
-    public long readUnsignedInt(long address) {
-        return readInt(address) & 0xffff_ffffL;
-    }
-
     /// Reads an unsigned little-endian 32-bit value from guest memory using explicit page-layout constants.
     public long readUnsignedInt(long address, MemoryLayout layout) {
         return readInt(address, layout) & 0xffff_ffffL;
-    }
-
-    /// Reads a little-endian 32-bit instruction from a guest address.
-    public int readInstructionInt(long address) {
-        return readInstructionInt(address, memory.layout());
-    }
-
-    /// Reads a little-endian 32-bit instruction from a guest address using explicit page-layout constants.
-    public int readInstructionInt(long address, MemoryLayout layout) {
-        long pageOffset = layout.pageOffset(address);
-        if (layout.isSinglePageIntOffset(pageOffset)) {
-            MemoryPage page = memory.readPage(address, Integer.BYTES, true, cache, null, layout);
-            int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset));
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-        }
-
-        return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache, layout);
-    }
-
-    /// Reads a signed little-endian 64-bit value from guest memory.
-    public long readLong(long address) {
-        return readLong(address, memory.layout());
     }
 
     /// Reads a signed little-endian 64-bit value from guest memory using explicit page-layout constants.
@@ -179,21 +127,11 @@ public final class MemoryAccess {
         return memory.readLittleEndianByBytes(address, Long.BYTES, cache, layout);
     }
 
-    /// Writes a byte to guest memory.
-    public void writeByte(long address, byte value) {
-        writeByte(address, value, memory.layout());
-    }
-
     /// Writes a byte to guest memory using explicit page-layout constants.
     public void writeByte(long address, byte value, MemoryLayout layout) {
         long pageOffset = layout.pageOffset(address);
         ensureWritableDataPage(address, Byte.BYTES, layout);
         MemoryUnsafe.UNSAFE.putByte(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
-    }
-
-    /// Writes a little-endian 16-bit value to guest memory.
-    public void writeShort(long address, short value) {
-        writeShort(address, value, memory.layout());
     }
 
     /// Writes a little-endian 16-bit value to guest memory using explicit page-layout constants.
@@ -209,11 +147,6 @@ public final class MemoryAccess {
         memory.writeLittleEndianByBytes(address, value, Short.BYTES, cache, layout);
     }
 
-    /// Writes a little-endian 32-bit value to guest memory.
-    public void writeInt(long address, int value) {
-        writeInt(address, value, memory.layout());
-    }
-
     /// Writes a little-endian 32-bit value to guest memory using explicit page-layout constants.
     public void writeInt(long address, int value, MemoryLayout layout) {
         long pageOffset = layout.pageOffset(address);
@@ -225,11 +158,6 @@ public final class MemoryAccess {
         }
 
         memory.writeLittleEndianByBytes(address, value, Integer.BYTES, cache, layout);
-    }
-
-    /// Writes a little-endian 64-bit value to guest memory.
-    public void writeLong(long address, long value) {
-        writeLong(address, value, memory.layout());
     }
 
     /// Writes a little-endian 64-bit value to guest memory using explicit page-layout constants.

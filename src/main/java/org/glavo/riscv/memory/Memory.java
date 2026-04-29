@@ -670,11 +670,6 @@ public final class Memory implements AutoCloseable {
         return readLittleEndianByBytes(address, byteCount, currentMappedRegionCache(), layout);
     }
 
-    /// Reads a little-endian value byte-by-byte using the supplied software TLB.
-    long readLittleEndianByBytes(long address, int byteCount, @Nullable MappedRegionCache cache) {
-        return readLittleEndianByBytes(address, byteCount, cache, layout);
-    }
-
     /// Reads a little-endian value byte-by-byte using the supplied software TLB and page layout.
     long readLittleEndianByBytes(
             long address,
@@ -695,11 +690,6 @@ public final class Memory implements AutoCloseable {
     /// Writes a little-endian value byte-by-byte for cross-page accesses.
     private void writeLittleEndianByBytes(long address, long value, int byteCount) {
         writeLittleEndianByBytes(address, value, byteCount, currentMappedRegionCache(), layout);
-    }
-
-    /// Writes a little-endian value byte-by-byte using the supplied software TLB.
-    void writeLittleEndianByBytes(long address, long value, int byteCount, @Nullable MappedRegionCache cache) {
-        writeLittleEndianByBytes(address, value, byteCount, cache, layout);
     }
 
     /// Writes a little-endian value byte-by-byte using the supplied software TLB and page layout.
@@ -745,21 +735,6 @@ public final class Memory implements AutoCloseable {
         return readPage(address, length, instruction, currentMappedRegionCache(), null, layout);
     }
 
-    /// Returns the committed page for a read access using the supplied software TLB.
-    MemoryPage readPage(long address, int length, boolean instruction, @Nullable MappedRegionCache cache) {
-        return readPage(address, length, instruction, cache, null, layout);
-    }
-
-    /// Returns the committed page for a read access using the supplied software TLB and access-local cache.
-    MemoryPage readPage(
-            long address,
-            int length,
-            boolean instruction,
-            @Nullable MappedRegionCache cache,
-            @Nullable MemoryAccess access) {
-        return readPage(address, length, instruction, cache, access, layout);
-    }
-
     /// Returns the committed page for a read access using explicit page-layout constants.
     MemoryPage readPage(
             long address,
@@ -789,16 +764,6 @@ public final class Memory implements AutoCloseable {
     /// Returns a committed page for a write access, allocating it on first write.
     MemoryPage writePage(long address, int length) {
         return writePage(address, length, currentMappedRegionCache(), null, layout);
-    }
-
-    /// Returns a committed page for a write access using the supplied software TLB.
-    MemoryPage writePage(long address, int length, @Nullable MappedRegionCache cache) {
-        return writePage(address, length, cache, null, layout);
-    }
-
-    /// Returns a committed page for a write access using the supplied software TLB and access-local cache.
-    MemoryPage writePage(long address, int length, @Nullable MappedRegionCache cache, @Nullable MemoryAccess access) {
-        return writePage(address, length, cache, access, layout);
     }
 
     /// Returns a committed page for a write access using explicit page-layout constants.
@@ -907,16 +872,6 @@ public final class Memory implements AutoCloseable {
         return cache == null ? null : cache.page(pageNumber, address, length, requiredProtection, generation, instruction, access);
     }
 
-    /// Stores a committed page in the supplied software TLB.
-    private void setCachedPage(
-            long pageNumber,
-            MemoryPage page,
-            Vma vma,
-            boolean instruction,
-            @Nullable MappedRegionCache cache) {
-        setCachedPage(pageNumber, page, vma, instruction, vma.protection(), cache, null);
-    }
-
     /// Stores a committed page in the supplied software TLB and access-local cache.
     private void setCachedPage(
             long pageNumber,
@@ -926,17 +881,6 @@ public final class Memory implements AutoCloseable {
             @Nullable MappedRegionCache cache,
             @Nullable MemoryAccess access) {
         setCachedPage(pageNumber, page, vma, instruction, vma.protection(), cache, access);
-    }
-
-    /// Stores a committed page in the supplied software TLB with an explicit protection mask.
-    private void setCachedPage(
-            long pageNumber,
-            MemoryPage page,
-            Vma vma,
-            boolean instruction,
-            long protection,
-            @Nullable MappedRegionCache cache) {
-        setCachedPage(pageNumber, page, vma, instruction, protection, cache, null);
     }
 
     /// Stores a committed page in the supplied software TLB and access-local cache with an explicit protection mask.
