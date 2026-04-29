@@ -1061,29 +1061,53 @@ public final class Memory implements AutoCloseable {
         /// The software TLB for the current Truffle context and host thread.
         private final @Nullable MappedRegionCache cache;
 
-        /// Whether this execution facade has a data-page cache entry.
+        /// Whether this execution facade has a read data-page cache entry.
         private boolean cachedDataPageValid;
 
-        /// The guest page number associated with the cached data page.
+        /// The guest page number associated with the cached read data page.
         private long cachedDataPageNumber;
 
-        /// The inclusive guest address where the cached data page is valid.
+        /// The inclusive guest address where the cached read data page is valid.
         private long cachedDataRangeStart;
 
-        /// The exclusive guest address where the cached data page stops being valid.
+        /// The exclusive guest address where the cached read data page stops being valid.
         private long cachedDataRangeEnd;
 
-        /// The access protections available through the cached data page.
+        /// The access protections available through the cached read data page.
         private long cachedDataProtection;
 
-        /// The memory generation associated with the cached data page.
+        /// The memory generation associated with the cached read data page.
         private long cachedDataGeneration;
 
-        /// The Unsafe base object for the cached data page.
+        /// The Unsafe base object for the cached read data page.
         private @Nullable Object cachedDataBaseObject;
 
-        /// The Unsafe byte offset of the cached data page start.
+        /// The Unsafe byte offset of the cached read data page start.
         private long cachedDataBaseOffset;
+
+        /// Whether this execution facade has a write data-page cache entry.
+        private boolean cachedWriteDataPageValid;
+
+        /// The guest page number associated with the cached write data page.
+        private long cachedWriteDataPageNumber;
+
+        /// The inclusive guest address where the cached write data page is valid.
+        private long cachedWriteDataRangeStart;
+
+        /// The exclusive guest address where the cached write data page stops being valid.
+        private long cachedWriteDataRangeEnd;
+
+        /// The access protections available through the cached write data page.
+        private long cachedWriteDataProtection;
+
+        /// The memory generation associated with the cached write data page.
+        private long cachedWriteDataGeneration;
+
+        /// The Unsafe base object for the cached write data page.
+        private @Nullable Object cachedWriteDataBaseObject;
+
+        /// The Unsafe byte offset of the cached write data page start.
+        private long cachedWriteDataBaseOffset;
 
         /// Creates an access facade for a memory object and optional software TLB.
         private Access(Memory memory, @Nullable MappedRegionCache cache) {
@@ -1165,7 +1189,7 @@ public final class Memory implements AutoCloseable {
         public void writeByte(long address, byte value) {
             long pageOffset = memory.pageOffset(address);
             ensureWritableDataPage(address, Byte.BYTES);
-            UNSAFE.putByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, value);
+            UNSAFE.putByte(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
         }
 
         /// Writes a little-endian 16-bit value to guest memory.
@@ -1174,7 +1198,7 @@ public final class Memory implements AutoCloseable {
             if (memory.isSinglePageOffset(pageOffset, Short.BYTES)) {
                 ensureWritableDataPage(address, Short.BYTES);
                 short stored = NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-                UNSAFE.putShort(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, stored);
+                UNSAFE.putShort(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
                 return;
             }
 
@@ -1187,7 +1211,7 @@ public final class Memory implements AutoCloseable {
             if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
                 ensureWritableDataPage(address, Integer.BYTES);
                 int stored = NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-                UNSAFE.putInt(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, stored);
+                UNSAFE.putInt(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
                 return;
             }
 
@@ -1200,7 +1224,7 @@ public final class Memory implements AutoCloseable {
             if (memory.isSinglePageOffset(pageOffset, Long.BYTES)) {
                 ensureWritableDataPage(address, Long.BYTES);
                 long stored = NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-                UNSAFE.putLong(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, stored);
+                UNSAFE.putLong(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
                 return;
             }
 
@@ -1216,7 +1240,7 @@ public final class Memory implements AutoCloseable {
 
         /// Ensures the access-local cache contains the writable data page for the supplied range.
         private void ensureWritableDataPage(long address, int length) {
-            if (!hasCachedDataPage(address, length, PROTECTION_WRITE)) {
+            if (!hasCachedWriteDataPage(address, length, PROTECTION_WRITE)) {
                 memory.writePage(address, length, cache, this);
             }
         }
@@ -1232,6 +1256,17 @@ public final class Memory implements AutoCloseable {
                     && (cachedDataProtection & requiredProtection) == requiredProtection;
         }
 
+        /// Returns true when the access-local write data-page cache satisfies the supplied range and protection.
+        private boolean hasCachedWriteDataPage(long address, int length, long requiredProtection) {
+            long pageNumber = memory.pageNumber(address);
+            return cachedWriteDataPageValid
+                    && cachedWriteDataPageNumber == pageNumber
+                    && cachedWriteDataGeneration == memory.generation
+                    && address >= cachedWriteDataRangeStart
+                    && length <= cachedWriteDataRangeEnd - address
+                    && (cachedWriteDataProtection & requiredProtection) == requiredProtection;
+        }
+
         /// Stores one data-page lookup in the access-local cache.
         private void setDataPage(
                 long pageNumber,
@@ -1240,15 +1275,28 @@ public final class Memory implements AutoCloseable {
                 long protection,
                 long generation,
                 Page page) {
-            cachedDataPageNumber = pageNumber;
-            cachedDataRangeStart = rangeStart;
-            cachedDataRangeEnd = rangeEnd;
-            cachedDataProtection = protection;
-            cachedDataGeneration = generation;
-            cachedDataBaseObject = page.baseObject();
-            cachedDataBaseOffset = page.baseOffset();
-            cachedDataPageValid = true;
+            if ((protection & PROTECTION_READ) != 0) {
+                cachedDataPageNumber = pageNumber;
+                cachedDataRangeStart = rangeStart;
+                cachedDataRangeEnd = rangeEnd;
+                cachedDataProtection = protection;
+                cachedDataGeneration = generation;
+                cachedDataBaseObject = page.baseObject();
+                cachedDataBaseOffset = page.baseOffset();
+                cachedDataPageValid = true;
+            }
+            if ((protection & PROTECTION_WRITE) != 0) {
+                cachedWriteDataPageNumber = pageNumber;
+                cachedWriteDataRangeStart = rangeStart;
+                cachedWriteDataRangeEnd = rangeEnd;
+                cachedWriteDataProtection = protection;
+                cachedWriteDataGeneration = generation;
+                cachedWriteDataBaseObject = page.baseObject();
+                cachedWriteDataBaseOffset = page.baseOffset();
+                cachedWriteDataPageValid = true;
+            }
         }
+
     }
 
     /// Stores committed pages in a primitive long-key hash table.

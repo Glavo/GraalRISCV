@@ -226,37 +226,44 @@ final class RiscVMicroBlockNode extends Node {
             }
             case RiscVMicroOpcode.LB -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), access.readByte(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                writeRegister(registers, rd(operand), access.readByte(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LH -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), access.readShort(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                writeRegister(registers, rd(operand), access.readShort(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LW -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), access.readInt(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                writeRegister(registers, rd(operand), access.readInt(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LD -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), access.readLong(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                writeRegister(registers, rd(operand), access.readLong(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LBU -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), access.readUnsignedByte(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                writeRegister(registers, rd(operand), access.readUnsignedByte(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LHU -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), access.readUnsignedShort(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                writeRegister(registers, rd(operand), access.readUnsignedShort(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LWU -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), access.readUnsignedInt(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                writeRegister(registers, rd(operand), access.readUnsignedInt(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.SB -> {
@@ -367,12 +374,14 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.REMUW -> binaryRegister(state, registers, index, operand, mode, remainderUnsignedWord((int) registers[rs1(operand)], (int) registers[rs2(operand)]));
             case RiscVMicroOpcode.FLW -> {
                 beginMemoryInstruction(state, index, mode);
-                state.setDecodedFloatingPointRegister(rd(operand), 0xffff_ffff_0000_0000L | access.readUnsignedInt(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                state.setDecodedFloatingPointRegister(rd(operand), 0xffff_ffff_0000_0000L | access.readUnsignedInt(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.FLD -> {
                 beginMemoryInstruction(state, index, mode);
-                state.setDecodedFloatingPointRegister(rd(operand), access.readLong(loadAddress(registers, operand, index)));
+                long address = loadAddress(registers, operand, index);
+                state.setDecodedFloatingPointRegister(rd(operand), access.readLong(address));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.FSW -> {
