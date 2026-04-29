@@ -23,7 +23,7 @@
 ### 4. Maintain build, docs, and performance probes
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
-- Continue profiling the remaining custom micro-bytecode dispatch, memory access, and shared block-cache miss costs with hot-loop and CoreMark probes.
+- Redesign the execution structure so Truffle can optimize guest loops or traces instead of only isolated micro-bytecode blocks.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
 - Investigate register staging for the custom micro-bytecode executor after correctness remains stable.
 - Keep rejected performance experiments documented outside `PLANS.md`.
