@@ -11,6 +11,8 @@
 
 - Keep the simulator user-mode only; do not implement privileged mode, page tables, interrupts, devices, or Linux kernel boot.
 - Expand ELF, auxv, stack, `mmap`, and static-runtime behavior only as acceptance workloads require.
+- Continue the sparse-memory migration by moving ELF segments, stack, and `brk` backing from the initial window into explicit regions.
+- Keep both native and heap-backed memory regions supported through the shared region table.
 - Preserve freestanding examples and existing static musl coverage while broadening toward larger libc and language-runtime programs.
 
 ### 3. Expand syscall compatibility
@@ -24,6 +26,7 @@
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue measuring the direct-call hot trace executor, especially trace length, trigger thresholds, and interaction with Graal compilation diagnostics.
+- Add load/store region inline caches after sparse region-table correctness is stable.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
 - Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.
 - Keep rejected performance experiments documented outside `PLANS.md`.

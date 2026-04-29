@@ -48,13 +48,13 @@ public final class Memory implements AutoCloseable {
     /// The exclusive end address of the initial contiguous guest memory segment.
     private final long endAddress;
 
-    /// The sorted immutable snapshot of sparse memory regions created by Linux user-mode memory syscalls.
-    private volatile MappedRegions mappedRegions = MappedRegions.EMPTY;
+    /// The sorted immutable snapshot of every currently backed guest memory region.
+    private volatile MemoryRegions regions;
 
-    /// The current Truffle context and host thread's most recently accessed sparse memory region.
+    /// The current Truffle context and host thread's most recently accessed memory region.
     private final @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion;
 
-    /// Creates a memory window with a Truffle context-thread-local sparse-region cache.
+    /// Creates a memory window with a Truffle context-thread-local region cache.
     public Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
         if (baseAddress < 0) {
             throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
@@ -71,6 +71,7 @@ public final class Memory implements AutoCloseable {
         this.segment = arena.allocate(size, Long.BYTES);
         this.size = size;
         this.endAddress = baseAddress + size;
+        this.regions = MemoryRegions.single(baseAddress, segment);
         this.cachedMappedRegion = cachedMappedRegion;
     }
 
@@ -120,8 +121,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(ValueLayout.JAVA_BYTE, offset);
         }
 
-        MappedRegion region = mappedRegion(address, Byte.BYTES);
-        return region.segment().get(ValueLayout.JAVA_BYTE, address - region.address());
+        MemoryRegion region = region(address, Byte.BYTES);
+        return region.segment().get(ValueLayout.JAVA_BYTE, region.offset(address));
     }
 
     /// Reads an unsigned byte from guest memory.
@@ -136,8 +137,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(SHORT_LE, offset);
         }
 
-        MappedRegion region = mappedRegion(address, Short.BYTES);
-        return region.segment().get(SHORT_LE, address - region.address());
+        MemoryRegion region = region(address, Short.BYTES);
+        return region.segment().get(SHORT_LE, region.offset(address));
     }
 
     /// Reads an unsigned little-endian 16-bit value from an aligned guest address.
@@ -152,8 +153,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(INT_LE, offset);
         }
 
-        MappedRegion region = mappedRegion(address, Integer.BYTES);
-        return region.segment().get(INT_LE, address - region.address());
+        MemoryRegion region = region(address, Integer.BYTES);
+        return region.segment().get(INT_LE, region.offset(address));
     }
 
     /// Reads an unsigned little-endian 32-bit value from an aligned guest address.
@@ -198,8 +199,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(INSTRUCTION_INT_LE, fastOffset);
         }
 
-        MappedRegion region = mappedRegion(address, Integer.BYTES);
-        return region.segment().get(INSTRUCTION_INT_LE, address - region.address());
+        MemoryRegion region = region(address, Integer.BYTES);
+        return region.segment().get(INSTRUCTION_INT_LE, region.offset(address));
     }
 
     /// Reads a signed little-endian 64-bit value from guest memory.
@@ -209,8 +210,8 @@ public final class Memory implements AutoCloseable {
             return segment.get(LONG_LE, offset);
         }
 
-        MappedRegion region = mappedRegion(address, Long.BYTES);
-        return region.segment().get(LONG_LE, address - region.address());
+        MemoryRegion region = region(address, Long.BYTES);
+        return region.segment().get(LONG_LE, region.offset(address));
     }
 
     /// Writes a byte to guest memory.
@@ -221,8 +222,8 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MappedRegion region = mappedRegion(address, Byte.BYTES);
-        region.segment().set(ValueLayout.JAVA_BYTE, address - region.address(), value);
+        MemoryRegion region = region(address, Byte.BYTES);
+        region.segment().set(ValueLayout.JAVA_BYTE, region.offset(address), value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory.
@@ -233,8 +234,8 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MappedRegion region = mappedRegion(address, Short.BYTES);
-        region.segment().set(SHORT_LE, address - region.address(), value);
+        MemoryRegion region = region(address, Short.BYTES);
+        region.segment().set(SHORT_LE, region.offset(address), value);
     }
 
     /// Writes a little-endian 32-bit value to guest memory.
@@ -245,8 +246,8 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MappedRegion region = mappedRegion(address, Integer.BYTES);
-        region.segment().set(INT_LE, address - region.address(), value);
+        MemoryRegion region = region(address, Integer.BYTES);
+        region.segment().set(INT_LE, region.offset(address), value);
     }
 
     /// Writes a little-endian 64-bit value to guest memory.
@@ -257,15 +258,13 @@ public final class Memory implements AutoCloseable {
             return;
         }
 
-        MappedRegion region = mappedRegion(address, Long.BYTES);
-        region.segment().set(LONG_LE, address - region.address(), value);
+        MemoryRegion region = region(address, Long.BYTES);
+        region.segment().set(LONG_LE, region.offset(address), value);
     }
 
-    /// Adds a sparse guest memory region backed by a native memory segment.
+    /// Adds a guest memory region backed by a native memory segment.
     public synchronized boolean map(long address, long length) {
-        MappedRegions regions = mappedRegions;
-        if (!isValidRange(address, length) || length == 0 || overlapsInitialMemory(address, length)
-                || regions.overlaps(address, length)) {
+        if (!canMap(address, length)) {
             return false;
         }
 
@@ -276,16 +275,44 @@ public final class Memory implements AutoCloseable {
             return false;
         }
 
-        MemorySegment regionSegment = mappedSegment.asSlice(0, length);
-        MappedRegion region = new MappedRegion(address, regionSegment);
-        int insertionIndex = regions.insertionIndex(address);
-        MappedRegions newRegions = regions.insert(insertionIndex, address, regionSegment);
-        mappedRegions = newRegions;
-        setCachedMappedRegion(newRegions, region);
+        mapSegment(address, mappedSegment.asSlice(0, length));
         return true;
     }
 
-    /// Removes sparse guest memory backing overlapped by the supplied range.
+    /// Adds a guest memory region backed by a Java heap array.
+    public synchronized boolean mapHeap(long address, int length) {
+        if (length <= 0 || !canMap(address, length)) {
+            return false;
+        }
+
+        long[] array;
+        try {
+            int wordCount = (int) (((long) length + Long.BYTES - 1) / Long.BYTES);
+            array = new long[wordCount];
+        } catch (OutOfMemoryError exception) {
+            return false;
+        }
+
+        mapSegment(address, MemorySegment.ofArray(array).asSlice(0, length));
+        return true;
+    }
+
+    /// Returns true when a new region may be inserted at the supplied guest range.
+    private boolean canMap(long address, long length) {
+        return isValidRange(address, length) && length != 0 && !regions.overlaps(address, length);
+    }
+
+    /// Adds an already allocated host segment to the memory region table.
+    private void mapSegment(long address, MemorySegment regionSegment) {
+        MemoryRegion region = MemoryRegion.of(address, regionSegment);
+        MemoryRegions regions = this.regions;
+        int insertionIndex = regions.insertionIndex(address);
+        MemoryRegions newRegions = regions.insert(insertionIndex, region);
+        this.regions = newRegions;
+        setCachedMappedRegion(newRegions, region);
+    }
+
+    /// Removes non-initial guest memory backing overlapped by the supplied range.
     public synchronized void unmap(long address, long length) {
         if (length == 0) {
             return;
@@ -296,17 +323,21 @@ public final class Memory implements AutoCloseable {
         }
 
         long endAddress = address + length;
-        MappedRegions regions = mappedRegions;
+        MemoryRegions regions = this.regions;
         long[] newAddresses = new long[regions.size() + 1];
         MemorySegment[] newSegments = new MemorySegment[regions.size() + 1];
+        long[] newBaseOffsets = new long[regions.size() + 1];
         int newSize = 0;
         for (int index = 0; index < regions.size(); index++) {
             long regionAddress = regions.addresses[index];
             MemorySegment regionSegment = regions.segments[index];
+            long regionBaseOffset = regions.baseOffsets[index];
             long regionEndAddress = regionAddress + regionSegment.byteSize();
-            if (!rangesOverlap(address, endAddress, regionAddress, regionEndAddress)) {
+            if (!rangesOverlap(address, endAddress, regionAddress, regionEndAddress)
+                    || isInitialRegion(regionAddress, regionSegment)) {
                 newAddresses[newSize] = regionAddress;
                 newSegments[newSize] = regionSegment;
+                newBaseOffsets[newSize] = regionBaseOffset;
                 newSize++;
                 continue;
             }
@@ -315,6 +346,7 @@ public final class Memory implements AutoCloseable {
                 long prefixLength = address - regionAddress;
                 newAddresses[newSize] = regionAddress;
                 newSegments[newSize] = regionSegment.asSlice(0, prefixLength);
+                newBaseOffsets[newSize] = -regionAddress;
                 newSize++;
             }
             if (endAddress < regionEndAddress) {
@@ -322,10 +354,11 @@ public final class Memory implements AutoCloseable {
                 long suffixLength = regionEndAddress - endAddress;
                 newAddresses[newSize] = endAddress;
                 newSegments[newSize] = regionSegment.asSlice(suffixOffset, suffixLength);
+                newBaseOffsets[newSize] = -endAddress;
                 newSize++;
             }
         }
-        mappedRegions = MappedRegions.copyOf(newAddresses, newSegments, newSize);
+        this.regions = MemoryRegions.copyOf(newAddresses, newSegments, newBaseOffsets, newSize);
         clearCachedMappedRegion();
     }
 
@@ -357,9 +390,9 @@ public final class Memory implements AutoCloseable {
         return access;
     }
 
-    /// Returns the sparse region backing a guest range, or throws when it is absent.
-    private MappedRegion mappedRegion(long address, long length) {
-        @Nullable MappedRegion region = findMappedRegion(address, length);
+    /// Returns the memory region backing a guest range, or throws when it is absent.
+    private MemoryRegion region(long address, long length) {
+        @Nullable MemoryRegion region = findRegion(address, length);
         if (region == null) {
             throw new RiscVException("Guest memory access out of range: address=0x"
                     + Long.toUnsignedString(address, 16) + ", length=" + length);
@@ -402,15 +435,15 @@ public final class Memory implements AutoCloseable {
             return null;
         }
 
-        @Nullable MappedRegion region = findMappedRegion(address, length);
+        @Nullable MemoryRegion region = findRegion(address, length);
         if (region != null) {
-            return new MemoryAccess(region.segment(), address - region.address());
+            return new MemoryAccess(region.segment(), region.offset(address));
         }
         return null;
     }
 
-    /// Finds the sparse region backing a guest range, or null when absent.
-    private @Nullable MappedRegion findMappedRegion(long address, long length) {
+    /// Finds the memory region backing a guest range, or null when absent.
+    private @Nullable MemoryRegion findRegion(long address, long length) {
         if (length < 0) {
             throw new RiscVException("Negative memory access length: " + length);
         }
@@ -418,34 +451,34 @@ public final class Memory implements AutoCloseable {
             return null;
         }
 
-        MappedRegions regions = mappedRegions;
-        @Nullable MappedRegion cachedRegion = cachedMappedRegion(regions, address, length);
+        MemoryRegions regions = this.regions;
+        @Nullable MemoryRegion cachedRegion = cachedMappedRegion(regions, address, length);
         if (cachedRegion != null) {
             return cachedRegion;
         }
 
-        @Nullable MappedRegion region = regions.find(address, length);
-        if (region != null && mappedRegions == regions) {
+        @Nullable MemoryRegion region = regions.find(address, length);
+        if (region != null && this.regions == regions) {
             setCachedMappedRegion(regions, region);
         }
         return region;
     }
 
-    /// Returns the cached mapped region for the current context and thread, or null when it misses.
-    private @Nullable MappedRegion cachedMappedRegion(MappedRegions regions, long address, long length) {
+    /// Returns the cached memory region for the current context and thread, or null when it misses.
+    private @Nullable MemoryRegion cachedMappedRegion(MemoryRegions regions, long address, long length) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         return cache == null ? null : cache.get().region(regions, address, length);
     }
 
-    /// Stores the cached mapped region for the current context and thread when caching is available.
-    private void setCachedMappedRegion(MappedRegions regions, MappedRegion region) {
+    /// Stores the cached memory region for the current context and thread when caching is available.
+    private void setCachedMappedRegion(MemoryRegions regions, MemoryRegion region) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         if (cache != null) {
             cache.get().setRegion(regions, region);
         }
     }
 
-    /// Clears the cached mapped region for the current context and thread when caching is available.
+    /// Clears the cached memory region for the current context and thread when caching is available.
     private void clearCachedMappedRegion() {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         if (cache != null) {
@@ -453,9 +486,9 @@ public final class Memory implements AutoCloseable {
         }
     }
 
-    /// Returns true when the supplied guest range overlaps the initial memory segment.
-    private boolean overlapsInitialMemory(long address, long length) {
-        return rangesOverlap(address, address + length, baseAddress, endAddress);
+    /// Returns true when a region describes the initial contiguous memory segment.
+    private boolean isInitialRegion(long address, MemorySegment regionSegment) {
+        return address == baseAddress && regionSegment == segment;
     }
 
     /// Returns true when the supplied address and length form a non-overflowing guest range.
@@ -468,8 +501,8 @@ public final class Memory implements AutoCloseable {
         return firstStart < secondEnd && secondStart < firstEnd;
     }
 
-    /// Returns true when the sparse region fully contains the supplied guest range.
-    private static boolean containsRange(MappedRegion region, long address, long length) {
+    /// Returns true when the memory region fully contains the supplied guest range.
+    private static boolean containsRange(MemoryRegion region, long address, long length) {
         long regionAddress = region.address();
         long regionEndAddress = region.endAddress();
         return address >= regionAddress && address <= regionEndAddress && length <= regionEndAddress - address;
@@ -484,81 +517,97 @@ public final class Memory implements AutoCloseable {
             long offset) {
     }
 
-    /// Stores mutable sparse memory lookup state for one Truffle context and host thread.
+    /// Stores mutable memory-region lookup state for one Truffle context and host thread.
     public static final class MappedRegionCache {
-        /// The sparse region snapshot that owns the cached region.
-        private @Nullable MappedRegions regions;
+        /// The region snapshot that owns the cached region.
+        private @Nullable MemoryRegions regions;
 
-        /// The cached sparse region.
-        private @Nullable MappedRegion region;
+        /// The cached memory region.
+        private @Nullable MemoryRegion region;
 
-        /// Creates an empty sparse memory lookup cache.
+        /// Creates an empty memory-region lookup cache.
         public MappedRegionCache() {
         }
 
-        /// Returns the cached sparse region, or null when the cache misses.
-        private @Nullable MappedRegion region(MappedRegions regions, long address, long length) {
-            @Nullable MappedRegion region = this.region;
+        /// Returns the cached memory region, or null when the cache misses.
+        private @Nullable MemoryRegion region(MemoryRegions regions, long address, long length) {
+            @Nullable MemoryRegion region = this.region;
             if (region != null && this.regions == regions && containsRange(region, address, length)) {
                 return region;
             }
             return null;
         }
 
-        /// Stores a sparse region cache entry.
-        private void setRegion(MappedRegions regions, MappedRegion region) {
+        /// Stores a memory-region cache entry.
+        private void setRegion(MemoryRegions regions, MemoryRegion region) {
             this.regions = regions;
             this.region = region;
         }
 
-        /// Clears this sparse region cache.
+        /// Clears this memory-region cache.
         private void clear() {
             this.regions = null;
             this.region = null;
         }
     }
 
-    /// Stores sorted sparse guest memory regions in parallel arrays.
+    /// Stores sorted guest memory regions in parallel arrays.
     ///
-    /// @param addresses the inclusive guest start addresses for the sparse regions
-    /// @param segments the host segments backing the sparse regions
-    private record MappedRegions(
+    /// @param addresses the inclusive guest start addresses for the regions
+    /// @param segments the host segments backing the regions
+    /// @param baseOffsets the values added to guest addresses to produce host segment offsets
+    private record MemoryRegions(
             long @Unmodifiable [] addresses,
-            MemorySegment @Unmodifiable [] segments) {
-        /// The empty sparse region snapshot.
-        private static final MappedRegions EMPTY = new MappedRegions(new long[0], new MemorySegment[0]);
-
-        /// Creates a sparse region snapshot backed by same-length sorted arrays.
-        private MappedRegions {
-            if (addresses.length != segments.length) {
-                throw new IllegalArgumentException("Region address and segment arrays have different lengths");
+            MemorySegment @Unmodifiable [] segments,
+            long @Unmodifiable [] baseOffsets) {
+        /// Creates a region snapshot backed by same-length sorted arrays.
+        private MemoryRegions {
+            if (addresses.length != segments.length || addresses.length != baseOffsets.length) {
+                throw new IllegalArgumentException("Region arrays have different lengths");
             }
         }
 
-        /// Copies a prefix of the supplied arrays into a new sparse region snapshot.
-        private static MappedRegions copyOf(long[] addresses, MemorySegment[] segments, int size) {
-            return new MappedRegions(Arrays.copyOf(addresses, size), Arrays.copyOf(segments, size));
+        /// Creates a one-region snapshot.
+        private static MemoryRegions single(long address, MemorySegment segment) {
+            return new MemoryRegions(new long[]{address}, new MemorySegment[]{segment}, new long[]{-address});
         }
 
-        /// Returns the number of sparse regions in this snapshot.
+        /// Copies a prefix of the supplied arrays into a new region snapshot.
+        private static MemoryRegions copyOf(
+                long[] addresses,
+                MemorySegment[] segments,
+                long[] baseOffsets,
+                int size) {
+            return new MemoryRegions(
+                    Arrays.copyOf(addresses, size),
+                    Arrays.copyOf(segments, size),
+                    Arrays.copyOf(baseOffsets, size));
+        }
+
+        /// Returns the number of regions in this snapshot.
         int size() {
             return addresses.length;
         }
 
         /// Returns a new snapshot with one region inserted at the supplied index.
-        MappedRegions insert(int insertionIndex, long address, MemorySegment segment) {
+        MemoryRegions insert(int insertionIndex, MemoryRegion region) {
             long[] newAddresses = new long[addresses.length + 1];
             MemorySegment[] newSegments = new MemorySegment[segments.length + 1];
+            long[] newBaseOffsets = new long[baseOffsets.length + 1];
             System.arraycopy(addresses, 0, newAddresses, 0, insertionIndex);
             System.arraycopy(segments, 0, newSegments, 0, insertionIndex);
-            newAddresses[insertionIndex] = address;
-            newSegments[insertionIndex] = segment;
-            System.arraycopy(addresses, insertionIndex, newAddresses, insertionIndex + 1, addresses.length - insertionIndex);
-            System.arraycopy(segments, insertionIndex, newSegments, insertionIndex + 1, segments.length - insertionIndex);
-            return new MappedRegions(newAddresses, newSegments);
+            System.arraycopy(baseOffsets, 0, newBaseOffsets, 0, insertionIndex);
+            newAddresses[insertionIndex] = region.address();
+            newSegments[insertionIndex] = region.segment();
+            newBaseOffsets[insertionIndex] = region.baseOffset();
+            int copiedEntries = addresses.length - insertionIndex;
+            System.arraycopy(addresses, insertionIndex, newAddresses, insertionIndex + 1, copiedEntries);
+            System.arraycopy(segments, insertionIndex, newSegments, insertionIndex + 1, copiedEntries);
+            System.arraycopy(baseOffsets, insertionIndex, newBaseOffsets, insertionIndex + 1, copiedEntries);
+            return new MemoryRegions(newAddresses, newSegments, newBaseOffsets);
         }
 
-        /// Returns true when any sparse region overlaps the supplied guest range.
+        /// Returns true when any region overlaps the supplied guest range.
         boolean overlaps(long address, long length) {
             long endAddress = address + length;
             int insertionIndex = insertionIndex(address);
@@ -578,8 +627,8 @@ public final class Memory implements AutoCloseable {
             return rangesOverlap(address, endAddress, nextAddress, nextEndAddress);
         }
 
-        /// Finds the sparse region backing a guest range, or null when absent.
-        private @Nullable MappedRegion find(long address, long length) {
+        /// Finds the region backing a guest range, or null when absent.
+        private @Nullable MemoryRegion find(long address, long length) {
             int index = Arrays.binarySearch(addresses, address);
             if (index < 0) {
                 index = -index - 2;
@@ -593,7 +642,7 @@ public final class Memory implements AutoCloseable {
             if (!containsRange(regionAddress, regionEndAddress, address, length)) {
                 return null;
             }
-            return new MappedRegion(regionAddress, regionSegment);
+            return new MemoryRegion(regionAddress, regionSegment, baseOffsets[index]);
         }
 
         /// Returns the insertion index for an address in this sorted snapshot.
@@ -608,13 +657,25 @@ public final class Memory implements AutoCloseable {
         }
     }
 
-    /// Describes a sparse guest memory region created by a memory syscall.
+    /// Describes a guest memory region.
     ///
     /// @param address the inclusive guest start address of the region
     /// @param segment the host segment backing exactly this region
-    private record MappedRegion(
+    /// @param baseOffset the value added to a guest address to produce an offset in `segment`
+    private record MemoryRegion(
             long address,
-            MemorySegment segment) {
+            MemorySegment segment,
+            long baseOffset) {
+        /// Creates a region whose host segment begins at the guest start address.
+        private static MemoryRegion of(long address, MemorySegment segment) {
+            return new MemoryRegion(address, segment, -address);
+        }
+
+        /// Returns the host segment offset for the supplied guest address.
+        long offset(long address) {
+            return address + baseOffset;
+        }
+
         /// Returns the exclusive guest end address of the region.
         long endAddress() {
             return address + segment.byteSize();

@@ -9,6 +9,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -66,6 +67,28 @@ public final class MemoryTest {
             assertEquals(0x1122_3344, memory.readInt(firstAddress + 16));
             assertEquals(0x0102_0304_0506_0708L, memory.readLong(secondAddress + 32));
             assertEquals(0x5a, memory.readUnsignedByte(thirdAddress + 48));
+        }
+    }
+
+    /// Verifies heap-backed regions share the same sparse access path as native mappings.
+    @Test
+    public void accessesHeapBackedMapping() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            long mappingAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
+
+            assertTrue(memory.mapHeap(mappingAddress, 4096));
+            memory.writeLong(mappingAddress + 24, 0x1020_3040_5060_7080L);
+
+            assertEquals(0x1020_3040_5060_7080L, memory.readLong(mappingAddress + 24));
+        }
+    }
+
+    /// Verifies the initial contiguous memory is part of the unified region table.
+    @Test
+    public void rejectsMappingsOverInitialRegion() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            assertFalse(memory.map(Memory.DEFAULT_BASE_ADDRESS + 16, 4096));
+            assertFalse(memory.mapHeap(Memory.DEFAULT_BASE_ADDRESS + 16, 4096));
         }
     }
 
