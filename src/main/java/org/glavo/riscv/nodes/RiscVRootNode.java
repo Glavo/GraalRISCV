@@ -36,6 +36,12 @@ import org.jetbrains.annotations.Unmodifiable;
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
+    /// The guest page size used for explicit runtime stack backing.
+    private static final long PAGE_SIZE = 4096;
+
+    /// The initial Linux user stack backing size.
+    private static final long INITIAL_STACK_SIZE = 8L * 1024L * 1024L;
+
     /// Resolves the current RISC-V context for this root node.
     private static final TruffleLanguage.ContextReference<RiscVContext> CONTEXT_REFERENCE =
             TruffleLanguage.ContextReference.create(RiscVLanguage.class);
@@ -115,6 +121,9 @@ public final class RiscVRootNode extends RootNode {
         for (ElfImage.LoadSegment segment : image.loadSegments()) {
             long contentsLength = segment.contents().length;
             validateGuestRange(memory, segment.virtualAddress(), segment.memorySize());
+            if (!memory.hasDenseInitialBacking()) {
+                mapLoadSegment(memory, segment);
+            }
             memory.load(segment.virtualAddress(), segment.contents(), 0, (int) contentsLength);
             if (segment.memorySize() > contentsLength) {
                 memory.clear(segment.virtualAddress() + contentsLength, segment.memorySize() - contentsLength);
@@ -147,9 +156,37 @@ public final class RiscVRootNode extends RootNode {
         return state;
     }
 
+    /// Adds explicit backing for one ELF load segment.
+    private static void mapLoadSegment(Memory memory, ElfImage.LoadSegment segment) {
+        if (segment.memorySize() == 0) {
+            return;
+        }
+        if (!memory.map(segment.virtualAddress(), segment.memorySize())) {
+            throw new RiscVException("ELF segment overlaps another guest memory region: segment="
+                    + formatRange(segment.virtualAddress(), segment.virtualAddress() + segment.memorySize())
+                    + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress()));
+        }
+    }
+
     /// Initializes the Linux user stack at the top of the contiguous guest memory segment.
     private long initializeLinuxStack(Memory memory, RiscVContext context) {
-        return LinuxInitialStack.initialize(memory, memory.endAddress(), context.programArguments(), image);
+        if (memory.hasDenseInitialBacking()) {
+            return LinuxInitialStack.initialize(memory, memory.endAddress(), context.programArguments(), image);
+        }
+
+        long stackTop = memory.endAddress();
+        long stackSize = Math.min(INITIAL_STACK_SIZE, memory.size());
+        long stackBase = alignDown(stackTop - stackSize, PAGE_SIZE);
+        if (stackBase < memory.baseAddress()) {
+            stackBase = memory.baseAddress();
+        }
+        long stackLength = stackTop - stackBase;
+        if (stackLength <= 0 || !memory.map(stackBase, stackLength)) {
+            throw new RiscVException("Failed to allocate guest stack backing: stack="
+                    + formatRange(stackBase, stackTop)
+                    + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress()));
+        }
+        return LinuxInitialStack.initialize(memory, stackTop, context.programArguments(), image);
     }
 
     /// Resolves the memory base from context options or the lowest ELF load segment address.
@@ -265,6 +302,11 @@ public final class RiscVRootNode extends RootNode {
             return address;
         }
         return (address + mask) & ~mask;
+    }
+
+    /// Rounds an address down to the requested power-of-two alignment.
+    private static long alignDown(long address, long alignment) {
+        return address & -alignment;
     }
 
     /// Holds per-thread guest loop state while a Truffle loop root is executing.

@@ -92,6 +92,37 @@ public final class MemoryTest {
         }
     }
 
+    /// Verifies sparse memory starts without backing for the configured virtual address window.
+    @Test
+    public void sparseMemoryRequiresExplicitBacking() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            assertFalse(memory.isBacked(Memory.DEFAULT_BASE_ADDRESS, Long.BYTES));
+            assertThrows(RiscVException.class, () -> memory.readLong(Memory.DEFAULT_BASE_ADDRESS));
+
+            assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, 1024));
+            memory.writeLong(Memory.DEFAULT_BASE_ADDRESS + 8, 0x1122_3344_5566_7788L);
+
+            assertEquals(0x1122_3344_5566_7788L, memory.readLong(Memory.DEFAULT_BASE_ADDRESS + 8));
+            assertTrue(memory.isBacked(Memory.DEFAULT_BASE_ADDRESS, Long.BYTES));
+        }
+    }
+
+    /// Verifies sparse memory reports the backed range containing an address.
+    @Test
+    public void reportsSparseBackedRangeEnd() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
+            long firstAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
+            long secondAddress = Memory.DEFAULT_BASE_ADDRESS + 0x8000;
+
+            assertTrue(memory.map(firstAddress, 4096));
+            assertTrue(memory.map(secondAddress, 4096));
+
+            assertEquals(firstAddress + 4096, memory.backedRangeEnd(firstAddress + 16));
+            assertEquals(Memory.DEFAULT_BASE_ADDRESS, memory.backedRangeEnd(Memory.DEFAULT_BASE_ADDRESS));
+            assertEquals(secondAddress + 4096, memory.overlappingBackingEnd(secondAddress - 16, 32));
+        }
+    }
+
     /// Verifies unmapping the middle of a sparse mapping keeps the remaining slices addressable.
     @Test
     public void unmapSplitsSparseMapping() {

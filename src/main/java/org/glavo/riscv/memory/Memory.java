@@ -39,7 +39,10 @@ public final class Memory implements AutoCloseable {
     /// The arena that owns the guest memory segment lifetime.
     private final Arena arena;
 
-    /// The mutable guest memory segment.
+    /// Whether the initial guest memory window has one dense backing segment.
+    private final boolean denseInitialBacking;
+
+    /// The mutable guest memory segment used by the dense initial backing path.
     private final MemorySegment segment;
 
     /// The byte size of the initial contiguous guest memory segment.
@@ -56,6 +59,23 @@ public final class Memory implements AutoCloseable {
 
     /// Creates a memory window with a Truffle context-thread-local region cache.
     public Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
+        this(baseAddress, size, cachedMappedRegion, true);
+    }
+
+    /// Creates a sparse memory window with no initial backing segment.
+    public static Memory sparse(
+            long baseAddress,
+            long size,
+            @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
+        return new Memory(baseAddress, size, cachedMappedRegion, false);
+    }
+
+    /// Creates a memory window with either dense initial backing or explicit sparse regions only.
+    private Memory(
+            long baseAddress,
+            long size,
+            @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion,
+            boolean denseInitialBacking) {
         if (baseAddress < 0) {
             throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
         }
@@ -68,10 +88,11 @@ public final class Memory implements AutoCloseable {
 
         this.baseAddress = baseAddress;
         this.arena = Arena.ofShared();
-        this.segment = arena.allocate(size, Long.BYTES);
+        this.denseInitialBacking = denseInitialBacking;
+        this.segment = denseInitialBacking ? arena.allocate(size, Long.BYTES) : MemorySegment.NULL;
         this.size = size;
         this.endAddress = baseAddress + size;
-        this.regions = MemoryRegions.single(baseAddress, segment);
+        this.regions = denseInitialBacking ? MemoryRegions.single(baseAddress, segment) : MemoryRegions.empty();
         this.cachedMappedRegion = cachedMappedRegion;
     }
 
@@ -88,6 +109,11 @@ public final class Memory implements AutoCloseable {
     /// Returns the exclusive end address of the memory window.
     public long endAddress() {
         return endAddress;
+    }
+
+    /// Returns true when the full initial guest memory window is backed by one dense segment.
+    public boolean hasDenseInitialBacking() {
+        return denseInitialBacking;
     }
 
     /// Copies bytes from a host array into guest memory.
@@ -367,6 +393,21 @@ public final class Memory implements AutoCloseable {
         return findAccess(address, length) != null;
     }
 
+    /// Returns the exclusive end address of the backed region containing the supplied address, or the address itself.
+    public synchronized long backedRangeEnd(long address) {
+        @Nullable MemoryRegion region = findRegion(address, 1);
+        return region == null ? address : region.endAddress();
+    }
+
+    /// Returns the exclusive end address of the first backed region overlapping the supplied range, or the address itself.
+    public synchronized long overlappingBackingEnd(long address, long length) {
+        if (!isValidRange(address, length) || length == 0) {
+            return address;
+        }
+        @Nullable MemoryRegion region = regions.findOverlap(address, length);
+        return region == null ? address : region.endAddress();
+    }
+
     /// Releases the native memory segment backing this guest memory.
     @Override
     public synchronized void close() {
@@ -402,7 +443,7 @@ public final class Memory implements AutoCloseable {
 
     /// Returns the offset inside the initial segment for a scalar access, or `-1` when it starts outside.
     private long initialScalarOffset(long address) {
-        if (address >= baseAddress && address < endAddress) {
+        if (denseInitialBacking && address >= baseAddress && address < endAddress) {
             return address - baseAddress;
         }
         return -1;
@@ -414,7 +455,7 @@ public final class Memory implements AutoCloseable {
             throw new RiscVException("Negative memory access length: " + length);
         }
 
-        if (address >= baseAddress && address <= endAddress - length) {
+        if (denseInitialBacking && address >= baseAddress && address <= endAddress - length) {
             return address - baseAddress;
         }
         return -1;
@@ -488,7 +529,7 @@ public final class Memory implements AutoCloseable {
 
     /// Returns true when a region describes the initial contiguous memory segment.
     private boolean isInitialRegion(long address, MemorySegment regionSegment) {
-        return address == baseAddress && regionSegment == segment;
+        return denseInitialBacking && address == baseAddress && regionSegment == segment;
     }
 
     /// Returns true when the supplied address and length form a non-overflowing guest range.
@@ -519,11 +560,29 @@ public final class Memory implements AutoCloseable {
 
     /// Stores mutable memory-region lookup state for one Truffle context and host thread.
     public static final class MappedRegionCache {
-        /// The region snapshot that owns the cached region.
-        private @Nullable MemoryRegions regions;
+        /// The newest region snapshot that owns the first cached region.
+        private @Nullable MemoryRegions firstRegions;
 
-        /// The cached memory region.
-        private @Nullable MemoryRegion region;
+        /// The newest cached memory region.
+        private @Nullable MemoryRegion firstRegion;
+
+        /// The region snapshot that owns the second cached region.
+        private @Nullable MemoryRegions secondRegions;
+
+        /// The second cached memory region.
+        private @Nullable MemoryRegion secondRegion;
+
+        /// The region snapshot that owns the third cached region.
+        private @Nullable MemoryRegions thirdRegions;
+
+        /// The third cached memory region.
+        private @Nullable MemoryRegion thirdRegion;
+
+        /// The region snapshot that owns the fourth cached region.
+        private @Nullable MemoryRegions fourthRegions;
+
+        /// The fourth cached memory region.
+        private @Nullable MemoryRegion fourthRegion;
 
         /// Creates an empty memory-region lookup cache.
         public MappedRegionCache() {
@@ -531,8 +590,23 @@ public final class Memory implements AutoCloseable {
 
         /// Returns the cached memory region, or null when the cache misses.
         private @Nullable MemoryRegion region(MemoryRegions regions, long address, long length) {
-            @Nullable MemoryRegion region = this.region;
-            if (region != null && this.regions == regions && containsRange(region, address, length)) {
+            @Nullable MemoryRegion region = firstRegion;
+            if (region != null && firstRegions == regions && containsRange(region, address, length)) {
+                return region;
+            }
+
+            region = secondRegion;
+            if (region != null && secondRegions == regions && containsRange(region, address, length)) {
+                return region;
+            }
+
+            region = thirdRegion;
+            if (region != null && thirdRegions == regions && containsRange(region, address, length)) {
+                return region;
+            }
+
+            region = fourthRegion;
+            if (region != null && fourthRegions == regions && containsRange(region, address, length)) {
                 return region;
             }
             return null;
@@ -540,14 +614,45 @@ public final class Memory implements AutoCloseable {
 
         /// Stores a memory-region cache entry.
         private void setRegion(MemoryRegions regions, MemoryRegion region) {
-            this.regions = regions;
-            this.region = region;
+            if (isCachedRegion(firstRegions, firstRegion, regions, region)
+                    || isCachedRegion(secondRegions, secondRegion, regions, region)
+                    || isCachedRegion(thirdRegions, thirdRegion, regions, region)
+                    || isCachedRegion(fourthRegions, fourthRegion, regions, region)) {
+                return;
+            }
+
+            fourthRegions = thirdRegions;
+            fourthRegion = thirdRegion;
+            thirdRegions = secondRegions;
+            thirdRegion = secondRegion;
+            secondRegions = firstRegions;
+            secondRegion = firstRegion;
+            firstRegions = regions;
+            firstRegion = region;
         }
 
         /// Clears this memory-region cache.
         private void clear() {
-            this.regions = null;
-            this.region = null;
+            firstRegions = null;
+            firstRegion = null;
+            secondRegions = null;
+            secondRegion = null;
+            thirdRegions = null;
+            thirdRegion = null;
+            fourthRegions = null;
+            fourthRegion = null;
+        }
+
+        /// Returns true when the supplied region is already cached for the same region snapshot.
+        private static boolean isCachedRegion(
+                @Nullable MemoryRegions cachedRegions,
+                @Nullable MemoryRegion cachedRegion,
+                MemoryRegions regions,
+                MemoryRegion region) {
+            return cachedRegions == regions
+                    && cachedRegion != null
+                    && cachedRegion.address() == region.address()
+                    && cachedRegion.segment() == region.segment();
         }
     }
 
@@ -570,6 +675,11 @@ public final class Memory implements AutoCloseable {
         /// Creates a one-region snapshot.
         private static MemoryRegions single(long address, MemorySegment segment) {
             return new MemoryRegions(new long[]{address}, new MemorySegment[]{segment}, new long[]{-address});
+        }
+
+        /// Creates an empty region snapshot.
+        private static MemoryRegions empty() {
+            return new MemoryRegions(new long[0], new MemorySegment[0], new long[0]);
         }
 
         /// Copies a prefix of the supplied arrays into a new region snapshot.
@@ -609,22 +719,32 @@ public final class Memory implements AutoCloseable {
 
         /// Returns true when any region overlaps the supplied guest range.
         boolean overlaps(long address, long length) {
+            return findOverlap(address, length) != null;
+        }
+
+        /// Finds the first region overlapping the supplied guest range, or null when absent.
+        private @Nullable MemoryRegion findOverlap(long address, long length) {
             long endAddress = address + length;
             int insertionIndex = insertionIndex(address);
             if (insertionIndex > 0) {
                 int previousIndex = insertionIndex - 1;
                 long previousAddress = addresses[previousIndex];
-                long previousEndAddress = previousAddress + segments[previousIndex].byteSize();
+                MemorySegment previousSegment = segments[previousIndex];
+                long previousEndAddress = previousAddress + previousSegment.byteSize();
                 if (rangesOverlap(address, endAddress, previousAddress, previousEndAddress)) {
-                    return true;
+                    return new MemoryRegion(previousAddress, previousSegment, baseOffsets[previousIndex]);
                 }
             }
             if (insertionIndex >= addresses.length) {
-                return false;
+                return null;
             }
             long nextAddress = addresses[insertionIndex];
-            long nextEndAddress = nextAddress + segments[insertionIndex].byteSize();
-            return rangesOverlap(address, endAddress, nextAddress, nextEndAddress);
+            MemorySegment nextSegment = segments[insertionIndex];
+            long nextEndAddress = nextAddress + nextSegment.byteSize();
+            if (rangesOverlap(address, endAddress, nextAddress, nextEndAddress)) {
+                return new MemoryRegion(nextAddress, nextSegment, baseOffsets[insertionIndex]);
+            }
+            return null;
         }
 
         /// Finds the region backing a guest range, or null when absent.

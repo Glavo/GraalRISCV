@@ -1277,6 +1277,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The current guest program break returned by `brk`.
     private long programBreak;
 
+    /// The highest program-break address that currently has guest memory backing.
+    private long programBreakBackingEnd;
+
     /// The active anonymous mappings created by `mmap`.
     private final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
 
@@ -1489,6 +1492,7 @@ public final class GuestSyscalls implements AutoCloseable {
         this.hostRoot = hostRoot == null ? null : hostRoot.getAbsoluteFile().normalize();
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
+        this.programBreakBackingEnd = initialProgramBreak;
         this.clock = clock;
         this.clockStartInstant = clock.instant();
     }
@@ -4616,6 +4620,13 @@ public final class GuestSyscalls implements AutoCloseable {
         if (requestedAddress >= initialProgramBreak
                 && requestedAddress <= memory.endAddress()
                 && !overlapsMemoryMappings(initialProgramBreak, requestedAddress - initialProgramBreak)) {
+            if (requestedAddress > programBreakBackingEnd
+                    && !ensureProgramBreakBacking(programBreakBackingEnd, requestedAddress - programBreakBackingEnd)) {
+                return programBreak;
+            }
+            if (requestedAddress > programBreakBackingEnd) {
+                programBreakBackingEnd = requestedAddress;
+            }
             programBreak = requestedAddress;
         }
         return programBreak;
@@ -5118,10 +5129,15 @@ public final class GuestSyscalls implements AutoCloseable {
         long candidateAddress = alignUp(programBreak, PAGE_SIZE);
         while (candidateAddress > 0 && fitsGuestMemory(candidateAddress, length)) {
             MemoryMapping overlap = overlappingMemoryMapping(candidateAddress, length);
-            if (overlap == null) {
+            long backingOverlapEnd = overlappingExplicitBackingEnd(candidateAddress, length);
+            if (overlap == null && backingOverlapEnd == candidateAddress) {
                 return candidateAddress;
             }
-            candidateAddress = alignUp(overlap.endAddress(), PAGE_SIZE);
+            long nextAddress = overlap == null ? backingOverlapEnd : overlap.endAddress();
+            if (nextAddress <= candidateAddress) {
+                nextAddress = candidateAddress + PAGE_SIZE;
+            }
+            candidateAddress = alignUp(nextAddress, PAGE_SIZE);
         }
 
         return findSparseMmapAddress(length);
@@ -5145,6 +5161,7 @@ public final class GuestSyscalls implements AutoCloseable {
         return isValidGuestRange(address, length)
                 && address >= programBreak
                 && !overlapsMemoryMappings(address, length)
+                && overlappingExplicitBackingEnd(address, length) == address
                 && (fitsGuestMemory(address, length) || !overlapsInitialMemory(address, length));
     }
 
@@ -5193,11 +5210,19 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Ensures that the supplied range has native backing for non-`PROT_NONE` access.
     private boolean ensureMemoryBacking(long address, long length) {
-        if (fitsGuestMemory(address, length)) {
+        if (!isValidGuestRange(address, length)) {
+            return false;
+        }
+        if (memory.isBacked(address, length)) {
             return true;
         }
-        if (!isValidGuestRange(address, length) || overlapsInitialMemory(address, length)) {
-            return false;
+        return memory.map(address, length);
+    }
+
+    /// Ensures the newly grown part of the process heap has native backing.
+    private boolean ensureProgramBreakBacking(long address, long length) {
+        if (length == 0 || memory.isBacked(address, length)) {
+            return true;
         }
         return memory.map(address, length);
     }
@@ -5207,7 +5232,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if (!mapping.isBacked()) {
             return;
         }
-        if (fitsGuestMemory(address, length)) {
+        if (memory.hasDenseInitialBacking() && fitsGuestMemory(address, length)) {
             memory.clear(address, length);
         } else {
             memory.unmap(address, length);
@@ -5216,7 +5241,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Releases native backing after a mapped range transitions to `PROT_NONE`.
     private void releaseProtectedMemory(long address, long length) {
-        if (!fitsGuestMemory(address, length)) {
+        if (!memory.hasDenseInitialBacking() || !fitsGuestMemory(address, length)) {
             memory.unmap(address, length);
         }
     }
@@ -5237,7 +5262,7 @@ public final class GuestSyscalls implements AutoCloseable {
             long protectStart = Math.max(address, mapping.address());
             long protectEnd = Math.min(endAddress, mapping.endAddress());
             long protectLength = protectEnd - protectStart;
-            if (fitsGuestMemory(protectStart, protectLength)) {
+            if (memory.isBacked(protectStart, protectLength)) {
                 memory.clear(protectStart, protectLength);
                 continue;
             }
@@ -5344,8 +5369,9 @@ public final class GuestSyscalls implements AutoCloseable {
         long endAddress = address + length;
         long cursor = address;
         while (cursor < endAddress) {
-            if (cursor >= memory.baseAddress() && cursor < memory.endAddress()) {
-                cursor = Math.min(endAddress, memory.endAddress());
+            long backedEndAddress = memory.backedRangeEnd(cursor);
+            if (backedEndAddress > cursor) {
+                cursor = Math.min(endAddress, backedEndAddress);
                 continue;
             }
 
@@ -5427,6 +5453,11 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns true when the supplied guest range overlaps the initial memory window.
     private boolean overlapsInitialMemory(long address, long length) {
         return rangesOverlap(address, address + length, memory.baseAddress(), memory.endAddress());
+    }
+
+    /// Returns the end address of explicit sparse backing overlapped by a range, or the start address when none exists.
+    private long overlappingExplicitBackingEnd(long address, long length) {
+        return memory.hasDenseInitialBacking() ? address : memory.overlappingBackingEnd(address, length);
     }
 
     /// Returns true when two half-open address ranges overlap.
