@@ -84,7 +84,7 @@ public final class MemoryAccess {
     /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
         long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageOffset(pageOffset, Short.BYTES)) {
+        if (memory.isSinglePageShortOffset(pageOffset)) {
             ensureReadableDataPage(address, Short.BYTES);
             short value = MemoryUnsafe.UNSAFE.getShort(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
@@ -101,7 +101,7 @@ public final class MemoryAccess {
     /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
         long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
+        if (memory.isSinglePageIntOffset(pageOffset)) {
             ensureReadableDataPage(address, Integer.BYTES);
             int value = MemoryUnsafe.UNSAFE.getInt(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
@@ -118,7 +118,7 @@ public final class MemoryAccess {
     /// Reads a little-endian 32-bit instruction from a guest address.
     public int readInstructionInt(long address) {
         long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
+        if (memory.isSinglePageIntOffset(pageOffset)) {
             MemoryPage page = memory.readPage(address, Integer.BYTES, true, cache);
             int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset));
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
@@ -130,7 +130,7 @@ public final class MemoryAccess {
     /// Reads a signed little-endian 64-bit value from guest memory.
     public long readLong(long address) {
         long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageOffset(pageOffset, Long.BYTES)) {
+        if (memory.isSinglePageLongOffset(pageOffset)) {
             ensureReadableDataPage(address, Long.BYTES);
             long value = MemoryUnsafe.UNSAFE.getLong(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
@@ -149,7 +149,7 @@ public final class MemoryAccess {
     /// Writes a little-endian 16-bit value to guest memory.
     public void writeShort(long address, short value) {
         long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageOffset(pageOffset, Short.BYTES)) {
+        if (memory.isSinglePageShortOffset(pageOffset)) {
             ensureWritableDataPage(address, Short.BYTES);
             short stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putShort(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
@@ -162,7 +162,7 @@ public final class MemoryAccess {
     /// Writes a little-endian 32-bit value to guest memory.
     public void writeInt(long address, int value) {
         long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
+        if (memory.isSinglePageIntOffset(pageOffset)) {
             ensureWritableDataPage(address, Integer.BYTES);
             int stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putInt(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
@@ -175,7 +175,7 @@ public final class MemoryAccess {
     /// Writes a little-endian 64-bit value to guest memory.
     public void writeLong(long address, long value) {
         long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageOffset(pageOffset, Long.BYTES)) {
+        if (memory.isSinglePageLongOffset(pageOffset)) {
             ensureWritableDataPage(address, Long.BYTES);
             long stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putLong(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);

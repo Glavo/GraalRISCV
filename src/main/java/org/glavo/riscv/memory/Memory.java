@@ -68,6 +68,15 @@ public final class Memory implements AutoCloseable {
     /// The bit mask selecting the byte offset inside a base page.
     private final long pageMask;
 
+    /// The largest page-relative offset where a 16-bit scalar access stays inside one base page.
+    private final long maxShortPageOffset;
+
+    /// The largest page-relative offset where a 32-bit scalar access stays inside one base page.
+    private final long maxIntPageOffset;
+
+    /// The largest page-relative offset where a 64-bit scalar access stays inside one base page.
+    private final long maxLongPageOffset;
+
     /// The number of long array elements in one base page.
     private final int pageWords;
 
@@ -178,6 +187,9 @@ public final class Memory implements AutoCloseable {
         this.pageSize = validatedPageSize;
         this.pageShift = Integer.numberOfTrailingZeros(validatedPageSize);
         this.pageMask = validatedPageSize - 1L;
+        this.maxShortPageOffset = validatedPageSize - Short.BYTES;
+        this.maxIntPageOffset = validatedPageSize - Integer.BYTES;
+        this.maxLongPageOffset = validatedPageSize - Long.BYTES;
         this.pageWords = validatedPageSize >>> 3;
         this.zeroPage = MemoryPage.heap(this.pageWords);
         this.pages = new PageTable(this.pageShift, this.endAddress);
@@ -298,7 +310,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
-        if (isSinglePageAccess(address, Short.BYTES)) {
+        if (isSinglePageShortAccess(address)) {
             MemoryPage page = readPage(address, Short.BYTES, false);
             short value = MemoryUnsafe.UNSAFE.getShort(page.baseObject(), page.byteOffset(pageOffset(address)));
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
@@ -314,7 +326,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
-        if (isSinglePageAccess(address, Integer.BYTES)) {
+        if (isSinglePageIntAccess(address)) {
             MemoryPage page = readPage(address, Integer.BYTES, false);
             int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
@@ -330,7 +342,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a little-endian 32-bit instruction from a guest address.
     public int readInstructionInt(long address) {
-        if (isSinglePageAccess(address, Integer.BYTES)) {
+        if (isSinglePageIntAccess(address)) {
             MemoryPage page = readPage(address, Integer.BYTES, true);
             int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
@@ -341,7 +353,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed little-endian 64-bit value from guest memory.
     public long readLong(long address) {
-        if (isSinglePageAccess(address, Long.BYTES)) {
+        if (isSinglePageLongAccess(address)) {
             MemoryPage page = readPage(address, Long.BYTES, false);
             long value = MemoryUnsafe.UNSAFE.getLong(page.baseObject(), page.byteOffset(pageOffset(address)));
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
@@ -416,7 +428,7 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a little-endian 16-bit value to guest memory.
     public void writeShort(long address, short value) {
-        if (isSinglePageAccess(address, Short.BYTES)) {
+        if (isSinglePageShortAccess(address)) {
             MemoryPage page = writePage(address, Short.BYTES);
             short stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putShort(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
@@ -428,7 +440,7 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a little-endian 32-bit value to guest memory.
     public void writeInt(long address, int value) {
-        if (isSinglePageAccess(address, Integer.BYTES)) {
+        if (isSinglePageIntAccess(address)) {
             MemoryPage page = writePage(address, Integer.BYTES);
             int stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putInt(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
@@ -440,7 +452,7 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a little-endian 64-bit value to guest memory.
     public void writeLong(long address, long value) {
-        if (isSinglePageAccess(address, Long.BYTES)) {
+        if (isSinglePageLongAccess(address)) {
             MemoryPage page = writePage(address, Long.BYTES);
             long stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putLong(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
@@ -950,14 +962,34 @@ public final class Memory implements AutoCloseable {
         return (address & ~pageMask) + pageSize;
     }
 
-    /// Returns true when a scalar access stays within one base page.
-    private boolean isSinglePageAccess(long address, int length) {
-        return isSinglePageOffset(address & pageMask, length);
+    /// Returns true when a 16-bit scalar access stays within one base page.
+    private boolean isSinglePageShortAccess(long address) {
+        return (address & pageMask) <= maxShortPageOffset;
     }
 
-    /// Returns true when a scalar access at a page-relative offset stays within one base page.
-    boolean isSinglePageOffset(long pageOffset, int length) {
-        return pageOffset + length <= pageSize;
+    /// Returns true when a 32-bit scalar access stays within one base page.
+    private boolean isSinglePageIntAccess(long address) {
+        return (address & pageMask) <= maxIntPageOffset;
+    }
+
+    /// Returns true when a 64-bit scalar access stays within one base page.
+    private boolean isSinglePageLongAccess(long address) {
+        return (address & pageMask) <= maxLongPageOffset;
+    }
+
+    /// Returns true when a 16-bit scalar access at a page-relative offset stays within one base page.
+    boolean isSinglePageShortOffset(long pageOffset) {
+        return pageOffset <= maxShortPageOffset;
+    }
+
+    /// Returns true when a 32-bit scalar access at a page-relative offset stays within one base page.
+    boolean isSinglePageIntOffset(long pageOffset) {
+        return pageOffset <= maxIntPageOffset;
+    }
+
+    /// Returns true when a 64-bit scalar access at a page-relative offset stays within one base page.
+    boolean isSinglePageLongOffset(long pageOffset) {
+        return pageOffset <= maxLongPageOffset;
     }
 
     /// Returns a checked byte count within one page.
