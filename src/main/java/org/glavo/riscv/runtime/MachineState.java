@@ -184,6 +184,11 @@ public final class MachineState {
         }
     }
 
+    /// Returns the mutable integer register array for decoded hot-path execution.
+    public long[] decodedRegisters() {
+        return registers;
+    }
+
     /// Returns the raw 64-bit value of a floating-point register.
     public long floatingPointRegister(int index) {
         checkFloatingPointRegisterIndex(index);

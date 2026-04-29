@@ -36,11 +36,13 @@ final class RiscVMicroBlockCompiler {
         long[] addresses = new long[instructionCount];
         long[] nextPcs = new long[instructionCount];
         long[] immediates = new long[instructionCount];
+        boolean requiresPreciseFastState = false;
 
         for (int index = 0; index < instructionCount; index++) {
             DecodedInstruction instruction = instructions[index];
             operations[index] = instruction.operation();
             opcodes[index] = opcode(operations[index]);
+            requiresPreciseFastState |= requiresPreciseFastState(opcodes[index]);
             operands[index] = RiscVMicroBlockNode.packRegisters(instruction.rd(), instruction.rs1(), instruction.rs2());
             raws[index] = instruction.raw();
             addresses[index] = instruction.address();
@@ -55,7 +57,10 @@ final class RiscVMicroBlockCompiler {
                 raws,
                 addresses,
                 nextPcs,
-                immediates);
+                immediates,
+                block.fallThroughPc(),
+                block.endsWithTerminator(),
+                requiresPreciseFastState);
     }
 
     /// Converts a decoded operation to a micro-bytecode opcode.
@@ -159,6 +164,22 @@ final class RiscVMicroBlockCompiler {
             case AMOMINU_D -> RiscVMicroOpcode.AMOMINU_D;
             case AMOMAXU_D -> RiscVMicroOpcode.AMOMAXU_D;
             default -> RiscVMicroOpcode.EXECUTE_OPERATION;
+        };
+    }
+
+    /// Returns true when an opcode needs exact per-instruction fast-path state updates.
+    private static boolean requiresPreciseFastState(byte opcode) {
+        return switch (opcode) {
+            case RiscVMicroOpcode.EXECUTE_OPERATION,
+                    RiscVMicroOpcode.ECALL,
+                    RiscVMicroOpcode.EBREAK,
+                    RiscVMicroOpcode.CSRRW,
+                    RiscVMicroOpcode.CSRRS,
+                    RiscVMicroOpcode.CSRRC,
+                    RiscVMicroOpcode.CSRRWI,
+                    RiscVMicroOpcode.CSRRSI,
+                    RiscVMicroOpcode.CSRRCI -> true;
+            default -> false;
         };
     }
 }

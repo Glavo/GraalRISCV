@@ -25,5 +25,5 @@
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue measuring the direct-call hot trace executor, especially trace length, trigger thresholds, and interaction with Graal compilation diagnostics.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
-- Investigate register staging for the custom micro-bytecode executor after correctness remains stable.
+- Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.
 - Keep rejected performance experiments documented outside `PLANS.md`.
