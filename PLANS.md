@@ -14,7 +14,7 @@
 - Harden the new Linux-like paged virtual memory implementation; do not reintroduce a long-term `MemorySegment` fallback.
 - Treat `memorySize` as the guest virtual address window size, not as an eager host-memory allocation size.
 - Continue moving ELF segments, stack, `brk`, anonymous `mmap`, `munmap`, `mprotect`, and `madvise` behavior toward one VMA and page-table implementation, reducing remaining syscall-side mapping duplication.
-- Extend lazy page commit, committed-page limits, configurable base page size, HugeTLB pool handling, and future non-heap or file-mapped page backings with broader Linux edge-case coverage.
+- Extend lazy page commit, committed-page limits, configurable base page size, HugeTLB pool handling, and future native or file-mapped page allocators with broader Linux edge-case coverage.
 - Preserve freestanding examples and existing static musl coverage while broadening toward larger libc and language-runtime programs.
 
 ### 3. Expand syscall compatibility
@@ -28,7 +28,7 @@
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue measuring the direct-call hot trace executor, especially trace length, trigger thresholds, and interaction with Graal compilation diagnostics.
-- Improve software ITLB and DTLB fast paths for paged memory, especially multi-entry caches, cross-page accesses, and permission-fault slow paths.
+- Improve software ITLB and DTLB fast paths for paged memory, especially cross-page accesses and permission-fault slow paths.
 - Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and VMA split/merge behavior as the syscall layer is simplified.
 - Keep CoreMark, Zig examples, and the local Go demo as acceptance workloads for the paged-memory migration.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
