@@ -9,6 +9,7 @@ import com.oracle.truffle.api.Option;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.source.Source;
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.nodes.RiscVRootNode;
 import org.glavo.riscv.parser.ElfImage;
@@ -64,7 +65,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
 
     /// The per-context and per-host-thread sparse memory lookup cache.
-    private final ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache;
+    private final ContextThreadLocal<MappedRegionCache> mappedRegionCache;
 
     /// The `riscv.memoryBase` language option.
     @Option(
@@ -149,7 +150,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// Creates a RISC-V Truffle language instance.
     @SuppressWarnings("deprecation")
     public RiscVLanguage() {
-        this.mappedRegionCache = createContextThreadLocal((context, thread) -> new Memory.MappedRegionCache());
+        this.mappedRegionCache = createContextThreadLocal((context, thread) -> new MappedRegionCache());
     }
 
     /// Creates a context from the current Truffle environment and option values.

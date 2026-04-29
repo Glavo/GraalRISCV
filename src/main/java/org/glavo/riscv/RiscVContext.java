@@ -6,6 +6,7 @@ package org.glavo.riscv;
 import com.oracle.truffle.api.ContextThreadLocal;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
@@ -52,7 +53,7 @@ public final class RiscVContext {
     private final String @Unmodifiable [] programArguments;
 
     /// The sparse memory lookup cache scoped by the current Truffle context and host thread.
-    private final ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache;
+    private final ContextThreadLocal<MappedRegionCache> mappedRegionCache;
 
     /// Creates a simulator context.
     public RiscVContext(
@@ -67,7 +68,7 @@ public final class RiscVContext {
             boolean trace,
             Clock clock,
             String hostRoot,
-            ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache) {
+            ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
@@ -171,7 +172,7 @@ public final class RiscVContext {
     }
 
     /// Returns the sparse memory lookup cache for the current Truffle context and host thread.
-    public ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache() {
+    public ContextThreadLocal<MappedRegionCache> mappedRegionCache() {
         return mappedRegionCache;
     }
 

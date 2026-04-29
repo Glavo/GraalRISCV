@@ -9,7 +9,7 @@ import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node.Children;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.glavo.riscv.RiscVLanguage;
-import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.runtime.MachineState;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -38,17 +38,17 @@ final class RiscVMicroTraceRootNode extends RootNode {
         this.expectedNextPcs = expectedNextPcs.clone();
     }
 
-    /// Executes the trace with the `MachineState` and `Memory.Access` supplied as block-call arguments.
+    /// Executes the trace with the `MachineState` and `MemoryAccess` supplied as block-call arguments.
     @Override
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();
-        executeTrace((MachineState) arguments[0], (Memory.Access) arguments[1]);
+        executeTrace((MachineState) arguments[0], (MemoryAccess) arguments[1]);
         return null;
     }
 
     /// Runs trace blocks until the trace ends or a side-exit guard fails.
     @ExplodeLoop
-    private void executeTrace(MachineState state, Memory.Access access) {
+    private void executeTrace(MachineState state, MemoryAccess access) {
         for (int index = 0; index < blocks.length; index++) {
             blocks[index].execute(state, access);
             if (index < expectedNextPcs.length && state.pc() != expectedNextPcs[index]) {

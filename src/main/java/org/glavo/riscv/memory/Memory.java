@@ -4,17 +4,11 @@
 package org.glavo.riscv.memory;
 
 import com.oracle.truffle.api.ContextThreadLocal;
-import jdk.internal.misc.Unsafe;
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.Unmodifiable;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
-import java.nio.ByteOrder;
 import java.util.ArrayList;
-import java.util.Arrays;
 
 /// Provides Linux-like paged virtual memory for guest address-space accesses.
 @NotNullByDefault
@@ -56,24 +50,6 @@ public final class Memory implements AutoCloseable {
     /// The supported guest page-protection bit mask.
     public static final long SUPPORTED_PROTECTION_MASK = PROTECTION_READ_WRITE_EXECUTE;
 
-    /// The Unsafe instance used to access heap page backing without MemorySegment overhead.
-    private static final Unsafe UNSAFE = Unsafe.getUnsafe();
-
-    /// The byte offset of the first element in a Java long array used by the default heap page allocator.
-    private static final long HEAP_LONG_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
-
-    /// Whether the host CPU uses little-endian primitive layout.
-    private static final boolean NATIVE_LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
-
-    /// No transparent huge-page preference has been recorded for a VMA.
-    private static final byte HUGE_PAGE_PREFERENCE_DEFAULT = 0;
-
-    /// The VMA prefers transparent huge pages.
-    private static final byte HUGE_PAGE_PREFERENCE_ENABLED = 1;
-
-    /// The VMA opts out of transparent huge pages.
-    private static final byte HUGE_PAGE_PREFERENCE_DISABLED = 2;
-
     /// The inclusive base address of the guest virtual address window.
     private final long baseAddress;
 
@@ -96,7 +72,7 @@ public final class Memory implements AutoCloseable {
     private final int pageWords;
 
     /// Read-only zero-fill page used to cache reads from uncommitted mapped pages.
-    private final Page zeroPage;
+    private final MemoryPage zeroPage;
 
     /// The maximum number of committed base pages, or zero when unlimited.
     private final long maxCommittedPages;
@@ -120,7 +96,7 @@ public final class Memory implements AutoCloseable {
     private volatile VmaTable vmas;
 
     /// The generation used to invalidate per-thread software TLB entries.
-    private volatile long generation;
+    volatile long generation;
 
     /// The number of currently committed base pages.
     private long committedPages;
@@ -203,7 +179,7 @@ public final class Memory implements AutoCloseable {
         this.pageShift = Integer.numberOfTrailingZeros(validatedPageSize);
         this.pageMask = validatedPageSize - 1L;
         this.pageWords = validatedPageSize >>> 3;
-        this.zeroPage = Page.heap(this.pageWords);
+        this.zeroPage = MemoryPage.heap(this.pageWords);
         this.pages = new PageTable(this.pageShift, this.endAddress);
         this.maxCommittedPages = maxCommittedPages;
         this.hugePageSize = validatedHugePageSize;
@@ -215,7 +191,7 @@ public final class Memory implements AutoCloseable {
                         baseAddress,
                         baseAddress + size,
                         false,
-                        HUGE_PAGE_PREFERENCE_DEFAULT,
+                        Vma.HUGE_PAGE_PREFERENCE_DEFAULT,
                         PROTECTION_READ_WRITE_EXECUTE)
                 : VmaTable.empty();
     }
@@ -271,9 +247,9 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Creates a memory access facade bound to the current Truffle context and host thread.
-    public Access newAccess() {
+    public MemoryAccess newAccess() {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return new Access(this, cache == null ? null : cache.get());
+        return new MemoryAccess(this, cache == null ? null : cache.get());
     }
 
     /// Copies bytes from a host array into guest memory.
@@ -301,9 +277,9 @@ public final class Memory implements AutoCloseable {
 
             long pageEnd = pageEnd(cursor);
             int count = checkedPageByteCount(cursor, Math.min(end, Math.min(mappedEnd, pageEnd)) - cursor);
-            @Nullable Page page = pages.get(pageNumber(cursor));
+            @Nullable MemoryPage page = pages.get(pageNumber(cursor));
             if (page != null) {
-                UNSAFE.setMemory(page.baseObject(), page.byteOffset(pageOffset(cursor)), count, (byte) 0);
+                MemoryUnsafe.UNSAFE.setMemory(page.baseObject(), page.byteOffset(pageOffset(cursor)), count, (byte) 0);
             }
             cursor += count;
         }
@@ -311,8 +287,8 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
-        Page page = readPage(address, Byte.BYTES, false);
-        return UNSAFE.getByte(page.baseObject(), page.byteOffset(pageOffset(address)));
+        MemoryPage page = readPage(address, Byte.BYTES, false);
+        return MemoryUnsafe.UNSAFE.getByte(page.baseObject(), page.byteOffset(pageOffset(address)));
     }
 
     /// Reads an unsigned byte from guest memory.
@@ -323,9 +299,9 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
         if (isSinglePageAccess(address, Short.BYTES)) {
-            Page page = readPage(address, Short.BYTES, false);
-            short value = UNSAFE.getShort(page.baseObject(), page.byteOffset(pageOffset(address)));
-            return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
+            MemoryPage page = readPage(address, Short.BYTES, false);
+            short value = MemoryUnsafe.UNSAFE.getShort(page.baseObject(), page.byteOffset(pageOffset(address)));
+            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
         }
 
         return (short) readLittleEndianByBytes(address, Short.BYTES);
@@ -339,9 +315,9 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
         if (isSinglePageAccess(address, Integer.BYTES)) {
-            Page page = readPage(address, Integer.BYTES, false);
-            int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
-            return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+            MemoryPage page = readPage(address, Integer.BYTES, false);
+            int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
+            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
         return (int) readLittleEndianByBytes(address, Integer.BYTES);
@@ -355,9 +331,9 @@ public final class Memory implements AutoCloseable {
     /// Reads a little-endian 32-bit instruction from a guest address.
     public int readInstructionInt(long address) {
         if (isSinglePageAccess(address, Integer.BYTES)) {
-            Page page = readPage(address, Integer.BYTES, true);
-            int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
-            return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+            MemoryPage page = readPage(address, Integer.BYTES, true);
+            int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset(address)));
+            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
         return (int) readLittleEndianByBytes(address, Integer.BYTES);
@@ -366,9 +342,9 @@ public final class Memory implements AutoCloseable {
     /// Reads a signed little-endian 64-bit value from guest memory.
     public long readLong(long address) {
         if (isSinglePageAccess(address, Long.BYTES)) {
-            Page page = readPage(address, Long.BYTES, false);
-            long value = UNSAFE.getLong(page.baseObject(), page.byteOffset(pageOffset(address)));
-            return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
+            MemoryPage page = readPage(address, Long.BYTES, false);
+            long value = MemoryUnsafe.UNSAFE.getLong(page.baseObject(), page.byteOffset(pageOffset(address)));
+            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
         }
 
         return readLittleEndianByBytes(address, Long.BYTES);
@@ -395,12 +371,12 @@ public final class Memory implements AutoCloseable {
 
             long pageEnd = pageEnd(cursor);
             int count = checkedPageByteCount(cursor, Math.min(end, Math.min(mappedEnd, pageEnd)) - cursor);
-            Page page = readPage(cursor, count, false);
-            UNSAFE.copyMemory(
+            MemoryPage page = readPage(cursor, count, false);
+            MemoryUnsafe.UNSAFE.copyMemory(
                     page.baseObject(),
                     page.byteOffset(pageOffset(cursor)),
                     result,
-                    Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) destinationOffset,
+                    MemoryUnsafe.HEAP_BYTE_ARRAY_BASE_OFFSET + (long) destinationOffset,
                     count);
             cursor += count;
             destinationOffset += count;
@@ -420,10 +396,10 @@ public final class Memory implements AutoCloseable {
         while (cursor < end) {
             long pageEnd = pageEnd(cursor);
             int count = checkedPageByteCount(cursor, Math.min(end, pageEnd) - cursor);
-            Page page = writePage(cursor, count);
-            UNSAFE.copyMemory(
+            MemoryPage page = writePage(cursor, count);
+            MemoryUnsafe.UNSAFE.copyMemory(
                     source,
-                    Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) sourceOffset,
+                    MemoryUnsafe.HEAP_BYTE_ARRAY_BASE_OFFSET + (long) sourceOffset,
                     page.baseObject(),
                     page.byteOffset(pageOffset(cursor)),
                     count);
@@ -434,16 +410,16 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a byte to guest memory.
     public void writeByte(long address, byte value) {
-        Page page = writePage(address, Byte.BYTES);
-        UNSAFE.putByte(page.baseObject(), page.byteOffset(pageOffset(address)), value);
+        MemoryPage page = writePage(address, Byte.BYTES);
+        MemoryUnsafe.UNSAFE.putByte(page.baseObject(), page.byteOffset(pageOffset(address)), value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory.
     public void writeShort(long address, short value) {
         if (isSinglePageAccess(address, Short.BYTES)) {
-            Page page = writePage(address, Short.BYTES);
-            short stored = NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-            UNSAFE.putShort(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
+            MemoryPage page = writePage(address, Short.BYTES);
+            short stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
+            MemoryUnsafe.UNSAFE.putShort(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
             return;
         }
 
@@ -453,9 +429,9 @@ public final class Memory implements AutoCloseable {
     /// Writes a little-endian 32-bit value to guest memory.
     public void writeInt(long address, int value) {
         if (isSinglePageAccess(address, Integer.BYTES)) {
-            Page page = writePage(address, Integer.BYTES);
-            int stored = NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-            UNSAFE.putInt(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
+            MemoryPage page = writePage(address, Integer.BYTES);
+            int stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+            MemoryUnsafe.UNSAFE.putInt(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
             return;
         }
 
@@ -465,9 +441,9 @@ public final class Memory implements AutoCloseable {
     /// Writes a little-endian 64-bit value to guest memory.
     public void writeLong(long address, long value) {
         if (isSinglePageAccess(address, Long.BYTES)) {
-            Page page = writePage(address, Long.BYTES);
-            long stored = NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-            UNSAFE.putLong(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
+            MemoryPage page = writePage(address, Long.BYTES);
+            long stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
+            MemoryUnsafe.UNSAFE.putLong(page.baseObject(), page.byteOffset(pageOffset(address)), stored);
             return;
         }
 
@@ -590,7 +566,7 @@ public final class Memory implements AutoCloseable {
                     + Long.toUnsignedString(address, 16) + ", length=" + length);
         }
 
-        byte preference = enabled ? HUGE_PAGE_PREFERENCE_ENABLED : HUGE_PAGE_PREFERENCE_DISABLED;
+        byte preference = enabled ? Vma.HUGE_PAGE_PREFERENCE_ENABLED : Vma.HUGE_PAGE_PREFERENCE_DISABLED;
         VmaTable oldVmas = vmas;
         ArrayList<Vma> newVmas = new ArrayList<>(oldVmas.size() + 2);
         for (int index = 0; index < oldVmas.size(); index++) {
@@ -694,11 +670,13 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Reads a little-endian value byte-by-byte using the supplied software TLB.
-    private long readLittleEndianByBytes(long address, int byteCount, @Nullable MappedRegionCache cache) {
+    long readLittleEndianByBytes(long address, int byteCount, @Nullable MappedRegionCache cache) {
         long value = 0;
         for (int index = 0; index < byteCount; index++) {
-            Page page = readPage(address + index, Byte.BYTES, false, cache);
-            int b = UNSAFE.getByte(page.baseObject(), page.byteOffset(pageOffset(address + index))) & 0xff;
+            MemoryPage page = readPage(address + index, Byte.BYTES, false, cache);
+            int b = MemoryUnsafe.UNSAFE.getByte(
+                    page.baseObject(),
+                    page.byteOffset(pageOffset(address + index))) & 0xff;
             value |= (long) b << (index * Byte.SIZE);
         }
         return value;
@@ -710,11 +688,14 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Writes a little-endian value byte-by-byte using the supplied software TLB.
-    private void writeLittleEndianByBytes(long address, long value, int byteCount, @Nullable MappedRegionCache cache) {
+    void writeLittleEndianByBytes(long address, long value, int byteCount, @Nullable MappedRegionCache cache) {
         for (int index = 0; index < byteCount; index++) {
             long currentAddress = address + index;
-            Page page = writePage(currentAddress, Byte.BYTES, cache);
-            UNSAFE.putByte(page.baseObject(), page.byteOffset(pageOffset(currentAddress)), (byte) (value >>> (index * Byte.SIZE)));
+            MemoryPage page = writePage(currentAddress, Byte.BYTES, cache);
+            MemoryUnsafe.UNSAFE.putByte(
+                    page.baseObject(),
+                    page.byteOffset(pageOffset(currentAddress)),
+                    (byte) (value >>> (index * Byte.SIZE)));
         }
     }
 
@@ -734,31 +715,31 @@ public final class Memory implements AutoCloseable {
             reservedHugePages += requestedHugePages;
         }
 
-        vmas = vmas.insert(new Vma(address, address + length, huge, HUGE_PAGE_PREFERENCE_DEFAULT, protection));
+        vmas = vmas.insert(new Vma(address, address + length, huge, Vma.HUGE_PAGE_PREFERENCE_DEFAULT, protection));
         invalidateSoftwareTlb();
         return true;
     }
 
     /// Returns the committed page for a read access, or the shared zero-fill page for uncommitted mapped memory.
-    private Page readPage(long address, int length, boolean instruction) {
+    MemoryPage readPage(long address, int length, boolean instruction) {
         return readPage(address, length, instruction, currentMappedRegionCache());
     }
 
     /// Returns the committed page for a read access using the supplied software TLB.
-    private Page readPage(long address, int length, boolean instruction, @Nullable MappedRegionCache cache) {
+    MemoryPage readPage(long address, int length, boolean instruction, @Nullable MappedRegionCache cache) {
         return readPage(address, length, instruction, cache, null);
     }
 
     /// Returns the committed page for a read access using the supplied software TLB and access-local cache.
-    private Page readPage(
+    MemoryPage readPage(
             long address,
             int length,
             boolean instruction,
             @Nullable MappedRegionCache cache,
-            @Nullable Access access) {
+            @Nullable MemoryAccess access) {
         long requiredProtection = instruction ? PROTECTION_EXECUTE : PROTECTION_READ;
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, address, length, requiredProtection, instruction, cache, access);
+        @Nullable MemoryPage page = cachedPage(pageNumber, address, length, requiredProtection, instruction, cache, access);
         if (page != null) {
             return page;
         }
@@ -775,19 +756,19 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns a committed page for a write access, allocating it on first write.
-    private Page writePage(long address, int length) {
+    MemoryPage writePage(long address, int length) {
         return writePage(address, length, currentMappedRegionCache());
     }
 
     /// Returns a committed page for a write access using the supplied software TLB.
-    private Page writePage(long address, int length, @Nullable MappedRegionCache cache) {
+    MemoryPage writePage(long address, int length, @Nullable MappedRegionCache cache) {
         return writePage(address, length, cache, null);
     }
 
     /// Returns a committed page for a write access using the supplied software TLB and access-local cache.
-    private Page writePage(long address, int length, @Nullable MappedRegionCache cache, @Nullable Access access) {
+    MemoryPage writePage(long address, int length, @Nullable MappedRegionCache cache, @Nullable MemoryAccess access) {
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, address, length, PROTECTION_WRITE, false, cache, access);
+        @Nullable MemoryPage page = cachedPage(pageNumber, address, length, PROTECTION_WRITE, false, cache, access);
         if (page != null) {
             return page;
         }
@@ -805,8 +786,8 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Allocates a heap long-array backing page after enforcing the committed-page limit.
-    private synchronized Page commitPage(long pageNumber) {
-        @Nullable Page page = pages.get(pageNumber);
+    private synchronized MemoryPage commitPage(long pageNumber) {
+        @Nullable MemoryPage page = pages.get(pageNumber);
         if (page != null) {
             return page;
         }
@@ -814,7 +795,7 @@ public final class Memory implements AutoCloseable {
             throw new RiscVException("Guest committed page limit exceeded: limit=" + maxCommittedPages);
         }
 
-        page = Page.heap(pageWords);
+        page = MemoryPage.heap(pageWords);
         pages.put(pageNumber, page);
         committedPages++;
         invalidateSoftwareTlb();
@@ -874,21 +855,21 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns the cached committed page for the current context and thread, or null on miss.
-    private @Nullable Page cachedPage(
+    private @Nullable MemoryPage cachedPage(
             long pageNumber,
             long address,
             int length,
             long requiredProtection,
             boolean instruction,
             @Nullable MappedRegionCache cache,
-            @Nullable Access access) {
+            @Nullable MemoryAccess access) {
         return cache == null ? null : cache.page(pageNumber, address, length, requiredProtection, generation, instruction, access);
     }
 
     /// Stores a committed page in the supplied software TLB.
     private void setCachedPage(
             long pageNumber,
-            Page page,
+            MemoryPage page,
             Vma vma,
             boolean instruction,
             @Nullable MappedRegionCache cache) {
@@ -898,18 +879,18 @@ public final class Memory implements AutoCloseable {
     /// Stores a committed page in the supplied software TLB and access-local cache.
     private void setCachedPage(
             long pageNumber,
-            Page page,
+            MemoryPage page,
             Vma vma,
             boolean instruction,
             @Nullable MappedRegionCache cache,
-            @Nullable Access access) {
+            @Nullable MemoryAccess access) {
         setCachedPage(pageNumber, page, vma, instruction, vma.protection(), cache, access);
     }
 
     /// Stores a committed page in the supplied software TLB with an explicit protection mask.
     private void setCachedPage(
             long pageNumber,
-            Page page,
+            MemoryPage page,
             Vma vma,
             boolean instruction,
             long protection,
@@ -920,12 +901,12 @@ public final class Memory implements AutoCloseable {
     /// Stores a committed page in the supplied software TLB and access-local cache with an explicit protection mask.
     private void setCachedPage(
             long pageNumber,
-            Page page,
+            MemoryPage page,
             Vma vma,
             boolean instruction,
             long protection,
             @Nullable MappedRegionCache cache,
-            @Nullable Access access) {
+            @Nullable MemoryAccess access) {
         long pageStart = pageNumber << pageShift;
         long rangeStart = Math.max(vma.address(), pageStart);
         long rangeEnd = Math.min(vma.endAddress(), pageStart + pageSize);
@@ -955,12 +936,12 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns the guest page number containing the supplied address.
-    private long pageNumber(long address) {
+    long pageNumber(long address) {
         return address >>> pageShift;
     }
 
     /// Returns the byte offset inside the guest page containing the supplied address.
-    private long pageOffset(long address) {
+    long pageOffset(long address) {
         return address & pageMask;
     }
 
@@ -975,7 +956,7 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns true when a scalar access at a page-relative offset stays within one base page.
-    private boolean isSinglePageOffset(long pageOffset, int length) {
+    boolean isSinglePageOffset(long pageOffset, int length) {
         return pageOffset + length <= pageSize;
     }
 
@@ -1052,847 +1033,4 @@ public final class Memory implements AutoCloseable {
         return value > 0 && (value & (value - 1L)) == 0;
     }
 
-    /// Provides scalar guest memory access with a pre-resolved software TLB for one host thread.
-    @NotNullByDefault
-    public static final class Access {
-        /// The memory object that owns page tables and VMA metadata.
-        private final Memory memory;
-
-        /// The software TLB for the current Truffle context and host thread.
-        private final @Nullable MappedRegionCache cache;
-
-        /// Whether this execution facade has a read data-page cache entry.
-        private boolean cachedDataPageValid;
-
-        /// The guest page number associated with the cached read data page.
-        private long cachedDataPageNumber;
-
-        /// The inclusive guest address where the cached read data page is valid.
-        private long cachedDataRangeStart;
-
-        /// The exclusive guest address where the cached read data page stops being valid.
-        private long cachedDataRangeEnd;
-
-        /// The access protections available through the cached read data page.
-        private long cachedDataProtection;
-
-        /// The memory generation associated with the cached read data page.
-        private long cachedDataGeneration;
-
-        /// The Unsafe base object for the cached read data page.
-        private @Nullable Object cachedDataBaseObject;
-
-        /// The Unsafe byte offset of the cached read data page start.
-        private long cachedDataBaseOffset;
-
-        /// Whether this execution facade has a write data-page cache entry.
-        private boolean cachedWriteDataPageValid;
-
-        /// The guest page number associated with the cached write data page.
-        private long cachedWriteDataPageNumber;
-
-        /// The inclusive guest address where the cached write data page is valid.
-        private long cachedWriteDataRangeStart;
-
-        /// The exclusive guest address where the cached write data page stops being valid.
-        private long cachedWriteDataRangeEnd;
-
-        /// The access protections available through the cached write data page.
-        private long cachedWriteDataProtection;
-
-        /// The memory generation associated with the cached write data page.
-        private long cachedWriteDataGeneration;
-
-        /// The Unsafe base object for the cached write data page.
-        private @Nullable Object cachedWriteDataBaseObject;
-
-        /// The Unsafe byte offset of the cached write data page start.
-        private long cachedWriteDataBaseOffset;
-
-        /// Creates an access facade for a memory object and optional software TLB.
-        private Access(Memory memory, @Nullable MappedRegionCache cache) {
-            this.memory = memory;
-            this.cache = cache;
-        }
-
-        /// Reads a signed byte from guest memory.
-        public byte readByte(long address) {
-            long pageOffset = memory.pageOffset(address);
-            ensureReadableDataPage(address, Byte.BYTES);
-            return UNSAFE.getByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
-        }
-
-        /// Reads an unsigned byte from guest memory.
-        public int readUnsignedByte(long address) {
-            return readByte(address) & 0xff;
-        }
-
-        /// Reads a signed little-endian 16-bit value from guest memory.
-        public short readShort(long address) {
-            long pageOffset = memory.pageOffset(address);
-            if (memory.isSinglePageOffset(pageOffset, Short.BYTES)) {
-                ensureReadableDataPage(address, Short.BYTES);
-                short value = UNSAFE.getShort(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
-                return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-            }
-
-            return (short) memory.readLittleEndianByBytes(address, Short.BYTES, cache);
-        }
-
-        /// Reads an unsigned little-endian 16-bit value from guest memory.
-        public int readUnsignedShort(long address) {
-            return readShort(address) & 0xffff;
-        }
-
-        /// Reads a signed little-endian 32-bit value from guest memory.
-        public int readInt(long address) {
-            long pageOffset = memory.pageOffset(address);
-            if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
-                ensureReadableDataPage(address, Integer.BYTES);
-                int value = UNSAFE.getInt(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
-                return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-            }
-
-            return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache);
-        }
-
-        /// Reads an unsigned little-endian 32-bit value from guest memory.
-        public long readUnsignedInt(long address) {
-            return readInt(address) & 0xffff_ffffL;
-        }
-
-        /// Reads a little-endian 32-bit instruction from a guest address.
-        public int readInstructionInt(long address) {
-            long pageOffset = memory.pageOffset(address);
-            if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
-                Page page = memory.readPage(address, Integer.BYTES, true, cache);
-                int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset));
-                return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-            }
-
-            return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache);
-        }
-
-        /// Reads a signed little-endian 64-bit value from guest memory.
-        public long readLong(long address) {
-            long pageOffset = memory.pageOffset(address);
-            if (memory.isSinglePageOffset(pageOffset, Long.BYTES)) {
-                ensureReadableDataPage(address, Long.BYTES);
-                long value = UNSAFE.getLong(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
-                return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-            }
-
-            return memory.readLittleEndianByBytes(address, Long.BYTES, cache);
-        }
-
-        /// Writes a byte to guest memory.
-        public void writeByte(long address, byte value) {
-            long pageOffset = memory.pageOffset(address);
-            ensureWritableDataPage(address, Byte.BYTES);
-            UNSAFE.putByte(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
-        }
-
-        /// Writes a little-endian 16-bit value to guest memory.
-        public void writeShort(long address, short value) {
-            long pageOffset = memory.pageOffset(address);
-            if (memory.isSinglePageOffset(pageOffset, Short.BYTES)) {
-                ensureWritableDataPage(address, Short.BYTES);
-                short stored = NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-                UNSAFE.putShort(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
-                return;
-            }
-
-            memory.writeLittleEndianByBytes(address, value, Short.BYTES, cache);
-        }
-
-        /// Writes a little-endian 32-bit value to guest memory.
-        public void writeInt(long address, int value) {
-            long pageOffset = memory.pageOffset(address);
-            if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
-                ensureWritableDataPage(address, Integer.BYTES);
-                int stored = NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-                UNSAFE.putInt(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
-                return;
-            }
-
-            memory.writeLittleEndianByBytes(address, value, Integer.BYTES, cache);
-        }
-
-        /// Writes a little-endian 64-bit value to guest memory.
-        public void writeLong(long address, long value) {
-            long pageOffset = memory.pageOffset(address);
-            if (memory.isSinglePageOffset(pageOffset, Long.BYTES)) {
-                ensureWritableDataPage(address, Long.BYTES);
-                long stored = NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-                UNSAFE.putLong(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
-                return;
-            }
-
-            memory.writeLittleEndianByBytes(address, value, Long.BYTES, cache);
-        }
-
-        /// Ensures the access-local cache contains the readable data page for the supplied range.
-        private void ensureReadableDataPage(long address, int length) {
-            if (!hasCachedDataPage(address, length, PROTECTION_READ)) {
-                memory.readPage(address, length, false, cache, this);
-            }
-        }
-
-        /// Ensures the access-local cache contains the writable data page for the supplied range.
-        private void ensureWritableDataPage(long address, int length) {
-            if (!hasCachedWriteDataPage(address, length, PROTECTION_WRITE)) {
-                memory.writePage(address, length, cache, this);
-            }
-        }
-
-        /// Returns true when the access-local data-page cache satisfies the supplied range and protection.
-        private boolean hasCachedDataPage(long address, int length, long requiredProtection) {
-            long pageNumber = memory.pageNumber(address);
-            return cachedDataPageValid
-                    && cachedDataPageNumber == pageNumber
-                    && cachedDataGeneration == memory.generation
-                    && address >= cachedDataRangeStart
-                    && length <= cachedDataRangeEnd - address
-                    && (cachedDataProtection & requiredProtection) == requiredProtection;
-        }
-
-        /// Returns true when the access-local write data-page cache satisfies the supplied range and protection.
-        private boolean hasCachedWriteDataPage(long address, int length, long requiredProtection) {
-            long pageNumber = memory.pageNumber(address);
-            return cachedWriteDataPageValid
-                    && cachedWriteDataPageNumber == pageNumber
-                    && cachedWriteDataGeneration == memory.generation
-                    && address >= cachedWriteDataRangeStart
-                    && length <= cachedWriteDataRangeEnd - address
-                    && (cachedWriteDataProtection & requiredProtection) == requiredProtection;
-        }
-
-        /// Stores one data-page lookup in the access-local cache.
-        private void setDataPage(
-                long pageNumber,
-                long rangeStart,
-                long rangeEnd,
-                long protection,
-                long generation,
-                Page page) {
-            if ((protection & PROTECTION_READ) != 0) {
-                cachedDataPageNumber = pageNumber;
-                cachedDataRangeStart = rangeStart;
-                cachedDataRangeEnd = rangeEnd;
-                cachedDataProtection = protection;
-                cachedDataGeneration = generation;
-                cachedDataBaseObject = page.baseObject();
-                cachedDataBaseOffset = page.baseOffset();
-                cachedDataPageValid = true;
-            }
-            if ((protection & PROTECTION_WRITE) != 0) {
-                cachedWriteDataPageNumber = pageNumber;
-                cachedWriteDataRangeStart = rangeStart;
-                cachedWriteDataRangeEnd = rangeEnd;
-                cachedWriteDataProtection = protection;
-                cachedWriteDataGeneration = generation;
-                cachedWriteDataBaseObject = page.baseObject();
-                cachedWriteDataBaseOffset = page.baseOffset();
-                cachedWriteDataPageValid = true;
-            }
-        }
-
-    }
-
-    /// Stores committed pages in a lazily allocated radix page table.
-    @NotNullByDefault
-    private static final class PageTable {
-        /// Number of guest page-number bits consumed at each radix level.
-        private static final int LEVEL_BITS = 9;
-
-        /// Number of entries in every radix node.
-        private static final int LEVEL_SIZE = 1 << LEVEL_BITS;
-
-        /// Bit mask selecting an entry inside one radix node.
-        private static final int LEVEL_MASK = LEVEL_SIZE - 1;
-
-        /// VarHandle used to publish and read radix node entries.
-        private static final VarHandle ENTRY_HANDLE = MethodHandles.arrayElementVarHandle(Object[].class);
-
-        /// The root radix array.
-        private final Object[] root = new Object[LEVEL_SIZE];
-
-        /// The bit shift used by the root radix level for this memory window.
-        private final int rootShift;
-
-        /// Creates a page table sized for the configured guest virtual memory window.
-        private PageTable(int pageShift, long endAddress) {
-            long maximumPageNumber = endAddress == 0 ? 0 : (endAddress - 1L) >>> pageShift;
-            int pageNumberBits = Long.SIZE - Long.numberOfLeadingZeros(maximumPageNumber);
-            int levels = Math.max(1, (pageNumberBits + LEVEL_BITS - 1) / LEVEL_BITS);
-            this.rootShift = (levels - 1) * LEVEL_BITS;
-        }
-
-        /// Returns the committed page for a guest page number, or null when absent.
-        private @Nullable Page get(long pageNumber) {
-            Object[] node = root;
-            if (!fitsTable(pageNumber)) {
-                return null;
-            }
-            for (int shift = rootShift; shift > 0; shift -= LEVEL_BITS) {
-                @Nullable Object child = ENTRY_HANDLE.getAcquire(node, levelIndex(pageNumber, shift));
-                if (child == null) {
-                    return null;
-                }
-                node = (Object[]) child;
-            }
-            return (Page) ENTRY_HANDLE.getAcquire(node, levelIndex(pageNumber, 0));
-        }
-
-        /// Stores a committed page for a guest page number.
-        private void put(long pageNumber, Page page) {
-            Object[] node = root;
-            if (!fitsTable(pageNumber)) {
-                throw new RiscVException("Guest page number is outside the configured page table: " + pageNumber);
-            }
-            for (int shift = rootShift; shift > 0; shift -= LEVEL_BITS) {
-                int index = levelIndex(pageNumber, shift);
-                @Nullable Object child = ENTRY_HANDLE.getAcquire(node, index);
-                if (child == null) {
-                    child = new Object[LEVEL_SIZE];
-                    ENTRY_HANDLE.setRelease(node, index, child);
-                }
-                node = (Object[]) child;
-            }
-            ENTRY_HANDLE.setRelease(node, levelIndex(pageNumber, 0), page);
-        }
-
-        /// Removes, closes, and counts pages with guest page numbers in the supplied half-open range.
-        private long removeRange(long startPageNumber, long endPageNumber) {
-            if (startPageNumber >= endPageNumber) {
-                return 0;
-            }
-            return removeRange(root, rootShift, 0, startPageNumber, endPageNumber);
-        }
-
-        /// Closes every committed page and resets the table to its initial empty state.
-        private void closeAndClear() {
-            closeAndClear(root, rootShift);
-        }
-
-        /// Returns true when a page number is representable in this table's root level.
-        private boolean fitsTable(long pageNumber) {
-            return (pageNumber >>> (rootShift + LEVEL_BITS)) == 0;
-        }
-
-        /// Removes pages from a radix subtree intersecting the supplied page range.
-        private static long removeRange(
-                Object[] node,
-                int shift,
-                long nodeBase,
-                long startPageNumber,
-                long endPageNumber) {
-            if (shift == 0) {
-                int startIndex = leafStartIndex(nodeBase, startPageNumber);
-                int endIndex = leafEndIndex(nodeBase, endPageNumber);
-                long removedPages = 0;
-                for (int index = startIndex; index < endIndex; index++) {
-                    @Nullable Object entry = ENTRY_HANDLE.getAndSet(node, index, null);
-                    if (entry instanceof Page page) {
-                        page.close();
-                        removedPages++;
-                    }
-                }
-                return removedPages;
-            }
-
-            int startIndex = subtreeStartIndex(shift, nodeBase, startPageNumber);
-            int endIndex = subtreeEndIndex(shift, nodeBase, endPageNumber);
-            long removedPages = 0;
-            for (int index = startIndex; index < endIndex; index++) {
-                @Nullable Object entry = ENTRY_HANDLE.getAcquire(node, index);
-                if (!(entry instanceof Object[] child)) {
-                    continue;
-                }
-                long childBase = nodeBase + ((long) index << shift);
-                removedPages += removeRange(child, shift - LEVEL_BITS, childBase, startPageNumber, endPageNumber);
-                if (isEmpty(child)) {
-                    ENTRY_HANDLE.setRelease(node, index, null);
-                }
-            }
-            return removedPages;
-        }
-
-        /// Closes and clears every committed page in a radix subtree.
-        private static void closeAndClear(Object[] node, int shift) {
-            for (int index = 0; index < LEVEL_SIZE; index++) {
-                @Nullable Object entry = ENTRY_HANDLE.getAndSet(node, index, null);
-                if (entry == null) {
-                    continue;
-                }
-                if (shift == 0) {
-                    if (entry instanceof Page page) {
-                        page.close();
-                    }
-                } else {
-                    closeAndClear((Object[]) entry, shift - LEVEL_BITS);
-                }
-            }
-        }
-
-        /// Returns true when a radix array contains no published entries.
-        private static boolean isEmpty(Object[] node) {
-            for (int index = 0; index < LEVEL_SIZE; index++) {
-                if (ENTRY_HANDLE.getAcquire(node, index) != null) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        /// Returns the radix index at the supplied page-number bit shift.
-        private static int levelIndex(long pageNumber, int shift) {
-            return (int) (pageNumber >>> shift) & LEVEL_MASK;
-        }
-
-        /// Returns the first leaf index that can overlap a page range.
-        private static int leafStartIndex(long nodeBase, long startPageNumber) {
-            return (int) Math.max(0L, startPageNumber - nodeBase);
-        }
-
-        /// Returns the exclusive leaf index that can overlap a page range.
-        private static int leafEndIndex(long nodeBase, long endPageNumber) {
-            return (int) Math.min(LEVEL_SIZE, endPageNumber - nodeBase);
-        }
-
-        /// Returns the first child index that can overlap a page range.
-        private static int subtreeStartIndex(int shift, long nodeBase, long startPageNumber) {
-            long offset = Math.max(0L, startPageNumber - nodeBase);
-            return (int) Math.min(LEVEL_SIZE, offset >>> shift);
-        }
-
-        /// Returns the exclusive child index that can overlap a page range.
-        private static int subtreeEndIndex(int shift, long nodeBase, long endPageNumber) {
-            long offset = Math.max(0L, endPageNumber - nodeBase);
-            if (offset == 0) {
-                return 0;
-            }
-            long index = ((offset - 1L) >>> shift) + 1L;
-            return (int) Math.min(LEVEL_SIZE, index);
-        }
-
-    }
-
-    /// Stores mutable software TLB state for one Truffle context and host thread.
-    public static final class MappedRegionCache {
-        /// The number of cached data pages.
-        private static final int DATA_CACHE_SIZE = 64;
-
-        /// The number of cached instruction pages.
-        private static final int INSTRUCTION_CACHE_SIZE = 16;
-
-        /// Direct-mapped cached data page numbers.
-        private final long[] dataPageNumbers = new long[DATA_CACHE_SIZE];
-
-        /// Inclusive valid guest address starts for direct-mapped cached data pages.
-        private final long[] dataRangeStarts = new long[DATA_CACHE_SIZE];
-
-        /// Exclusive valid guest address ends for direct-mapped cached data pages.
-        private final long[] dataRangeEnds = new long[DATA_CACHE_SIZE];
-
-        /// Access protections associated with direct-mapped cached data pages.
-        private final long[] dataProtections = new long[DATA_CACHE_SIZE];
-
-        /// Memory generations associated with direct-mapped cached data pages.
-        private final long[] dataGenerations = new long[DATA_CACHE_SIZE];
-
-        /// Direct-mapped cached committed data pages.
-        private final @Nullable Page[] dataPages = new Page[DATA_CACHE_SIZE];
-
-        /// Direct-mapped cached instruction page numbers.
-        private final long[] instructionPageNumbers = new long[INSTRUCTION_CACHE_SIZE];
-
-        /// Inclusive valid guest address starts for direct-mapped cached instruction pages.
-        private final long[] instructionRangeStarts = new long[INSTRUCTION_CACHE_SIZE];
-
-        /// Exclusive valid guest address ends for direct-mapped cached instruction pages.
-        private final long[] instructionRangeEnds = new long[INSTRUCTION_CACHE_SIZE];
-
-        /// Access protections associated with direct-mapped cached instruction pages.
-        private final long[] instructionProtections = new long[INSTRUCTION_CACHE_SIZE];
-
-        /// Memory generations associated with direct-mapped cached instruction pages.
-        private final long[] instructionGenerations = new long[INSTRUCTION_CACHE_SIZE];
-
-        /// Direct-mapped cached committed instruction pages.
-        private final @Nullable Page[] instructionPages = new Page[INSTRUCTION_CACHE_SIZE];
-
-        /// Creates an empty software TLB.
-        public MappedRegionCache() {
-        }
-
-        /// Returns a cached page, or null when the lookup misses.
-        private @Nullable Page page(
-                long pageNumber,
-                long address,
-                int length,
-                long requiredProtection,
-                long generation,
-                boolean instruction,
-                @Nullable Access access) {
-            return instruction
-                    ? page(
-                            pageNumber,
-                            address,
-                            length,
-                            requiredProtection,
-                            generation,
-                            instructionPageNumbers,
-                            instructionRangeStarts,
-                            instructionRangeEnds,
-                            instructionProtections,
-                            instructionGenerations,
-                            instructionPages,
-                            null)
-                    : page(
-                            pageNumber,
-                            address,
-                            length,
-                            requiredProtection,
-                            generation,
-                            dataPageNumbers,
-                            dataRangeStarts,
-                            dataRangeEnds,
-                            dataProtections,
-                            dataGenerations,
-                            dataPages,
-                            access);
-        }
-
-        /// Stores a cached committed page.
-        private void setPage(
-                long pageNumber,
-                long rangeStart,
-                long rangeEnd,
-                long protection,
-                long generation,
-                Page page,
-                boolean instruction) {
-            if (instruction) {
-                setPage(
-                        pageNumber,
-                        rangeStart,
-                        rangeEnd,
-                        protection,
-                        generation,
-                        page,
-                        instructionPageNumbers,
-                        instructionRangeStarts,
-                        instructionRangeEnds,
-                        instructionProtections,
-                        instructionGenerations,
-                        instructionPages);
-            } else {
-                setPage(
-                        pageNumber,
-                        rangeStart,
-                        rangeEnd,
-                        protection,
-                        generation,
-                        page,
-                        dataPageNumbers,
-                        dataRangeStarts,
-                        dataRangeEnds,
-                        dataProtections,
-                        dataGenerations,
-                        dataPages);
-            }
-        }
-
-        /// Returns a cached page from a direct-mapped page cache.
-        private static @Nullable Page page(
-                long pageNumber,
-                long address,
-                int length,
-                long requiredProtection,
-                long generation,
-                long[] pageNumbers,
-                long[] rangeStarts,
-                long[] rangeEnds,
-                long[] protections,
-                long[] generations,
-                @Nullable Page[] pages,
-                @Nullable Access access) {
-            int index = cacheSlot(pageNumber, pages.length);
-            @Nullable Page page = pages[index];
-            if (page != null
-                    && pageNumbers[index] == pageNumber
-                    && generations[index] == generation
-                    && address >= rangeStarts[index]
-                    && length <= rangeEnds[index] - address
-                    && (protections[index] & requiredProtection) == requiredProtection) {
-                if (access != null) {
-                    access.setDataPage(
-                            pageNumber,
-                            rangeStarts[index],
-                            rangeEnds[index],
-                            protections[index],
-                            generations[index],
-                            page);
-                }
-                return page;
-            }
-            return null;
-        }
-
-        /// Stores a page in a direct-mapped page cache.
-        private static void setPage(
-                long pageNumber,
-                long rangeStart,
-                long rangeEnd,
-                long protection,
-                long generation,
-                Page page,
-                long[] pageNumbers,
-                long[] rangeStarts,
-                long[] rangeEnds,
-                long[] protections,
-                long[] generations,
-                @Nullable Page[] pages) {
-            int index = cacheSlot(pageNumber, pages.length);
-            pageNumbers[index] = pageNumber;
-            rangeStarts[index] = rangeStart;
-            rangeEnds[index] = rangeEnd;
-            protections[index] = protection;
-            generations[index] = generation;
-            pages[index] = page;
-        }
-
-        /// Hashes a page number into a direct-mapped cache slot.
-        private static int cacheSlot(long pageNumber, int length) {
-            long hash = pageNumber ^ (pageNumber >>> 6) ^ (pageNumber >>> 12);
-            return (int) hash & (length - 1);
-        }
-    }
-
-    /// Stores one committed guest page with replaceable backing.
-    @NotNullByDefault
-    private static final class Page {
-        /// The Unsafe base object, or null when baseOffset is an absolute native address.
-        private final @Nullable Object baseObject;
-
-        /// The Unsafe byte offset of the first byte in the page.
-        private final long baseOffset;
-
-        /// An object retained for the lifetime of the page backing.
-        private final @Nullable Object owner;
-
-        /// The optional release action for non-GC-managed backing.
-        private final @Nullable Runnable closeAction;
-
-        /// Creates a committed guest page with the supplied Unsafe access coordinates.
-        private Page(
-                @Nullable Object baseObject,
-                long baseOffset,
-                @Nullable Object owner,
-                @Nullable Runnable closeAction) {
-            this.baseObject = baseObject;
-            this.baseOffset = baseOffset;
-            this.owner = owner;
-            this.closeAction = closeAction;
-        }
-
-        /// Creates a committed guest page backed by a zero-filled heap long array.
-        private static Page heap(int pageWords) {
-            long[] data = new long[pageWords];
-            return new Page(data, HEAP_LONG_ARRAY_BASE_OFFSET, data, null);
-        }
-
-        /// Returns the Unsafe base object, or null for absolute native-address backing.
-        private @Nullable Object baseObject() {
-            return baseObject;
-        }
-
-        /// Returns the Unsafe byte offset of the first byte in this page.
-        private long baseOffset() {
-            return baseOffset;
-        }
-
-        /// Returns the Unsafe byte offset for an access at the supplied page-relative byte offset.
-        private long byteOffset(long pageOffset) {
-            return baseOffset + pageOffset;
-        }
-
-        /// Releases resources owned by this page backing.
-        private void close() {
-            @Nullable Runnable action = this.closeAction;
-            if (action != null) {
-                action.run();
-            }
-        }
-    }
-
-    /// Describes a guest virtual memory area.
-    ///
-    /// @param address the inclusive guest start address of the VMA
-    /// @param endAddress the exclusive guest end address of the VMA
-    /// @param huge whether this VMA reserves MAP_HUGETLB pages
-    /// @param hugePagePreference the transparent huge-page advice recorded for this VMA
-    /// @param protection the supported guest access-protection flags for this VMA
-    private record Vma(
-            long address,
-            long endAddress,
-            boolean huge,
-            byte hugePagePreference,
-            long protection) {
-    }
-
-    /// Stores sorted guest VMAs in parallel arrays.
-    ///
-    /// @param addresses the inclusive guest start addresses for the VMAs
-    /// @param endAddresses the exclusive guest end addresses for the VMAs
-    /// @param huge whether each VMA reserves MAP_HUGETLB pages
-    /// @param hugePagePreferences the transparent huge-page advice for each VMA
-    /// @param protections the supported guest access-protection flags for each VMA
-    private record VmaTable(
-            long @Unmodifiable [] addresses,
-            long @Unmodifiable [] endAddresses,
-            boolean @Unmodifiable [] huge,
-            byte @Unmodifiable [] hugePagePreferences,
-            long @Unmodifiable [] protections) {
-        /// Creates a VMA snapshot backed by same-length sorted arrays.
-        private VmaTable {
-            if (addresses.length != endAddresses.length
-                    || addresses.length != huge.length
-                    || addresses.length != hugePagePreferences.length
-                    || addresses.length != protections.length) {
-                throw new IllegalArgumentException("VMA arrays have different lengths");
-            }
-        }
-
-        /// Creates an empty VMA snapshot.
-        private static VmaTable empty() {
-            return new VmaTable(new long[0], new long[0], new boolean[0], new byte[0], new long[0]);
-        }
-
-        /// Creates a one-VMA snapshot.
-        private static VmaTable single(
-                long address,
-                long endAddress,
-                boolean huge,
-                byte hugePagePreference,
-                long protection) {
-            return new VmaTable(
-                    new long[]{address},
-                    new long[]{endAddress},
-                    new boolean[]{huge},
-                    new byte[]{hugePagePreference},
-                    new long[]{protection});
-        }
-
-        /// Copies a VMA list into a sorted immutable snapshot.
-        private static VmaTable copyOf(ArrayList<Vma> vmas) {
-            long[] addresses = new long[vmas.size()];
-            long[] endAddresses = new long[vmas.size()];
-            boolean[] huge = new boolean[vmas.size()];
-            byte[] hugePagePreferences = new byte[vmas.size()];
-            long[] protections = new long[vmas.size()];
-            for (int index = 0; index < vmas.size(); index++) {
-                Vma vma = vmas.get(index);
-                addresses[index] = vma.address();
-                endAddresses[index] = vma.endAddress();
-                huge[index] = vma.huge();
-                hugePagePreferences[index] = vma.hugePagePreference();
-                protections[index] = vma.protection();
-            }
-            return new VmaTable(addresses, endAddresses, huge, hugePagePreferences, protections);
-        }
-
-        /// Returns the number of VMAs in this snapshot.
-        private int size() {
-            return addresses.length;
-        }
-
-        /// Returns the VMA at the supplied index.
-        private Vma vma(int index) {
-            return new Vma(
-                    addresses[index],
-                    endAddresses[index],
-                    huge[index],
-                    hugePagePreferences[index],
-                    protections[index]);
-        }
-
-        /// Returns a new snapshot with the supplied non-overlapping VMA inserted.
-        private VmaTable insert(Vma vma) {
-            int insertionIndex = insertionIndex(vma.address());
-            long[] newAddresses = new long[addresses.length + 1];
-            long[] newEndAddresses = new long[endAddresses.length + 1];
-            boolean[] newHuge = new boolean[huge.length + 1];
-            byte[] newHugePagePreferences = new byte[hugePagePreferences.length + 1];
-            long[] newProtections = new long[protections.length + 1];
-            System.arraycopy(addresses, 0, newAddresses, 0, insertionIndex);
-            System.arraycopy(endAddresses, 0, newEndAddresses, 0, insertionIndex);
-            System.arraycopy(huge, 0, newHuge, 0, insertionIndex);
-            System.arraycopy(hugePagePreferences, 0, newHugePagePreferences, 0, insertionIndex);
-            System.arraycopy(protections, 0, newProtections, 0, insertionIndex);
-            newAddresses[insertionIndex] = vma.address();
-            newEndAddresses[insertionIndex] = vma.endAddress();
-            newHuge[insertionIndex] = vma.huge();
-            newHugePagePreferences[insertionIndex] = vma.hugePagePreference();
-            newProtections[insertionIndex] = vma.protection();
-            int copiedEntries = addresses.length - insertionIndex;
-            System.arraycopy(addresses, insertionIndex, newAddresses, insertionIndex + 1, copiedEntries);
-            System.arraycopy(endAddresses, insertionIndex, newEndAddresses, insertionIndex + 1, copiedEntries);
-            System.arraycopy(huge, insertionIndex, newHuge, insertionIndex + 1, copiedEntries);
-            System.arraycopy(
-                    hugePagePreferences,
-                    insertionIndex,
-                    newHugePagePreferences,
-                    insertionIndex + 1,
-                    copiedEntries);
-            System.arraycopy(protections, insertionIndex, newProtections, insertionIndex + 1, copiedEntries);
-            return new VmaTable(newAddresses, newEndAddresses, newHuge, newHugePagePreferences, newProtections);
-        }
-
-        /// Returns true when any VMA overlaps the supplied guest range.
-        private boolean overlaps(long address, long length) {
-            return findOverlap(address, length) != null;
-        }
-
-        /// Finds the VMA fully containing the supplied guest range, or null when absent.
-        private @Nullable Vma find(long address, long length) {
-            int index = Arrays.binarySearch(addresses, address);
-            if (index < 0) {
-                index = -index - 2;
-            }
-            if (index < 0) {
-                return null;
-            }
-            long vmaEndAddress = endAddresses[index];
-            if (address > vmaEndAddress || length > vmaEndAddress - address) {
-                return null;
-            }
-            return vma(index);
-        }
-
-        /// Finds the first VMA overlapping the supplied guest range, or null when absent.
-        private @Nullable Vma findOverlap(long address, long length) {
-            long endAddress = address + length;
-            int insertionIndex = insertionIndex(address);
-            if (insertionIndex > 0) {
-                int previousIndex = insertionIndex - 1;
-                if (rangesOverlap(address, endAddress, addresses[previousIndex], endAddresses[previousIndex])) {
-                    return vma(previousIndex);
-                }
-            }
-            if (insertionIndex >= addresses.length) {
-                return null;
-            }
-            return rangesOverlap(address, endAddress, addresses[insertionIndex], endAddresses[insertionIndex])
-                    ? vma(insertionIndex)
-                    : null;
-        }
-
-        /// Returns the insertion index for an address in this sorted snapshot.
-        private int insertionIndex(long address) {
-            int index = Arrays.binarySearch(addresses, address);
-            return index >= 0 ? index : -index - 1;
-        }
-    }
 }

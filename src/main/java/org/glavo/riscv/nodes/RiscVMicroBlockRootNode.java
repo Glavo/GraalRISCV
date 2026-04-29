@@ -14,6 +14,7 @@ import org.glavo.riscv.constants.RiscVMicroOpcode;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.MachineState;
 import org.glavo.riscv.runtime.RiscVInstructionSemantics;
@@ -121,7 +122,7 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Executes the block with the supplied machine state and memory access facade.
-    void execute(MachineState state, Memory.Access access) {
+    void execute(MachineState state, MemoryAccess access) {
         Memory memory = state.memory();
         long[] registers = state.decodedRegisters();
         if (state.canRetireBlock()) {
@@ -137,7 +138,7 @@ final class RiscVMicroBlockNode extends Node {
 
     /// Executes this block when every instruction can retire without per-instruction checks.
     @ExplodeLoop
-    private void executeBatchedFast(MachineState state, Memory memory, Memory.Access access, long[] registers) {
+    private void executeBatchedFast(MachineState state, Memory memory, MemoryAccess access, long[] registers) {
         for (int index = 0; index < opcodes.length; index++) {
             executeInstruction(state, memory, access, registers, index, BATCHED_FAST_MODE);
         }
@@ -149,7 +150,7 @@ final class RiscVMicroBlockNode extends Node {
 
     /// Executes this block when every instruction can retire without per-instruction checks.
     @ExplodeLoop
-    private void executePreciseFast(MachineState state, Memory memory, Memory.Access access, long[] registers) {
+    private void executePreciseFast(MachineState state, Memory memory, MemoryAccess access, long[] registers) {
         for (int index = 0; index < opcodes.length; index++) {
             executeInstruction(state, memory, access, registers, index, PRECISE_FAST_MODE);
         }
@@ -157,7 +158,7 @@ final class RiscVMicroBlockNode extends Node {
 
     /// Executes this block when tracing or instruction-budget checks are active.
     @ExplodeLoop
-    private void executeChecked(MachineState state, Memory memory, Memory.Access access, long[] registers) {
+    private void executeChecked(MachineState state, Memory memory, MemoryAccess access, long[] registers) {
         for (int index = 0; index < opcodes.length; index++) {
             executeInstruction(state, memory, access, registers, index, CHECKED_MODE);
         }
@@ -167,7 +168,7 @@ final class RiscVMicroBlockNode extends Node {
     private void executeInstruction(
             MachineState state,
             Memory memory,
-            Memory.Access access,
+            MemoryAccess access,
             long[] registers,
             int index,
             byte mode) {
@@ -664,7 +665,7 @@ final class RiscVMicroBlockNode extends Node {
     private void lrWord(
             MachineState state,
             Memory memory,
-            Memory.Access access,
+            MemoryAccess access,
             long[] registers,
             int index,
             int operand,
@@ -682,7 +683,7 @@ final class RiscVMicroBlockNode extends Node {
     private void lrDouble(
             MachineState state,
             Memory memory,
-            Memory.Access access,
+            MemoryAccess access,
             long[] registers,
             int index,
             int operand,
@@ -700,7 +701,7 @@ final class RiscVMicroBlockNode extends Node {
     private void scWord(
             MachineState state,
             Memory memory,
-            Memory.Access access,
+            MemoryAccess access,
             long[] registers,
             int index,
             int operand,
@@ -724,7 +725,7 @@ final class RiscVMicroBlockNode extends Node {
     private void scDouble(
             MachineState state,
             Memory memory,
-            Memory.Access access,
+            MemoryAccess access,
             long[] registers,
             int index,
             int operand,
@@ -748,7 +749,7 @@ final class RiscVMicroBlockNode extends Node {
     private void amoWord(
             MachineState state,
             Memory memory,
-            Memory.Access access,
+            MemoryAccess access,
             long[] registers,
             int index,
             int operand,
@@ -782,7 +783,7 @@ final class RiscVMicroBlockNode extends Node {
     private void amoDouble(
             MachineState state,
             Memory memory,
-            Memory.Access access,
+            MemoryAccess access,
             long[] registers,
             int index,
             int operand,
@@ -1130,11 +1131,11 @@ final class RiscVMicroBlockRootNode extends RootNode {
         this.block = block;
     }
 
-    /// Executes the block with the `MachineState` and `Memory.Access` supplied as arguments.
+    /// Executes the block with the `MachineState` and `MemoryAccess` supplied as arguments.
     @Override
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();
-        block.execute((MachineState) arguments[0], (Memory.Access) arguments[1]);
+        block.execute((MachineState) arguments[0], (MemoryAccess) arguments[1]);
         return null;
     }
 }
