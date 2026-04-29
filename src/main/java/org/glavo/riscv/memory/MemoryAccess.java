@@ -71,8 +71,13 @@ public final class MemoryAccess {
 
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
-        long pageOffset = memory.pageOffset(address);
-        ensureReadableDataPage(address, Byte.BYTES);
+        return readByte(address, memory.layout());
+    }
+
+    /// Reads a signed byte from guest memory using explicit page-layout constants.
+    public byte readByte(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureReadableDataPage(address, Byte.BYTES, layout);
         return MemoryUnsafe.UNSAFE.getByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
     }
 
@@ -81,16 +86,26 @@ public final class MemoryAccess {
         return readByte(address) & 0xff;
     }
 
+    /// Reads an unsigned byte from guest memory using explicit page-layout constants.
+    public int readUnsignedByte(long address, MemoryLayout layout) {
+        return readByte(address, layout) & 0xff;
+    }
+
     /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
-        long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageShortOffset(pageOffset)) {
-            ensureReadableDataPage(address, Short.BYTES);
+        return readShort(address, memory.layout());
+    }
+
+    /// Reads a signed little-endian 16-bit value from guest memory using explicit page-layout constants.
+    public short readShort(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        if (layout.isSinglePageShortOffset(pageOffset)) {
+            ensureReadableDataPage(address, Short.BYTES, layout);
             short value = MemoryUnsafe.UNSAFE.getShort(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
         }
 
-        return (short) memory.readLittleEndianByBytes(address, Short.BYTES, cache);
+        return (short) memory.readLittleEndianByBytes(address, Short.BYTES, cache, layout);
     }
 
     /// Reads an unsigned little-endian 16-bit value from guest memory.
@@ -98,16 +113,26 @@ public final class MemoryAccess {
         return readShort(address) & 0xffff;
     }
 
+    /// Reads an unsigned little-endian 16-bit value from guest memory using explicit page-layout constants.
+    public int readUnsignedShort(long address, MemoryLayout layout) {
+        return readShort(address, layout) & 0xffff;
+    }
+
     /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
-        long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageIntOffset(pageOffset)) {
-            ensureReadableDataPage(address, Integer.BYTES);
+        return readInt(address, memory.layout());
+    }
+
+    /// Reads a signed little-endian 32-bit value from guest memory using explicit page-layout constants.
+    public int readInt(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        if (layout.isSinglePageIntOffset(pageOffset)) {
+            ensureReadableDataPage(address, Integer.BYTES, layout);
             int value = MemoryUnsafe.UNSAFE.getInt(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
-        return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache);
+        return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache, layout);
     }
 
     /// Reads an unsigned little-endian 32-bit value from guest memory.
@@ -115,93 +140,128 @@ public final class MemoryAccess {
         return readInt(address) & 0xffff_ffffL;
     }
 
+    /// Reads an unsigned little-endian 32-bit value from guest memory using explicit page-layout constants.
+    public long readUnsignedInt(long address, MemoryLayout layout) {
+        return readInt(address, layout) & 0xffff_ffffL;
+    }
+
     /// Reads a little-endian 32-bit instruction from a guest address.
     public int readInstructionInt(long address) {
-        long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageIntOffset(pageOffset)) {
-            MemoryPage page = memory.readPage(address, Integer.BYTES, true, cache);
+        return readInstructionInt(address, memory.layout());
+    }
+
+    /// Reads a little-endian 32-bit instruction from a guest address using explicit page-layout constants.
+    public int readInstructionInt(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        if (layout.isSinglePageIntOffset(pageOffset)) {
+            MemoryPage page = memory.readPage(address, Integer.BYTES, true, cache, null, layout);
             int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset));
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
-        return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache);
+        return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache, layout);
     }
 
     /// Reads a signed little-endian 64-bit value from guest memory.
     public long readLong(long address) {
-        long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageLongOffset(pageOffset)) {
-            ensureReadableDataPage(address, Long.BYTES);
+        return readLong(address, memory.layout());
+    }
+
+    /// Reads a signed little-endian 64-bit value from guest memory using explicit page-layout constants.
+    public long readLong(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        if (layout.isSinglePageLongOffset(pageOffset)) {
+            ensureReadableDataPage(address, Long.BYTES, layout);
             long value = MemoryUnsafe.UNSAFE.getLong(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
         }
 
-        return memory.readLittleEndianByBytes(address, Long.BYTES, cache);
+        return memory.readLittleEndianByBytes(address, Long.BYTES, cache, layout);
     }
 
     /// Writes a byte to guest memory.
     public void writeByte(long address, byte value) {
-        long pageOffset = memory.pageOffset(address);
-        ensureWritableDataPage(address, Byte.BYTES);
+        writeByte(address, value, memory.layout());
+    }
+
+    /// Writes a byte to guest memory using explicit page-layout constants.
+    public void writeByte(long address, byte value, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureWritableDataPage(address, Byte.BYTES, layout);
         MemoryUnsafe.UNSAFE.putByte(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory.
     public void writeShort(long address, short value) {
-        long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageShortOffset(pageOffset)) {
-            ensureWritableDataPage(address, Short.BYTES);
+        writeShort(address, value, memory.layout());
+    }
+
+    /// Writes a little-endian 16-bit value to guest memory using explicit page-layout constants.
+    public void writeShort(long address, short value, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        if (layout.isSinglePageShortOffset(pageOffset)) {
+            ensureWritableDataPage(address, Short.BYTES, layout);
             short stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putShort(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
             return;
         }
 
-        memory.writeLittleEndianByBytes(address, value, Short.BYTES, cache);
+        memory.writeLittleEndianByBytes(address, value, Short.BYTES, cache, layout);
     }
 
     /// Writes a little-endian 32-bit value to guest memory.
     public void writeInt(long address, int value) {
-        long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageIntOffset(pageOffset)) {
-            ensureWritableDataPage(address, Integer.BYTES);
+        writeInt(address, value, memory.layout());
+    }
+
+    /// Writes a little-endian 32-bit value to guest memory using explicit page-layout constants.
+    public void writeInt(long address, int value, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        if (layout.isSinglePageIntOffset(pageOffset)) {
+            ensureWritableDataPage(address, Integer.BYTES, layout);
             int stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putInt(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
             return;
         }
 
-        memory.writeLittleEndianByBytes(address, value, Integer.BYTES, cache);
+        memory.writeLittleEndianByBytes(address, value, Integer.BYTES, cache, layout);
     }
 
     /// Writes a little-endian 64-bit value to guest memory.
     public void writeLong(long address, long value) {
-        long pageOffset = memory.pageOffset(address);
-        if (memory.isSinglePageLongOffset(pageOffset)) {
-            ensureWritableDataPage(address, Long.BYTES);
+        writeLong(address, value, memory.layout());
+    }
+
+    /// Writes a little-endian 64-bit value to guest memory using explicit page-layout constants.
+    public void writeLong(long address, long value, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        if (layout.isSinglePageLongOffset(pageOffset)) {
+            ensureWritableDataPage(address, Long.BYTES, layout);
             long stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
             MemoryUnsafe.UNSAFE.putLong(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
             return;
         }
 
-        memory.writeLittleEndianByBytes(address, value, Long.BYTES, cache);
+        memory.writeLittleEndianByBytes(address, value, Long.BYTES, cache, layout);
     }
 
     /// Ensures the access-local cache contains the readable data page for the supplied range.
-    private void ensureReadableDataPage(long address, int length) {
-        if (!hasCachedDataPage(address, length, Memory.PROTECTION_READ)) {
-            memory.readPage(address, length, false, cache, this);
+    private void ensureReadableDataPage(long address, int length, MemoryLayout layout) {
+        if (!hasCachedDataPage(address, length, Memory.PROTECTION_READ, layout)) {
+            memory.readPage(address, length, false, cache, this, layout);
         }
     }
 
     /// Ensures the access-local cache contains the writable data page for the supplied range.
-    private void ensureWritableDataPage(long address, int length) {
-        if (!hasCachedWriteDataPage(address, length, Memory.PROTECTION_WRITE)) {
-            memory.writePage(address, length, cache, this);
+    private void ensureWritableDataPage(long address, int length, MemoryLayout layout) {
+        if (!hasCachedWriteDataPage(address, length, Memory.PROTECTION_WRITE, layout)) {
+            memory.writePage(address, length, cache, this, layout);
         }
     }
 
     /// Returns true when the access-local data-page cache satisfies the supplied range and protection.
-    private boolean hasCachedDataPage(long address, int length, long requiredProtection) {
-        long pageNumber = memory.pageNumber(address);
+    private boolean hasCachedDataPage(long address, int length, long requiredProtection, MemoryLayout layout) {
+        long pageNumber = layout.pageNumber(address);
         return cachedDataPageValid
                 && cachedDataPageNumber == pageNumber
                 && cachedDataGeneration == memory.generation
@@ -211,8 +271,8 @@ public final class MemoryAccess {
     }
 
     /// Returns true when the access-local write data-page cache satisfies the supplied range and protection.
-    private boolean hasCachedWriteDataPage(long address, int length, long requiredProtection) {
-        long pageNumber = memory.pageNumber(address);
+    private boolean hasCachedWriteDataPage(long address, int length, long requiredProtection, MemoryLayout layout) {
+        long pageNumber = layout.pageNumber(address);
         return cachedWriteDataPageValid
                 && cachedWriteDataPageNumber == pageNumber
                 && cachedWriteDataGeneration == memory.generation

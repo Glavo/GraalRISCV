@@ -10,6 +10,7 @@ import com.oracle.truffle.api.nodes.Node.Children;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.memory.MemoryAccess;
+import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.runtime.MachineState;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -28,12 +29,13 @@ final class RiscVMicroTraceRootNode extends RootNode {
     /// Creates a trace root from decoded blocks and side-exit guards.
     RiscVMicroTraceRootNode(
             RiscVLanguage language,
+            MemoryLayout memoryLayout,
             DecodedBlock @Unmodifiable [] decodedBlocks,
             long @Unmodifiable [] expectedNextPcs) {
         super(language);
         this.blocks = new RiscVMicroBlockNode[decodedBlocks.length];
         for (int index = 0; index < decodedBlocks.length; index++) {
-            this.blocks[index] = RiscVMicroBlockCompiler.compileNode(decodedBlocks[index]);
+            this.blocks[index] = RiscVMicroBlockCompiler.compileNode(decodedBlocks[index], memoryLayout);
         }
         this.expectedNextPcs = expectedNextPcs.clone();
     }

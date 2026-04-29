@@ -6,6 +6,7 @@ package org.glavo.riscv.nodes;
 import com.oracle.truffle.api.RootCallTarget;
 import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.constants.RiscVMicroOpcode;
+import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.parser.DecodedInstruction;
 import org.glavo.riscv.parser.RiscVOperation;
@@ -20,13 +21,13 @@ final class RiscVMicroBlockCompiler {
     }
 
     /// Builds a Truffle call target backed by the custom micro-bytecode interpreter.
-    static RootCallTarget compile(RiscVLanguage language, DecodedBlock block) {
-        RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(language, compileNode(block));
+    static RootCallTarget compile(RiscVLanguage language, DecodedBlock block, MemoryLayout memoryLayout) {
+        RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(language, compileNode(block, memoryLayout));
         return root.getCallTarget();
     }
 
     /// Builds an executable micro-bytecode block node for direct embedding in a root.
-    static RiscVMicroBlockNode compileNode(DecodedBlock block) {
+    static RiscVMicroBlockNode compileNode(DecodedBlock block, MemoryLayout memoryLayout) {
         DecodedInstruction @Unmodifiable [] instructions = block.instructions();
         int instructionCount = instructions.length;
         byte[] opcodes = new byte[instructionCount];
@@ -51,6 +52,7 @@ final class RiscVMicroBlockCompiler {
         }
 
         return new RiscVMicroBlockNode(
+                memoryLayout,
                 opcodes,
                 operations,
                 operands,

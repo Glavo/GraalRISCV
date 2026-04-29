@@ -28,7 +28,7 @@
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue measuring the embedded hot trace executor, especially trace length, trigger thresholds, batched store fast paths, the small trace direct-call PIC, and interaction with Graal compilation diagnostics.
-- Continue improving paged-memory slow paths, especially cross-page accesses and richer fault reporting; package-level `MemoryAccess`, fixed-width scalar page-boundary checks, split read/write access-local Unsafe-coordinate page caching, direct-mapped software TLB hits, zero-fill page caching, window-sized VarHandle radix page-table lookup, and VMA access protections are now in place.
+- Continue improving paged-memory slow paths, especially cross-page accesses and richer fault reporting; package-level `MemoryAccess`, Truffle-captured `MemoryLayout` page constants, fixed-width scalar page-boundary checks, split read/write access-local Unsafe-coordinate page caching, direct-mapped software TLB hits, zero-fill page caching, window-sized VarHandle radix page-table lookup, and VMA access protections are now in place.
 - Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and VMA split/merge behavior as the syscall layer is simplified.
 - Keep CoreMark, Zig examples, and the local Go demo as acceptance workloads for the paged-memory migration.
 - Profile the remaining generic complex floating-point arithmetic and conversion micro-op path before deciding whether to split it further; bit-level sign-injection, minimum/maximum, classify, compare, and raw move operations now use direct micro-op bodies.
