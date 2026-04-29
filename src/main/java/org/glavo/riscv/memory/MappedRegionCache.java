@@ -15,38 +15,32 @@ public final class MappedRegionCache {
     /// The number of cached instruction pages.
     private static final int INSTRUCTION_CACHE_SIZE = 16;
 
-    /// Direct-mapped cached data page numbers.
-    private final long[] dataPageNumbers = new long[DATA_CACHE_SIZE];
+    /// The entry offset storing the cached guest page number.
+    private static final int PAGE_NUMBER_OFFSET = 0;
 
-    /// Inclusive valid guest address starts for direct-mapped cached data pages.
-    private final long[] dataRangeStarts = new long[DATA_CACHE_SIZE];
+    /// The entry offset storing the inclusive valid guest address start.
+    private static final int RANGE_START_OFFSET = 1;
 
-    /// Exclusive valid guest address ends for direct-mapped cached data pages.
-    private final long[] dataRangeEnds = new long[DATA_CACHE_SIZE];
+    /// The entry offset storing the exclusive valid guest address end.
+    private static final int RANGE_END_OFFSET = 2;
 
-    /// Access protections associated with direct-mapped cached data pages.
-    private final long[] dataProtections = new long[DATA_CACHE_SIZE];
+    /// The entry offset storing the access protection mask.
+    private static final int PROTECTION_OFFSET = 3;
 
-    /// Memory generations associated with direct-mapped cached data pages.
-    private final long[] dataGenerations = new long[DATA_CACHE_SIZE];
+    /// The entry offset storing the memory generation.
+    private static final int GENERATION_OFFSET = 4;
+
+    /// The number of scalar metadata words stored for one direct-mapped cache entry.
+    private static final int ENTRY_LONG_COUNT = 5;
+
+    /// Packed direct-mapped cached data page metadata.
+    private final long[] dataEntries = new long[DATA_CACHE_SIZE * ENTRY_LONG_COUNT];
 
     /// Direct-mapped cached committed data pages.
     private final @Nullable MemoryPage[] dataPages = new MemoryPage[DATA_CACHE_SIZE];
 
-    /// Direct-mapped cached instruction page numbers.
-    private final long[] instructionPageNumbers = new long[INSTRUCTION_CACHE_SIZE];
-
-    /// Inclusive valid guest address starts for direct-mapped cached instruction pages.
-    private final long[] instructionRangeStarts = new long[INSTRUCTION_CACHE_SIZE];
-
-    /// Exclusive valid guest address ends for direct-mapped cached instruction pages.
-    private final long[] instructionRangeEnds = new long[INSTRUCTION_CACHE_SIZE];
-
-    /// Access protections associated with direct-mapped cached instruction pages.
-    private final long[] instructionProtections = new long[INSTRUCTION_CACHE_SIZE];
-
-    /// Memory generations associated with direct-mapped cached instruction pages.
-    private final long[] instructionGenerations = new long[INSTRUCTION_CACHE_SIZE];
+    /// Packed direct-mapped cached instruction page metadata.
+    private final long[] instructionEntries = new long[INSTRUCTION_CACHE_SIZE * ENTRY_LONG_COUNT];
 
     /// Direct-mapped cached committed instruction pages.
     private final @Nullable MemoryPage[] instructionPages = new MemoryPage[INSTRUCTION_CACHE_SIZE];
@@ -71,11 +65,7 @@ public final class MappedRegionCache {
                         length,
                         requiredProtection,
                         generation,
-                        instructionPageNumbers,
-                        instructionRangeStarts,
-                        instructionRangeEnds,
-                        instructionProtections,
-                        instructionGenerations,
+                        instructionEntries,
                         instructionPages,
                         null)
                 : page(
@@ -84,11 +74,7 @@ public final class MappedRegionCache {
                         length,
                         requiredProtection,
                         generation,
-                        dataPageNumbers,
-                        dataRangeStarts,
-                        dataRangeEnds,
-                        dataProtections,
-                        dataGenerations,
+                        dataEntries,
                         dataPages,
                         access);
     }
@@ -110,11 +96,7 @@ public final class MappedRegionCache {
                     protection,
                     generation,
                     page,
-                    instructionPageNumbers,
-                    instructionRangeStarts,
-                    instructionRangeEnds,
-                    instructionProtections,
-                    instructionGenerations,
+                    instructionEntries,
                     instructionPages);
         } else {
             setPage(
@@ -124,11 +106,7 @@ public final class MappedRegionCache {
                     protection,
                     generation,
                     page,
-                    dataPageNumbers,
-                    dataRangeStarts,
-                    dataRangeEnds,
-                    dataProtections,
-                    dataGenerations,
+                    dataEntries,
                     dataPages);
         }
     }
@@ -140,28 +118,31 @@ public final class MappedRegionCache {
             int length,
             long requiredProtection,
             long generation,
-            long[] pageNumbers,
-            long[] rangeStarts,
-            long[] rangeEnds,
-            long[] protections,
-            long[] generations,
+            long[] entries,
             @Nullable MemoryPage[] pages,
             @Nullable MemoryAccess access) {
         int index = cacheSlot(pageNumber, pages.length);
         @Nullable MemoryPage page = pages[index];
-        if (page != null
-                && pageNumbers[index] == pageNumber
-                && generations[index] == generation
-                && address >= rangeStarts[index]
-                && length <= rangeEnds[index] - address
-                && (protections[index] & requiredProtection) == requiredProtection) {
+        int entryOffset = entryOffset(index);
+        if (page == null || entries[entryOffset + PAGE_NUMBER_OFFSET] != pageNumber) {
+            return null;
+        }
+
+        long entryGeneration = entries[entryOffset + GENERATION_OFFSET];
+        long rangeStart = entries[entryOffset + RANGE_START_OFFSET];
+        long rangeEnd = entries[entryOffset + RANGE_END_OFFSET];
+        long protection = entries[entryOffset + PROTECTION_OFFSET];
+        if (entryGeneration == generation
+                && address >= rangeStart
+                && length <= rangeEnd - address
+                && (protection & requiredProtection) == requiredProtection) {
             if (access != null) {
                 access.setDataPage(
                         pageNumber,
-                        rangeStarts[index],
-                        rangeEnds[index],
-                        protections[index],
-                        generations[index],
+                        rangeStart,
+                        rangeEnd,
+                        protection,
+                        entryGeneration,
                         page);
             }
             return page;
@@ -177,19 +158,21 @@ public final class MappedRegionCache {
             long protection,
             long generation,
             MemoryPage page,
-            long[] pageNumbers,
-            long[] rangeStarts,
-            long[] rangeEnds,
-            long[] protections,
-            long[] generations,
+            long[] entries,
             @Nullable MemoryPage[] pages) {
         int index = cacheSlot(pageNumber, pages.length);
-        pageNumbers[index] = pageNumber;
-        rangeStarts[index] = rangeStart;
-        rangeEnds[index] = rangeEnd;
-        protections[index] = protection;
-        generations[index] = generation;
+        int entryOffset = entryOffset(index);
+        entries[entryOffset + PAGE_NUMBER_OFFSET] = pageNumber;
+        entries[entryOffset + RANGE_START_OFFSET] = rangeStart;
+        entries[entryOffset + RANGE_END_OFFSET] = rangeEnd;
+        entries[entryOffset + PROTECTION_OFFSET] = protection;
+        entries[entryOffset + GENERATION_OFFSET] = generation;
         pages[index] = page;
+    }
+
+    /// Returns the first metadata word offset for a direct-mapped cache slot.
+    private static int entryOffset(int index) {
+        return index * ENTRY_LONG_COUNT;
     }
 
     /// Hashes a page number into a direct-mapped cache slot.
