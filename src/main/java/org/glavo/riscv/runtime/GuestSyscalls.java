@@ -4678,10 +4678,10 @@ public final class GuestSyscalls implements AutoCloseable {
             }
         }
 
+        if (!ensureMemoryBacking(mappingAddress, alignedLength, protection, hugeTlb)) {
+            return ENOMEM;
+        }
         if (isMemoryBackedProtection(protection)) {
-            if (!ensureMemoryBacking(mappingAddress, alignedLength, hugeTlb)) {
-                return ENOMEM;
-            }
             memory.clear(mappingAddress, alignedLength);
         }
         addMemoryMapping(mappingAddress, alignedLength, protection);
@@ -5219,18 +5219,18 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Ensures that the supplied range has native backing for non-`PROT_NONE` access.
     private boolean ensureMemoryBacking(long address, long length) {
-        return ensureMemoryBacking(address, length, false);
+        return ensureMemoryBacking(address, length, Memory.PROTECTION_READ_WRITE_EXECUTE, false);
     }
 
-    /// Ensures that the supplied range has guest memory backing for non-`PROT_NONE` access.
-    private boolean ensureMemoryBacking(long address, long length, boolean hugeTlb) {
+    /// Ensures that the supplied range has guest memory backing with the requested protection.
+    private boolean ensureMemoryBacking(long address, long length, long protection, boolean hugeTlb) {
         if (!isValidGuestRange(address, length)) {
             return false;
         }
         if (memory.isBacked(address, length)) {
-            return true;
+            return memory.protect(address, length, protection);
         }
-        return hugeTlb ? memory.mapHuge(address, length) : memory.map(address, length);
+        return hugeTlb ? memory.mapHuge(address, length, protection) : memory.map(address, length, protection);
     }
 
     /// Ensures the newly grown part of the process heap has native backing.
@@ -5243,19 +5243,17 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Releases or clears native backing for a removed mapping range.
     private void releaseRemovedMappingMemory(MemoryMapping mapping, long address, long length) {
-        if (!mapping.isBacked()) {
-            return;
-        }
         if (memory.hasDenseInitialBacking() && fitsGuestMemory(address, length)) {
-            memory.clear(address, length);
+            if (mapping.isBacked()) {
+                memory.clear(address, length);
+            }
+            if (!memory.protect(address, length, Memory.PROTECTION_READ_WRITE_EXECUTE)) {
+                throw new RiscVException("Failed to restore dense guest memory protection: address=0x"
+                        + Long.toUnsignedString(address, 16)
+                        + ", length="
+                        + length);
+            }
         } else {
-            memory.unmap(address, length);
-        }
-    }
-
-    /// Releases native backing after a mapped range transitions to `PROT_NONE`.
-    private void releaseProtectedMemory(long address, long length) {
-        if (!memory.hasDenseInitialBacking() || !fitsGuestMemory(address, length)) {
             memory.unmap(address, length);
         }
     }
@@ -5277,15 +5275,17 @@ public final class GuestSyscalls implements AutoCloseable {
             long protectEnd = Math.min(endAddress, mapping.endAddress());
             long protectLength = protectEnd - protectStart;
             if (memory.isBacked(protectStart, protectLength)) {
-                memory.clear(protectStart, protectLength);
+                if (!memory.protect(protectStart, protectLength, protection)) {
+                    rollbackAllocatedMemory(allocatedRanges);
+                    return false;
+                }
                 continue;
             }
-            if (!memory.map(protectStart, protectLength)) {
+            if (!memory.map(protectStart, protectLength, protection)) {
                 rollbackAllocatedMemory(allocatedRanges);
                 return false;
             }
             allocatedRanges.add(new MemoryRange(protectStart, protectLength));
-            memory.clear(protectStart, protectLength);
         }
         return true;
     }
@@ -5311,8 +5311,11 @@ public final class GuestSyscalls implements AutoCloseable {
             long protectStart = Math.max(address, mapping.address());
             long protectEnd = Math.min(endAddress, mapping.endAddress());
             long protectLength = protectEnd - protectStart;
-            if (mapping.isBacked() && !isMemoryBackedProtection(protection)) {
-                releaseProtectedMemory(protectStart, protectLength);
+            if (!memory.protect(protectStart, protectLength, protection)) {
+                throw new RiscVException("Failed to update guest memory protection: address=0x"
+                        + Long.toUnsignedString(protectStart, 16)
+                        + ", length="
+                        + protectLength);
             }
 
             if (mapping.address() < protectStart) {

@@ -246,4 +246,49 @@ public final class MemoryTest {
             assertEquals(60, memory.readUnsignedByte(Memory.DEFAULT_BASE_ADDRESS + 60 * pageSize));
         }
     }
+
+    /// Verifies that VMA access protection controls guest data reads and writes.
+    @Test
+    public void enforcesDataAccessProtection() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null)) {
+            assertTrue(memory.map(
+                    Memory.DEFAULT_BASE_ADDRESS,
+                    Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            memory.writeLong(Memory.DEFAULT_BASE_ADDRESS, 0x0102_0304_0506_0708L);
+
+            assertTrue(memory.protect(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, Memory.PROTECTION_READ));
+            assertEquals(0x0102_0304_0506_0708L, memory.readLong(Memory.DEFAULT_BASE_ADDRESS));
+            assertThrows(RiscVException.class, () -> memory.writeByte(Memory.DEFAULT_BASE_ADDRESS, (byte) 0x7f));
+
+            assertTrue(memory.protect(
+                    Memory.DEFAULT_BASE_ADDRESS,
+                    Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            memory.writeByte(Memory.DEFAULT_BASE_ADDRESS, (byte) 0x7f);
+            assertEquals(0x7f, memory.readUnsignedByte(Memory.DEFAULT_BASE_ADDRESS));
+
+            assertTrue(memory.protect(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, Memory.PROTECTION_NONE));
+            assertThrows(RiscVException.class, () -> memory.readByte(Memory.DEFAULT_BASE_ADDRESS));
+        }
+    }
+
+    /// Verifies that instruction fetches require execute permission.
+    @Test
+    public void enforcesInstructionFetchProtection() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null)) {
+            assertTrue(memory.map(
+                    Memory.DEFAULT_BASE_ADDRESS,
+                    Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            memory.writeInt(Memory.DEFAULT_BASE_ADDRESS, 0x0000_0513);
+            assertThrows(RiscVException.class, () -> memory.readInstructionInt(Memory.DEFAULT_BASE_ADDRESS));
+
+            assertTrue(memory.protect(
+                    Memory.DEFAULT_BASE_ADDRESS,
+                    Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_EXECUTE));
+            assertEquals(0x0000_0513, memory.readInstructionInt(Memory.DEFAULT_BASE_ADDRESS));
+        }
+    }
 }

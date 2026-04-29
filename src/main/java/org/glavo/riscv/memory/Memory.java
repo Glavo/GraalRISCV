@@ -32,6 +32,25 @@ public final class Memory implements AutoCloseable {
     /// The default huge-page pool size.
     public static final long DEFAULT_HUGE_PAGES = 0;
 
+    /// Guest pages cannot be read, written, or executed.
+    public static final long PROTECTION_NONE = 0;
+
+    /// Guest pages can be read.
+    public static final long PROTECTION_READ = 0x1;
+
+    /// Guest pages can be written.
+    public static final long PROTECTION_WRITE = 0x2;
+
+    /// Guest pages can be used for instruction fetch.
+    public static final long PROTECTION_EXECUTE = 0x4;
+
+    /// Guest pages support every user-mode access type.
+    public static final long PROTECTION_READ_WRITE_EXECUTE =
+            PROTECTION_READ | PROTECTION_WRITE | PROTECTION_EXECUTE;
+
+    /// The supported guest page-protection bit mask.
+    public static final long SUPPORTED_PROTECTION_MASK = PROTECTION_READ_WRITE_EXECUTE;
+
     /// The Unsafe instance used to access heap page backing without MemorySegment overhead.
     private static final Unsafe UNSAFE = Unsafe.getUnsafe();
 
@@ -185,7 +204,12 @@ public final class Memory implements AutoCloseable {
         this.initialWindowMapped = initialWindowMapped;
         this.cachedMappedRegion = cachedMappedRegion;
         this.vmas = initialWindowMapped
-                ? VmaTable.single(baseAddress, baseAddress + size, false, HUGE_PAGE_PREFERENCE_DEFAULT)
+                ? VmaTable.single(
+                        baseAddress,
+                        baseAddress + size,
+                        false,
+                        HUGE_PAGE_PREFERENCE_DEFAULT,
+                        PROTECTION_READ_WRITE_EXECUTE)
                 : VmaTable.empty();
     }
 
@@ -252,7 +276,7 @@ public final class Memory implements AutoCloseable {
         if (length == 0) {
             return;
         }
-        ensureValidMappedRange(address, length);
+        ensureMappedRange(address, length);
 
         long end = address + length;
         long cursor = address;
@@ -457,15 +481,25 @@ public final class Memory implements AutoCloseable {
 
     /// Adds a lazily committed anonymous guest memory VMA.
     public synchronized boolean map(long address, long length) {
-        return mapInternal(address, length, false);
+        return map(address, length, PROTECTION_READ_WRITE_EXECUTE);
+    }
+
+    /// Adds a lazily committed anonymous guest memory VMA with explicit access protection.
+    public synchronized boolean map(long address, long length, long protection) {
+        return mapInternal(address, length, false, protection);
     }
 
     /// Adds a lazily committed MAP_HUGETLB guest memory VMA.
     public synchronized boolean mapHuge(long address, long length) {
+        return mapHuge(address, length, PROTECTION_READ_WRITE_EXECUTE);
+    }
+
+    /// Adds a lazily committed MAP_HUGETLB guest memory VMA with explicit access protection.
+    public synchronized boolean mapHuge(long address, long length, long protection) {
         if (!isAligned(address, hugePageSize) || !isAligned(length, hugePageSize)) {
             return false;
         }
-        return mapInternal(address, length, true);
+        return mapInternal(address, length, true, protection);
     }
 
     /// Adds a guest memory VMA whose committed pages are backed by Java heap long arrays.
@@ -500,10 +534,20 @@ public final class Memory implements AutoCloseable {
                 releasedHugePages += hugePagesForLength(removedEnd - removedStart);
             }
             if (vma.address() < removedStart) {
-                newVmas.add(new Vma(vma.address(), removedStart, vma.huge(), vma.hugePagePreference()));
+                newVmas.add(new Vma(
+                        vma.address(),
+                        removedStart,
+                        vma.huge(),
+                        vma.hugePagePreference(),
+                        vma.protection()));
             }
             if (removedEnd < vma.endAddress()) {
-                newVmas.add(new Vma(removedEnd, vma.endAddress(), vma.huge(), vma.hugePagePreference()));
+                newVmas.add(new Vma(
+                        removedEnd,
+                        vma.endAddress(),
+                        vma.huge(),
+                        vma.hugePagePreference(),
+                        vma.protection()));
             }
         }
 
@@ -564,15 +608,72 @@ public final class Memory implements AutoCloseable {
             long adviceStart = Math.max(address, vma.address());
             long adviceEnd = Math.min(end, vma.endAddress());
             if (vma.address() < adviceStart) {
-                newVmas.add(new Vma(vma.address(), adviceStart, vma.huge(), vma.hugePagePreference()));
+                newVmas.add(new Vma(
+                        vma.address(),
+                        adviceStart,
+                        vma.huge(),
+                        vma.hugePagePreference(),
+                        vma.protection()));
             }
-            newVmas.add(new Vma(adviceStart, adviceEnd, vma.huge(), preference));
+            newVmas.add(new Vma(adviceStart, adviceEnd, vma.huge(), preference, vma.protection()));
             if (adviceEnd < vma.endAddress()) {
-                newVmas.add(new Vma(adviceEnd, vma.endAddress(), vma.huge(), vma.hugePagePreference()));
+                newVmas.add(new Vma(
+                        adviceEnd,
+                        vma.endAddress(),
+                        vma.huge(),
+                        vma.hugePagePreference(),
+                        vma.protection()));
             }
         }
         vmas = VmaTable.copyOf(newVmas);
         invalidateSoftwareTlb();
+    }
+
+    /// Updates access protection for a mapped VMA range.
+    public synchronized boolean protect(long address, long length, long protection) {
+        if (length == 0) {
+            return true;
+        }
+        if ((protection & ~SUPPORTED_PROTECTION_MASK) != 0
+                || length < 0
+                || !fitsWindow(address, length)
+                || !isMappedRange(address, length)) {
+            return false;
+        }
+
+        long end = address + length;
+        VmaTable oldVmas = vmas;
+        ArrayList<Vma> newVmas = new ArrayList<>(oldVmas.size() + 2);
+        for (int index = 0; index < oldVmas.size(); index++) {
+            Vma vma = oldVmas.vma(index);
+            if (!rangesOverlap(address, end, vma.address(), vma.endAddress())) {
+                newVmas.add(vma);
+                continue;
+            }
+
+            long protectStart = Math.max(address, vma.address());
+            long protectEnd = Math.min(end, vma.endAddress());
+            if (vma.address() < protectStart) {
+                newVmas.add(new Vma(
+                        vma.address(),
+                        protectStart,
+                        vma.huge(),
+                        vma.hugePagePreference(),
+                        vma.protection()));
+            }
+            newVmas.add(new Vma(protectStart, protectEnd, vma.huge(), vma.hugePagePreference(), protection));
+            if (protectEnd < vma.endAddress()) {
+                newVmas.add(new Vma(
+                        protectEnd,
+                        vma.endAddress(),
+                        vma.huge(),
+                        vma.hugePagePreference(),
+                        vma.protection()));
+            }
+        }
+        vmas = VmaTable.copyOf(newVmas);
+        invalidateSoftwareTlb();
+        return true;
     }
 
     /// Releases all committed heap page references held by this memory object.
@@ -609,8 +710,11 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Adds a VMA to the sorted VMA table.
-    private boolean mapInternal(long address, long length, boolean huge) {
-        if (length <= 0 || !fitsWindow(address, length) || vmas.overlaps(address, length)) {
+    private boolean mapInternal(long address, long length, boolean huge, long protection) {
+        if (length <= 0
+                || (protection & ~SUPPORTED_PROTECTION_MASK) != 0
+                || !fitsWindow(address, length)
+                || vmas.overlaps(address, length)) {
             return false;
         }
         if (huge) {
@@ -621,20 +725,21 @@ public final class Memory implements AutoCloseable {
             reservedHugePages += requestedHugePages;
         }
 
-        vmas = vmas.insert(new Vma(address, address + length, huge, HUGE_PAGE_PREFERENCE_DEFAULT));
+        vmas = vmas.insert(new Vma(address, address + length, huge, HUGE_PAGE_PREFERENCE_DEFAULT, protection));
         invalidateSoftwareTlb();
         return true;
     }
 
     /// Returns the committed page for a read access, or null for mapped zero-fill memory.
     private @Nullable Page readPage(long address, int length, boolean instruction) {
+        long requiredProtection = instruction ? PROTECTION_EXECUTE : PROTECTION_READ;
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, address, length, instruction);
+        @Nullable Page page = cachedPage(pageNumber, address, length, requiredProtection, instruction);
         if (page != null) {
             return page;
         }
 
-        Vma vma = ensureValidMappedRange(address, length);
+        Vma vma = ensureValidMappedRange(address, length, requiredProtection);
         page = pages.get(pageNumber);
         if (page != null) {
             setCachedPage(pageNumber, page, vma, instruction);
@@ -645,12 +750,12 @@ public final class Memory implements AutoCloseable {
     /// Returns a committed page for a write access, allocating it on first write.
     private Page writePage(long address, int length) {
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, address, length, false);
+        @Nullable Page page = cachedPage(pageNumber, address, length, PROTECTION_WRITE, false);
         if (page != null) {
             return page;
         }
 
-        Vma vma = ensureValidMappedRange(address, length);
+        Vma vma = ensureValidMappedRange(address, length, PROTECTION_WRITE);
         page = pages.get(pageNumber);
         if (page != null) {
             setCachedPage(pageNumber, page, vma, false);
@@ -685,14 +790,43 @@ public final class Memory implements AutoCloseable {
         committedPages -= pages.removeRange(startPageNumber, endPageNumber);
     }
 
-    /// Returns the VMA containing a valid guest access range.
-    private Vma ensureValidMappedRange(long address, long length) {
+    /// Returns the VMA containing a valid guest access range with the required access protection.
+    private Vma ensureValidMappedRange(long address, long length, long requiredProtection) {
         checkedRangeEnd(address, length);
         @Nullable Vma vma = length == 0 ? null : vmas.find(address, length);
-        if (vma == null) {
+        if (vma == null || (vma.protection() & requiredProtection) != requiredProtection) {
             throw accessFault(address, length);
         }
         return vma;
+    }
+
+    /// Ensures that a guest range is mapped without checking user-mode access protection.
+    private void ensureMappedRange(long address, long length) {
+        checkedRangeEnd(address, length);
+        if (length == 0) {
+            return;
+        }
+        if (!isMappedRange(address, length)) {
+            throw accessFault(address, length);
+        }
+    }
+
+    /// Returns true when every byte in the supplied range is covered by a mapped VMA.
+    private boolean isMappedRange(long address, long length) {
+        if (!isValidRange(address, length)) {
+            return false;
+        }
+
+        long end = address + length;
+        long cursor = address;
+        while (cursor < end) {
+            @Nullable Vma vma = vmas.find(cursor, 1);
+            if (vma == null) {
+                return false;
+            }
+            cursor = Math.min(end, vma.endAddress());
+        }
+        return true;
     }
 
     /// Returns the mapped range end for the VMA containing the supplied address, or the address itself.
@@ -702,9 +836,16 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns the cached committed page for the current context and thread, or null on miss.
-    private @Nullable Page cachedPage(long pageNumber, long address, int length, boolean instruction) {
+    private @Nullable Page cachedPage(
+            long pageNumber,
+            long address,
+            int length,
+            long requiredProtection,
+            boolean instruction) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return cache == null ? null : cache.get().page(pageNumber, address, length, generation, instruction);
+        return cache == null
+                ? null
+                : cache.get().page(pageNumber, address, length, requiredProtection, generation, instruction);
     }
 
     /// Stores a committed page in the current context and thread software TLB.
@@ -714,7 +855,7 @@ public final class Memory implements AutoCloseable {
             long pageStart = pageNumber << pageShift;
             long rangeStart = Math.max(vma.address(), pageStart);
             long rangeEnd = Math.min(vma.endAddress(), pageStart + pageSize);
-            cache.get().setPage(pageNumber, rangeStart, rangeEnd, generation, page, instruction);
+            cache.get().setPage(pageNumber, rangeStart, rangeEnd, vma.protection(), generation, page, instruction);
         }
     }
 
@@ -1035,6 +1176,9 @@ public final class Memory implements AutoCloseable {
         /// Exclusive valid guest address ends for cached data pages.
         private final long[] dataRangeEnds = new long[DATA_CACHE_SIZE];
 
+        /// Access protections associated with cached data pages.
+        private final long[] dataProtections = new long[DATA_CACHE_SIZE];
+
         /// Memory generations associated with cached data pages.
         private final long[] dataGenerations = new long[DATA_CACHE_SIZE];
 
@@ -1050,6 +1194,9 @@ public final class Memory implements AutoCloseable {
         /// Exclusive valid guest address ends for cached instruction pages.
         private final long[] instructionRangeEnds = new long[INSTRUCTION_CACHE_SIZE];
 
+        /// Access protections associated with cached instruction pages.
+        private final long[] instructionProtections = new long[INSTRUCTION_CACHE_SIZE];
+
         /// Memory generations associated with cached instruction pages.
         private final long[] instructionGenerations = new long[INSTRUCTION_CACHE_SIZE];
 
@@ -1061,26 +1208,36 @@ public final class Memory implements AutoCloseable {
         }
 
         /// Returns a cached page, or null when the lookup misses.
-        private @Nullable Page page(long pageNumber, long address, int length, long generation, boolean instruction) {
+        private @Nullable Page page(
+                long pageNumber,
+                long address,
+                int length,
+                long requiredProtection,
+                long generation,
+                boolean instruction) {
             return instruction
                     ? page(
                             pageNumber,
                             address,
                             length,
+                            requiredProtection,
                             generation,
                             instructionPageNumbers,
                             instructionRangeStarts,
                             instructionRangeEnds,
+                            instructionProtections,
                             instructionGenerations,
                             instructionPages)
                     : page(
                             pageNumber,
                             address,
                             length,
+                            requiredProtection,
                             generation,
                             dataPageNumbers,
                             dataRangeStarts,
                             dataRangeEnds,
+                            dataProtections,
                             dataGenerations,
                             dataPages);
         }
@@ -1090,6 +1247,7 @@ public final class Memory implements AutoCloseable {
                 long pageNumber,
                 long rangeStart,
                 long rangeEnd,
+                long protection,
                 long generation,
                 Page page,
                 boolean instruction) {
@@ -1098,11 +1256,13 @@ public final class Memory implements AutoCloseable {
                         pageNumber,
                         rangeStart,
                         rangeEnd,
+                        protection,
                         generation,
                         page,
                         instructionPageNumbers,
                         instructionRangeStarts,
                         instructionRangeEnds,
+                        instructionProtections,
                         instructionGenerations,
                         instructionPages);
             } else {
@@ -1110,11 +1270,13 @@ public final class Memory implements AutoCloseable {
                         pageNumber,
                         rangeStart,
                         rangeEnd,
+                        protection,
                         generation,
                         page,
                         dataPageNumbers,
                         dataRangeStarts,
                         dataRangeEnds,
+                        dataProtections,
                         dataGenerations,
                         dataPages);
             }
@@ -1125,10 +1287,12 @@ public final class Memory implements AutoCloseable {
                 long pageNumber,
                 long address,
                 int length,
+                long requiredProtection,
                 long generation,
                 long[] pageNumbers,
                 long[] rangeStarts,
                 long[] rangeEnds,
+                long[] protections,
                 long[] generations,
                 @Nullable Page[] pages) {
             for (int index = 0; index < pages.length; index++) {
@@ -1137,8 +1301,9 @@ public final class Memory implements AutoCloseable {
                         && pageNumbers[index] == pageNumber
                         && generations[index] == generation
                         && address >= rangeStarts[index]
-                        && length <= rangeEnds[index] - address) {
-                    promote(index, pageNumbers, rangeStarts, rangeEnds, generations, pages);
+                        && length <= rangeEnds[index] - address
+                        && (protections[index] & requiredProtection) == requiredProtection) {
+                    promote(index, pageNumbers, rangeStarts, rangeEnds, protections, generations, pages);
                     return page;
                 }
             }
@@ -1150,11 +1315,13 @@ public final class Memory implements AutoCloseable {
                 long pageNumber,
                 long rangeStart,
                 long rangeEnd,
+                long protection,
                 long generation,
                 Page page,
                 long[] pageNumbers,
                 long[] rangeStarts,
                 long[] rangeEnds,
+                long[] protections,
                 long[] generations,
                 @Nullable Page[] pages) {
             for (int index = 0; index < pages.length; index++) {
@@ -1162,8 +1329,9 @@ public final class Memory implements AutoCloseable {
                     pageNumbers[index] = pageNumber;
                     rangeStarts[index] = rangeStart;
                     rangeEnds[index] = rangeEnd;
+                    protections[index] = protection;
                     generations[index] = generation;
-                    promote(index, pageNumbers, rangeStarts, rangeEnds, generations, pages);
+                    promote(index, pageNumbers, rangeStarts, rangeEnds, protections, generations, pages);
                     return;
                 }
             }
@@ -1172,12 +1340,14 @@ public final class Memory implements AutoCloseable {
                 pageNumbers[index] = pageNumbers[index - 1];
                 rangeStarts[index] = rangeStarts[index - 1];
                 rangeEnds[index] = rangeEnds[index - 1];
+                protections[index] = protections[index - 1];
                 generations[index] = generations[index - 1];
                 pages[index] = pages[index - 1];
             }
             pageNumbers[0] = pageNumber;
             rangeStarts[0] = rangeStart;
             rangeEnds[0] = rangeEnd;
+            protections[0] = protection;
             generations[0] = generation;
             pages[0] = page;
         }
@@ -1188,6 +1358,7 @@ public final class Memory implements AutoCloseable {
                 long[] pageNumbers,
                 long[] rangeStarts,
                 long[] rangeEnds,
+                long[] protections,
                 long[] generations,
                 @Nullable Page[] pages) {
             if (index == 0) {
@@ -1197,18 +1368,21 @@ public final class Memory implements AutoCloseable {
             long pageNumber = pageNumbers[index];
             long rangeStart = rangeStarts[index];
             long rangeEnd = rangeEnds[index];
+            long protection = protections[index];
             long generation = generations[index];
             @Nullable Page page = pages[index];
             for (int current = index; current > 0; current--) {
                 pageNumbers[current] = pageNumbers[current - 1];
                 rangeStarts[current] = rangeStarts[current - 1];
                 rangeEnds[current] = rangeEnds[current - 1];
+                protections[current] = protections[current - 1];
                 generations[current] = generations[current - 1];
                 pages[current] = pages[current - 1];
             }
             pageNumbers[0] = pageNumber;
             rangeStarts[0] = rangeStart;
             rangeEnds[0] = rangeEnd;
+            protections[0] = protection;
             generations[0] = generation;
             pages[0] = page;
         }
@@ -1272,11 +1446,13 @@ public final class Memory implements AutoCloseable {
     /// @param endAddress the exclusive guest end address of the VMA
     /// @param huge whether this VMA reserves MAP_HUGETLB pages
     /// @param hugePagePreference the transparent huge-page advice recorded for this VMA
+    /// @param protection the supported guest access-protection flags for this VMA
     private record Vma(
             long address,
             long endAddress,
             boolean huge,
-            byte hugePagePreference) {
+            byte hugePagePreference,
+            long protection) {
     }
 
     /// Stores sorted guest VMAs in parallel arrays.
@@ -1285,32 +1461,41 @@ public final class Memory implements AutoCloseable {
     /// @param endAddresses the exclusive guest end addresses for the VMAs
     /// @param huge whether each VMA reserves MAP_HUGETLB pages
     /// @param hugePagePreferences the transparent huge-page advice for each VMA
+    /// @param protections the supported guest access-protection flags for each VMA
     private record VmaTable(
             long @Unmodifiable [] addresses,
             long @Unmodifiable [] endAddresses,
             boolean @Unmodifiable [] huge,
-            byte @Unmodifiable [] hugePagePreferences) {
+            byte @Unmodifiable [] hugePagePreferences,
+            long @Unmodifiable [] protections) {
         /// Creates a VMA snapshot backed by same-length sorted arrays.
         private VmaTable {
             if (addresses.length != endAddresses.length
                     || addresses.length != huge.length
-                    || addresses.length != hugePagePreferences.length) {
+                    || addresses.length != hugePagePreferences.length
+                    || addresses.length != protections.length) {
                 throw new IllegalArgumentException("VMA arrays have different lengths");
             }
         }
 
         /// Creates an empty VMA snapshot.
         private static VmaTable empty() {
-            return new VmaTable(new long[0], new long[0], new boolean[0], new byte[0]);
+            return new VmaTable(new long[0], new long[0], new boolean[0], new byte[0], new long[0]);
         }
 
         /// Creates a one-VMA snapshot.
-        private static VmaTable single(long address, long endAddress, boolean huge, byte hugePagePreference) {
+        private static VmaTable single(
+                long address,
+                long endAddress,
+                boolean huge,
+                byte hugePagePreference,
+                long protection) {
             return new VmaTable(
                     new long[]{address},
                     new long[]{endAddress},
                     new boolean[]{huge},
-                    new byte[]{hugePagePreference});
+                    new byte[]{hugePagePreference},
+                    new long[]{protection});
         }
 
         /// Copies a VMA list into a sorted immutable snapshot.
@@ -1319,14 +1504,16 @@ public final class Memory implements AutoCloseable {
             long[] endAddresses = new long[vmas.size()];
             boolean[] huge = new boolean[vmas.size()];
             byte[] hugePagePreferences = new byte[vmas.size()];
+            long[] protections = new long[vmas.size()];
             for (int index = 0; index < vmas.size(); index++) {
                 Vma vma = vmas.get(index);
                 addresses[index] = vma.address();
                 endAddresses[index] = vma.endAddress();
                 huge[index] = vma.huge();
                 hugePagePreferences[index] = vma.hugePagePreference();
+                protections[index] = vma.protection();
             }
-            return new VmaTable(addresses, endAddresses, huge, hugePagePreferences);
+            return new VmaTable(addresses, endAddresses, huge, hugePagePreferences, protections);
         }
 
         /// Returns the number of VMAs in this snapshot.
@@ -1336,7 +1523,12 @@ public final class Memory implements AutoCloseable {
 
         /// Returns the VMA at the supplied index.
         private Vma vma(int index) {
-            return new Vma(addresses[index], endAddresses[index], huge[index], hugePagePreferences[index]);
+            return new Vma(
+                    addresses[index],
+                    endAddresses[index],
+                    huge[index],
+                    hugePagePreferences[index],
+                    protections[index]);
         }
 
         /// Returns a new snapshot with the supplied non-overlapping VMA inserted.
@@ -1346,14 +1538,17 @@ public final class Memory implements AutoCloseable {
             long[] newEndAddresses = new long[endAddresses.length + 1];
             boolean[] newHuge = new boolean[huge.length + 1];
             byte[] newHugePagePreferences = new byte[hugePagePreferences.length + 1];
+            long[] newProtections = new long[protections.length + 1];
             System.arraycopy(addresses, 0, newAddresses, 0, insertionIndex);
             System.arraycopy(endAddresses, 0, newEndAddresses, 0, insertionIndex);
             System.arraycopy(huge, 0, newHuge, 0, insertionIndex);
             System.arraycopy(hugePagePreferences, 0, newHugePagePreferences, 0, insertionIndex);
+            System.arraycopy(protections, 0, newProtections, 0, insertionIndex);
             newAddresses[insertionIndex] = vma.address();
             newEndAddresses[insertionIndex] = vma.endAddress();
             newHuge[insertionIndex] = vma.huge();
             newHugePagePreferences[insertionIndex] = vma.hugePagePreference();
+            newProtections[insertionIndex] = vma.protection();
             int copiedEntries = addresses.length - insertionIndex;
             System.arraycopy(addresses, insertionIndex, newAddresses, insertionIndex + 1, copiedEntries);
             System.arraycopy(endAddresses, insertionIndex, newEndAddresses, insertionIndex + 1, copiedEntries);
@@ -1364,7 +1559,8 @@ public final class Memory implements AutoCloseable {
                     newHugePagePreferences,
                     insertionIndex + 1,
                     copiedEntries);
-            return new VmaTable(newAddresses, newEndAddresses, newHuge, newHugePagePreferences);
+            System.arraycopy(protections, insertionIndex, newProtections, insertionIndex + 1, copiedEntries);
+            return new VmaTable(newAddresses, newEndAddresses, newHuge, newHugePagePreferences, newProtections);
         }
 
         /// Returns true when any VMA overlaps the supplied guest range.

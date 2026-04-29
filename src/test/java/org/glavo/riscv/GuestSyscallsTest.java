@@ -4045,6 +4045,45 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that `mprotect` updates the underlying guest memory access permissions.
+    @Test
+    public void mprotectEnforcesSparseMappingPermissions() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 16 * PAGE_SIZE, null)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+            memory.writeLong(mappedAddress, 0x0102_0304_0506_0708L);
+
+            setSyscall(state, SYS_MPROTECT, mappedAddress, PAGE_SIZE, PROT_READ);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0x0102_0304_0506_0708L, memory.readLong(mappedAddress));
+            assertThrows(RiscVException.class, () -> memory.writeByte(mappedAddress, (byte) 0x7f));
+
+            setSyscall(state, SYS_MPROTECT, mappedAddress, PAGE_SIZE, PROT_READ | PROT_WRITE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            memory.writeByte(mappedAddress, (byte) 0x7f);
+            assertEquals(0x7f, memory.readUnsignedByte(mappedAddress));
+        }
+    }
+
     /// Verifies that `madvise` accepts common hints and discards backed anonymous pages.
     @Test
     public void madviseClearsDiscardedAnonymousPages() {
