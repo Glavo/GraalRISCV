@@ -53,6 +53,9 @@ final class RiscVMicroBlockNode extends Node {
     /// The canonical single-precision quiet NaN bit pattern.
     private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
 
+    /// The canonical double-precision quiet NaN bit pattern.
+    private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
+
     /// The floating-point invalid-operation exception flag.
     private static final int FLOATING_POINT_INVALID_OPERATION = 0x10;
 
@@ -397,6 +400,8 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.FEQ -> floatingPointCompare(state, registers, index, operand, mode, CompareKind.EQUAL);
             case RiscVMicroOpcode.FLT -> floatingPointCompare(state, registers, index, operand, mode, CompareKind.LESS_THAN);
             case RiscVMicroOpcode.FLE -> floatingPointCompare(state, registers, index, operand, mode, CompareKind.LESS_THAN_OR_EQUAL);
+            case RiscVMicroOpcode.FMIN -> floatingPointMinimumMaximum(state, index, operand, mode, true);
+            case RiscVMicroOpcode.FMAX -> floatingPointMinimumMaximum(state, index, operand, mode, false);
             case RiscVMicroOpcode.LR_W -> lrWord(state, memory, access, registers, index, operand, mode);
             case RiscVMicroOpcode.LR_D -> lrDouble(state, memory, access, registers, index, operand, mode);
             case RiscVMicroOpcode.SC_W -> scWord(state, memory, access, registers, index, operand, mode);
@@ -620,6 +625,28 @@ final class RiscVMicroBlockNode extends Node {
             } else {
                 writeRegister(registers, rd(operand), compareFloatingPoint(left, right, kind) ? 1 : 0);
             }
+        }
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a floating-point minimum or maximum instruction.
+    private void floatingPointMinimumMaximum(
+            MachineState state,
+            int index,
+            int operand,
+            byte mode,
+            boolean minimum) {
+        beginInstruction(state, index, mode);
+        if (floatingPointFormat(index) == SINGLE_FLOAT_FORMAT) {
+            writeSingleBits(state, rd(operand), minimum
+                    ? minimumSingleBits(state, readSingleBits(state, rs1(operand)), readSingleBits(state, rs2(operand)))
+                    : maximumSingleBits(state, readSingleBits(state, rs1(operand)), readSingleBits(state, rs2(operand))));
+        } else {
+            long left = state.decodedFloatingPointRegister(rs1(operand));
+            long right = state.decodedFloatingPointRegister(rs2(operand));
+            state.setDecodedFloatingPointRegister(rd(operand), minimum
+                    ? minimumDoubleBits(state, left, right)
+                    : maximumDoubleBits(state, left, right));
         }
         finishInstruction(state, index, mode);
     }
@@ -929,6 +956,94 @@ final class RiscVMicroBlockNode extends Node {
             case LESS_THAN -> left < right;
             case LESS_THAN_OR_EQUAL -> left <= right;
         };
+    }
+
+    /// Computes RISC-V single-precision minimum bits.
+    private static int minimumSingleBits(MachineState state, int leftBits, int rightBits) {
+        if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        float left = Float.intBitsToFloat(leftBits);
+        float right = Float.intBitsToFloat(rightBits);
+        if (Float.isNaN(left) && Float.isNaN(right)) {
+            return CANONICAL_SINGLE_NAN;
+        }
+        if (Float.isNaN(left)) {
+            return rightBits;
+        }
+        if (Float.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0f && right == 0.0f) {
+            return (leftBits < 0 || rightBits < 0) ? 0x8000_0000 : 0;
+        }
+        return left <= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V single-precision maximum bits.
+    private static int maximumSingleBits(MachineState state, int leftBits, int rightBits) {
+        if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        float left = Float.intBitsToFloat(leftBits);
+        float right = Float.intBitsToFloat(rightBits);
+        if (Float.isNaN(left) && Float.isNaN(right)) {
+            return CANONICAL_SINGLE_NAN;
+        }
+        if (Float.isNaN(left)) {
+            return rightBits;
+        }
+        if (Float.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0f && right == 0.0f) {
+            return (leftBits >= 0 || rightBits >= 0) ? 0 : 0x8000_0000;
+        }
+        return left >= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V double-precision minimum bits.
+    private static long minimumDoubleBits(MachineState state, long leftBits, long rightBits) {
+        if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        if (Double.isNaN(left) && Double.isNaN(right)) {
+            return CANONICAL_DOUBLE_NAN;
+        }
+        if (Double.isNaN(left)) {
+            return rightBits;
+        }
+        if (Double.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0d && right == 0.0d) {
+            return (leftBits < 0 || rightBits < 0) ? Long.MIN_VALUE : 0;
+        }
+        return left <= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V double-precision maximum bits.
+    private static long maximumDoubleBits(MachineState state, long leftBits, long rightBits) {
+        if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        if (Double.isNaN(left) && Double.isNaN(right)) {
+            return CANONICAL_DOUBLE_NAN;
+        }
+        if (Double.isNaN(left)) {
+            return rightBits;
+        }
+        if (Double.isNaN(right)) {
+            return leftBits;
+        }
+        if (left == 0.0d && right == 0.0d) {
+            return (leftBits >= 0 || rightBits >= 0) ? 0 : Long.MIN_VALUE;
+        }
+        return left >= right ? leftBits : rightBits;
     }
 
     /// The AMO operation selected by one atomic memory instruction.

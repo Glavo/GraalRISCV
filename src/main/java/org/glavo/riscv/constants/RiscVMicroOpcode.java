@@ -329,6 +329,12 @@ public final class RiscVMicroOpcode {
     /// Executes `fle.s` or `fle.d`.
     public static final byte FLE = 106;
 
+    /// Executes `fmin.s` or `fmin.d`.
+    public static final byte FMIN = 107;
+
+    /// Executes `fmax.s` or `fmax.d`.
+    public static final byte FMAX = 108;
+
     /// Prevents construction of this constants class.
     private RiscVMicroOpcode() {
     }

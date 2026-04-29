@@ -31,6 +31,6 @@
 - Continue improving paged-memory slow paths, especially cross-page accesses and richer fault reporting; per-thread `Memory.Access`, access-local page caching, direct-mapped software TLB hits, zero-fill page caching, primitive page-table lookup, and VMA access protections are now in place.
 - Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and VMA split/merge behavior as the syscall layer is simplified.
 - Keep CoreMark, Zig examples, and the local Go demo as acceptance workloads for the paged-memory migration.
-- Profile the remaining generic complex floating-point arithmetic and conversion micro-op path before deciding whether to split it further; bit-level sign-injection, classify, compare, and raw move operations now use direct micro-op bodies.
+- Profile the remaining generic complex floating-point arithmetic and conversion micro-op path before deciding whether to split it further; bit-level sign-injection, minimum/maximum, classify, compare, and raw move operations now use direct micro-op bodies.
 - Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.
 - Keep rejected performance experiments documented outside `PLANS.md`.

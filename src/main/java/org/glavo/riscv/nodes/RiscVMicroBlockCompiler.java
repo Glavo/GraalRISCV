@@ -150,6 +150,8 @@ final class RiscVMicroBlockCompiler {
             case FEQ -> RiscVMicroOpcode.FEQ;
             case FLT -> RiscVMicroOpcode.FLT;
             case FLE -> RiscVMicroOpcode.FLE;
+            case FMIN -> RiscVMicroOpcode.FMIN;
+            case FMAX -> RiscVMicroOpcode.FMAX;
             case LR_W -> RiscVMicroOpcode.LR_W;
             case LR_D -> RiscVMicroOpcode.LR_D;
             case SC_W -> RiscVMicroOpcode.SC_W;
