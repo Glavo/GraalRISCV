@@ -252,6 +252,9 @@ public final class RiscVRootNode extends RootNode {
     /// Holds per-thread guest loop state while a Truffle loop root is executing.
     @NotNullByDefault
     private static final class GuestLoopState {
+        /// Number of entries in the thread-local decoded-block lookup cache.
+        private static final int LOCAL_BLOCK_CACHE_SIZE = 16;
+
         /// The guest memory shared by the process.
         private final Memory memory;
 
@@ -261,26 +264,24 @@ public final class RiscVRootNode extends RootNode {
         /// The syscall handler shared by all guest threads in this process.
         private final GuestSyscalls syscalls;
 
+        /// Reusable block call arguments used to avoid per-block varargs allocation.
+        private final Object[] blockArguments;
+
         /// The next guest program counter to dispatch.
         private long pc;
 
-        /// The most recently used decoded block target.
-        private @Nullable RootCallTarget primaryBlock;
+        /// Guest PCs cached in `localBlocks`.
+        private final long[] localBlockPcs = new long[LOCAL_BLOCK_CACHE_SIZE];
 
-        /// The guest program counter for `primaryBlock`.
-        private long primaryPc;
-
-        /// The second most recently used decoded block target.
-        private @Nullable RootCallTarget secondaryBlock;
-
-        /// The guest program counter for `secondaryBlock`.
-        private long secondaryPc;
+        /// Thread-local decoded block targets used before probing the shared cache.
+        private final @Nullable RootCallTarget[] localBlocks = new RootCallTarget[LOCAL_BLOCK_CACHE_SIZE];
 
         /// Creates loop-local state for one guest thread.
         private GuestLoopState(Memory memory, MachineState state, long pc) {
             this.memory = memory;
             this.state = state;
             this.syscalls = state.syscalls();
+            this.blockArguments = new Object[] { state };
             this.pc = pc;
         }
 
@@ -299,6 +300,11 @@ public final class RiscVRootNode extends RootNode {
             return syscalls;
         }
 
+        /// Returns the reusable arguments array passed to decoded block call targets.
+        private Object[] blockArguments() {
+            return blockArguments;
+        }
+
         /// Returns the next guest program counter to dispatch.
         private long pc() {
             return pc;
@@ -311,25 +317,23 @@ public final class RiscVRootNode extends RootNode {
 
         /// Returns the decoded block target for the current program counter.
         private RootCallTarget blockFor(BlockCache blocks) {
-            RootCallTarget block;
-            if (primaryBlock != null && pc == primaryPc) {
-                return primaryBlock;
-            }
-            if (secondaryBlock != null && pc == secondaryPc) {
-                block = secondaryBlock;
-                secondaryBlock = primaryBlock;
-                secondaryPc = primaryPc;
-                primaryBlock = block;
-                primaryPc = pc;
+            int slot = localBlockSlot(pc);
+            RootCallTarget block = localBlocks[slot];
+            if (block != null && localBlockPcs[slot] == pc) {
                 return block;
             }
 
             block = blocks.getOrDecode(memory, pc);
-            secondaryBlock = primaryBlock;
-            secondaryPc = primaryPc;
-            primaryBlock = block;
-            primaryPc = pc;
+            localBlockPcs[slot] = pc;
+            localBlocks[slot] = block;
             return block;
+        }
+
+        /// Hashes a guest PC into the thread-local decoded-block cache.
+        private static int localBlockSlot(long pc) {
+            long hash = pc >>> 1;
+            hash ^= hash >>> 4;
+            return (int) hash & (LOCAL_BLOCK_CACHE_SIZE - 1);
         }
     }
 
@@ -411,7 +415,7 @@ public final class RiscVRootNode extends RootNode {
         private long executeCachedOrMiss(GuestLoopState loopState, MachineState state, long pc) {
             CachedBlockCallNode cachedCall = this.cachedCall;
             if (cachedCall != null && cachedCall.matches(pc)) {
-                cachedCall.call(state);
+                cachedCall.call(loopState.blockArguments());
                 return state.pc();
             }
             return executeMiss(loopState, state, pc);
@@ -423,12 +427,12 @@ public final class RiscVRootNode extends RootNode {
             if (CompilerDirectives.inInterpreter() && shouldInstallDirectCall(pc)) {
                 CachedBlockCallNode cachedCall = installCachedCall(pc, target);
                 if (cachedCall != null) {
-                    cachedCall.call(state);
+                    cachedCall.call(loopState.blockArguments());
                     return state.pc();
                 }
             }
 
-            indirectCall.call(target, state);
+            indirectCall.call(target, loopState.blockArguments());
             return state.pc();
         }
 
@@ -484,8 +488,8 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Executes the cached decoded block.
-        private void call(MachineState state) {
-            call.call(state);
+        private void call(Object[] arguments) {
+            call.call(arguments);
         }
     }
 
