@@ -32,7 +32,8 @@ public final class Main {
 
             Options:
               --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
-              --memory-size <bytes>      Guest memory size in bytes.
+                                          Default is 0; auto infers the base from ELF load segments.
+              --memory-size <bytes>      Guest virtual address window size in bytes.
               --page-size <bytes>        Guest base page size in bytes; power of two at least 4096.
               --max-committed-pages <n>  Maximum committed guest base pages; 0 means unlimited.
               --huge-page-size <bytes>   Guest HugeTLB page size in bytes.

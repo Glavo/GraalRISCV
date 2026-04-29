@@ -95,9 +95,9 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
-    /// Verifies that the CLI can infer a memory base from an ELF segment below `0x80000000`.
+    /// Verifies that the default sparse memory window can run a page-aligned low ELF segment.
     @Test
-    public void runsPageAlignedSegmentBelowDefaultMemoryBase() throws Exception {
+    public void runsPageAlignedLowSegmentWithDefaultMemoryWindow() throws Exception {
         Path elfPath = tempDirectory.resolve("hello-low-segment.elf");
         Files.write(elfPath, pageAlignedHelloWorldElf());
 
@@ -205,6 +205,7 @@ public final class MainTest {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         int exitCode = Main.run(
                 new String[]{
+                        "--memory-base", "auto",
                         "--memory-size", "16",
                         "--max-instructions", "1000",
                         elfPath.toString()

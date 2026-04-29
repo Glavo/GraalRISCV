@@ -12,7 +12,7 @@
 - Keep the simulator user-mode only; do not implement privileged mode, page tables, interrupts, devices, or Linux kernel boot.
 - Expand ELF, auxv, stack, `mmap`, and static-runtime behavior only as acceptance workloads require.
 - Harden the new Linux-like paged virtual memory implementation; do not reintroduce a long-term `MemorySegment` fallback.
-- Treat `memorySize` as the guest virtual address window size, not as an eager host-memory allocation size.
+- Keep the default memory layout Linux-like and sparse: base address `0`, a large virtual address window, and `memorySize` as a guest virtual address window size rather than an eager host-memory allocation size.
 - Continue moving ELF segments, stack, `brk`, anonymous `mmap`, `munmap`, `mprotect`, and `madvise` behavior toward one VMA and page-table implementation, reducing remaining syscall-side mapping duplication.
 - Extend lazy page commit, committed-page limits, configurable power-of-two base page size, HugeTLB pool handling, and future native or file-mapped page allocators with broader Linux edge-case coverage.
 - Preserve freestanding examples and existing static musl coverage while broadening toward larger libc and language-runtime programs.

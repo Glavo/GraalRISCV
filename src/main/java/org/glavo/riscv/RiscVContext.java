@@ -22,7 +22,7 @@ public final class RiscVContext {
     /// The guest memory base address.
     private final long memoryBase;
 
-    /// The guest memory size in bytes.
+    /// The guest virtual address window size in bytes.
     private final long memorySize;
 
     /// The guest base page size in bytes.
@@ -121,7 +121,7 @@ public final class RiscVContext {
         return memoryBase;
     }
 
-    /// Returns the configured guest memory size in bytes.
+    /// Returns the configured guest virtual address window size in bytes.
     public long memorySize() {
         return memorySize;
     }

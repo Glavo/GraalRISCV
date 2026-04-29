@@ -40,8 +40,11 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The MIME type accepted by the language parser.
     public static final String ELF_MIME_TYPE = "application/x-riscv-elf";
 
-    /// The default guest memory size in bytes.
-    public static final long DEFAULT_MEMORY_SIZE = 128L * 1024L * 1024L;
+    /// The default guest virtual address window size in bytes.
+    public static final long DEFAULT_MEMORY_SIZE = 4L * 1024L * 1024L * 1024L;
+
+    /// The default guest memory base address.
+    public static final long DEFAULT_MEMORY_BASE = 0L;
 
     /// The default guest base page size in bytes.
     public static final long DEFAULT_PAGE_SIZE = Memory.DEFAULT_PAGE_SIZE;
@@ -70,15 +73,15 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The `riscv.memoryBase` language option.
     @Option(
             name = "memoryBase",
-            help = "Guest memory base address. Use -1 to infer it from ELF load segments. Default: -1.",
+            help = "Guest memory base address. Use -1 to infer it from ELF load segments. Default: 0.",
             category = OptionCategory.USER,
             stability = OptionStability.STABLE)
-    static final OptionKey<Long> MEMORY_BASE = new OptionKey<>(AUTO_MEMORY_BASE);
+    static final OptionKey<Long> MEMORY_BASE = new OptionKey<>(DEFAULT_MEMORY_BASE);
 
     /// The `riscv.memorySize` language option.
     @Option(
             name = "memorySize",
-            help = "Guest memory size in bytes. Default: 134217728.",
+            help = "Guest virtual address window size in bytes. Default: 4294967296.",
             category = OptionCategory.USER,
             stability = OptionStability.STABLE)
     static final OptionKey<Long> MEMORY_SIZE = new OptionKey<>(DEFAULT_MEMORY_SIZE);
