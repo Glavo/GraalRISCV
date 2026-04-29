@@ -3,6 +3,7 @@
 
 package org.glavo.riscv.memory;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
@@ -11,9 +12,9 @@ import org.jetbrains.annotations.Unmodifiable;
 /// @param pageSize the base page size in bytes
 /// @param pageShift the right shift converting a guest address to a base-page number
 /// @param pageMask the bit mask selecting the byte offset inside a base page
-/// @param maxShortPageOffset the largest offset where a 16-bit access stays inside one page
-/// @param maxIntPageOffset the largest offset where a 32-bit access stays inside one page
-/// @param maxLongPageOffset the largest offset where a 64-bit access stays inside one page
+/// @param maxShortPageOffset the largest offset where 16-bit access stays inside one page
+/// @param maxIntPageOffset the largest offset where 32-bit access stays inside one page
+/// @param maxLongPageOffset the largest offset where 64-bit access stays inside one page
 @NotNullByDefault
 public record MemoryLayout(
         int pageSize,
@@ -23,6 +24,7 @@ public record MemoryLayout(
         long maxIntPageOffset,
         long maxLongPageOffset) {
     /// Canonical layouts for all positive power-of-two `int` page sizes.
+    @CompilerDirectives.CompilationFinal(dimensions = 1)
     private static final MemoryLayout @Unmodifiable [] CANONICAL_LAYOUTS = createCanonicalLayouts();
 
     /// Creates the canonical layout table indexed by page shift.
@@ -66,32 +68,32 @@ public record MemoryLayout(
         return (address & ~pageMask) + pageSize;
     }
 
-    /// Returns true when a 16-bit scalar access stays within one base page.
+    /// Returns true when 16-bit scalar access stays within one base page.
     public boolean isSinglePageShortAccess(long address) {
         return pageOffset(address) <= maxShortPageOffset;
     }
 
-    /// Returns true when a 32-bit scalar access stays within one base page.
+    /// Returns true when 32-bit scalar access stays within one base page.
     public boolean isSinglePageIntAccess(long address) {
         return pageOffset(address) <= maxIntPageOffset;
     }
 
-    /// Returns true when a 64-bit scalar access stays within one base page.
+    /// Returns true when 64-bit scalar access stays within one base page.
     public boolean isSinglePageLongAccess(long address) {
         return pageOffset(address) <= maxLongPageOffset;
     }
 
-    /// Returns true when a 16-bit scalar access at a page-relative offset stays within one base page.
+    /// Returns true when 16-bit scalar access at a page-relative offset stays within one base page.
     public boolean isSinglePageShortOffset(long pageOffset) {
         return pageOffset <= maxShortPageOffset;
     }
 
-    /// Returns true when a 32-bit scalar access at a page-relative offset stays within one base page.
+    /// Returns true when 32-bit scalar access at a page-relative offset stays within one base page.
     public boolean isSinglePageIntOffset(long pageOffset) {
         return pageOffset <= maxIntPageOffset;
     }
 
-    /// Returns true when a 64-bit scalar access at a page-relative offset stays within one base page.
+    /// Returns true when 64-bit scalar access at a page-relative offset stays within one base page.
     public boolean isSinglePageLongOffset(long pageOffset) {
         return pageOffset <= maxLongPageOffset;
     }
