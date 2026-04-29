@@ -10,7 +10,6 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
-import java.lang.reflect.Field;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,7 +34,7 @@ public final class Memory implements AutoCloseable {
     public static final long DEFAULT_HUGE_PAGES = 0;
 
     /// The Unsafe instance used to access heap page backing without MemorySegment overhead.
-    private static final Unsafe UNSAFE = lookupUnsafe();
+    private static final Unsafe UNSAFE = Unsafe.getUnsafe();
 
     /// The byte offset of the first element in a Java long array used by the default heap page allocator.
     private static final long HEAP_LONG_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
@@ -838,17 +837,6 @@ public final class Memory implements AutoCloseable {
     /// Returns true when value is a positive power of two.
     private static boolean isPowerOfTwo(long value) {
         return value > 0 && (value & (value - 1L)) == 0;
-    }
-
-    /// Reflectively obtains jdk.internal.misc.Unsafe.
-    private static Unsafe lookupUnsafe() {
-        try {
-            Field field = Unsafe.class.getDeclaredField("theUnsafe");
-            field.setAccessible(true);
-            return (Unsafe) field.get(null);
-        } catch (ReflectiveOperationException exception) {
-            throw new ExceptionInInitializerError(exception);
-        }
     }
 
     /// Stores mutable software TLB state for one Truffle context and host thread.
