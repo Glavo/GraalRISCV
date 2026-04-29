@@ -51,11 +51,6 @@ public final class Memory implements AutoCloseable {
     /// The current Truffle context and host thread's most recently accessed sparse memory region.
     private final @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion;
 
-    /// Creates a memory window at the supplied guest base address.
-    public Memory(long baseAddress, long size) {
-        this(baseAddress, size, null);
-    }
-
     /// Creates a memory window with a Truffle context-thread-local sparse-region cache.
     public Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
         if (baseAddress < 0) {

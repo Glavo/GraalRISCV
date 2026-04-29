@@ -1,6 +1,5 @@
 package org.glavo.riscv;
 
-import org.glavo.riscv.exception.*;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
@@ -31,7 +30,7 @@ public final class LinuxInitialStackTest {
     /// Verifies argc, argv, envp, auxv, and alignment in the generated stack.
     @Test
     public void buildsAlignedLinuxInitialStack() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
             ElfImage image = ElfLoader.load(ElfTestImages.executable(ElfTestImages.ecall()));
             long stackPointer = LinuxInitialStack.initialize(
                     memory,

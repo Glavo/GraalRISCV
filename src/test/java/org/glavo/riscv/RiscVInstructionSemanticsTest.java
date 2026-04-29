@@ -1,6 +1,5 @@
 package org.glavo.riscv;
 
-import org.glavo.riscv.exception.*;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
@@ -74,7 +73,7 @@ public final class RiscVInstructionSemanticsTest {
 
     /// Executes one register-register instruction and returns its destination register value.
     private static long executeRegisterOperation(RiscVOperation operation, long leftValue, long rightValue) {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             GuestSyscalls syscalls = new GuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),

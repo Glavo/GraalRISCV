@@ -1,6 +1,5 @@
 package org.glavo.riscv;
 
-import org.glavo.riscv.exception.*;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
@@ -140,7 +139,7 @@ public final class AtomicInstructionSemanticsTest {
             MachineState state) implements AutoCloseable {
         /// Creates a test machine initialized at the atomic test address.
         private static TestMachine create() {
-            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
             GuestSyscalls syscalls = new GuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),

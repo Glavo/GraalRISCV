@@ -744,7 +744,7 @@ public final class FloatingPointOperationTest {
             MachineState state) implements AutoCloseable {
         /// Creates a test machine initialized at the decoder test address.
         private static TestMachine create() {
-            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
             GuestSyscalls syscalls = new GuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),

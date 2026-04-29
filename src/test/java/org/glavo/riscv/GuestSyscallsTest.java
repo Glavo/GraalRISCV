@@ -925,7 +925,7 @@ public final class GuestSyscallsTest {
     /// Verifies that stdin EOF is reported as a zero-byte read.
     @Test
     public void readReturnsZeroAtEndOfFile() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_READ, 0, memory.baseAddress(), 8);
@@ -938,7 +938,7 @@ public final class GuestSyscallsTest {
     /// Verifies that zero-length writes succeed without touching the guest address.
     @Test
     public void writeAcceptsZeroLengthInvalidAddress() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             MachineState state = state(
                     memory,
@@ -958,7 +958,7 @@ public final class GuestSyscallsTest {
     /// Verifies that short host reads only copy the returned byte count into guest memory.
     @Test
     public void readCopiesPartialInput() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             memory.writeByte(memory.baseAddress() + 2, (byte) 'Z');
             MachineState state = state(memory, new ByteArrayInputStream("AB".getBytes(StandardCharsets.UTF_8)));
 
@@ -974,7 +974,7 @@ public final class GuestSyscallsTest {
     /// Verifies that invalid file descriptors return `-EBADF` and do not touch host output streams.
     @Test
     public void invalidFileDescriptorsReturnBadFileDescriptor() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             ByteArrayOutputStream err = new ByteArrayOutputStream();
             MachineState state = state(
@@ -1002,7 +1002,7 @@ public final class GuestSyscallsTest {
     /// Verifies that syscall buffers still use checked guest memory bounds.
     @Test
     public void syscallBuffersMustFitGuestMemory() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream("A".getBytes(StandardCharsets.UTF_8)));
 
             setSyscall(state, SYS_READ, 0, memory.endAddress(), 1);
@@ -1016,7 +1016,7 @@ public final class GuestSyscallsTest {
     /// Verifies that standard file descriptor `close` is a deterministic no-op.
     @Test
     public void closeSupportsStandardFileDescriptors() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_CLOSE, 1, 0, 0);
@@ -1032,7 +1032,7 @@ public final class GuestSyscallsTest {
     /// Verifies that standard streams report as character devices through `fstat`.
     @Test
     public void fstatReportsStandardStreamsAsCharacterDevices() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_FSTAT, 1, memory.baseAddress(), 0);
@@ -1052,7 +1052,7 @@ public final class GuestSyscallsTest {
     /// Verifies that the guest working directory is exposed as the sandbox root.
     @Test
     public void getcwdReportsSandboxRoot() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long bufferAddress = memory.baseAddress() + 64;
 
@@ -1074,7 +1074,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("first").resolve("message.txt"), "cwd-data", StandardCharsets.UTF_8);
         Files.writeString(tempDirectory.resolve("root.txt"), "root-data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1193,7 +1193,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
         Files.createDirectories(tempDirectory.resolve("directory"));
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1241,7 +1241,7 @@ public final class GuestSyscallsTest {
         Files.createDirectories(tempDirectory.resolve("directory"));
         Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1324,7 +1324,7 @@ public final class GuestSyscallsTest {
         Files.createDirectories(tempDirectory.resolve("directory"));
         Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1469,7 +1469,7 @@ public final class GuestSyscallsTest {
             assumeTrue(false, "Host filesystem does not allow symbolic link creation");
         }
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1501,7 +1501,7 @@ public final class GuestSyscallsTest {
     public void faccessatChecksSandboxedPaths() throws Exception {
         Files.writeString(tempDirectory.resolve("readable.txt"), "data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1541,7 +1541,7 @@ public final class GuestSyscallsTest {
     public void faccessat2ChecksEmptyPathFileDescriptors() throws Exception {
         Files.writeString(tempDirectory.resolve("output.txt"), "data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1581,7 +1581,7 @@ public final class GuestSyscallsTest {
             assumeTrue(false, "Host filesystem does not allow symbolic link creation");
         }
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1612,7 +1612,7 @@ public final class GuestSyscallsTest {
     public void openatReadsHostFileBelowRoot() throws Exception {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1668,7 +1668,7 @@ public final class GuestSyscallsTest {
         Files.createDirectories(tempDirectory.resolve("subdir"));
         Files.writeString(tempDirectory.resolve("subdir").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1738,7 +1738,7 @@ public final class GuestSyscallsTest {
         Files.createDirectories(tempDirectory.resolve("subdir").resolve("nested"));
         Files.writeString(tempDirectory.resolve("subdir").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1822,7 +1822,7 @@ public final class GuestSyscallsTest {
     public void dupSharesHostFileOffsetAndLifetime() throws Exception {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1872,7 +1872,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `dup` can duplicate standard streams.
     @Test
     public void dupDuplicatesStandardStreams() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             MachineState state = state(
                     memory,
@@ -1911,7 +1911,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("first.txt"), "first", StandardCharsets.UTF_8);
         Files.writeString(tempDirectory.resolve("second.txt"), "second", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -1964,7 +1964,7 @@ public final class GuestSyscallsTest {
     /// Verifies in-memory `pipe2` descriptors for static single-process programs.
     @Test
     public void pipe2TransfersBytesBetweenDescriptors() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pipeAddress = memory.baseAddress();
             long bufferAddress = memory.baseAddress() + 32;
@@ -2010,7 +2010,7 @@ public final class GuestSyscallsTest {
     /// Verifies in-memory `eventfd2` counters and basic zero-timeout `epoll` readiness.
     @Test
     public void eventfd2AndEpollReportReadiness() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long bufferAddress = memory.baseAddress();
             long eventAddress = memory.baseAddress() + 128;
@@ -2136,7 +2136,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `openat` exposes writable host files below the configured host root.
     @Test
     public void openatWritesHostFilesBelowRoot() throws Exception {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -2242,7 +2242,7 @@ public final class GuestSyscallsTest {
     public void positionedFileIoPreservesDescriptorOffset() throws Exception {
         Files.writeString(tempDirectory.resolve("positioned.txt"), "0123456789", StandardCharsets.UTF_8);
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -2361,7 +2361,7 @@ public final class GuestSyscallsTest {
     /// Verifies path mutation syscalls for sandboxed files and directories.
     @Test
     public void fileMutationSyscallsStaySandboxed() throws Exception {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -2528,7 +2528,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
         Files.createDirectory(tempDirectory.resolve("directory"));
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
@@ -2579,7 +2579,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `lseek` rejects standard streams as non-seekable.
     @Test
     public void lseekRejectsStandardStreamsAsPipes() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_LSEEK, 1, 0, 0);
@@ -2599,7 +2599,7 @@ public final class GuestSyscallsTest {
     /// Verifies tty ioctl support used by common `isatty` and stdio setup paths.
     @Test
     public void ioctlSupportsTerminalQueries() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             memory.writeByte(memory.baseAddress(), (byte) 0x7f);
@@ -2627,7 +2627,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `writev` writes all guest iovec buffers to stderr.
     @Test
     public void writevWritesMultipleBuffers() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream err = new ByteArrayOutputStream();
             MachineState state = state(
                     memory,
@@ -2657,7 +2657,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `readv` fills guest iovec buffers from stdin in order.
     @Test
     public void readvReadsMultipleBuffers() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(
                     memory,
                     new ByteArrayInputStream("ABC".getBytes(StandardCharsets.UTF_8)),
@@ -2687,7 +2687,7 @@ public final class GuestSyscallsTest {
     /// Verifies stable process identity syscalls for the single-process simulator.
     @Test
     public void processIdentitySyscallsReturnStableIds() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_GETPID, 0, 0, 0);
@@ -2739,7 +2739,7 @@ public final class GuestSyscallsTest {
     /// Verifies signal-send syscalls use deterministic single-process validation.
     @Test
     public void signalSendSyscallsValidateSingleProcessTargets() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_KILL, 1, 0, 0);
@@ -2779,7 +2779,7 @@ public final class GuestSyscallsTest {
     /// Verifies that thread-style `clone` requires a Truffle environment that can create threads.
     @Test
     public void cloneRequiresThreadCreationContext() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 512;
             long parentTidAddress = memory.baseAddress() + 32;
@@ -2806,7 +2806,7 @@ public final class GuestSyscallsTest {
     /// Verifies that unsupported `clone` forms remain explicit errors.
     @Test
     public void cloneRejectsUnsupportedProcessCreationForms() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 512;
 
@@ -2827,7 +2827,7 @@ public final class GuestSyscallsTest {
     /// Verifies that robust futex list registration is accepted for single-threaded guests.
     @Test
     public void setRobustListAcceptsNonNegativeLength() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long headPointerAddress = memory.baseAddress() + 128;
             long lengthAddress = memory.baseAddress() + 136;
@@ -2855,7 +2855,7 @@ public final class GuestSyscallsTest {
     /// Verifies non-blocking single-threaded futex wait results.
     @Test
     public void futexWaitComparesWordAndReturnsImmediately() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long futexAddress = memory.baseAddress() + 64;
             long timeoutAddress = memory.baseAddress() + 80;
@@ -2885,7 +2885,7 @@ public final class GuestSyscallsTest {
     /// Verifies futex wake operations against the empty waiter set.
     @Test
     public void futexWakeReportsNoWaiters() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long futexAddress = memory.baseAddress() + 64;
 
@@ -2914,7 +2914,7 @@ public final class GuestSyscallsTest {
     /// Verifies futex validation and unsupported operation reporting.
     @Test
     public void futexRejectsInvalidOrUnsupportedOperations() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long futexAddress = memory.baseAddress() + 64;
 
@@ -2947,7 +2947,7 @@ public final class GuestSyscallsTest {
     /// Verifies `nanosleep` validation and successful short sleeps.
     @Test
     public void nanosleepValidatesTimespec() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long requestAddress = memory.baseAddress() + 64;
             long remainingAddress = memory.baseAddress() + 80;
@@ -2979,7 +2979,7 @@ public final class GuestSyscallsTest {
     /// Verifies `nanosleep` interruption handling and remaining-time reporting.
     @Test
     public void nanosleepReportsRemainingTimeOnInterrupt() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long requestAddress = memory.baseAddress() + 64;
             long remainingAddress = memory.baseAddress() + 80;
@@ -3003,7 +3003,7 @@ public final class GuestSyscallsTest {
     /// Verifies deterministic single-CPU affinity for static libc sysconf queries.
     @Test
     public void schedGetaffinityReportsSingleCpu() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long maskAddress = memory.baseAddress() + 64;
 
@@ -3023,7 +3023,7 @@ public final class GuestSyscallsTest {
     /// Verifies deterministic single-CPU scheduling helper syscalls.
     @Test
     public void schedulingHelpersReportSingleCpu() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long cpuAddress = memory.baseAddress() + 64;
             long nodeAddress = memory.baseAddress() + 72;
@@ -3049,7 +3049,7 @@ public final class GuestSyscallsTest {
     /// Verifies deterministic RISC-V hardware probe values for the simulated CPU.
     @Test
     public void riscvHwprobeReportsSupportedCapabilities() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pairsAddress = memory.baseAddress() + 64;
 
@@ -3085,7 +3085,7 @@ public final class GuestSyscallsTest {
     /// Verifies `riscv_hwprobe` validation and single-CPU filtering behavior.
     @Test
     public void riscvHwprobeFiltersWhichCpus() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pairsAddress = memory.baseAddress() + 64;
             long cpuSetAddress = memory.baseAddress() + 256;
@@ -3121,7 +3121,7 @@ public final class GuestSyscallsTest {
     /// Verifies the deterministic Linux machine identity reported by `uname`.
     @Test
     public void unameReportsRiscvLinuxIdentity() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long utsnameAddress = memory.baseAddress() + 64;
 
@@ -3138,7 +3138,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `clock_gettime` uses host clocks by default.
     @Test
     public void clockGettimeUsesHostTimeByDefault() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long timespecAddress = memory.baseAddress() + 64;
 
@@ -3170,7 +3170,7 @@ public final class GuestSyscallsTest {
     /// Verifies that a configured fixed clock makes `clock_gettime` deterministic.
     @Test
     public void clockGettimeUsesConfiguredClock() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             Clock fixedClock = Clock.fixed(
                     Instant.ofEpochSecond(1_700_000_000L, 123_456_789L),
                     ZoneOffset.UTC);
@@ -3206,7 +3206,7 @@ public final class GuestSyscallsTest {
     /// Verifies deterministic clock resolution reporting for supported clocks.
     @Test
     public void clockGetresReportsSupportedClockResolution() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long timespecAddress = memory.baseAddress() + 64;
 
@@ -3233,7 +3233,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `gettimeofday` uses the configured guest clock.
     @Test
     public void gettimeofdayUsesConfiguredClock() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             Clock fixedClock = Clock.fixed(
                     Instant.ofEpochSecond(1_700_000_000L, 987_654_321L),
                     ZoneOffset.UTC);
@@ -3261,7 +3261,7 @@ public final class GuestSyscallsTest {
     /// Verifies `clock_nanosleep` validation and deterministic elapsed clock handling.
     @Test
     public void clockNanosleepHandlesRelativeAndAbsoluteRequests() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             Clock fixedClock = Clock.fixed(
                     Instant.ofEpochSecond(1_700_000_000L, 123_456_789L),
                     ZoneOffset.UTC);
@@ -3309,7 +3309,7 @@ public final class GuestSyscallsTest {
     /// Verifies `times` reports deterministic process CPU ticks.
     @Test
     public void timesUsesConfiguredClock() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             Clock fixedClock = Clock.fixed(Instant.ofEpochSecond(1_700_000_000L), ZoneOffset.UTC);
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
             long tmsAddress = memory.baseAddress() + 64;
@@ -3336,7 +3336,7 @@ public final class GuestSyscallsTest {
     /// Verifies `getrusage` reports deterministic zero usage for a fixed clock.
     @Test
     public void getrusageUsesConfiguredClock() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             Clock fixedClock = Clock.fixed(Instant.ofEpochSecond(1_700_000_000L), ZoneOffset.UTC);
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
             long rusageAddress = memory.baseAddress() + 64;
@@ -3370,7 +3370,7 @@ public final class GuestSyscallsTest {
     /// Verifies `prlimit64` reports and lowers tracked resource limits.
     @Test
     public void prlimit64ReportsAndUpdatesResourceLimits() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long newLimitAddress = memory.baseAddress() + 64;
             long oldLimitAddress = memory.baseAddress() + 80;
@@ -3410,7 +3410,7 @@ public final class GuestSyscallsTest {
     /// Verifies `prctl` process-name truncation and retrieval.
     @Test
     public void prctlSupportsProcessName() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long inputAddress = memory.baseAddress() + 64;
             long outputAddress = memory.baseAddress() + 128;
@@ -3439,7 +3439,7 @@ public final class GuestSyscallsTest {
     /// Verifies `prctl` state tracked by the single-process simulator.
     @Test
     public void prctlTracksSingleProcessState() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long intAddress = memory.baseAddress() + 64;
             long longAddress = memory.baseAddress() + 72;
@@ -3525,7 +3525,7 @@ public final class GuestSyscallsTest {
     /// Verifies `prctl` no-op support and unsupported operation errors.
     @Test
     public void prctlAcceptsVirtualMemoryAreaNames() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long nameAddress = memory.baseAddress() + 64;
 
@@ -3556,7 +3556,7 @@ public final class GuestSyscallsTest {
     @Test
     public void getrandomFillsDeterministicBytes() {
         byte[] firstBytes;
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 3);
@@ -3574,7 +3574,7 @@ public final class GuestSyscallsTest {
             assertEquals(EINVAL, state.register(10));
         }
 
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 0);
@@ -3587,7 +3587,7 @@ public final class GuestSyscallsTest {
     /// Verifies optional runtime capability syscalls report deterministic fallback results.
     @Test
     public void optionalRuntimeCapabilitySyscallsReportUnavailable() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_MEMBARRIER, MEMBARRIER_CMD_QUERY, 0, 0);
@@ -3611,7 +3611,7 @@ public final class GuestSyscallsTest {
     /// Verifies that host input and output failures are surfaced as simulator exceptions.
     @Test
     public void propagatesHostIoFailures() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState readState = state(
                     memory,
                     new FailingInputStream(),
@@ -3636,7 +3636,7 @@ public final class GuestSyscallsTest {
     /// Verifies alternate signal stack registration for runtimes that install signal handlers.
     @Test
     public void sigaltstackTracksSingleThreadedSignalStack() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 64;
             long oldStackAddress = memory.baseAddress() + 128;
@@ -3679,7 +3679,7 @@ public final class GuestSyscallsTest {
     /// Verifies Linux-compatible `sigaltstack` validation for unsupported stack descriptions.
     @Test
     public void sigaltstackRejectsInvalidStacks() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 64;
             long stackPointer = memory.baseAddress() + 1024;
@@ -3704,7 +3704,7 @@ public final class GuestSyscallsTest {
     /// Verifies deterministic signal action handling for runtimes that initialize signal handlers.
     @Test
     public void rtSigactionAcceptsRuntimeSetup() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long actionAddress = memory.baseAddress() + 64;
             long oldActionAddress = memory.baseAddress() + 128;
@@ -3728,7 +3728,7 @@ public final class GuestSyscallsTest {
     /// Verifies deterministic signal-mask handling for single-threaded guests.
     @Test
     public void rtSigprocmaskReportsEmptyMask() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long newSetAddress = memory.baseAddress() + 64;
             long oldSetAddress = memory.baseAddress() + 128;
@@ -3753,7 +3753,7 @@ public final class GuestSyscallsTest {
     /// Verifies that anonymous `mmap` returns zero-filled page-aligned guest memory.
     @Test
     public void mmapAllocatesAnonymousGuestPages() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -3785,7 +3785,7 @@ public final class GuestSyscallsTest {
     /// Verifies that released anonymous mappings can be reused by later `mmap` calls.
     @Test
     public void munmapReleasesAnonymousGuestPages() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 5 * PAGE_SIZE)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 5 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -3841,7 +3841,7 @@ public final class GuestSyscallsTest {
     /// Verifies validation and collision behavior for unsupported `mmap` requests.
     @Test
     public void mmapRejectsUnsupportedRequests() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 3 * PAGE_SIZE)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 3 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -3907,7 +3907,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `PROT_NONE` reservations can be activated by fixed `mmap` calls.
     @Test
     public void mmapReservesProtNoneAndMapsFixedSparsePages() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -3951,7 +3951,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `mprotect` can activate and deactivate reserved sparse mappings.
     @Test
     public void mprotectUpdatesReservedSparseMappings() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -3996,7 +3996,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `madvise` accepts common hints and discards backed anonymous pages.
     @Test
     public void madviseClearsDiscardedAnonymousPages() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -4038,7 +4038,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `brk` does not grow into active anonymous mappings.
     @Test
     public void brkDoesNotOverlapAnonymousMappings() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -4068,7 +4068,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `brk` reports and updates the program break inside guest memory.
     @Test
     public void brkTracksProgramBreakWithinGuestMemory() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             long initialBreak = memory.baseAddress() + 128;
             long requestedBreak = initialBreak + 64;
             MachineState state = state(

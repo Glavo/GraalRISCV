@@ -2,8 +2,6 @@ package org.glavo.riscv;
 
 import org.glavo.riscv.exception.*;
 import org.glavo.riscv.memory.*;
-import org.glavo.riscv.parser.*;
-import org.glavo.riscv.runtime.*;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 
@@ -17,7 +15,7 @@ public final class MemoryTest {
     /// Verifies little-endian 64-bit guest memory access.
     @Test
     public void readsAndWritesLongValues() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             memory.writeLong(Memory.DEFAULT_BASE_ADDRESS + 16, 0x0102_0304_0506_0708L);
 
             assertEquals(0x0102_0304_0506_0708L, memory.readLong(Memory.DEFAULT_BASE_ADDRESS + 16));
@@ -28,7 +26,7 @@ public final class MemoryTest {
     /// Verifies that MemorySegment rejects unaligned data access.
     @Test
     public void rejectsMisalignedDataAccess() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             assertThrows(IllegalArgumentException.class, () -> memory.readInt(Memory.DEFAULT_BASE_ADDRESS + 2));
         }
     }
@@ -36,7 +34,7 @@ public final class MemoryTest {
     /// Verifies that instruction fetches can read from 16-bit-aligned addresses.
     @Test
     public void readsInstructionIntFromHalfwordAlignedAddress() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 2, (byte) 0x13);
             memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 3, (byte) 0x05);
             memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 4, (byte) 0x00);
@@ -49,7 +47,7 @@ public final class MemoryTest {
     /// Verifies sparse mappings can be accessed after out-of-order insertion.
     @Test
     public void accessesMultipleSparseMappings() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             long firstAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
             long secondAddress = Memory.DEFAULT_BASE_ADDRESS + 0x8000;
             long thirdAddress = Memory.DEFAULT_BASE_ADDRESS + 0xc000;
@@ -71,7 +69,7 @@ public final class MemoryTest {
     /// Verifies unmapping the middle of a sparse mapping keeps the remaining slices addressable.
     @Test
     public void unmapSplitsSparseMapping() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             long mappingAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
 
             assertTrue(memory.map(mappingAddress, 3 * 4096L));
