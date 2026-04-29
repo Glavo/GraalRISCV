@@ -23,7 +23,7 @@
 ### 4. Maintain build, docs, and performance probes
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
-- Expand direct-call trace coverage beyond one stable self-loop block and investigate remaining OSR churn under compilation tracing.
+- Investigate lower-overhead trace formation beyond one stable self-loop block; avoid broad direct-call caches unless benchmarks show a clear win.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
 - Investigate register staging for the custom micro-bytecode executor after correctness remains stable.
 - Keep rejected performance experiments documented outside `PLANS.md`.

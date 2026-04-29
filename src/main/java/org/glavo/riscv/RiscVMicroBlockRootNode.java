@@ -70,12 +70,13 @@ final class RiscVMicroBlockRootNode extends RootNode {
     /// Executes the block with the `MachineState` supplied as the first argument.
     @Override
     public Object execute(VirtualFrame frame) {
-        return executeBlock((MachineState) frame.getArguments()[0]);
+        executeBlock((MachineState) frame.getArguments()[0]);
+        return null;
     }
 
-    /// Runs all micro-ops in this block and returns the materialized next PC.
+    /// Runs all micro-ops in this block and materializes the next PC in the machine state.
     @ExplodeLoop
-    private long executeBlock(MachineState state) {
+    private void executeBlock(MachineState state) {
         if (state.canRetireBlock()) {
             for (int index = 0; index < opcodes.length; index++) {
                 executeInstruction(state, index, true);
@@ -85,7 +86,6 @@ final class RiscVMicroBlockRootNode extends RootNode {
                 executeInstruction(state, index, false);
             }
         }
-        return state.pc();
     }
 
     /// Executes one micro-op by decoding its packed operand.

@@ -6,12 +6,10 @@ import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.DirectCallNode;
-import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.Node.Child;
-import com.oracle.truffle.api.nodes.Node.Children;
 import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -365,7 +363,6 @@ public final class RiscVRootNode extends RootNode {
             state.syscalls().checkProcessStatus();
             long pc = dispatch.execute(loopState, state);
             loopState.setPc(pc);
-            state.setPc(pc);
             return true;
         }
     }
@@ -373,24 +370,17 @@ public final class RiscVRootNode extends RootNode {
     /// Dispatches decoded blocks through a small direct-call inline cache.
     @NotNullByDefault
     private static final class BlockDispatchNode extends Node {
-        /// The number of guest block targets kept as direct Truffle call nodes.
-        private static final int INLINE_CACHE_SIZE = 1;
-
         /// Consecutive executions required before a guest PC is promoted to a direct call.
         private static final int DIRECT_CALL_INSTALL_THRESHOLD = 128;
 
         /// The decoded block cache shared by all dispatch calls.
         private final BlockCache blocks;
 
-        /// Direct-call entries for stable guest block targets.
-        @Children private final @Nullable CachedBlockCallNode[] cachedCalls =
-                new CachedBlockCallNode[INLINE_CACHE_SIZE];
+        /// Direct-call entry for a stable self-looping guest block.
+        @Child private @Nullable CachedBlockCallNode cachedCall;
 
         /// Fallback call node used after the direct-call cache is full.
         @Child private IndirectCallNode indirectCall = IndirectCallNode.create();
-
-        /// The number of direct-call entries that have been installed.
-        private volatile int cachedCallCount;
 
         /// The guest PC currently being considered for direct-call promotion.
         private long candidatePc;
@@ -409,15 +399,12 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Executes a cached direct block call, or installs and executes a new cache entry.
-        @ExplodeLoop
         private long executeCachedOrMiss(GuestLoopState loopState, MachineState state, long pc) {
-            for (int index = 0; index < INLINE_CACHE_SIZE; index++) {
-                CachedBlockCallNode cachedCall = cachedCalls[index];
-                if (cachedCall != null && cachedCall.matches(pc)) {
-                    return cachedCall.call(state);
-                }
+            CachedBlockCallNode cachedCall = this.cachedCall;
+            if (cachedCall != null && cachedCall.matches(pc)) {
+                cachedCall.call(state);
+                return state.pc();
             }
-
             return executeMiss(loopState, state, pc);
         }
 
@@ -427,15 +414,21 @@ public final class RiscVRootNode extends RootNode {
             if (CompilerDirectives.inInterpreter() && shouldInstallDirectCall(pc)) {
                 CachedBlockCallNode cachedCall = installCachedCall(pc, target);
                 if (cachedCall != null) {
-                    return cachedCall.call(state);
+                    cachedCall.call(state);
+                    return state.pc();
                 }
             }
 
-            return (long) indirectCall.call(target, state);
+            indirectCall.call(target, state);
+            return state.pc();
         }
 
         /// Returns true after a guest PC has shown stable self-loop behavior in the interpreter.
         private boolean shouldInstallDirectCall(long pc) {
+            if (cachedCall != null) {
+                return false;
+            }
+
             if (candidatePc == pc) {
                 candidateCount++;
             } else {
@@ -445,34 +438,17 @@ public final class RiscVRootNode extends RootNode {
             return candidateCount >= DIRECT_CALL_INSTALL_THRESHOLD;
         }
 
-        /// Returns the cached direct call for the supplied guest program counter, or null on a miss.
-        private @Nullable CachedBlockCallNode cachedCall(long pc) {
-            for (int index = 0; index < INLINE_CACHE_SIZE; index++) {
-                CachedBlockCallNode cachedCall = cachedCalls[index];
-                if (cachedCall != null && cachedCall.matches(pc)) {
-                    return cachedCall;
-                }
-            }
-            return null;
-        }
-
         /// Installs a direct call node for a newly observed guest block when capacity remains.
         private @Nullable CachedBlockCallNode installCachedCall(long pc, RootCallTarget target) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             synchronized (this) {
-                CachedBlockCallNode cachedCall = cachedCall(pc);
+                CachedBlockCallNode cachedCall = this.cachedCall;
                 if (cachedCall != null) {
-                    return cachedCall;
-                }
-
-                int index = cachedCallCount;
-                if (index >= INLINE_CACHE_SIZE) {
-                    return null;
+                    return cachedCall.matches(pc) ? cachedCall : null;
                 }
 
                 cachedCall = insert(new CachedBlockCallNode(pc, target));
-                cachedCalls[index] = cachedCall;
-                cachedCallCount = index + 1;
+                this.cachedCall = cachedCall;
                 return cachedCall;
             }
         }
@@ -499,8 +475,8 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Executes the cached decoded block.
-        private long call(MachineState state) {
-            return (long) call.call(state);
+        private void call(MachineState state) {
+            call.call(state);
         }
     }
 
