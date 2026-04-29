@@ -278,7 +278,7 @@ public final class Memory implements AutoCloseable {
         int insertionIndex = regions.insertionIndex(address);
         MappedRegions newRegions = regions.insert(insertionIndex, address, regionSegment);
         mappedRegions = newRegions;
-        setCachedMappedRegion(new RegionCache(newRegions, region));
+        setCachedMappedRegion(newRegions, region);
         return true;
     }
 
@@ -416,29 +416,29 @@ public final class Memory implements AutoCloseable {
         }
 
         MappedRegions regions = mappedRegions;
-        @Nullable RegionCache cache = cachedMappedRegion();
-        if (cache != null && cache.regions() == regions && containsRange(cache.region(), address, length)) {
-            return cache.region();
+        @Nullable MappedRegion cachedRegion = cachedMappedRegion(regions, address, length);
+        if (cachedRegion != null) {
+            return cachedRegion;
         }
 
         @Nullable MappedRegion region = regions.find(address, length);
         if (region != null && mappedRegions == regions) {
-            setCachedMappedRegion(new RegionCache(regions, region));
+            setCachedMappedRegion(regions, region);
         }
         return region;
     }
 
-    /// Returns the cached mapped region for the current context and thread, or null when caching is unavailable.
-    private @Nullable RegionCache cachedMappedRegion() {
+    /// Returns the cached mapped region for the current context and thread, or null when it misses.
+    private @Nullable MappedRegion cachedMappedRegion(MappedRegions regions, long address, long length) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return cache == null ? null : cache.get().region();
+        return cache == null ? null : cache.get().region(regions, address, length);
     }
 
     /// Stores the cached mapped region for the current context and thread when caching is available.
-    private void setCachedMappedRegion(RegionCache region) {
+    private void setCachedMappedRegion(MappedRegions regions, MappedRegion region) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         if (cache != null) {
-            cache.get().setRegion(region);
+            cache.get().setRegion(regions, region);
         }
     }
 
@@ -483,36 +483,36 @@ public final class Memory implements AutoCloseable {
 
     /// Stores mutable sparse memory lookup state for one Truffle context and host thread.
     public static final class MappedRegionCache {
-        /// The cached sparse region and the immutable snapshot it belongs to.
-        private @Nullable RegionCache region;
+        /// The sparse region snapshot that owns the cached region.
+        private @Nullable MappedRegions regions;
+
+        /// The cached sparse region.
+        private @Nullable MappedRegion region;
 
         /// Creates an empty sparse memory lookup cache.
         public MappedRegionCache() {
         }
 
-        /// Returns the cached sparse region, or null when the cache is empty.
-        private @Nullable RegionCache region() {
-            return region;
+        /// Returns the cached sparse region, or null when the cache misses.
+        private @Nullable MappedRegion region(MappedRegions regions, long address, long length) {
+            @Nullable MappedRegion region = this.region;
+            if (region != null && this.regions == regions && containsRange(region, address, length)) {
+                return region;
+            }
+            return null;
         }
 
         /// Stores a sparse region cache entry.
-        private void setRegion(RegionCache region) {
+        private void setRegion(MappedRegions regions, MappedRegion region) {
+            this.regions = regions;
             this.region = region;
         }
 
         /// Clears this sparse region cache.
         private void clear() {
+            this.regions = null;
             this.region = null;
         }
-    }
-
-    /// Caches a sparse region together with the immutable snapshot it belongs to.
-    ///
-    /// @param regions the sparse region snapshot that owns `region`
-    /// @param region the cached sparse region view
-    private record RegionCache(
-            MappedRegions regions,
-            MappedRegion region) {
     }
 
     /// Stores sorted sparse guest memory regions in parallel arrays.
