@@ -3,6 +3,7 @@
 
 package org.glavo.riscv.memory;
 
+import com.oracle.truffle.api.CompilerDirectives.ValueType;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -15,53 +16,11 @@ public final class MemoryAccess {
     /// The software TLB for the current Truffle context and host thread.
     private final @Nullable MappedRegionCache cache;
 
-    /// Whether this execution facade has a read data-page cache entry.
-    private boolean cachedDataPageValid;
+    /// The access-local readable data-page cache entry.
+    private CachedPage cachedDataPage = new CachedPage(false, 0, 0, 0, 0, 0, null, 0);
 
-    /// The guest page number associated with the cached read data page.
-    private long cachedDataPageNumber;
-
-    /// The inclusive guest address where the cached read data page is valid.
-    private long cachedDataRangeStart;
-
-    /// The exclusive guest address where the cached read data page stops being valid.
-    private long cachedDataRangeEnd;
-
-    /// The access protections available through the cached read data page.
-    private long cachedDataProtection;
-
-    /// The memory generation associated with the cached read data page.
-    private long cachedDataGeneration;
-
-    /// The Unsafe base object for the cached read data page.
-    private @Nullable Object cachedDataBaseObject;
-
-    /// The Unsafe byte offset of the cached read data page start.
-    private long cachedDataBaseOffset;
-
-    /// Whether this execution facade has a write data-page cache entry.
-    private boolean cachedWriteDataPageValid;
-
-    /// The guest page number associated with the cached write data page.
-    private long cachedWriteDataPageNumber;
-
-    /// The inclusive guest address where the cached write data page is valid.
-    private long cachedWriteDataRangeStart;
-
-    /// The exclusive guest address where the cached write data page stops being valid.
-    private long cachedWriteDataRangeEnd;
-
-    /// The access protections available through the cached write data page.
-    private long cachedWriteDataProtection;
-
-    /// The memory generation associated with the cached write data page.
-    private long cachedWriteDataGeneration;
-
-    /// The Unsafe base object for the cached write data page.
-    private @Nullable Object cachedWriteDataBaseObject;
-
-    /// The Unsafe byte offset of the cached write data page start.
-    private long cachedWriteDataBaseOffset;
+    /// The access-local writable data-page cache entry.
+    private CachedPage cachedWriteDataPage = new CachedPage(false, 0, 0, 0, 0, 0, null, 0);
 
     /// Creates an access facade for a memory object and optional software TLB.
     MemoryAccess(Memory memory, @Nullable MappedRegionCache cache) {
@@ -69,11 +28,34 @@ public final class MemoryAccess {
         this.cache = cache;
     }
 
+    /// Stores one access-local page cache entry.
+    ///
+    /// @param valid whether this cache entry is valid
+    /// @param pageNumber the guest page number associated with the cached page
+    /// @param rangeStart the inclusive guest address where the cached page is valid
+    /// @param rangeEnd the exclusive guest address where the cached page stops being valid
+    /// @param protection the access protections available through the cached page
+    /// @param generation the memory generation associated with the cached page
+    /// @param baseObject the Unsafe base object for the cached page
+    /// @param baseOffset the Unsafe byte offset of the cached page start
+    @ValueType
+    private record CachedPage(
+            boolean valid,
+            long pageNumber,
+            long rangeStart,
+            long rangeEnd,
+            long protection,
+            long generation,
+            @Nullable Object baseObject,
+            long baseOffset) {
+    }
+
     /// Reads a signed byte from guest memory using explicit page-layout constants.
     public byte readByte(long address, MemoryLayout layout) {
         long pageOffset = layout.pageOffset(address);
         ensureReadableDataPage(address, Byte.BYTES, layout);
-        return MemoryUnsafe.UNSAFE.getByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
+        CachedPage cached = cachedDataPage;
+        return MemoryUnsafe.UNSAFE.getByte(cached.baseObject(), cached.baseOffset() + pageOffset);
     }
 
     /// Reads an unsigned byte from guest memory using explicit page-layout constants.
@@ -86,7 +68,8 @@ public final class MemoryAccess {
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageShortOffset(pageOffset)) {
             ensureReadableDataPage(address, Short.BYTES, layout);
-            short value = MemoryUnsafe.UNSAFE.getShort(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
+            CachedPage cached = cachedDataPage;
+            short value = MemoryUnsafe.UNSAFE.getShort(cached.baseObject(), cached.baseOffset() + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
         }
 
@@ -103,7 +86,8 @@ public final class MemoryAccess {
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageIntOffset(pageOffset)) {
             ensureReadableDataPage(address, Integer.BYTES, layout);
-            int value = MemoryUnsafe.UNSAFE.getInt(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
+            CachedPage cached = cachedDataPage;
+            int value = MemoryUnsafe.UNSAFE.getInt(cached.baseObject(), cached.baseOffset() + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
@@ -120,7 +104,8 @@ public final class MemoryAccess {
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageLongOffset(pageOffset)) {
             ensureReadableDataPage(address, Long.BYTES, layout);
-            long value = MemoryUnsafe.UNSAFE.getLong(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
+            CachedPage cached = cachedDataPage;
+            long value = MemoryUnsafe.UNSAFE.getLong(cached.baseObject(), cached.baseOffset() + pageOffset);
             return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
         }
 
@@ -131,7 +116,8 @@ public final class MemoryAccess {
     public void writeByte(long address, byte value, MemoryLayout layout) {
         long pageOffset = layout.pageOffset(address);
         ensureWritableDataPage(address, Byte.BYTES, layout);
-        MemoryUnsafe.UNSAFE.putByte(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
+        CachedPage cached = cachedWriteDataPage;
+        MemoryUnsafe.UNSAFE.putByte(cached.baseObject(), cached.baseOffset() + pageOffset, value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory using explicit page-layout constants.
@@ -140,7 +126,8 @@ public final class MemoryAccess {
         if (layout.isSinglePageShortOffset(pageOffset)) {
             ensureWritableDataPage(address, Short.BYTES, layout);
             short stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-            MemoryUnsafe.UNSAFE.putShort(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
+            CachedPage cached = cachedWriteDataPage;
+            MemoryUnsafe.UNSAFE.putShort(cached.baseObject(), cached.baseOffset() + pageOffset, stored);
             return;
         }
 
@@ -153,7 +140,8 @@ public final class MemoryAccess {
         if (layout.isSinglePageIntOffset(pageOffset)) {
             ensureWritableDataPage(address, Integer.BYTES, layout);
             int stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-            MemoryUnsafe.UNSAFE.putInt(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
+            CachedPage cached = cachedWriteDataPage;
+            MemoryUnsafe.UNSAFE.putInt(cached.baseObject(), cached.baseOffset() + pageOffset, stored);
             return;
         }
 
@@ -166,7 +154,8 @@ public final class MemoryAccess {
         if (layout.isSinglePageLongOffset(pageOffset)) {
             ensureWritableDataPage(address, Long.BYTES, layout);
             long stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-            MemoryUnsafe.UNSAFE.putLong(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, stored);
+            CachedPage cached = cachedWriteDataPage;
+            MemoryUnsafe.UNSAFE.putLong(cached.baseObject(), cached.baseOffset() + pageOffset, stored);
             return;
         }
 
@@ -190,23 +179,25 @@ public final class MemoryAccess {
     /// Returns true when the access-local data-page cache satisfies the supplied range and protection.
     private boolean hasCachedDataPage(long address, int length, long requiredProtection, MemoryLayout layout) {
         long pageNumber = layout.pageNumber(address);
-        return cachedDataPageValid
-                && cachedDataPageNumber == pageNumber
-                && cachedDataGeneration == memory.generation
-                && address >= cachedDataRangeStart
-                && length <= cachedDataRangeEnd - address
-                && (cachedDataProtection & requiredProtection) == requiredProtection;
+        CachedPage cached = cachedDataPage;
+        return cached.valid()
+                && cached.pageNumber() == pageNumber
+                && cached.generation() == memory.generation
+                && address >= cached.rangeStart()
+                && length <= cached.rangeEnd() - address
+                && (cached.protection() & requiredProtection) == requiredProtection;
     }
 
     /// Returns true when the access-local write data-page cache satisfies the supplied range and protection.
     private boolean hasCachedWriteDataPage(long address, int length, long requiredProtection, MemoryLayout layout) {
         long pageNumber = layout.pageNumber(address);
-        return cachedWriteDataPageValid
-                && cachedWriteDataPageNumber == pageNumber
-                && cachedWriteDataGeneration == memory.generation
-                && address >= cachedWriteDataRangeStart
-                && length <= cachedWriteDataRangeEnd - address
-                && (cachedWriteDataProtection & requiredProtection) == requiredProtection;
+        CachedPage cached = cachedWriteDataPage;
+        return cached.valid()
+                && cached.pageNumber() == pageNumber
+                && cached.generation() == memory.generation
+                && address >= cached.rangeStart()
+                && length <= cached.rangeEnd() - address
+                && (cached.protection() & requiredProtection) == requiredProtection;
     }
 
     /// Stores one data-page lookup in the access-local cache.
@@ -217,25 +208,20 @@ public final class MemoryAccess {
             long protection,
             long generation,
             MemoryPage page) {
+        CachedPage cachedPage = new CachedPage(
+                true,
+                pageNumber,
+                rangeStart,
+                rangeEnd,
+                protection,
+                generation,
+                page.baseObject(),
+                page.baseOffset());
         if ((protection & Memory.PROTECTION_READ) != 0) {
-            cachedDataPageNumber = pageNumber;
-            cachedDataRangeStart = rangeStart;
-            cachedDataRangeEnd = rangeEnd;
-            cachedDataProtection = protection;
-            cachedDataGeneration = generation;
-            cachedDataBaseObject = page.baseObject();
-            cachedDataBaseOffset = page.baseOffset();
-            cachedDataPageValid = true;
+            cachedDataPage = cachedPage;
         }
         if ((protection & Memory.PROTECTION_WRITE) != 0) {
-            cachedWriteDataPageNumber = pageNumber;
-            cachedWriteDataRangeStart = rangeStart;
-            cachedWriteDataRangeEnd = rangeEnd;
-            cachedWriteDataProtection = protection;
-            cachedWriteDataGeneration = generation;
-            cachedWriteDataBaseObject = page.baseObject();
-            cachedWriteDataBaseOffset = page.baseOffset();
-            cachedWriteDataPageValid = true;
+            cachedWriteDataPage = cachedPage;
         }
     }
 }
