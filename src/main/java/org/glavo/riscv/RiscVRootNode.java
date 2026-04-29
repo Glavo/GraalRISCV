@@ -467,13 +467,12 @@ public final class RiscVRootNode extends RootNode {
 
                 int index = cachedCallCount;
                 if (index >= INLINE_CACHE_SIZE) {
-                    index = INLINE_CACHE_SIZE - 1;
-                } else {
-                    cachedCallCount = index + 1;
+                    return null;
                 }
 
                 cachedCall = insert(new CachedBlockCallNode(pc, target));
                 cachedCalls[index] = cachedCall;
+                cachedCallCount = index + 1;
                 return cachedCall;
             }
         }
@@ -555,7 +554,7 @@ public final class RiscVRootNode extends RootNode {
                 return block;
             }
 
-            CompilerDirectives.transferToInterpreterAndInvalidate();
+            CompilerDirectives.transferToInterpreter();
             if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
                 grow();
                 slot = findSlot(pc, keys, values);
