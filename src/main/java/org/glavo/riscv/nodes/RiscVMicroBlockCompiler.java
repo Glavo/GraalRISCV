@@ -18,6 +18,12 @@ final class RiscVMicroBlockCompiler {
 
     /// Builds a Truffle call target backed by the custom micro-bytecode interpreter.
     static RootCallTarget compile(RiscVLanguage language, DecodedBlock block) {
+        RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(language, compileNode(block));
+        return root.getCallTarget();
+    }
+
+    /// Builds an executable micro-bytecode block node for direct embedding in a root.
+    static RiscVMicroBlockNode compileNode(DecodedBlock block) {
         DecodedInstruction @Unmodifiable [] instructions = block.instructions();
         int instructionCount = instructions.length;
         byte[] opcodes = new byte[instructionCount];
@@ -32,15 +38,14 @@ final class RiscVMicroBlockCompiler {
             DecodedInstruction instruction = instructions[index];
             operations[index] = instruction.operation();
             opcodes[index] = opcode(operations[index]);
-            operands[index] = RiscVMicroBlockRootNode.packRegisters(instruction.rd(), instruction.rs1(), instruction.rs2());
+            operands[index] = RiscVMicroBlockNode.packRegisters(instruction.rd(), instruction.rs1(), instruction.rs2());
             raws[index] = instruction.raw();
             addresses[index] = instruction.address();
             nextPcs[index] = instruction.nextAddress();
             immediates[index] = instruction.immediate();
         }
 
-        RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(
-                language,
+        return new RiscVMicroBlockNode(
                 opcodes,
                 operations,
                 operands,
@@ -48,7 +53,6 @@ final class RiscVMicroBlockCompiler {
                 addresses,
                 nextPcs,
                 immediates);
-        return root.getCallTarget();
     }
 
     /// Converts a decoded operation to a micro-bytecode opcode.

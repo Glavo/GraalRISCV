@@ -809,6 +809,10 @@ public final class RiscVRootNode extends RootNode {
                 targets[count] = current.target();
                 count++;
 
+                if (count == MAX_TRACE_BLOCKS) {
+                    break;
+                }
+
                 if (!current.hasHotSuccessor()) {
                     break;
                 }
@@ -886,7 +890,7 @@ public final class RiscVRootNode extends RootNode {
 
     /// Stores temporary trace build arrays trimmed to the number of selected blocks.
     ///
-    /// @param targets the executable block targets in trace order
+    /// @param targets the block call targets in trace order
     /// @param expectedNextPcs the expected successor PCs between adjacent trace blocks
     @NotNullByDefault
     private record TraceBuildResult(

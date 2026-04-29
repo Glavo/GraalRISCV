@@ -15,7 +15,7 @@ import org.jetbrains.annotations.Unmodifiable;
 /// Executes a hot linear sequence of decoded RISC-V basic blocks through direct calls.
 @NotNullByDefault
 final class RiscVMicroTraceRootNode extends RootNode {
-    /// Direct calls for the decoded blocks selected into this trace.
+    /// Direct calls to the block targets selected into this trace.
     @Children private final DirectCallNode @Unmodifiable [] blockCalls;
 
     /// Expected successor PCs between adjacent trace blocks.

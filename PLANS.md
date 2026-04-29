@@ -23,7 +23,7 @@
 ### 4. Maintain build, docs, and performance probes
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
-- Tune and validate the hot trace executor, especially trace length, trigger thresholds, and interaction with Graal compilation diagnostics.
+- Continue measuring the direct-call hot trace executor, especially trace length, trigger thresholds, and interaction with Graal compilation diagnostics.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
 - Investigate register staging for the custom micro-bytecode executor after correctness remains stable.
 - Keep rejected performance experiments documented outside `PLANS.md`.
