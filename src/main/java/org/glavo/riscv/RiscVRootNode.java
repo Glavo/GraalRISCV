@@ -43,7 +43,7 @@ public final class RiscVRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
-        try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize())) {
+        try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize(), context.mappedRegionCache())) {
             MachineState state = createState(context, memory);
             try {
                 return executeGuestLoop(memory, state);

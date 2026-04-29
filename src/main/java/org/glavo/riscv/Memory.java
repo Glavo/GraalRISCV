@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.ContextThreadLocal;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -46,11 +47,16 @@ public final class Memory implements AutoCloseable {
     /// The sorted immutable snapshot of sparse memory regions created by Linux user-mode memory syscalls.
     private volatile MappedRegions mappedRegions = MappedRegions.EMPTY;
 
-    /// The current host thread's most recently accessed sparse memory region.
-    private final ThreadLocal<@Nullable RegionCache> cachedMappedRegion = new ThreadLocal<>();
+    /// The current Truffle context and host thread's most recently accessed sparse memory region.
+    private final @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion;
 
     /// Creates a memory window at the supplied guest base address.
     public Memory(long baseAddress, long size) {
+        this(baseAddress, size, null);
+    }
+
+    /// Creates a memory window with a Truffle context-thread-local sparse-region cache.
+    Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
         if (baseAddress < 0) {
             throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
         }
@@ -66,6 +72,7 @@ public final class Memory implements AutoCloseable {
         this.segment = arena.allocate(size, Long.BYTES);
         this.size = size;
         this.endAddress = baseAddress + size;
+        this.cachedMappedRegion = cachedMappedRegion;
     }
 
     /// Returns the inclusive base address of the memory window.
@@ -275,7 +282,7 @@ public final class Memory implements AutoCloseable {
         int insertionIndex = regions.insertionIndex(address);
         MappedRegions newRegions = regions.insert(insertionIndex, address, regionSegment);
         mappedRegions = newRegions;
-        cachedMappedRegion.set(new RegionCache(newRegions, region));
+        setCachedMappedRegion(new RegionCache(newRegions, region));
         return true;
     }
 
@@ -320,7 +327,7 @@ public final class Memory implements AutoCloseable {
             }
         }
         mappedRegions = MappedRegions.copyOf(newAddresses, newSegments, newSize);
-        cachedMappedRegion.remove();
+        clearCachedMappedRegion();
     }
 
     /// Returns true when the supplied guest range has native backing.
@@ -413,16 +420,38 @@ public final class Memory implements AutoCloseable {
         }
 
         MappedRegions regions = mappedRegions;
-        @Nullable RegionCache cache = cachedMappedRegion.get();
+        @Nullable RegionCache cache = cachedMappedRegion();
         if (cache != null && cache.regions() == regions && containsRange(cache.region(), address, length)) {
             return cache.region();
         }
 
         @Nullable MappedRegion region = regions.find(address, length);
         if (region != null && mappedRegions == regions) {
-            cachedMappedRegion.set(new RegionCache(regions, region));
+            setCachedMappedRegion(new RegionCache(regions, region));
         }
         return region;
+    }
+
+    /// Returns the cached mapped region for the current context and thread, or null when caching is unavailable.
+    private @Nullable RegionCache cachedMappedRegion() {
+        @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
+        return cache == null ? null : cache.get().region();
+    }
+
+    /// Stores the cached mapped region for the current context and thread when caching is available.
+    private void setCachedMappedRegion(RegionCache region) {
+        @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
+        if (cache != null) {
+            cache.get().setRegion(region);
+        }
+    }
+
+    /// Clears the cached mapped region for the current context and thread when caching is available.
+    private void clearCachedMappedRegion() {
+        @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
+        if (cache != null) {
+            cache.get().clear();
+        }
     }
 
     /// Returns true when the supplied guest range overlaps the initial memory segment.
@@ -454,6 +483,31 @@ public final class Memory implements AutoCloseable {
     private record MemoryAccess(
             MemorySegment segment,
             long offset) {
+    }
+
+    /// Stores mutable sparse memory lookup state for one Truffle context and host thread.
+    static final class MappedRegionCache {
+        /// The cached sparse region and the immutable snapshot it belongs to.
+        private @Nullable RegionCache region;
+
+        /// Creates an empty sparse memory lookup cache.
+        MappedRegionCache() {
+        }
+
+        /// Returns the cached sparse region, or null when the cache is empty.
+        private @Nullable RegionCache region() {
+            return region;
+        }
+
+        /// Stores a sparse region cache entry.
+        private void setRegion(RegionCache region) {
+            this.region = region;
+        }
+
+        /// Clears this sparse region cache.
+        private void clear() {
+            this.region = null;
+        }
     }
 
     /// Caches a sparse region together with the immutable snapshot it belongs to.

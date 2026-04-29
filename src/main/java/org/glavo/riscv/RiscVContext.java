@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.ContextThreadLocal;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
@@ -33,6 +34,9 @@ public final class RiscVContext {
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
+    /// The sparse memory lookup cache scoped by the current Truffle context and host thread.
+    private final ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache;
+
     /// Creates a simulator context.
     public RiscVContext(
             TruffleLanguage.Env env,
@@ -41,7 +45,8 @@ public final class RiscVContext {
             long maxInstructions,
             boolean trace,
             Clock clock,
-            String hostRoot) {
+            String hostRoot,
+            ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
@@ -69,6 +74,7 @@ public final class RiscVContext {
         this.clock = clock;
         this.hostRoot = hostRoot;
         this.programArguments = env.getApplicationArguments().clone();
+        this.mappedRegionCache = mappedRegionCache;
     }
 
     /// Returns the Truffle environment associated with this context.
@@ -109,5 +115,10 @@ public final class RiscVContext {
     /// Returns the guest application arguments supplied after the ELF path.
     public String @Unmodifiable [] programArguments() {
         return programArguments.clone();
+    }
+
+    /// Returns the sparse memory lookup cache for the current Truffle context and host thread.
+    ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache() {
+        return mappedRegionCache;
     }
 }

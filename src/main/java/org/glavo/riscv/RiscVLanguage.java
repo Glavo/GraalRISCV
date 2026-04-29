@@ -1,6 +1,7 @@
 package org.glavo.riscv;
 
 import com.oracle.truffle.api.CallTarget;
+import com.oracle.truffle.api.ContextThreadLocal;
 import com.oracle.truffle.api.Option;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.source.Source;
@@ -41,6 +42,9 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
 
     /// The number of nanoseconds in one second.
     private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
+
+    /// The per-context and per-host-thread sparse memory lookup cache.
+    private final ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache;
 
     /// The `riscv.memoryBase` language option.
     @Option(
@@ -91,7 +95,9 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     static final OptionKey<String> HOST_ROOT = new OptionKey<>(".");
 
     /// Creates a RISC-V Truffle language instance.
+    @SuppressWarnings("deprecation")
     public RiscVLanguage() {
+        this.mappedRegionCache = createContextThreadLocal((context, thread) -> new Memory.MappedRegionCache());
     }
 
     /// Creates a context from the current Truffle environment and option values.
@@ -104,7 +110,8 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(MAX_INSTRUCTIONS),
                 env.getOptions().get(TRACE),
                 clockFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),
-                env.getOptions().get(HOST_ROOT));
+                env.getOptions().get(HOST_ROOT),
+                mappedRegionCache);
     }
 
     /// Allows clone-created guest threads to enter the same exclusive language context.
