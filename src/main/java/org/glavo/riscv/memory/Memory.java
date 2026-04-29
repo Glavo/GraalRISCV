@@ -630,15 +630,15 @@ public final class Memory implements AutoCloseable {
     /// Returns the committed page for a read access, or null for mapped zero-fill memory.
     private @Nullable Page readPage(long address, int length, boolean instruction) {
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, instruction);
-        if (page != null && containsMappedRange(address, length)) {
+        @Nullable Page page = cachedPage(pageNumber, address, length, instruction);
+        if (page != null) {
             return page;
         }
 
-        ensureValidMappedRange(address, length);
+        Vma vma = ensureValidMappedRange(address, length);
         page = pages.get(pageNumber);
         if (page != null) {
-            setCachedPage(pageNumber, page, instruction);
+            setCachedPage(pageNumber, page, vma, instruction);
         }
         return page;
     }
@@ -646,20 +646,20 @@ public final class Memory implements AutoCloseable {
     /// Returns a committed page for a write access, allocating it on first write.
     private Page writePage(long address, int length) {
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, false);
-        if (page != null && containsMappedRange(address, length)) {
+        @Nullable Page page = cachedPage(pageNumber, address, length, false);
+        if (page != null) {
             return page;
         }
 
-        ensureValidMappedRange(address, length);
+        Vma vma = ensureValidMappedRange(address, length);
         page = pages.get(pageNumber);
         if (page != null) {
-            setCachedPage(pageNumber, page, false);
+            setCachedPage(pageNumber, page, vma, false);
             return page;
         }
 
         page = commitPage(pageNumber);
-        setCachedPage(pageNumber, page, false);
+        setCachedPage(pageNumber, page, vma, false);
         return page;
     }
 
@@ -696,20 +696,14 @@ public final class Memory implements AutoCloseable {
         }
     }
 
-    /// Ensures that a guest access range is valid and mapped.
-    private void ensureValidMappedRange(long address, long length) {
+    /// Returns the VMA containing a valid guest access range.
+    private Vma ensureValidMappedRange(long address, long length) {
         checkedRangeEnd(address, length);
-        if (length == 0) {
-            return;
-        }
-        if (!containsMappedRange(address, length)) {
+        @Nullable Vma vma = length == 0 ? null : vmas.find(address, length);
+        if (vma == null) {
             throw accessFault(address, length);
         }
-    }
-
-    /// Returns true when one VMA fully contains a guest access range.
-    private boolean containsMappedRange(long address, long length) {
-        return vmas.find(address, length) != null;
+        return vma;
     }
 
     /// Returns the mapped range end for the VMA containing the supplied address, or the address itself.
@@ -719,16 +713,19 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns the cached committed page for the current context and thread, or null on miss.
-    private @Nullable Page cachedPage(long pageNumber, boolean instruction) {
+    private @Nullable Page cachedPage(long pageNumber, long address, int length, boolean instruction) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return cache == null ? null : cache.get().page(pageNumber, generation, instruction);
+        return cache == null ? null : cache.get().page(pageNumber, address, length, generation, instruction);
     }
 
     /// Stores a committed page in the current context and thread software TLB.
-    private void setCachedPage(long pageNumber, Page page, boolean instruction) {
+    private void setCachedPage(long pageNumber, Page page, Vma vma, boolean instruction) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         if (cache != null) {
-            cache.get().setPage(pageNumber, generation, page, instruction);
+            long pageStart = pageNumber << pageShift;
+            long rangeStart = Math.max(vma.address(), pageStart);
+            long rangeEnd = Math.min(vma.endAddress(), pageStart + pageSize);
+            cache.get().setPage(pageNumber, rangeStart, rangeEnd, generation, page, instruction);
         }
     }
 
@@ -850,6 +847,12 @@ public final class Memory implements AutoCloseable {
         /// Cached data page numbers ordered from most to least recently used.
         private final long[] dataPageNumbers = new long[DATA_CACHE_SIZE];
 
+        /// Inclusive valid guest address starts for cached data pages.
+        private final long[] dataRangeStarts = new long[DATA_CACHE_SIZE];
+
+        /// Exclusive valid guest address ends for cached data pages.
+        private final long[] dataRangeEnds = new long[DATA_CACHE_SIZE];
+
         /// Memory generations associated with cached data pages.
         private final long[] dataGenerations = new long[DATA_CACHE_SIZE];
 
@@ -858,6 +861,12 @@ public final class Memory implements AutoCloseable {
 
         /// Cached instruction page numbers ordered from most to least recently used.
         private final long[] instructionPageNumbers = new long[INSTRUCTION_CACHE_SIZE];
+
+        /// Inclusive valid guest address starts for cached instruction pages.
+        private final long[] instructionRangeStarts = new long[INSTRUCTION_CACHE_SIZE];
+
+        /// Exclusive valid guest address ends for cached instruction pages.
+        private final long[] instructionRangeEnds = new long[INSTRUCTION_CACHE_SIZE];
 
         /// Memory generations associated with cached instruction pages.
         private final long[] instructionGenerations = new long[INSTRUCTION_CACHE_SIZE];
@@ -870,32 +879,84 @@ public final class Memory implements AutoCloseable {
         }
 
         /// Returns a cached page, or null when the lookup misses.
-        private @Nullable Page page(long pageNumber, long generation, boolean instruction) {
+        private @Nullable Page page(long pageNumber, long address, int length, long generation, boolean instruction) {
             return instruction
-                    ? page(pageNumber, generation, instructionPageNumbers, instructionGenerations, instructionPages)
-                    : page(pageNumber, generation, dataPageNumbers, dataGenerations, dataPages);
+                    ? page(
+                            pageNumber,
+                            address,
+                            length,
+                            generation,
+                            instructionPageNumbers,
+                            instructionRangeStarts,
+                            instructionRangeEnds,
+                            instructionGenerations,
+                            instructionPages)
+                    : page(
+                            pageNumber,
+                            address,
+                            length,
+                            generation,
+                            dataPageNumbers,
+                            dataRangeStarts,
+                            dataRangeEnds,
+                            dataGenerations,
+                            dataPages);
         }
 
         /// Stores a cached committed page.
-        private void setPage(long pageNumber, long generation, Page page, boolean instruction) {
+        private void setPage(
+                long pageNumber,
+                long rangeStart,
+                long rangeEnd,
+                long generation,
+                Page page,
+                boolean instruction) {
             if (instruction) {
-                setPage(pageNumber, generation, page, instructionPageNumbers, instructionGenerations, instructionPages);
+                setPage(
+                        pageNumber,
+                        rangeStart,
+                        rangeEnd,
+                        generation,
+                        page,
+                        instructionPageNumbers,
+                        instructionRangeStarts,
+                        instructionRangeEnds,
+                        instructionGenerations,
+                        instructionPages);
             } else {
-                setPage(pageNumber, generation, page, dataPageNumbers, dataGenerations, dataPages);
+                setPage(
+                        pageNumber,
+                        rangeStart,
+                        rangeEnd,
+                        generation,
+                        page,
+                        dataPageNumbers,
+                        dataRangeStarts,
+                        dataRangeEnds,
+                        dataGenerations,
+                        dataPages);
             }
         }
 
         /// Returns a cached page from an LRU page cache.
         private static @Nullable Page page(
                 long pageNumber,
+                long address,
+                int length,
                 long generation,
                 long[] pageNumbers,
+                long[] rangeStarts,
+                long[] rangeEnds,
                 long[] generations,
                 @Nullable Page[] pages) {
             for (int index = 0; index < pages.length; index++) {
                 @Nullable Page page = pages[index];
-                if (page != null && pageNumbers[index] == pageNumber && generations[index] == generation) {
-                    promote(index, pageNumbers, generations, pages);
+                if (page != null
+                        && pageNumbers[index] == pageNumber
+                        && generations[index] == generation
+                        && address >= rangeStarts[index]
+                        && length <= rangeEnds[index] - address) {
+                    promote(index, pageNumbers, rangeStarts, rangeEnds, generations, pages);
                     return page;
                 }
             }
@@ -905,26 +966,36 @@ public final class Memory implements AutoCloseable {
         /// Stores a page in an LRU page cache.
         private static void setPage(
                 long pageNumber,
+                long rangeStart,
+                long rangeEnd,
                 long generation,
                 Page page,
                 long[] pageNumbers,
+                long[] rangeStarts,
+                long[] rangeEnds,
                 long[] generations,
                 @Nullable Page[] pages) {
             for (int index = 0; index < pages.length; index++) {
                 if (pages[index] == page) {
                     pageNumbers[index] = pageNumber;
+                    rangeStarts[index] = rangeStart;
+                    rangeEnds[index] = rangeEnd;
                     generations[index] = generation;
-                    promote(index, pageNumbers, generations, pages);
+                    promote(index, pageNumbers, rangeStarts, rangeEnds, generations, pages);
                     return;
                 }
             }
 
             for (int index = pages.length - 1; index > 0; index--) {
                 pageNumbers[index] = pageNumbers[index - 1];
+                rangeStarts[index] = rangeStarts[index - 1];
+                rangeEnds[index] = rangeEnds[index - 1];
                 generations[index] = generations[index - 1];
                 pages[index] = pages[index - 1];
             }
             pageNumbers[0] = pageNumber;
+            rangeStarts[0] = rangeStart;
+            rangeEnds[0] = rangeEnd;
             generations[0] = generation;
             pages[0] = page;
         }
@@ -933,6 +1004,8 @@ public final class Memory implements AutoCloseable {
         private static void promote(
                 int index,
                 long[] pageNumbers,
+                long[] rangeStarts,
+                long[] rangeEnds,
                 long[] generations,
                 @Nullable Page[] pages) {
             if (index == 0) {
@@ -940,14 +1013,20 @@ public final class Memory implements AutoCloseable {
             }
 
             long pageNumber = pageNumbers[index];
+            long rangeStart = rangeStarts[index];
+            long rangeEnd = rangeEnds[index];
             long generation = generations[index];
             @Nullable Page page = pages[index];
             for (int current = index; current > 0; current--) {
                 pageNumbers[current] = pageNumbers[current - 1];
+                rangeStarts[current] = rangeStarts[current - 1];
+                rangeEnds[current] = rangeEnds[current - 1];
                 generations[current] = generations[current - 1];
                 pages[current] = pages[current - 1];
             }
             pageNumbers[0] = pageNumber;
+            rangeStarts[0] = rangeStart;
+            rangeEnds[0] = rangeEnd;
             generations[0] = generation;
             pages[0] = page;
         }
@@ -956,50 +1035,39 @@ public final class Memory implements AutoCloseable {
     /// Stores one committed guest page with replaceable backing.
     @NotNullByDefault
     private static final class Page {
-        /// The Unsafe-accessible backing for this page.
-        private final PageBacking backing;
+        /// The Unsafe base object, or null when baseOffset is an absolute native address.
+        private final @Nullable Object baseObject;
 
-        /// Creates a committed guest page with the supplied backing.
-        private Page(PageBacking backing) {
-            this.backing = backing;
+        /// The Unsafe byte offset of the first byte in the page.
+        private final long baseOffset;
+
+        /// An object retained for the lifetime of the page backing.
+        private final @Nullable Object owner;
+
+        /// The optional release action for non-GC-managed backing.
+        private final @Nullable Runnable closeAction;
+
+        /// Creates a committed guest page with the supplied Unsafe access coordinates.
+        private Page(
+                @Nullable Object baseObject,
+                long baseOffset,
+                @Nullable Object owner,
+                @Nullable Runnable closeAction) {
+            this.baseObject = baseObject;
+            this.baseOffset = baseOffset;
+            this.owner = owner;
+            this.closeAction = closeAction;
         }
 
         /// Creates a committed guest page backed by a zero-filled heap long array.
         private static Page heap(int pageWords) {
-            return new Page(PageBacking.heap(pageWords));
+            long[] data = new long[pageWords];
+            return new Page(data, HEAP_LONG_ARRAY_BASE_OFFSET, data, null);
         }
 
         /// Returns the Unsafe base object, or null for absolute native-address backing.
         private @Nullable Object baseObject() {
-            return backing.baseObject();
-        }
-
-        /// Returns the Unsafe byte offset for an access at the supplied page-relative byte offset.
-        private long byteOffset(long pageOffset) {
-            return backing.byteOffset(pageOffset);
-        }
-
-        /// Releases resources owned by this page backing.
-        private void close() {
-            backing.close();
-        }
-    }
-
-    /// Describes the Unsafe access coordinates and lifetime owner for one page backing.
-    ///
-    /// @param baseObject the Unsafe base object, or null when `baseOffset` is an absolute native address
-    /// @param baseOffset the Unsafe byte offset of the first byte in the page
-    /// @param owner an object retained for the lifetime of the page, or null when no extra owner is needed
-    /// @param closeAction the optional release action for non-GC-managed backing
-    private record PageBacking(
-            @Nullable Object baseObject,
-            long baseOffset,
-            @Nullable Object owner,
-            @Nullable Runnable closeAction) {
-        /// Creates a page backing from an already zero-filled heap long array.
-        private static PageBacking heap(int pageWords) {
-            long[] data = new long[pageWords];
-            return new PageBacking(data, HEAP_LONG_ARRAY_BASE_OFFSET, data, null);
+            return baseObject;
         }
 
         /// Returns the Unsafe byte offset for an access at the supplied page-relative byte offset.
@@ -1007,9 +1075,9 @@ public final class Memory implements AutoCloseable {
             return baseOffset + pageOffset;
         }
 
-        /// Releases this backing when it owns non-GC-managed resources.
+        /// Releases resources owned by this page backing.
         private void close() {
-            @Nullable Runnable action = closeAction;
+            @Nullable Runnable action = this.closeAction;
             if (action != null) {
                 action.run();
             }
