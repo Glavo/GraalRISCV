@@ -37,9 +37,21 @@ These rules apply to all Java code written or modified in this repository.
 ## Gradle
 
 - When invoking Gradle in this repository, always set `GRADLE_USER_HOME` to the workspace-local `.gradle-user-home` directory.
-- When invoking Gradle in this repository, always set `GRADLE_OPTS` to `--enable-native-access=ALL-UNNAMED` for the command.
+- When invoking Gradle in this repository, always set `GRADLE_OPTS` to include
+  `--enable-native-access=ALL-UNNAMED --add-exports=java.base/jdk.internal.misc=ALL-UNNAMED --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED`
+  for the command.
 - Prefer commands such as `./gradlew -g .gradle-user-home ...` or the equivalent environment-variable-based configuration.
 - When running Gradle `test` tasks, use a higher timeout of ten minutes.
+
+## Memory Implementation
+
+- The `Memory` implementation should target Linux-like paged virtual memory.
+- Do not add or keep a long-term `MemorySegment` backend.
+- Use heap `long[]` pages as the default backing store so host-side page data is aligned.
+- Access page backing through `jdk.internal.misc.Unsafe`.
+- Support lazy page commit, a configurable committed-page limit, software ITLB and DTLB fast paths, configurable base page size, and an independent HugeTLB pool.
+- `MAP_HUGETLB` must consume the configured huge-page pool.
+- `madvise(MADV_HUGEPAGE)` and `madvise(MADV_NOHUGEPAGE)` should record VMA preference only unless a later plan explicitly expands that behavior.
 
 ## Project Workflow
 

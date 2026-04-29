@@ -11,8 +11,11 @@
 
 - Keep the simulator user-mode only; do not implement privileged mode, page tables, interrupts, devices, or Linux kernel boot.
 - Expand ELF, auxv, stack, `mmap`, and static-runtime behavior only as acceptance workloads require.
-- Finish enabling sparse runtime memory after load/store region inline caches avoid regressing hot-path memory access.
-- Keep the sparse path mapping ELF segments, stack, `brk`, and anonymous `mmap` backing explicitly.
+- Replace the current memory model with Linux-like paged virtual memory in one migration; do not keep a long-term `MemorySegment` fallback.
+- Treat `memorySize` as the guest virtual address window size, not as an eager host-memory allocation size.
+- Model ELF segments, stack, `brk`, anonymous `mmap`, `munmap`, `mprotect`, and `madvise` through one VMA and page-table implementation.
+- Commit backing pages lazily and enforce the configured committed-page limit before allocating new page backing.
+- Support configurable base page size and an independent HugeTLB pool, with `MAP_HUGETLB` consuming reserved huge pages.
 - Preserve freestanding examples and existing static musl coverage while broadening toward larger libc and language-runtime programs.
 
 ### 3. Expand syscall compatibility
@@ -26,7 +29,9 @@
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue measuring the direct-call hot trace executor, especially trace length, trigger thresholds, and interaction with Graal compilation diagnostics.
-- Add load/store region inline caches before making sparse memory the default runtime mode.
+- Add software ITLB and DTLB fast paths for paged memory, with cross-page and permission-fault accesses handled by slow paths.
+- Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and VMA split/merge behavior.
+- Keep CoreMark, Zig examples, and the local Go demo as acceptance workloads for the paged-memory migration.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
 - Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.
 - Keep rejected performance experiments documented outside `PLANS.md`.
