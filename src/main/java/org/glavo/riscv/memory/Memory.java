@@ -23,6 +23,9 @@ public final class Memory implements AutoCloseable {
     /// The default base page size.
     public static final int DEFAULT_PAGE_SIZE = 4096;
 
+    /// The smallest supported base page size.
+    public static final int MIN_PAGE_SIZE = 1 << 12;
+
     /// The default huge page size.
     public static final long DEFAULT_HUGE_PAGE_SIZE = 2L * 1024L * 1024L;
 
@@ -200,7 +203,7 @@ public final class Memory implements AutoCloseable {
         this.pageSize = validatedPageSize;
         this.pageShift = Integer.numberOfTrailingZeros(validatedPageSize);
         this.pageMask = validatedPageSize - 1L;
-        this.pageWords = validatedPageSize / Long.BYTES;
+        this.pageWords = validatedPageSize >>> 3;
         this.zeroPage = Page.heap(this.pageWords);
         this.maxCommittedPages = maxCommittedPages;
         this.hugePageSize = validatedHugePageSize;
@@ -968,7 +971,12 @@ public final class Memory implements AutoCloseable {
 
     /// Returns true when a scalar access stays within one base page.
     private boolean isSinglePageAccess(long address, int length) {
-        return ((address & pageMask) + length) <= pageSize;
+        return isSinglePageOffset(address & pageMask, length);
+    }
+
+    /// Returns true when a scalar access at a page-relative offset stays within one base page.
+    private boolean isSinglePageOffset(long pageOffset, int length) {
+        return pageOffset + length <= pageSize;
     }
 
     /// Returns a checked byte count within one page.
@@ -1023,12 +1031,9 @@ public final class Memory implements AutoCloseable {
 
     /// Validates a power-of-two base page size that can back a single Java array.
     private static int validatePageSize(String name, long pageSize) {
-        if (pageSize < DEFAULT_PAGE_SIZE || pageSize > Integer.MAX_VALUE || !isPowerOfTwo(pageSize)) {
+        if (pageSize < MIN_PAGE_SIZE || pageSize > Integer.MAX_VALUE || !isPowerOfTwo(pageSize)) {
             throw new RiscVException("Guest " + name + " must be a power of two between "
-                    + DEFAULT_PAGE_SIZE + " and " + Integer.MAX_VALUE + ": " + pageSize);
-        }
-        if ((pageSize & (Long.BYTES - 1L)) != 0) {
-            throw new RiscVException("Guest " + name + " must be aligned to long elements: " + pageSize);
+                    + MIN_PAGE_SIZE + " and " + Integer.MAX_VALUE + ": " + pageSize);
         }
         return (int) pageSize;
     }
@@ -1056,23 +1061,29 @@ public final class Memory implements AutoCloseable {
         /// The software TLB for the current Truffle context and host thread.
         private final @Nullable MappedRegionCache cache;
 
-        /// The most recently accessed data page for this execution facade.
-        private @Nullable Page cachedDataPage;
+        /// Whether this execution facade has a data-page cache entry.
+        private boolean cachedDataPageValid;
 
-        /// The guest page number associated with `cachedDataPage`.
+        /// The guest page number associated with the cached data page.
         private long cachedDataPageNumber;
 
-        /// The inclusive guest address where `cachedDataPage` is valid.
+        /// The inclusive guest address where the cached data page is valid.
         private long cachedDataRangeStart;
 
-        /// The exclusive guest address where `cachedDataPage` stops being valid.
+        /// The exclusive guest address where the cached data page stops being valid.
         private long cachedDataRangeEnd;
 
-        /// The access protections available through `cachedDataPage`.
+        /// The access protections available through the cached data page.
         private long cachedDataProtection;
 
-        /// The memory generation associated with `cachedDataPage`.
+        /// The memory generation associated with the cached data page.
         private long cachedDataGeneration;
+
+        /// The Unsafe base object for the cached data page.
+        private @Nullable Object cachedDataBaseObject;
+
+        /// The Unsafe byte offset of the cached data page start.
+        private long cachedDataBaseOffset;
 
         /// Creates an access facade for a memory object and optional software TLB.
         private Access(Memory memory, @Nullable MappedRegionCache cache) {
@@ -1082,8 +1093,9 @@ public final class Memory implements AutoCloseable {
 
         /// Reads a signed byte from guest memory.
         public byte readByte(long address) {
-            Page page = readDataPage(address, Byte.BYTES);
-            return UNSAFE.getByte(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
+            long pageOffset = memory.pageOffset(address);
+            ensureReadableDataPage(address, Byte.BYTES);
+            return UNSAFE.getByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
         }
 
         /// Reads an unsigned byte from guest memory.
@@ -1093,9 +1105,10 @@ public final class Memory implements AutoCloseable {
 
         /// Reads a signed little-endian 16-bit value from guest memory.
         public short readShort(long address) {
-            if (memory.isSinglePageAccess(address, Short.BYTES)) {
-                Page page = readDataPage(address, Short.BYTES);
-                short value = UNSAFE.getShort(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
+            long pageOffset = memory.pageOffset(address);
+            if (memory.isSinglePageOffset(pageOffset, Short.BYTES)) {
+                ensureReadableDataPage(address, Short.BYTES);
+                short value = UNSAFE.getShort(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
                 return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
             }
 
@@ -1109,9 +1122,10 @@ public final class Memory implements AutoCloseable {
 
         /// Reads a signed little-endian 32-bit value from guest memory.
         public int readInt(long address) {
-            if (memory.isSinglePageAccess(address, Integer.BYTES)) {
-                Page page = readDataPage(address, Integer.BYTES);
-                int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
+            long pageOffset = memory.pageOffset(address);
+            if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
+                ensureReadableDataPage(address, Integer.BYTES);
+                int value = UNSAFE.getInt(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
                 return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             }
 
@@ -1125,9 +1139,10 @@ public final class Memory implements AutoCloseable {
 
         /// Reads a little-endian 32-bit instruction from a guest address.
         public int readInstructionInt(long address) {
-            if (memory.isSinglePageAccess(address, Integer.BYTES)) {
+            long pageOffset = memory.pageOffset(address);
+            if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
                 Page page = memory.readPage(address, Integer.BYTES, true, cache);
-                int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
+                int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(pageOffset));
                 return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             }
 
@@ -1136,9 +1151,10 @@ public final class Memory implements AutoCloseable {
 
         /// Reads a signed little-endian 64-bit value from guest memory.
         public long readLong(long address) {
-            if (memory.isSinglePageAccess(address, Long.BYTES)) {
-                Page page = readDataPage(address, Long.BYTES);
-                long value = UNSAFE.getLong(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
+            long pageOffset = memory.pageOffset(address);
+            if (memory.isSinglePageOffset(pageOffset, Long.BYTES)) {
+                ensureReadableDataPage(address, Long.BYTES);
+                long value = UNSAFE.getLong(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
                 return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
             }
 
@@ -1147,16 +1163,18 @@ public final class Memory implements AutoCloseable {
 
         /// Writes a byte to guest memory.
         public void writeByte(long address, byte value) {
-            Page page = writeDataPage(address, Byte.BYTES);
-            UNSAFE.putByte(page.baseObject(), page.byteOffset(memory.pageOffset(address)), value);
+            long pageOffset = memory.pageOffset(address);
+            ensureWritableDataPage(address, Byte.BYTES);
+            UNSAFE.putByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, value);
         }
 
         /// Writes a little-endian 16-bit value to guest memory.
         public void writeShort(long address, short value) {
-            if (memory.isSinglePageAccess(address, Short.BYTES)) {
-                Page page = writeDataPage(address, Short.BYTES);
+            long pageOffset = memory.pageOffset(address);
+            if (memory.isSinglePageOffset(pageOffset, Short.BYTES)) {
+                ensureWritableDataPage(address, Short.BYTES);
                 short stored = NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-                UNSAFE.putShort(page.baseObject(), page.byteOffset(memory.pageOffset(address)), stored);
+                UNSAFE.putShort(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, stored);
                 return;
             }
 
@@ -1165,10 +1183,11 @@ public final class Memory implements AutoCloseable {
 
         /// Writes a little-endian 32-bit value to guest memory.
         public void writeInt(long address, int value) {
-            if (memory.isSinglePageAccess(address, Integer.BYTES)) {
-                Page page = writeDataPage(address, Integer.BYTES);
+            long pageOffset = memory.pageOffset(address);
+            if (memory.isSinglePageOffset(pageOffset, Integer.BYTES)) {
+                ensureWritableDataPage(address, Integer.BYTES);
                 int stored = NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-                UNSAFE.putInt(page.baseObject(), page.byteOffset(memory.pageOffset(address)), stored);
+                UNSAFE.putInt(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, stored);
                 return;
             }
 
@@ -1177,41 +1196,40 @@ public final class Memory implements AutoCloseable {
 
         /// Writes a little-endian 64-bit value to guest memory.
         public void writeLong(long address, long value) {
-            if (memory.isSinglePageAccess(address, Long.BYTES)) {
-                Page page = writeDataPage(address, Long.BYTES);
+            long pageOffset = memory.pageOffset(address);
+            if (memory.isSinglePageOffset(pageOffset, Long.BYTES)) {
+                ensureWritableDataPage(address, Long.BYTES);
                 long stored = NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-                UNSAFE.putLong(page.baseObject(), page.byteOffset(memory.pageOffset(address)), stored);
+                UNSAFE.putLong(cachedDataBaseObject, cachedDataBaseOffset + pageOffset, stored);
                 return;
             }
 
             memory.writeLittleEndianByBytes(address, value, Long.BYTES, cache);
         }
 
-        /// Returns the cached data page for a read access, resolving and caching it on miss.
-        private Page readDataPage(long address, int length) {
-            @Nullable Page page = cachedDataPage(address, length, PROTECTION_READ);
-            return page == null ? memory.readPage(address, length, false, cache, this) : page;
+        /// Ensures the access-local cache contains the readable data page for the supplied range.
+        private void ensureReadableDataPage(long address, int length) {
+            if (!hasCachedDataPage(address, length, PROTECTION_READ)) {
+                memory.readPage(address, length, false, cache, this);
+            }
         }
 
-        /// Returns the cached data page for a write access, resolving and caching it on miss.
-        private Page writeDataPage(long address, int length) {
-            @Nullable Page page = cachedDataPage(address, length, PROTECTION_WRITE);
-            return page == null ? memory.writePage(address, length, cache, this) : page;
+        /// Ensures the access-local cache contains the writable data page for the supplied range.
+        private void ensureWritableDataPage(long address, int length) {
+            if (!hasCachedDataPage(address, length, PROTECTION_WRITE)) {
+                memory.writePage(address, length, cache, this);
+            }
         }
 
-        /// Returns the access-local cached data page, or null when the lookup misses.
-        private @Nullable Page cachedDataPage(long address, int length, long requiredProtection) {
+        /// Returns true when the access-local data-page cache satisfies the supplied range and protection.
+        private boolean hasCachedDataPage(long address, int length, long requiredProtection) {
             long pageNumber = memory.pageNumber(address);
-            @Nullable Page page = cachedDataPage;
-            if (page != null
+            return cachedDataPageValid
                     && cachedDataPageNumber == pageNumber
                     && cachedDataGeneration == memory.generation
                     && address >= cachedDataRangeStart
                     && length <= cachedDataRangeEnd - address
-                    && (cachedDataProtection & requiredProtection) == requiredProtection) {
-                return page;
-            }
-            return null;
+                    && (cachedDataProtection & requiredProtection) == requiredProtection;
         }
 
         /// Stores one data-page lookup in the access-local cache.
@@ -1227,7 +1245,9 @@ public final class Memory implements AutoCloseable {
             cachedDataRangeEnd = rangeEnd;
             cachedDataProtection = protection;
             cachedDataGeneration = generation;
-            cachedDataPage = page;
+            cachedDataBaseObject = page.baseObject();
+            cachedDataBaseOffset = page.baseOffset();
+            cachedDataPageValid = true;
         }
     }
 
@@ -1652,6 +1672,11 @@ public final class Memory implements AutoCloseable {
         /// Returns the Unsafe base object, or null for absolute native-address backing.
         private @Nullable Object baseObject() {
             return baseObject;
+        }
+
+        /// Returns the Unsafe byte offset of the first byte in this page.
+        private long baseOffset() {
+            return baseOffset;
         }
 
         /// Returns the Unsafe byte offset for an access at the supplied page-relative byte offset.

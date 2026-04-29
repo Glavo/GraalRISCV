@@ -144,6 +144,47 @@ public final class MemoryTest {
         }
     }
 
+    /// Verifies the minimum power-of-two base page size keeps page masking behavior correct.
+    @Test
+    public void supportsMinimumPowerOfTwoBasePageSize() {
+        int pageSize = Memory.MIN_PAGE_SIZE;
+        try (Memory memory = Memory.sparse(
+                Memory.DEFAULT_BASE_ADDRESS,
+                2L * pageSize,
+                pageSize,
+                0,
+                Memory.DEFAULT_HUGE_PAGE_SIZE,
+                0,
+                null)) {
+            assertEquals(pageSize, memory.pageSize());
+            assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, pageSize));
+
+            long value = 0x1122_3344_5566_7788L;
+            memory.writeLong(Memory.DEFAULT_BASE_ADDRESS, value);
+            memory.writeLong(Memory.DEFAULT_BASE_ADDRESS + pageSize - Long.BYTES, value);
+
+            assertEquals(value, memory.readLong(Memory.DEFAULT_BASE_ADDRESS));
+            assertEquals(value, memory.readLong(Memory.DEFAULT_BASE_ADDRESS + pageSize - Long.BYTES));
+            assertEquals(1, memory.committedPages());
+            assertThrows(RiscVException.class, () -> memory.readLong(Memory.DEFAULT_BASE_ADDRESS + pageSize - 1L));
+        }
+    }
+
+    /// Verifies base page sizes below 4 KiB are rejected even when they are powers of two.
+    @Test
+    public void rejectsSubMinimumPowerOfTwoBasePageSize() {
+        assertThrows(
+                RiscVException.class,
+                () -> Memory.sparse(
+                        Memory.DEFAULT_BASE_ADDRESS,
+                        2L * Memory.MIN_PAGE_SIZE,
+                        Memory.MIN_PAGE_SIZE >>> 1,
+                        0,
+                        Memory.DEFAULT_HUGE_PAGE_SIZE,
+                        0,
+                        null));
+    }
+
     /// Verifies MAP_HUGETLB-style mappings reserve and release the configured huge-page pool.
     @Test
     public void accountsHugePagePoolReservations() {

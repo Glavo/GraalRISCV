@@ -177,9 +177,9 @@ public final class RiscVContext {
 
     /// Validates a configured guest page size.
     private static void validatePageSize(String optionName, long pageSize) {
-        if (pageSize < Memory.DEFAULT_PAGE_SIZE || pageSize > Integer.MAX_VALUE || !isPowerOfTwo(pageSize)) {
+        if (pageSize < Memory.MIN_PAGE_SIZE || pageSize > Integer.MAX_VALUE || !isPowerOfTwo(pageSize)) {
             throw new RiscVException(optionName + " must be a power of two between "
-                    + Memory.DEFAULT_PAGE_SIZE + " and " + Integer.MAX_VALUE + ": " + pageSize);
+                    + Memory.MIN_PAGE_SIZE + " and " + Integer.MAX_VALUE + ": " + pageSize);
         }
     }
 

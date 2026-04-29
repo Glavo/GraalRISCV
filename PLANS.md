@@ -14,7 +14,7 @@
 - Harden the new Linux-like paged virtual memory implementation; do not reintroduce a long-term `MemorySegment` fallback.
 - Treat `memorySize` as the guest virtual address window size, not as an eager host-memory allocation size.
 - Continue moving ELF segments, stack, `brk`, anonymous `mmap`, `munmap`, `mprotect`, and `madvise` behavior toward one VMA and page-table implementation, reducing remaining syscall-side mapping duplication.
-- Extend lazy page commit, committed-page limits, configurable base page size, HugeTLB pool handling, and future native or file-mapped page allocators with broader Linux edge-case coverage.
+- Extend lazy page commit, committed-page limits, configurable power-of-two base page size, HugeTLB pool handling, and future native or file-mapped page allocators with broader Linux edge-case coverage.
 - Preserve freestanding examples and existing static musl coverage while broadening toward larger libc and language-runtime programs.
 
 ### 3. Expand syscall compatibility
@@ -28,7 +28,7 @@
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue measuring the embedded hot trace executor, especially trace length, trigger thresholds, batched store fast paths, the small trace direct-call PIC, and interaction with Graal compilation diagnostics.
-- Continue improving paged-memory slow paths, especially cross-page accesses and richer fault reporting; per-thread `Memory.Access`, access-local page caching, direct-mapped software TLB hits, zero-fill page caching, primitive page-table lookup, and VMA access protections are now in place.
+- Continue improving paged-memory slow paths, especially cross-page accesses and richer fault reporting; per-thread `Memory.Access`, access-local Unsafe-coordinate page caching, direct-mapped software TLB hits, zero-fill page caching, primitive page-table lookup, and VMA access protections are now in place.
 - Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and VMA split/merge behavior as the syscall layer is simplified.
 - Keep CoreMark, Zig examples, and the local Go demo as acceptance workloads for the paged-memory migration.
 - Profile the remaining generic complex floating-point arithmetic and conversion micro-op path before deciding whether to split it further; bit-level sign-injection, minimum/maximum, classify, compare, and raw move operations now use direct micro-op bodies.

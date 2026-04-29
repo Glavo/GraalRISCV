@@ -85,7 +85,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The `riscv.pageSize` language option.
     @Option(
             name = "pageSize",
-            help = "Guest base page size in bytes. Default: 4096.",
+            help = "Guest base page size in bytes; power of two at least 4096. Default: 4096.",
             category = OptionCategory.USER,
             stability = OptionStability.STABLE)
     static final OptionKey<Long> PAGE_SIZE = new OptionKey<>(DEFAULT_PAGE_SIZE);
