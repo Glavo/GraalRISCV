@@ -156,34 +156,26 @@ public final class MemoryAccess {
 
     /// Ensures the access-local cache contains the readable data page for the supplied range.
     private void ensureReadableDataPage(long address, int length, MemoryLayout layout) {
-        if (!hasCachedDataPage(address, length, Memory.PROTECTION_READ, layout)) {
+        if (!hasCachedPage(cachedDataPage, address, length, Memory.PROTECTION_READ, layout)) {
             memory.readPage(address, length, false, cache, this, layout);
         }
     }
 
     /// Ensures the access-local cache contains the writable data page for the supplied range.
     private void ensureWritableDataPage(long address, int length, MemoryLayout layout) {
-        if (!hasCachedWriteDataPage(address, length, Memory.PROTECTION_WRITE, layout)) {
+        if (!hasCachedPage(cachedWriteDataPage, address, length, Memory.PROTECTION_WRITE, layout)) {
             memory.writePage(address, length, cache, this, layout);
         }
     }
 
-    /// Returns true when the access-local data-page cache satisfies the supplied range and protection.
-    private boolean hasCachedDataPage(long address, int length, long requiredProtection, MemoryLayout layout) {
+    /// Returns true when an access-local page cache entry satisfies the supplied range and protection.
+    private boolean hasCachedPage(
+            @Nullable CachedPage cached,
+            long address,
+            int length,
+            long requiredProtection,
+            MemoryLayout layout) {
         long pageNumber = layout.pageNumber(address);
-        @Nullable CachedPage cached = cachedDataPage;
-        return cached != null
-                && cached.pageNumber() == pageNumber
-                && cached.generation() == memory.generation
-                && address >= cached.rangeStart()
-                && length <= cached.rangeEnd() - address
-                && (cached.protection() & requiredProtection) == requiredProtection;
-    }
-
-    /// Returns true when the access-local write data-page cache satisfies the supplied range and protection.
-    private boolean hasCachedWriteDataPage(long address, int length, long requiredProtection, MemoryLayout layout) {
-        long pageNumber = layout.pageNumber(address);
-        @Nullable CachedPage cached = cachedWriteDataPage;
         return cached != null
                 && cached.pageNumber() == pageNumber
                 && cached.generation() == memory.generation
