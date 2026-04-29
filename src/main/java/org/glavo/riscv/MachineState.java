@@ -295,7 +295,7 @@ public final class MachineState {
     /// Records one guest instruction retirement and enforces the instruction budget.
     public void beforeInstruction(long address, int raw) {
         if (canRetireBlock) {
-            instructionCount++;
+            retireInstructionUnchecked();
             return;
         }
 
@@ -312,8 +312,13 @@ public final class MachineState {
         instructionCount += retiredInstructions;
     }
 
+    /// Records one guest instruction retirement without budget or trace checks.
+    void retireInstructionUnchecked() {
+        instructionCount++;
+    }
+
     /// Records one guest instruction retirement on configurations that need checks or tracing.
-    private void beforeInstructionChecked(long address, int raw) {
+    void beforeInstructionChecked(long address, int raw) {
         if (maxInstructions > 0 && instructionCount >= maxInstructions) {
             throw new RiscVException("Guest instruction limit exceeded: " + maxInstructions
                     + ", pc=0x" + Long.toUnsignedString(address, 16));

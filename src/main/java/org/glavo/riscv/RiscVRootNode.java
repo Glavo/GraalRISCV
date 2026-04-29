@@ -103,9 +103,29 @@ public final class RiscVRootNode extends RootNode {
     /// Runs the decoded-block dispatch loop for a clone-created guest thread.
     private void executeGuestThreadLoop(Memory memory, MachineState state) {
         long pc = state.pc();
+        long primaryPc = 0;
+        long secondaryPc = 0;
+        @Nullable RootCallTarget primaryBlock = null;
+        @Nullable RootCallTarget secondaryBlock = null;
+
         while (true) {
             state.syscalls().checkProcessStatus();
-            RootCallTarget block = blockFor(memory, pc);
+            RootCallTarget block;
+            if (primaryBlock != null && pc == primaryPc) {
+                block = primaryBlock;
+            } else if (secondaryBlock != null && pc == secondaryPc) {
+                block = secondaryBlock;
+                secondaryBlock = primaryBlock;
+                secondaryPc = primaryPc;
+                primaryBlock = block;
+                primaryPc = pc;
+            } else {
+                block = blockFor(memory, pc);
+                secondaryBlock = primaryBlock;
+                secondaryPc = primaryPc;
+                primaryBlock = block;
+                primaryPc = pc;
+            }
             pc = (long) block.call(state);
             state.setPc(pc);
         }

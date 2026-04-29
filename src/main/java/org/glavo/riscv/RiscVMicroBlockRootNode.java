@@ -76,104 +76,110 @@ final class RiscVMicroBlockRootNode extends RootNode {
     /// Runs all micro-ops in this block and returns the materialized next PC.
     @ExplodeLoop
     private long executeBlock(MachineState state) {
-        for (int index = 0; index < opcodes.length; index++) {
-            executeInstruction(state, index);
+        if (state.canRetireBlock()) {
+            for (int index = 0; index < opcodes.length; index++) {
+                executeInstruction(state, index, true);
+            }
+        } else {
+            for (int index = 0; index < opcodes.length; index++) {
+                executeInstruction(state, index, false);
+            }
         }
         return state.pc();
     }
 
     /// Executes one micro-op by decoding its packed operand.
-    private void executeInstruction(MachineState state, int index) {
+    private void executeInstruction(MachineState state, int index, boolean fastRetirement) {
         byte opcode = opcodes[index];
         int operand = operands[index];
         switch (opcode) {
             case RiscVMicroOpcode.EXECUTE_OPERATION -> executeOperation(state, index, operand);
             case RiscVMicroOpcode.ADVANCE_PC -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.LUI -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), immediates[index]);
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.AUIPC -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), addresses[index] + immediates[index]);
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.JAL -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), nextPcs[index]);
                 state.setPc(addresses[index] + immediates[index]);
             }
             case RiscVMicroOpcode.JALR -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 long target = (state.decodedRegister(rs1(operand)) + immediates[index]) & ~1L;
                 state.setDecodedRegister(rd(operand), nextPcs[index]);
                 state.setPc(target);
             }
             case RiscVMicroOpcode.BEQ -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 branch(state, state.decodedRegister(rs1(operand)) == state.decodedRegister(rs2(operand)), index);
             }
             case RiscVMicroOpcode.BNE -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 branch(state, state.decodedRegister(rs1(operand)) != state.decodedRegister(rs2(operand)), index);
             }
             case RiscVMicroOpcode.BLT -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 branch(state, state.decodedRegister(rs1(operand)) < state.decodedRegister(rs2(operand)), index);
             }
             case RiscVMicroOpcode.BGE -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 branch(state, state.decodedRegister(rs1(operand)) >= state.decodedRegister(rs2(operand)), index);
             }
             case RiscVMicroOpcode.BLTU -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 branch(state, Long.compareUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))) < 0, index);
             }
             case RiscVMicroOpcode.BGEU -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 branch(state, Long.compareUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))) >= 0, index);
             }
             case RiscVMicroOpcode.LB -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), state.memory().readByte(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.LH -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), state.memory().readShort(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.LW -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), state.memory().readInt(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.LD -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), state.memory().readLong(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.LBU -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), state.memory().readUnsignedByte(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.LHU -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), state.memory().readUnsignedShort(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.LWU -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedRegister(rd(operand), state.memory().readUnsignedInt(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.SB -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 long address = loadAddress(state, operand, index);
                 state.memory().writeByte(address, (byte) state.decodedRegister(rs2(operand)));
                 afterStore(state, address, Byte.BYTES);
@@ -181,7 +187,7 @@ final class RiscVMicroBlockRootNode extends RootNode {
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.SH -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 long address = loadAddress(state, operand, index);
                 state.memory().writeShort(address, (short) state.decodedRegister(rs2(operand)));
                 afterStore(state, address, Short.BYTES);
@@ -189,7 +195,7 @@ final class RiscVMicroBlockRootNode extends RootNode {
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.SW -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 long address = loadAddress(state, operand, index);
                 state.memory().writeInt(address, (int) state.decodedRegister(rs2(operand)));
                 afterStore(state, address, Integer.BYTES);
@@ -197,99 +203,99 @@ final class RiscVMicroBlockRootNode extends RootNode {
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.SD -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 long address = loadAddress(state, operand, index);
                 state.memory().writeLong(address, state.decodedRegister(rs2(operand)));
                 afterStore(state, address, Long.BYTES);
                 state.clearReservation();
                 state.setPc(nextPcs[index]);
             }
-            case RiscVMicroOpcode.ADDI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) + immediates[index]);
-            case RiscVMicroOpcode.SLTI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) < immediates[index] ? 1 : 0);
-            case RiscVMicroOpcode.SLTIU -> binaryImmediate(state, index, operand, Long.compareUnsigned(state.decodedRegister(rs1(operand)), immediates[index]) < 0 ? 1 : 0);
-            case RiscVMicroOpcode.XORI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) ^ immediates[index]);
-            case RiscVMicroOpcode.ORI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) | immediates[index]);
-            case RiscVMicroOpcode.ANDI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) & immediates[index]);
-            case RiscVMicroOpcode.SLLI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) << immediates[index]);
-            case RiscVMicroOpcode.SRLI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) >>> immediates[index]);
-            case RiscVMicroOpcode.SRAI -> binaryImmediate(state, index, operand, state.decodedRegister(rs1(operand)) >> immediates[index]);
-            case RiscVMicroOpcode.ADDIW -> binaryImmediate(state, index, operand, (int) (state.decodedRegister(rs1(operand)) + immediates[index]));
-            case RiscVMicroOpcode.SLLIW -> binaryImmediate(state, index, operand, (int) state.decodedRegister(rs1(operand)) << immediates[index]);
-            case RiscVMicroOpcode.SRLIW -> binaryImmediate(state, index, operand, (int) state.decodedRegister(rs1(operand)) >>> immediates[index]);
-            case RiscVMicroOpcode.SRAIW -> binaryImmediate(state, index, operand, (int) state.decodedRegister(rs1(operand)) >> immediates[index]);
-            case RiscVMicroOpcode.ADD -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) + state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.SUB -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) - state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.SLL -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) << (state.decodedRegister(rs2(operand)) & 0x3f));
-            case RiscVMicroOpcode.SLT -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) < state.decodedRegister(rs2(operand)) ? 1 : 0);
-            case RiscVMicroOpcode.SLTU -> binaryRegister(state, index, operand, Long.compareUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))) < 0 ? 1 : 0);
-            case RiscVMicroOpcode.XOR -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) ^ state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.SRL -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) >>> (state.decodedRegister(rs2(operand)) & 0x3f));
-            case RiscVMicroOpcode.SRA -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) >> (state.decodedRegister(rs2(operand)) & 0x3f));
-            case RiscVMicroOpcode.OR -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) | state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.AND -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) & state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.ADDW -> binaryRegister(state, index, operand, (int) state.decodedRegister(rs1(operand)) + (int) state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.SUBW -> binaryRegister(state, index, operand, (int) state.decodedRegister(rs1(operand)) - (int) state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.SLLW -> binaryRegister(state, index, operand, (int) state.decodedRegister(rs1(operand)) << (state.decodedRegister(rs2(operand)) & 0x1f));
-            case RiscVMicroOpcode.SRLW -> binaryRegister(state, index, operand, (int) state.decodedRegister(rs1(operand)) >>> (state.decodedRegister(rs2(operand)) & 0x1f));
-            case RiscVMicroOpcode.SRAW -> binaryRegister(state, index, operand, (int) state.decodedRegister(rs1(operand)) >> (state.decodedRegister(rs2(operand)) & 0x1f));
+            case RiscVMicroOpcode.ADDI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) + immediates[index]);
+            case RiscVMicroOpcode.SLTI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) < immediates[index] ? 1 : 0);
+            case RiscVMicroOpcode.SLTIU -> binaryImmediate(state, index, operand, fastRetirement, Long.compareUnsigned(state.decodedRegister(rs1(operand)), immediates[index]) < 0 ? 1 : 0);
+            case RiscVMicroOpcode.XORI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) ^ immediates[index]);
+            case RiscVMicroOpcode.ORI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) | immediates[index]);
+            case RiscVMicroOpcode.ANDI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) & immediates[index]);
+            case RiscVMicroOpcode.SLLI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) << immediates[index]);
+            case RiscVMicroOpcode.SRLI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) >>> immediates[index]);
+            case RiscVMicroOpcode.SRAI -> binaryImmediate(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) >> immediates[index]);
+            case RiscVMicroOpcode.ADDIW -> binaryImmediate(state, index, operand, fastRetirement, (int) (state.decodedRegister(rs1(operand)) + immediates[index]));
+            case RiscVMicroOpcode.SLLIW -> binaryImmediate(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) << immediates[index]);
+            case RiscVMicroOpcode.SRLIW -> binaryImmediate(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) >>> immediates[index]);
+            case RiscVMicroOpcode.SRAIW -> binaryImmediate(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) >> immediates[index]);
+            case RiscVMicroOpcode.ADD -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) + state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.SUB -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) - state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.SLL -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) << (state.decodedRegister(rs2(operand)) & 0x3f));
+            case RiscVMicroOpcode.SLT -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) < state.decodedRegister(rs2(operand)) ? 1 : 0);
+            case RiscVMicroOpcode.SLTU -> binaryRegister(state, index, operand, fastRetirement, Long.compareUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))) < 0 ? 1 : 0);
+            case RiscVMicroOpcode.XOR -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) ^ state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.SRL -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) >>> (state.decodedRegister(rs2(operand)) & 0x3f));
+            case RiscVMicroOpcode.SRA -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) >> (state.decodedRegister(rs2(operand)) & 0x3f));
+            case RiscVMicroOpcode.OR -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) | state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.AND -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) & state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.ADDW -> binaryRegister(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) + (int) state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.SUBW -> binaryRegister(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) - (int) state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.SLLW -> binaryRegister(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) << (state.decodedRegister(rs2(operand)) & 0x1f));
+            case RiscVMicroOpcode.SRLW -> binaryRegister(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) >>> (state.decodedRegister(rs2(operand)) & 0x1f));
+            case RiscVMicroOpcode.SRAW -> binaryRegister(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) >> (state.decodedRegister(rs2(operand)) & 0x1f));
             case RiscVMicroOpcode.ECALL -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.syscalls().handle(state, addresses[index]);
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.EBREAK -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 throw new ProgramExitException(0);
             }
             case RiscVMicroOpcode.CSRRW -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 writeControlStatusRegister(state, index, operand, state.decodedRegister(rs1(operand)));
             }
             case RiscVMicroOpcode.CSRRS -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 setClearControlStatusRegister(state, index, operand, state.decodedRegister(rs1(operand)), true);
             }
             case RiscVMicroOpcode.CSRRC -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 setClearControlStatusRegister(state, index, operand, state.decodedRegister(rs1(operand)), false);
             }
             case RiscVMicroOpcode.CSRRWI -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 writeControlStatusRegister(state, index, operand, rs1(operand));
             }
             case RiscVMicroOpcode.CSRRSI -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 setClearControlStatusRegister(state, index, operand, rs1(operand), true);
             }
             case RiscVMicroOpcode.CSRRCI -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 setClearControlStatusRegister(state, index, operand, rs1(operand), false);
             }
-            case RiscVMicroOpcode.MUL -> binaryRegister(state, index, operand, state.decodedRegister(rs1(operand)) * state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.MULH -> binaryRegister(state, index, operand, Math.multiplyHigh(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.MULHSU -> binaryRegister(state, index, operand, multiplyHighSignedUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.MULHU -> binaryRegister(state, index, operand, Math.unsignedMultiplyHigh(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.DIV -> binaryRegister(state, index, operand, divideSigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.DIVU -> binaryRegister(state, index, operand, divideUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.REM -> binaryRegister(state, index, operand, remainderSigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.REMU -> binaryRegister(state, index, operand, remainderUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.MULW -> binaryRegister(state, index, operand, (int) state.decodedRegister(rs1(operand)) * (int) state.decodedRegister(rs2(operand)));
-            case RiscVMicroOpcode.DIVW -> binaryRegister(state, index, operand, divideSignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.DIVUW -> binaryRegister(state, index, operand, divideUnsignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.REMW -> binaryRegister(state, index, operand, remainderSignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
-            case RiscVMicroOpcode.REMUW -> binaryRegister(state, index, operand, remainderUnsignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.MUL -> binaryRegister(state, index, operand, fastRetirement, state.decodedRegister(rs1(operand)) * state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.MULH -> binaryRegister(state, index, operand, fastRetirement, Math.multiplyHigh(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.MULHSU -> binaryRegister(state, index, operand, fastRetirement, multiplyHighSignedUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.MULHU -> binaryRegister(state, index, operand, fastRetirement, Math.unsignedMultiplyHigh(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.DIV -> binaryRegister(state, index, operand, fastRetirement, divideSigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.DIVU -> binaryRegister(state, index, operand, fastRetirement, divideUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.REM -> binaryRegister(state, index, operand, fastRetirement, remainderSigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.REMU -> binaryRegister(state, index, operand, fastRetirement, remainderUnsigned(state.decodedRegister(rs1(operand)), state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.MULW -> binaryRegister(state, index, operand, fastRetirement, (int) state.decodedRegister(rs1(operand)) * (int) state.decodedRegister(rs2(operand)));
+            case RiscVMicroOpcode.DIVW -> binaryRegister(state, index, operand, fastRetirement, divideSignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.DIVUW -> binaryRegister(state, index, operand, fastRetirement, divideUnsignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.REMW -> binaryRegister(state, index, operand, fastRetirement, remainderSignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
+            case RiscVMicroOpcode.REMUW -> binaryRegister(state, index, operand, fastRetirement, remainderUnsignedWord((int) state.decodedRegister(rs1(operand)), (int) state.decodedRegister(rs2(operand))));
             case RiscVMicroOpcode.FLW -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedFloatingPointRegister(rd(operand), 0xffff_ffff_0000_0000L | state.memory().readUnsignedInt(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.FLD -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 state.setDecodedFloatingPointRegister(rd(operand), state.memory().readLong(loadAddress(state, operand, index)));
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.FSW -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 long address = loadAddress(state, operand, index);
                 state.memory().writeInt(address, (int) state.decodedFloatingPointRegister(rs2(operand)));
                 afterStore(state, address, Integer.BYTES);
@@ -297,35 +303,35 @@ final class RiscVMicroBlockRootNode extends RootNode {
                 state.setPc(nextPcs[index]);
             }
             case RiscVMicroOpcode.FSD -> {
-                beginInstruction(state, index);
+                beginInstruction(state, index, fastRetirement);
                 long address = loadAddress(state, operand, index);
                 state.memory().writeLong(address, state.decodedFloatingPointRegister(rs2(operand)));
                 afterStore(state, address, Long.BYTES);
                 state.clearReservation();
                 state.setPc(nextPcs[index]);
             }
-            case RiscVMicroOpcode.LR_W -> lrWord(state, index, operand);
-            case RiscVMicroOpcode.LR_D -> lrDouble(state, index, operand);
-            case RiscVMicroOpcode.SC_W -> scWord(state, index, operand);
-            case RiscVMicroOpcode.SC_D -> scDouble(state, index, operand);
-            case RiscVMicroOpcode.AMOSWAP_W -> amoWord(state, index, operand, AmoKind.SWAP);
-            case RiscVMicroOpcode.AMOADD_W -> amoWord(state, index, operand, AmoKind.ADD);
-            case RiscVMicroOpcode.AMOXOR_W -> amoWord(state, index, operand, AmoKind.XOR);
-            case RiscVMicroOpcode.AMOAND_W -> amoWord(state, index, operand, AmoKind.AND);
-            case RiscVMicroOpcode.AMOOR_W -> amoWord(state, index, operand, AmoKind.OR);
-            case RiscVMicroOpcode.AMOMIN_W -> amoWord(state, index, operand, AmoKind.MIN);
-            case RiscVMicroOpcode.AMOMAX_W -> amoWord(state, index, operand, AmoKind.MAX);
-            case RiscVMicroOpcode.AMOMINU_W -> amoWord(state, index, operand, AmoKind.MINU);
-            case RiscVMicroOpcode.AMOMAXU_W -> amoWord(state, index, operand, AmoKind.MAXU);
-            case RiscVMicroOpcode.AMOSWAP_D -> amoDouble(state, index, operand, AmoKind.SWAP);
-            case RiscVMicroOpcode.AMOADD_D -> amoDouble(state, index, operand, AmoKind.ADD);
-            case RiscVMicroOpcode.AMOXOR_D -> amoDouble(state, index, operand, AmoKind.XOR);
-            case RiscVMicroOpcode.AMOAND_D -> amoDouble(state, index, operand, AmoKind.AND);
-            case RiscVMicroOpcode.AMOOR_D -> amoDouble(state, index, operand, AmoKind.OR);
-            case RiscVMicroOpcode.AMOMIN_D -> amoDouble(state, index, operand, AmoKind.MIN);
-            case RiscVMicroOpcode.AMOMAX_D -> amoDouble(state, index, operand, AmoKind.MAX);
-            case RiscVMicroOpcode.AMOMINU_D -> amoDouble(state, index, operand, AmoKind.MINU);
-            case RiscVMicroOpcode.AMOMAXU_D -> amoDouble(state, index, operand, AmoKind.MAXU);
+            case RiscVMicroOpcode.LR_W -> lrWord(state, index, operand, fastRetirement);
+            case RiscVMicroOpcode.LR_D -> lrDouble(state, index, operand, fastRetirement);
+            case RiscVMicroOpcode.SC_W -> scWord(state, index, operand, fastRetirement);
+            case RiscVMicroOpcode.SC_D -> scDouble(state, index, operand, fastRetirement);
+            case RiscVMicroOpcode.AMOSWAP_W -> amoWord(state, index, operand, fastRetirement, AmoKind.SWAP);
+            case RiscVMicroOpcode.AMOADD_W -> amoWord(state, index, operand, fastRetirement, AmoKind.ADD);
+            case RiscVMicroOpcode.AMOXOR_W -> amoWord(state, index, operand, fastRetirement, AmoKind.XOR);
+            case RiscVMicroOpcode.AMOAND_W -> amoWord(state, index, operand, fastRetirement, AmoKind.AND);
+            case RiscVMicroOpcode.AMOOR_W -> amoWord(state, index, operand, fastRetirement, AmoKind.OR);
+            case RiscVMicroOpcode.AMOMIN_W -> amoWord(state, index, operand, fastRetirement, AmoKind.MIN);
+            case RiscVMicroOpcode.AMOMAX_W -> amoWord(state, index, operand, fastRetirement, AmoKind.MAX);
+            case RiscVMicroOpcode.AMOMINU_W -> amoWord(state, index, operand, fastRetirement, AmoKind.MINU);
+            case RiscVMicroOpcode.AMOMAXU_W -> amoWord(state, index, operand, fastRetirement, AmoKind.MAXU);
+            case RiscVMicroOpcode.AMOSWAP_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.SWAP);
+            case RiscVMicroOpcode.AMOADD_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.ADD);
+            case RiscVMicroOpcode.AMOXOR_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.XOR);
+            case RiscVMicroOpcode.AMOAND_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.AND);
+            case RiscVMicroOpcode.AMOOR_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.OR);
+            case RiscVMicroOpcode.AMOMIN_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.MIN);
+            case RiscVMicroOpcode.AMOMAX_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.MAX);
+            case RiscVMicroOpcode.AMOMINU_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.MINU);
+            case RiscVMicroOpcode.AMOMAXU_D -> amoDouble(state, index, operand, fastRetirement, AmoKind.MAXU);
             default -> throw new RiscVException("Unknown micro-bytecode opcode: " + opcode);
         }
     }
@@ -346,10 +352,14 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Records the current instruction before running a direct micro-op body.
-    private void beginInstruction(MachineState state, int index) {
+    private void beginInstruction(MachineState state, int index, boolean fastRetirement) {
         long address = addresses[index];
         state.setPc(address);
-        state.beforeInstruction(address, raws[index]);
+        if (fastRetirement) {
+            state.retireInstructionUnchecked();
+        } else {
+            state.beforeInstructionChecked(address, raws[index]);
+        }
     }
 
     /// Writes a conditional branch target.
@@ -363,15 +373,15 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Writes the result of an immediate integer operation.
-    private void binaryImmediate(MachineState state, int index, int operand, long value) {
-        beginInstruction(state, index);
+    private void binaryImmediate(MachineState state, int index, int operand, boolean fastRetirement, long value) {
+        beginInstruction(state, index, fastRetirement);
         state.setDecodedRegister(rd(operand), value);
         state.setPc(nextPcs[index]);
     }
 
     /// Writes the result of a register integer operation.
-    private void binaryRegister(MachineState state, int index, int operand, long value) {
-        beginInstruction(state, index);
+    private void binaryRegister(MachineState state, int index, int operand, boolean fastRetirement, long value) {
+        beginInstruction(state, index, fastRetirement);
         state.setDecodedRegister(rd(operand), value);
         state.setPc(nextPcs[index]);
     }
@@ -396,8 +406,8 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Loads and reserves a 32-bit memory word.
-    private void lrWord(MachineState state, int index, int operand) {
-        beginInstruction(state, index);
+    private void lrWord(MachineState state, int index, int operand, boolean fastRetirement) {
+        beginInstruction(state, index, fastRetirement);
         Memory memory = state.memory();
         synchronized (memory) {
             long address = state.decodedRegister(rs1(operand));
@@ -408,8 +418,8 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Loads and reserves a 64-bit memory doubleword.
-    private void lrDouble(MachineState state, int index, int operand) {
-        beginInstruction(state, index);
+    private void lrDouble(MachineState state, int index, int operand, boolean fastRetirement) {
+        beginInstruction(state, index, fastRetirement);
         Memory memory = state.memory();
         synchronized (memory) {
             long address = state.decodedRegister(rs1(operand));
@@ -420,8 +430,8 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
-    private void scWord(MachineState state, int index, int operand) {
-        beginInstruction(state, index);
+    private void scWord(MachineState state, int index, int operand, boolean fastRetirement) {
+        beginInstruction(state, index, fastRetirement);
         Memory memory = state.memory();
         synchronized (memory) {
             long address = state.decodedRegister(rs1(operand));
@@ -438,8 +448,8 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
-    private void scDouble(MachineState state, int index, int operand) {
-        beginInstruction(state, index);
+    private void scDouble(MachineState state, int index, int operand, boolean fastRetirement) {
+        beginInstruction(state, index, fastRetirement);
         Memory memory = state.memory();
         synchronized (memory) {
             long address = state.decodedRegister(rs1(operand));
@@ -456,8 +466,8 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Executes a 32-bit AMO instruction.
-    private void amoWord(MachineState state, int index, int operand, AmoKind kind) {
-        beginInstruction(state, index);
+    private void amoWord(MachineState state, int index, int operand, boolean fastRetirement, AmoKind kind) {
+        beginInstruction(state, index, fastRetirement);
         Memory memory = state.memory();
         synchronized (memory) {
             long address = state.decodedRegister(rs1(operand));
@@ -483,8 +493,8 @@ final class RiscVMicroBlockRootNode extends RootNode {
     }
 
     /// Executes a 64-bit AMO instruction.
-    private void amoDouble(MachineState state, int index, int operand, AmoKind kind) {
-        beginInstruction(state, index);
+    private void amoDouble(MachineState state, int index, int operand, boolean fastRetirement, AmoKind kind) {
+        beginInstruction(state, index, fastRetirement);
         Memory memory = state.memory();
         synchronized (memory) {
             long address = state.decodedRegister(rs1(operand));
