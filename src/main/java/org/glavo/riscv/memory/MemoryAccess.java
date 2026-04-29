@@ -17,10 +17,10 @@ public final class MemoryAccess {
     private final @Nullable MappedRegionCache cache;
 
     /// The access-local readable data-page cache entry.
-    private CachedPage cachedDataPage = new CachedPage(false, 0, 0, 0, 0, 0, null, 0);
+    private CachedPage cachedDataPage = CachedPage.EMPTY;
 
     /// The access-local writable data-page cache entry.
-    private CachedPage cachedWriteDataPage = new CachedPage(false, 0, 0, 0, 0, 0, null, 0);
+    private CachedPage cachedWriteDataPage = CachedPage.EMPTY;
 
     /// Creates an access facade for a memory object and optional software TLB.
     MemoryAccess(Memory memory, @Nullable MappedRegionCache cache) {
@@ -48,6 +48,8 @@ public final class MemoryAccess {
             long generation,
             @Nullable Object baseObject,
             long baseOffset) {
+        /// The empty page-cache entry used before a page has been cached.
+        private static final CachedPage EMPTY = new CachedPage(false, 0, 0, 0, 0, 0, null, 0);
     }
 
     /// Reads a signed byte from guest memory using explicit page-layout constants.
