@@ -511,36 +511,20 @@ public final class Memory implements AutoCloseable {
 
         /// Finds the sparse region backing a guest range, or null when absent.
         private @Nullable MappedRegion find(long address, long length) {
-            int low = 0;
-            int high = addresses.length - 1;
-            while (low <= high) {
-                int index = (low + high) >>> 1;
-                if (address < addresses[index]) {
-                    high = index - 1;
-                } else if (address >= endAddress(index)) {
-                    low = index + 1;
-                } else {
-                    return containsRange(index, address, length)
-                            ? new MappedRegion(addresses[index], segments[index])
-                            : null;
-                }
+            int index = Arrays.binarySearch(addresses, address);
+            if (index < 0) {
+                index = -index - 2;
             }
-            return null;
+            if (index < 0 || !containsRange(index, address, length)) {
+                return null;
+            }
+            return new MappedRegion(addresses[index], segments[index]);
         }
 
         /// Returns the insertion index for an address in this sorted snapshot.
         int insertionIndex(long address) {
-            int low = 0;
-            int high = addresses.length;
-            while (low < high) {
-                int index = (low + high) >>> 1;
-                if (addresses[index] < address) {
-                    low = index + 1;
-                } else {
-                    high = index;
-                }
-            }
-            return low;
+            int index = Arrays.binarySearch(addresses, address);
+            return index >= 0 ? index : -index - 1;
         }
 
         /// Returns true when a region fully contains the supplied guest range.
