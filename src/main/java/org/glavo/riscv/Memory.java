@@ -297,8 +297,8 @@ public final class Memory implements AutoCloseable {
         int newSize = 0;
         for (int index = 0; index < regions.size(); index++) {
             long regionAddress = regions.addresses[index];
-            long regionEndAddress = regions.endAddress(index);
             MemorySegment regionSegment = regions.segments[index];
+            long regionEndAddress = regionAddress + regionSegment.byteSize();
             if (!rangesOverlap(address, endAddress, regionAddress, regionEndAddress)) {
                 newAddresses[newSize] = regionAddress;
                 newSegments[newSize] = regionSegment;
@@ -442,7 +442,9 @@ public final class Memory implements AutoCloseable {
 
     /// Returns true when the sparse region fully contains the supplied guest range.
     private static boolean containsRange(MappedRegion region, long address, long length) {
-        return address >= region.address() && address <= region.endAddress() && length <= region.endAddress() - address;
+        long regionAddress = region.address();
+        long regionEndAddress = region.endAddress();
+        return address >= regionAddress && address <= regionEndAddress && length <= regionEndAddress - address;
     }
 
     /// Describes a concrete host segment access for a guest memory range.
@@ -481,11 +483,6 @@ public final class Memory implements AutoCloseable {
             return addresses.length;
         }
 
-        /// Returns the exclusive guest end address for a region.
-        long endAddress(int index) {
-            return addresses[index] + segments[index].byteSize();
-        }
-
         /// Returns a new snapshot with one region inserted at the supplied index.
         MappedRegions insert(int insertionIndex, long address, MemorySegment segment) {
             long[] newAddresses = new long[addresses.length + 1];
@@ -503,10 +500,20 @@ public final class Memory implements AutoCloseable {
         boolean overlaps(long address, long length) {
             long endAddress = address + length;
             int insertionIndex = insertionIndex(address);
-            if (insertionIndex > 0 && rangesOverlap(address, endAddress, addresses[insertionIndex - 1], endAddress(insertionIndex - 1))) {
-                return true;
+            if (insertionIndex > 0) {
+                int previousIndex = insertionIndex - 1;
+                long previousAddress = addresses[previousIndex];
+                long previousEndAddress = previousAddress + segments[previousIndex].byteSize();
+                if (rangesOverlap(address, endAddress, previousAddress, previousEndAddress)) {
+                    return true;
+                }
             }
-            return insertionIndex < size() && rangesOverlap(address, endAddress, addresses[insertionIndex], endAddress(insertionIndex));
+            if (insertionIndex >= addresses.length) {
+                return false;
+            }
+            long nextAddress = addresses[insertionIndex];
+            long nextEndAddress = nextAddress + segments[insertionIndex].byteSize();
+            return rangesOverlap(address, endAddress, nextAddress, nextEndAddress);
         }
 
         /// Finds the sparse region backing a guest range, or null when absent.
@@ -515,10 +522,16 @@ public final class Memory implements AutoCloseable {
             if (index < 0) {
                 index = -index - 2;
             }
-            if (index < 0 || !containsRange(index, address, length)) {
+            if (index < 0) {
                 return null;
             }
-            return new MappedRegion(addresses[index], segments[index]);
+            long regionAddress = addresses[index];
+            MemorySegment regionSegment = segments[index];
+            long regionEndAddress = regionAddress + regionSegment.byteSize();
+            if (!containsRange(regionAddress, regionEndAddress, address, length)) {
+                return null;
+            }
+            return new MappedRegion(regionAddress, regionSegment);
         }
 
         /// Returns the insertion index for an address in this sorted snapshot.
@@ -528,9 +541,7 @@ public final class Memory implements AutoCloseable {
         }
 
         /// Returns true when a region fully contains the supplied guest range.
-        private boolean containsRange(int index, long address, long length) {
-            long regionAddress = addresses[index];
-            long regionEndAddress = endAddress(index);
+        private static boolean containsRange(long regionAddress, long regionEndAddress, long address, long length) {
             return address >= regionAddress && address <= regionEndAddress && length <= regionEndAddress - address;
         }
     }
