@@ -38,7 +38,7 @@ final class RiscVMicroTraceRootNode extends RootNode {
         this.expectedNextPcs = expectedNextPcs.clone();
     }
 
-    /// Executes the trace with the `MachineState` supplied as the first argument.
+    /// Executes the trace with the `MachineState` and `Memory.Access` supplied as block-call arguments.
     @Override
     public Object execute(VirtualFrame frame) {
         Object[] arguments = frame.getArguments();

@@ -350,7 +350,7 @@ public final class RiscVRootNode extends RootNode {
             this.memory = memory;
             this.state = state;
             this.syscalls = state.syscalls();
-            this.blockArguments = new Object[] { state };
+            this.blockArguments = new Object[] { state, memory };
             this.pc = pc;
         }
 
@@ -372,6 +372,11 @@ public final class RiscVRootNode extends RootNode {
         /// Returns the reusable arguments array passed to decoded block call targets.
         private Object[] blockArguments() {
             return blockArguments;
+        }
+
+        /// Initializes block-call memory access inside an entered Truffle context.
+        private void initializeMemoryAccess() {
+            blockArguments[1] = memory.newAccess();
         }
 
         /// Returns the next guest program counter to dispatch.
@@ -421,6 +426,7 @@ public final class RiscVRootNode extends RootNode {
         /// Runs guest blocks until the guest exits by throwing an execution-control exception.
         @Override
         public Object execute(VirtualFrame frame) {
+            ((GuestLoopState) frame.getArguments()[0]).initializeMemoryAccess();
             loop.execute(frame);
             throw new AssertionError("Guest loop returned without an exit signal");
         }

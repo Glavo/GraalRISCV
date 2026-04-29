@@ -102,26 +102,26 @@ final class RiscVMicroBlockNode extends Node {
         this.requiresPreciseFastState = requiresPreciseFastState;
     }
 
-    /// Executes the block with the supplied machine state.
-    void execute(MachineState state) {
+    /// Executes the block with the supplied machine state and memory access facade.
+    void execute(MachineState state, Memory.Access access) {
         Memory memory = state.memory();
         long[] registers = state.decodedRegisters();
         if (state.canRetireBlock()) {
             if (!requiresPreciseFastState && !state.hasStoreSideEffects()) {
-                executeBatchedFast(state, memory, registers);
+                executeBatchedFast(state, memory, access, registers);
             } else {
-                executePreciseFast(state, memory, registers);
+                executePreciseFast(state, memory, access, registers);
             }
         } else {
-            executeChecked(state, memory, registers);
+            executeChecked(state, memory, access, registers);
         }
     }
 
     /// Executes this block when every instruction can retire without per-instruction checks.
     @ExplodeLoop
-    private void executeBatchedFast(MachineState state, Memory memory, long[] registers) {
+    private void executeBatchedFast(MachineState state, Memory memory, Memory.Access access, long[] registers) {
         for (int index = 0; index < opcodes.length; index++) {
-            executeInstruction(state, memory, registers, index, BATCHED_FAST_MODE);
+            executeInstruction(state, memory, access, registers, index, BATCHED_FAST_MODE);
         }
         state.retireBlock(opcodes.length);
         if (!endsWithTerminator) {
@@ -131,22 +131,28 @@ final class RiscVMicroBlockNode extends Node {
 
     /// Executes this block when every instruction can retire without per-instruction checks.
     @ExplodeLoop
-    private void executePreciseFast(MachineState state, Memory memory, long[] registers) {
+    private void executePreciseFast(MachineState state, Memory memory, Memory.Access access, long[] registers) {
         for (int index = 0; index < opcodes.length; index++) {
-            executeInstruction(state, memory, registers, index, PRECISE_FAST_MODE);
+            executeInstruction(state, memory, access, registers, index, PRECISE_FAST_MODE);
         }
     }
 
     /// Executes this block when tracing or instruction-budget checks are active.
     @ExplodeLoop
-    private void executeChecked(MachineState state, Memory memory, long[] registers) {
+    private void executeChecked(MachineState state, Memory memory, Memory.Access access, long[] registers) {
         for (int index = 0; index < opcodes.length; index++) {
-            executeInstruction(state, memory, registers, index, CHECKED_MODE);
+            executeInstruction(state, memory, access, registers, index, CHECKED_MODE);
         }
     }
 
     /// Executes one micro-op by decoding its packed operand.
-    private void executeInstruction(MachineState state, Memory memory, long[] registers, int index, byte mode) {
+    private void executeInstruction(
+            MachineState state,
+            Memory memory,
+            Memory.Access access,
+            long[] registers,
+            int index,
+            byte mode) {
         byte opcode = opcodes[index];
         int operand = operands[index];
         switch (opcode) {
@@ -202,43 +208,43 @@ final class RiscVMicroBlockNode extends Node {
             }
             case RiscVMicroOpcode.LB -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), memory.readByte(loadAddress(registers, operand, index)));
+                writeRegister(registers, rd(operand), access.readByte(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LH -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), memory.readShort(loadAddress(registers, operand, index)));
+                writeRegister(registers, rd(operand), access.readShort(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LW -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), memory.readInt(loadAddress(registers, operand, index)));
+                writeRegister(registers, rd(operand), access.readInt(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LD -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), memory.readLong(loadAddress(registers, operand, index)));
+                writeRegister(registers, rd(operand), access.readLong(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LBU -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), memory.readUnsignedByte(loadAddress(registers, operand, index)));
+                writeRegister(registers, rd(operand), access.readUnsignedByte(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LHU -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), memory.readUnsignedShort(loadAddress(registers, operand, index)));
+                writeRegister(registers, rd(operand), access.readUnsignedShort(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.LWU -> {
                 beginMemoryInstruction(state, index, mode);
-                writeRegister(registers, rd(operand), memory.readUnsignedInt(loadAddress(registers, operand, index)));
+                writeRegister(registers, rd(operand), access.readUnsignedInt(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.SB -> {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
-                memory.writeByte(address, (byte) registers[rs2(operand)]);
+                access.writeByte(address, (byte) registers[rs2(operand)]);
                 afterStore(state, address, Byte.BYTES);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
@@ -246,7 +252,7 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.SH -> {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
-                memory.writeShort(address, (short) registers[rs2(operand)]);
+                access.writeShort(address, (short) registers[rs2(operand)]);
                 afterStore(state, address, Short.BYTES);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
@@ -254,7 +260,7 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.SW -> {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
-                memory.writeInt(address, (int) registers[rs2(operand)]);
+                access.writeInt(address, (int) registers[rs2(operand)]);
                 afterStore(state, address, Integer.BYTES);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
@@ -262,7 +268,7 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.SD -> {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
-                memory.writeLong(address, registers[rs2(operand)]);
+                access.writeLong(address, registers[rs2(operand)]);
                 afterStore(state, address, Long.BYTES);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
@@ -343,18 +349,18 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.REMUW -> binaryRegister(state, registers, index, operand, mode, remainderUnsignedWord((int) registers[rs1(operand)], (int) registers[rs2(operand)]));
             case RiscVMicroOpcode.FLW -> {
                 beginMemoryInstruction(state, index, mode);
-                state.setDecodedFloatingPointRegister(rd(operand), 0xffff_ffff_0000_0000L | memory.readUnsignedInt(loadAddress(registers, operand, index)));
+                state.setDecodedFloatingPointRegister(rd(operand), 0xffff_ffff_0000_0000L | access.readUnsignedInt(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.FLD -> {
                 beginMemoryInstruction(state, index, mode);
-                state.setDecodedFloatingPointRegister(rd(operand), memory.readLong(loadAddress(registers, operand, index)));
+                state.setDecodedFloatingPointRegister(rd(operand), access.readLong(loadAddress(registers, operand, index)));
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.FSW -> {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
-                memory.writeInt(address, (int) state.decodedFloatingPointRegister(rs2(operand)));
+                access.writeInt(address, (int) state.decodedFloatingPointRegister(rs2(operand)));
                 afterStore(state, address, Integer.BYTES);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
@@ -362,33 +368,33 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.FSD -> {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
-                memory.writeLong(address, state.decodedFloatingPointRegister(rs2(operand)));
+                access.writeLong(address, state.decodedFloatingPointRegister(rs2(operand)));
                 afterStore(state, address, Long.BYTES);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
-            case RiscVMicroOpcode.LR_W -> lrWord(state, memory, registers, index, operand, mode);
-            case RiscVMicroOpcode.LR_D -> lrDouble(state, memory, registers, index, operand, mode);
-            case RiscVMicroOpcode.SC_W -> scWord(state, memory, registers, index, operand, mode);
-            case RiscVMicroOpcode.SC_D -> scDouble(state, memory, registers, index, operand, mode);
-            case RiscVMicroOpcode.AMOSWAP_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.SWAP);
-            case RiscVMicroOpcode.AMOADD_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.ADD);
-            case RiscVMicroOpcode.AMOXOR_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.XOR);
-            case RiscVMicroOpcode.AMOAND_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.AND);
-            case RiscVMicroOpcode.AMOOR_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.OR);
-            case RiscVMicroOpcode.AMOMIN_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.MIN);
-            case RiscVMicroOpcode.AMOMAX_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.MAX);
-            case RiscVMicroOpcode.AMOMINU_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.MINU);
-            case RiscVMicroOpcode.AMOMAXU_W -> amoWord(state, memory, registers, index, operand, mode, AmoKind.MAXU);
-            case RiscVMicroOpcode.AMOSWAP_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.SWAP);
-            case RiscVMicroOpcode.AMOADD_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.ADD);
-            case RiscVMicroOpcode.AMOXOR_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.XOR);
-            case RiscVMicroOpcode.AMOAND_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.AND);
-            case RiscVMicroOpcode.AMOOR_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.OR);
-            case RiscVMicroOpcode.AMOMIN_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.MIN);
-            case RiscVMicroOpcode.AMOMAX_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.MAX);
-            case RiscVMicroOpcode.AMOMINU_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.MINU);
-            case RiscVMicroOpcode.AMOMAXU_D -> amoDouble(state, memory, registers, index, operand, mode, AmoKind.MAXU);
+            case RiscVMicroOpcode.LR_W -> lrWord(state, memory, access, registers, index, operand, mode);
+            case RiscVMicroOpcode.LR_D -> lrDouble(state, memory, access, registers, index, operand, mode);
+            case RiscVMicroOpcode.SC_W -> scWord(state, memory, access, registers, index, operand, mode);
+            case RiscVMicroOpcode.SC_D -> scDouble(state, memory, access, registers, index, operand, mode);
+            case RiscVMicroOpcode.AMOSWAP_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.SWAP);
+            case RiscVMicroOpcode.AMOADD_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.ADD);
+            case RiscVMicroOpcode.AMOXOR_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.XOR);
+            case RiscVMicroOpcode.AMOAND_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.AND);
+            case RiscVMicroOpcode.AMOOR_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.OR);
+            case RiscVMicroOpcode.AMOMIN_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.MIN);
+            case RiscVMicroOpcode.AMOMAX_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.MAX);
+            case RiscVMicroOpcode.AMOMINU_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.MINU);
+            case RiscVMicroOpcode.AMOMAXU_W -> amoWord(state, memory, access, registers, index, operand, mode, AmoKind.MAXU);
+            case RiscVMicroOpcode.AMOSWAP_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.SWAP);
+            case RiscVMicroOpcode.AMOADD_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.ADD);
+            case RiscVMicroOpcode.AMOXOR_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.XOR);
+            case RiscVMicroOpcode.AMOAND_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.AND);
+            case RiscVMicroOpcode.AMOOR_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.OR);
+            case RiscVMicroOpcode.AMOMIN_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.MIN);
+            case RiscVMicroOpcode.AMOMAX_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.MAX);
+            case RiscVMicroOpcode.AMOMINU_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.MINU);
+            case RiscVMicroOpcode.AMOMAXU_D -> amoDouble(state, memory, access, registers, index, operand, mode, AmoKind.MAXU);
             default -> throw new RiscVException("Unknown micro-bytecode opcode: " + opcode);
         }
     }
@@ -495,34 +501,55 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Loads and reserves a 32-bit memory word.
-    private void lrWord(MachineState state, Memory memory, long[] registers, int index, int operand, byte mode) {
+    private void lrWord(
+            MachineState state,
+            Memory memory,
+            Memory.Access access,
+            long[] registers,
+            int index,
+            int operand,
+            byte mode) {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
-            writeRegister(registers, rd(operand), memory.readInt(address));
+            writeRegister(registers, rd(operand), access.readInt(address));
             state.reserve(address);
         }
         finishInstruction(state, index, mode);
     }
 
     /// Loads and reserves a 64-bit memory doubleword.
-    private void lrDouble(MachineState state, Memory memory, long[] registers, int index, int operand, byte mode) {
+    private void lrDouble(
+            MachineState state,
+            Memory memory,
+            Memory.Access access,
+            long[] registers,
+            int index,
+            int operand,
+            byte mode) {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
-            writeRegister(registers, rd(operand), memory.readLong(address));
+            writeRegister(registers, rd(operand), access.readLong(address));
             state.reserve(address);
         }
         finishInstruction(state, index, mode);
     }
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
-    private void scWord(MachineState state, Memory memory, long[] registers, int index, int operand, byte mode) {
+    private void scWord(
+            MachineState state,
+            Memory memory,
+            Memory.Access access,
+            long[] registers,
+            int index,
+            int operand,
+            byte mode) {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
             if (state.hasReservation(address)) {
-                memory.writeInt(address, (int) registers[rs2(operand)]);
+                access.writeInt(address, (int) registers[rs2(operand)]);
                 afterStore(state, address, Integer.BYTES);
                 writeRegister(registers, rd(operand), 0);
             } else {
@@ -534,12 +561,19 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
-    private void scDouble(MachineState state, Memory memory, long[] registers, int index, int operand, byte mode) {
+    private void scDouble(
+            MachineState state,
+            Memory memory,
+            Memory.Access access,
+            long[] registers,
+            int index,
+            int operand,
+            byte mode) {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
             if (state.hasReservation(address)) {
-                memory.writeLong(address, registers[rs2(operand)]);
+                access.writeLong(address, registers[rs2(operand)]);
                 afterStore(state, address, Long.BYTES);
                 writeRegister(registers, rd(operand), 0);
             } else {
@@ -551,11 +585,19 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Executes a 32-bit AMO instruction.
-    private void amoWord(MachineState state, Memory memory, long[] registers, int index, int operand, byte mode, AmoKind kind) {
+    private void amoWord(
+            MachineState state,
+            Memory memory,
+            Memory.Access access,
+            long[] registers,
+            int index,
+            int operand,
+            byte mode,
+            AmoKind kind) {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
-            int oldValue = memory.readInt(address);
+            int oldValue = access.readInt(address);
             int source = (int) registers[rs2(operand)];
             int newValue = switch (kind) {
                 case SWAP -> source;
@@ -568,7 +610,7 @@ final class RiscVMicroBlockNode extends Node {
                 case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
                 case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
             };
-            memory.writeInt(address, newValue);
+            access.writeInt(address, newValue);
             writeRegister(registers, rd(operand), oldValue);
             afterStore(state, address, Integer.BYTES);
             state.clearReservation();
@@ -577,11 +619,19 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Executes a 64-bit AMO instruction.
-    private void amoDouble(MachineState state, Memory memory, long[] registers, int index, int operand, byte mode, AmoKind kind) {
+    private void amoDouble(
+            MachineState state,
+            Memory memory,
+            Memory.Access access,
+            long[] registers,
+            int index,
+            int operand,
+            byte mode,
+            AmoKind kind) {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
-            long oldValue = memory.readLong(address);
+            long oldValue = access.readLong(address);
             long source = registers[rs2(operand)];
             long newValue = switch (kind) {
                 case SWAP -> source;
@@ -594,7 +644,7 @@ final class RiscVMicroBlockNode extends Node {
                 case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
                 case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
             };
-            memory.writeLong(address, newValue);
+            access.writeLong(address, newValue);
             writeRegister(registers, rd(operand), oldValue);
             afterStore(state, address, Long.BYTES);
             state.clearReservation();
@@ -733,10 +783,11 @@ final class RiscVMicroBlockRootNode extends RootNode {
         this.block = block;
     }
 
-    /// Executes the block with the `MachineState` supplied as the first argument.
+    /// Executes the block with the `MachineState` and `Memory.Access` supplied as arguments.
     @Override
     public Object execute(VirtualFrame frame) {
-        block.execute((MachineState) frame.getArguments()[0]);
+        Object[] arguments = frame.getArguments();
+        block.execute((MachineState) arguments[0], (Memory.Access) arguments[1]);
         return null;
     }
 }
