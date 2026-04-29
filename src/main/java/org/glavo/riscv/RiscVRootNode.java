@@ -2,8 +2,17 @@ package org.glavo.riscv;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.nodes.IndirectCallNode;
+import com.oracle.truffle.api.nodes.LoopNode;
+import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.Node.Child;
+import com.oracle.truffle.api.nodes.Node.Children;
+import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
@@ -21,11 +30,15 @@ public final class RiscVRootNode extends RootNode {
     /// The lazily populated block cache for this execution root.
     private final BlockCache blocks;
 
+    /// The Truffle loop root used by the main thread and clone-created guest threads.
+    private final RootCallTarget guestLoopTarget;
+
     /// Creates a root node for a parsed ELF image.
     public RiscVRootNode(RiscVLanguage language, ElfImage image) {
         super(language);
         this.image = image;
         this.blocks = new BlockCache(language);
+        this.guestLoopTarget = new GuestLoopRootNode(language, blocks).getCallTarget();
     }
 
     /// Executes the guest program and returns its exit code.
@@ -52,36 +65,11 @@ public final class RiscVRootNode extends RootNode {
 
     /// Runs the decoded-block dispatch loop for an initialized guest state.
     private int executeGuestLoop(Memory memory, MachineState state) {
-        long pc = state.pc();
-        long primaryPc = 0;
-        long secondaryPc = 0;
-        @Nullable RootCallTarget primaryBlock = null;
-        @Nullable RootCallTarget secondaryBlock = null;
-
-        while (true) {
-            try {
-                state.syscalls().checkProcessStatus();
-                RootCallTarget block;
-                if (primaryBlock != null && pc == primaryPc) {
-                    block = primaryBlock;
-                } else if (secondaryBlock != null && pc == secondaryPc) {
-                    block = secondaryBlock;
-                    secondaryBlock = primaryBlock;
-                    secondaryPc = primaryPc;
-                    primaryBlock = block;
-                    primaryPc = pc;
-                } else {
-                    block = blockFor(memory, pc);
-                    secondaryBlock = primaryBlock;
-                    secondaryPc = primaryPc;
-                    primaryBlock = block;
-                    primaryPc = pc;
-                }
-                pc = (long) block.call(state);
-                state.setPc(pc);
-            } catch (ThreadExitException exit) {
-                return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
-            }
+        try {
+            guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
+            throw new AssertionError("Guest loop returned without an exit signal");
+        } catch (ThreadExitException exit) {
+            return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
         }
     }
 
@@ -102,33 +90,7 @@ public final class RiscVRootNode extends RootNode {
 
     /// Runs the decoded-block dispatch loop for a clone-created guest thread.
     private void executeGuestThreadLoop(Memory memory, MachineState state) {
-        long pc = state.pc();
-        long primaryPc = 0;
-        long secondaryPc = 0;
-        @Nullable RootCallTarget primaryBlock = null;
-        @Nullable RootCallTarget secondaryBlock = null;
-
-        while (true) {
-            state.syscalls().checkProcessStatus();
-            RootCallTarget block;
-            if (primaryBlock != null && pc == primaryPc) {
-                block = primaryBlock;
-            } else if (secondaryBlock != null && pc == secondaryPc) {
-                block = secondaryBlock;
-                secondaryBlock = primaryBlock;
-                secondaryPc = primaryPc;
-                primaryBlock = block;
-                primaryPc = pc;
-            } else {
-                block = blockFor(memory, pc);
-                secondaryBlock = primaryBlock;
-                secondaryPc = primaryPc;
-                primaryBlock = block;
-                primaryPc = pc;
-            }
-            pc = (long) block.call(state);
-            state.setPc(pc);
-        }
+        guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
     }
 
     /// Creates and initializes architectural state for a guest run.
@@ -185,11 +147,6 @@ public final class RiscVRootNode extends RootNode {
             baseAddress = Math.min(baseAddress, segment.virtualAddress());
         }
         return baseAddress == Long.MAX_VALUE ? Memory.DEFAULT_BASE_ADDRESS : baseAddress;
-    }
-
-    /// Returns a decoded block, creating it on first use.
-    private RootCallTarget blockFor(Memory memory, long pc) {
-        return blocks.getOrDecode(memory, pc);
     }
 
     /// Ensures a loaded ELF segment fits in guest memory.
@@ -292,6 +249,260 @@ public final class RiscVRootNode extends RootNode {
             return address;
         }
         return (address + mask) & ~mask;
+    }
+
+    /// Holds per-thread guest loop state while a Truffle loop root is executing.
+    @NotNullByDefault
+    private static final class GuestLoopState {
+        /// The guest memory shared by the process.
+        private final Memory memory;
+
+        /// The architectural state for the running guest thread.
+        private final MachineState state;
+
+        /// The next guest program counter to dispatch.
+        private long pc;
+
+        /// The most recently used decoded block target.
+        private @Nullable RootCallTarget primaryBlock;
+
+        /// The guest program counter for `primaryBlock`.
+        private long primaryPc;
+
+        /// The second most recently used decoded block target.
+        private @Nullable RootCallTarget secondaryBlock;
+
+        /// The guest program counter for `secondaryBlock`.
+        private long secondaryPc;
+
+        /// Creates loop-local state for one guest thread.
+        private GuestLoopState(Memory memory, MachineState state, long pc) {
+            this.memory = memory;
+            this.state = state;
+            this.pc = pc;
+        }
+
+        /// Returns the guest memory shared by the process.
+        private Memory memory() {
+            return memory;
+        }
+
+        /// Returns the architectural state for the running guest thread.
+        private MachineState state() {
+            return state;
+        }
+
+        /// Returns the next guest program counter to dispatch.
+        private long pc() {
+            return pc;
+        }
+
+        /// Updates the next guest program counter to dispatch.
+        private void setPc(long pc) {
+            this.pc = pc;
+        }
+
+        /// Returns the decoded block target for the current program counter.
+        private RootCallTarget blockFor(BlockCache blocks) {
+            RootCallTarget block;
+            if (primaryBlock != null && pc == primaryPc) {
+                return primaryBlock;
+            }
+            if (secondaryBlock != null && pc == secondaryPc) {
+                block = secondaryBlock;
+                secondaryBlock = primaryBlock;
+                secondaryPc = primaryPc;
+                primaryBlock = block;
+                primaryPc = pc;
+                return block;
+            }
+
+            block = blocks.getOrDecode(memory, pc);
+            secondaryBlock = primaryBlock;
+            secondaryPc = primaryPc;
+            primaryBlock = block;
+            primaryPc = pc;
+            return block;
+        }
+    }
+
+    /// Executes the guest dispatch loop as a Truffle loop root.
+    @NotNullByDefault
+    private static final class GuestLoopRootNode extends RootNode {
+        /// The loop node that repeatedly dispatches one decoded guest block.
+        @Child private LoopNode loop;
+
+        /// Creates a root for guest-thread execution.
+        private GuestLoopRootNode(RiscVLanguage language, BlockCache blocks) {
+            super(language);
+            this.loop = Truffle.getRuntime().createLoopNode(new GuestLoopRepeatingNode(blocks));
+        }
+
+        /// Runs guest blocks until the guest exits by throwing an execution-control exception.
+        @Override
+        public Object execute(VirtualFrame frame) {
+            loop.execute(frame);
+            throw new AssertionError("Guest loop returned without an exit signal");
+        }
+    }
+
+    /// Dispatches one guest block per Truffle loop iteration.
+    @NotNullByDefault
+    private static final class GuestLoopRepeatingNode extends Node implements RepeatingNode {
+        /// The block dispatch node used by this loop.
+        @Child private BlockDispatchNode dispatch;
+
+        /// Creates a repeating node backed by the supplied decoded-block cache.
+        private GuestLoopRepeatingNode(BlockCache blocks) {
+            this.dispatch = new BlockDispatchNode(blocks);
+        }
+
+        /// Executes one decoded guest block and continues looping.
+        @Override
+        public boolean executeRepeating(VirtualFrame frame) {
+            GuestLoopState loopState = (GuestLoopState) frame.getArguments()[0];
+            MachineState state = loopState.state();
+            state.syscalls().checkProcessStatus();
+            long pc = dispatch.execute(loopState, state);
+            loopState.setPc(pc);
+            state.setPc(pc);
+            return true;
+        }
+    }
+
+    /// Dispatches decoded blocks through a small direct-call inline cache.
+    @NotNullByDefault
+    private static final class BlockDispatchNode extends Node {
+        /// The number of guest block targets kept as direct Truffle call nodes.
+        private static final int INLINE_CACHE_SIZE = 1;
+
+        /// Consecutive executions required before a guest PC is promoted to a direct call.
+        private static final int DIRECT_CALL_INSTALL_THRESHOLD = 128;
+
+        /// The decoded block cache shared by all dispatch calls.
+        private final BlockCache blocks;
+
+        /// Direct-call entries for stable guest block targets.
+        @Children private final @Nullable CachedBlockCallNode[] cachedCalls =
+                new CachedBlockCallNode[INLINE_CACHE_SIZE];
+
+        /// Fallback call node used after the direct-call cache is full.
+        @Child private IndirectCallNode indirectCall = IndirectCallNode.create();
+
+        /// The number of direct-call entries that have been installed.
+        private volatile int cachedCallCount;
+
+        /// The guest PC currently being considered for direct-call promotion.
+        private long candidatePc;
+
+        /// Consecutive direct-call promotion observations for `candidatePc`.
+        private int candidateCount;
+
+        /// Creates a block dispatch node backed by the supplied decoded-block cache.
+        private BlockDispatchNode(BlockCache blocks) {
+            this.blocks = blocks;
+        }
+
+        /// Executes the decoded block for the supplied guest program counter.
+        private long execute(GuestLoopState loopState, MachineState state) {
+            return executeCachedOrMiss(loopState, state, loopState.pc());
+        }
+
+        /// Executes a cached direct block call, or installs and executes a new cache entry.
+        @ExplodeLoop
+        private long executeCachedOrMiss(GuestLoopState loopState, MachineState state, long pc) {
+            for (int index = 0; index < INLINE_CACHE_SIZE; index++) {
+                CachedBlockCallNode cachedCall = cachedCalls[index];
+                if (cachedCall != null && cachedCall.matches(pc)) {
+                    return cachedCall.call(state);
+                }
+            }
+
+            return executeMiss(loopState, state, pc);
+        }
+
+        /// Handles a direct-call cache miss for the supplied guest program counter.
+        private long executeMiss(GuestLoopState loopState, MachineState state, long pc) {
+            RootCallTarget target = loopState.blockFor(blocks);
+            if (CompilerDirectives.inInterpreter() && shouldInstallDirectCall(pc)) {
+                CachedBlockCallNode cachedCall = installCachedCall(pc, target);
+                if (cachedCall != null) {
+                    return cachedCall.call(state);
+                }
+            }
+
+            return (long) indirectCall.call(target, state);
+        }
+
+        /// Returns true after a guest PC has shown stable self-loop behavior in the interpreter.
+        private boolean shouldInstallDirectCall(long pc) {
+            if (candidatePc == pc) {
+                candidateCount++;
+            } else {
+                candidatePc = pc;
+                candidateCount = 1;
+            }
+            return candidateCount >= DIRECT_CALL_INSTALL_THRESHOLD;
+        }
+
+        /// Returns the cached direct call for the supplied guest program counter, or null on a miss.
+        private @Nullable CachedBlockCallNode cachedCall(long pc) {
+            for (int index = 0; index < INLINE_CACHE_SIZE; index++) {
+                CachedBlockCallNode cachedCall = cachedCalls[index];
+                if (cachedCall != null && cachedCall.matches(pc)) {
+                    return cachedCall;
+                }
+            }
+            return null;
+        }
+
+        /// Installs a direct call node for a newly observed guest block when capacity remains.
+        private @Nullable CachedBlockCallNode installCachedCall(long pc, RootCallTarget target) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            synchronized (this) {
+                CachedBlockCallNode cachedCall = cachedCall(pc);
+                if (cachedCall != null) {
+                    return cachedCall;
+                }
+
+                int index = cachedCallCount;
+                if (index >= INLINE_CACHE_SIZE) {
+                    index = INLINE_CACHE_SIZE - 1;
+                } else {
+                    cachedCallCount = index + 1;
+                }
+
+                cachedCall = insert(new CachedBlockCallNode(pc, target));
+                cachedCalls[index] = cachedCall;
+                return cachedCall;
+            }
+        }
+    }
+
+    /// Calls one decoded block through a direct Truffle call node.
+    @NotNullByDefault
+    private static final class CachedBlockCallNode extends Node {
+        /// The guest program counter handled by this cached direct call.
+        private final long pc;
+
+        /// The direct call node for the decoded block target.
+        @Child private DirectCallNode call;
+
+        /// Creates a cached direct call for one decoded block.
+        private CachedBlockCallNode(long pc, RootCallTarget target) {
+            this.pc = pc;
+            this.call = DirectCallNode.create(target);
+        }
+
+        /// Returns true when this node handles the supplied guest program counter.
+        private boolean matches(long pc) {
+            return this.pc == pc;
+        }
+
+        /// Executes the cached decoded block.
+        private long call(MachineState state) {
+            return (long) call.call(state);
+        }
     }
 
     /// Stores decoded guest blocks in a primitive long-keyed open-addressing map.

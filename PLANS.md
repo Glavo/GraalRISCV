@@ -23,7 +23,7 @@
 ### 4. Maintain build, docs, and performance probes
 
 - Keep Zig example tasks, CI aggregation tasks, and README coverage in sync as examples change.
-- Redesign the execution structure so Truffle can optimize guest loops or traces instead of only isolated micro-bytecode blocks.
+- Stabilize guest-loop OSR by reducing late block-decode invalidations and expanding direct-call trace coverage beyond stable self-loop blocks.
 - Profile the remaining generic complex floating-point micro-op path before deciding whether to split it further.
 - Investigate register staging for the custom micro-bytecode executor after correctness remains stable.
 - Keep rejected performance experiments documented outside `PLANS.md`.
