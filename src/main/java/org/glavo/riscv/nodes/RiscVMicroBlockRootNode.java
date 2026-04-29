@@ -245,7 +245,7 @@ final class RiscVMicroBlockNode extends Node {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
                 access.writeByte(address, (byte) registers[rs2(operand)]);
-                afterStore(state, address, Byte.BYTES);
+                afterStore(state, address, Byte.BYTES, mode);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
@@ -253,7 +253,7 @@ final class RiscVMicroBlockNode extends Node {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
                 access.writeShort(address, (short) registers[rs2(operand)]);
-                afterStore(state, address, Short.BYTES);
+                afterStore(state, address, Short.BYTES, mode);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
@@ -261,7 +261,7 @@ final class RiscVMicroBlockNode extends Node {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
                 access.writeInt(address, (int) registers[rs2(operand)]);
-                afterStore(state, address, Integer.BYTES);
+                afterStore(state, address, Integer.BYTES, mode);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
@@ -269,7 +269,7 @@ final class RiscVMicroBlockNode extends Node {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
                 access.writeLong(address, registers[rs2(operand)]);
-                afterStore(state, address, Long.BYTES);
+                afterStore(state, address, Long.BYTES, mode);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
@@ -361,7 +361,7 @@ final class RiscVMicroBlockNode extends Node {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
                 access.writeInt(address, (int) state.decodedFloatingPointRegister(rs2(operand)));
-                afterStore(state, address, Integer.BYTES);
+                afterStore(state, address, Integer.BYTES, mode);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
@@ -369,7 +369,7 @@ final class RiscVMicroBlockNode extends Node {
                 beginMemoryInstruction(state, index, mode);
                 long address = loadAddress(registers, operand, index);
                 access.writeLong(address, state.decodedFloatingPointRegister(rs2(operand)));
-                afterStore(state, address, Long.BYTES);
+                afterStore(state, address, Long.BYTES, mode);
                 state.clearReservation();
                 finishInstruction(state, index, mode);
             }
@@ -550,7 +550,7 @@ final class RiscVMicroBlockNode extends Node {
             long address = registers[rs1(operand)];
             if (state.hasReservation(address)) {
                 access.writeInt(address, (int) registers[rs2(operand)]);
-                afterStore(state, address, Integer.BYTES);
+                afterStore(state, address, Integer.BYTES, mode);
                 writeRegister(registers, rd(operand), 0);
             } else {
                 writeRegister(registers, rd(operand), 1);
@@ -574,7 +574,7 @@ final class RiscVMicroBlockNode extends Node {
             long address = registers[rs1(operand)];
             if (state.hasReservation(address)) {
                 access.writeLong(address, registers[rs2(operand)]);
-                afterStore(state, address, Long.BYTES);
+                afterStore(state, address, Long.BYTES, mode);
                 writeRegister(registers, rd(operand), 0);
             } else {
                 writeRegister(registers, rd(operand), 1);
@@ -612,7 +612,7 @@ final class RiscVMicroBlockNode extends Node {
             };
             access.writeInt(address, newValue);
             writeRegister(registers, rd(operand), oldValue);
-            afterStore(state, address, Integer.BYTES);
+            afterStore(state, address, Integer.BYTES, mode);
             state.clearReservation();
         }
         finishInstruction(state, index, mode);
@@ -646,15 +646,15 @@ final class RiscVMicroBlockNode extends Node {
             };
             access.writeLong(address, newValue);
             writeRegister(registers, rd(operand), oldValue);
-            afterStore(state, address, Long.BYTES);
+            afterStore(state, address, Long.BYTES, mode);
             state.clearReservation();
         }
         finishInstruction(state, index, mode);
     }
 
     /// Handles optional simulator side effects after a store.
-    private static void afterStore(MachineState state, long address, int length) {
-        if (state.hasStoreSideEffects()) {
+    private static void afterStore(MachineState state, long address, int length, byte mode) {
+        if (mode != BATCHED_FAST_MODE && state.hasStoreSideEffects()) {
             state.afterStoreWithSideEffects(address, length);
         }
     }

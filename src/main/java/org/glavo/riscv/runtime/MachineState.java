@@ -354,7 +354,9 @@ public final class MachineState {
 
     /// Clears the active LR/SC reservation.
     public void clearReservation() {
-        reservationAddress = ElfImage.ABSENT_ADDRESS;
+        if (reservationAddress != ElfImage.ABSENT_ADDRESS) {
+            reservationAddress = ElfImage.ABSENT_ADDRESS;
+        }
     }
 
     /// Returns true when guest memory stores need simulator side-effect checks.
