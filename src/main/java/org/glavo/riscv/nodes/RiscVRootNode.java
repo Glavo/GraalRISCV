@@ -19,13 +19,16 @@ import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.parser.DecodedBlock;
+import org.glavo.riscv.parser.DecodedInstruction;
 import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.RiscVDecoder;
+import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxInitialStack;
 import org.glavo.riscv.runtime.MachineState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
@@ -285,8 +288,8 @@ public final class RiscVRootNode extends RootNode {
         /// Guest PCs cached in `localBlocks`.
         private final long[] localBlockPcs = new long[LOCAL_BLOCK_CACHE_SIZE];
 
-        /// Thread-local decoded block targets used before probing the shared cache.
-        private final @Nullable RootCallTarget[] localBlocks = new RootCallTarget[LOCAL_BLOCK_CACHE_SIZE];
+        /// Thread-local decoded block entries used before probing the shared cache.
+        private final @Nullable BlockEntry[] localBlocks = new BlockEntry[LOCAL_BLOCK_CACHE_SIZE];
 
         /// Creates loop-local state for one guest thread.
         private GuestLoopState(Memory memory, MachineState state, long pc) {
@@ -328,9 +331,9 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Returns the decoded block target for the current program counter.
-        private RootCallTarget blockFor(BlockCache blocks) {
+        private BlockEntry blockFor(BlockCache blocks) {
             int slot = localBlockSlot(pc);
-            RootCallTarget block = localBlocks[slot];
+            BlockEntry block = localBlocks[slot];
             if (block != null && localBlockPcs[slot] == pc) {
                 return block;
             }
@@ -401,11 +404,23 @@ public final class RiscVRootNode extends RootNode {
         /// The decoded block cache shared by all dispatch calls.
         private final BlockCache blocks;
 
+        /// The hot trace cache shared by all dispatch calls.
+        private final TraceCache traces;
+
+        /// Direct-call entry for a stable hot guest trace.
+        @Child private @Nullable CachedTraceCallNode cachedTrace;
+
         /// Direct-call entry for a stable self-looping guest block.
         @Child private @Nullable CachedBlockCallNode cachedCall;
 
         /// Fallback call node used after the direct-call cache is full.
         @Child private IndirectCallNode indirectCall = IndirectCallNode.create();
+
+        /// The trace start PC currently being considered for direct-call promotion.
+        private long traceCandidatePc;
+
+        /// Consecutive trace direct-call promotion observations for `traceCandidatePc`.
+        private int traceCandidateCount;
 
         /// The guest PC currently being considered for direct-call promotion.
         private long candidatePc;
@@ -416,36 +431,112 @@ public final class RiscVRootNode extends RootNode {
         /// Creates a block dispatch node backed by the supplied decoded-block cache.
         private BlockDispatchNode(BlockCache blocks) {
             this.blocks = blocks;
+            this.traces = new TraceCache(blocks.language());
         }
 
         /// Executes the decoded block for the supplied guest program counter.
         private long execute(GuestLoopState loopState, MachineState state) {
-            return executeCachedOrMiss(loopState, state, loopState.pc());
+            long pc = loopState.pc();
+            if (state.canRetireBlock()) {
+                TraceEntry trace = traces.get(pc);
+                if (trace != null) {
+                    return executeTraceCachedOrMiss(loopState, state, trace);
+                }
+            }
+            return executeBlockCachedOrMiss(loopState, state, pc);
         }
 
-        /// Executes a cached direct block call, or installs and executes a new cache entry.
-        private long executeCachedOrMiss(GuestLoopState loopState, MachineState state, long pc) {
-            CachedBlockCallNode cachedCall = this.cachedCall;
-            if (cachedCall != null && cachedCall.matches(pc)) {
-                cachedCall.call(loopState.blockArguments());
+        /// Executes a cached direct trace call, or falls back to an indirect trace call.
+        private long executeTraceCachedOrMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
+            CachedTraceCallNode cachedTrace = this.cachedTrace;
+            if (cachedTrace != null && cachedTrace.matches(trace.startPc())) {
+                cachedTrace.call(loopState.blockArguments());
                 return state.pc();
             }
-            return executeMiss(loopState, state, pc);
+            return executeTraceMiss(loopState, state, trace);
         }
 
-        /// Handles a direct-call cache miss for the supplied guest program counter.
-        private long executeMiss(GuestLoopState loopState, MachineState state, long pc) {
-            RootCallTarget target = loopState.blockFor(blocks);
-            if (CompilerDirectives.inInterpreter() && shouldInstallDirectCall(pc)) {
-                CachedBlockCallNode cachedCall = installCachedCall(pc, target);
-                if (cachedCall != null) {
-                    cachedCall.call(loopState.blockArguments());
+        /// Handles a direct trace-call cache miss for the supplied trace.
+        private long executeTraceMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
+            if (CompilerDirectives.inInterpreter() && shouldInstallDirectTrace(trace.startPc())) {
+                CachedTraceCallNode cachedTrace = installCachedTrace(trace);
+                if (cachedTrace != null) {
+                    cachedTrace.call(loopState.blockArguments());
                     return state.pc();
                 }
             }
 
-            indirectCall.call(target, loopState.blockArguments());
+            indirectCall.call(trace.target(), loopState.blockArguments());
             return state.pc();
+        }
+
+        /// Executes a cached direct block call, or installs and executes a new cache entry.
+        private long executeBlockCachedOrMiss(GuestLoopState loopState, MachineState state, long pc) {
+            CachedBlockCallNode cachedCall = this.cachedCall;
+            if (cachedCall != null && cachedCall.matches(pc)) {
+                cachedCall.call(loopState.blockArguments());
+                long nextPc = state.pc();
+                observeTransition(loopState.memory(), state, cachedCall.entry(), nextPc);
+                return nextPc;
+            }
+            return executeBlockMiss(loopState, state, pc);
+        }
+
+        /// Handles a direct-call cache miss for the supplied guest program counter.
+        private long executeBlockMiss(GuestLoopState loopState, MachineState state, long pc) {
+            BlockEntry entry = loopState.blockFor(blocks);
+            if (CompilerDirectives.inInterpreter() && shouldInstallDirectCall(pc)) {
+                CachedBlockCallNode cachedCall = installCachedCall(entry);
+                if (cachedCall != null) {
+                    cachedCall.call(loopState.blockArguments());
+                    long nextPc = state.pc();
+                    observeTransition(loopState.memory(), state, entry, nextPc);
+                    return nextPc;
+                }
+            }
+
+            indirectCall.call(entry.target(), loopState.blockArguments());
+            long nextPc = state.pc();
+            observeTransition(loopState.memory(), state, entry, nextPc);
+            return nextPc;
+        }
+
+        /// Records a block transition and compiles a trace when the successor edge is hot.
+        private void observeTransition(Memory memory, MachineState state, BlockEntry entry, long nextPc) {
+            entry.recordSuccessor(nextPc);
+            if (state.canRetireBlock() && CompilerDirectives.inInterpreter()) {
+                traces.compileIfHot(memory, blocks, entry);
+            }
+        }
+
+        /// Returns true after a trace PC has been reached repeatedly in the interpreter.
+        private boolean shouldInstallDirectTrace(long pc) {
+            if (cachedTrace != null) {
+                return false;
+            }
+
+            if (traceCandidatePc == pc) {
+                traceCandidateCount++;
+            } else {
+                traceCandidatePc = pc;
+                traceCandidateCount = 1;
+            }
+            return traceCandidateCount >= DIRECT_CALL_INSTALL_THRESHOLD;
+        }
+
+        /// Installs a direct trace call node for a newly observed hot trace.
+        private @Nullable CachedTraceCallNode installCachedTrace(TraceEntry trace) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            synchronized (this) {
+                CachedTraceCallNode cachedTrace = this.cachedTrace;
+                if (cachedTrace != null) {
+                    return cachedTrace.matches(trace.startPc()) ? cachedTrace : null;
+                }
+
+                cachedTrace = insert(new CachedTraceCallNode(trace));
+                this.cachedTrace = cachedTrace;
+                return cachedTrace;
+            }
         }
 
         /// Returns true after a guest PC has shown stable self-loop behavior in the interpreter.
@@ -464,24 +555,53 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Installs a direct call node for a newly observed guest block when capacity remains.
-        private @Nullable CachedBlockCallNode installCachedCall(long pc, RootCallTarget target) {
+        private @Nullable CachedBlockCallNode installCachedCall(BlockEntry entry) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             synchronized (this) {
                 CachedBlockCallNode cachedCall = this.cachedCall;
                 if (cachedCall != null) {
-                    return cachedCall.matches(pc) ? cachedCall : null;
+                    return cachedCall.matches(entry.pc()) ? cachedCall : null;
                 }
 
-                cachedCall = insert(new CachedBlockCallNode(pc, target));
+                cachedCall = insert(new CachedBlockCallNode(entry));
                 this.cachedCall = cachedCall;
                 return cachedCall;
             }
         }
     }
 
+    /// Calls one hot decoded trace through a direct Truffle call node.
+    @NotNullByDefault
+    private static final class CachedTraceCallNode extends Node {
+        /// The guest program counter handled by this cached trace.
+        private final long pc;
+
+        /// The direct call node for the decoded trace target.
+        @Child private DirectCallNode call;
+
+        /// Creates a cached direct call for one decoded trace.
+        private CachedTraceCallNode(TraceEntry trace) {
+            this.pc = trace.startPc();
+            this.call = DirectCallNode.create(trace.target());
+        }
+
+        /// Returns true when this node handles the supplied trace start PC.
+        private boolean matches(long pc) {
+            return this.pc == pc;
+        }
+
+        /// Executes the cached decoded trace.
+        private void call(Object[] arguments) {
+            call.call(arguments);
+        }
+    }
+
     /// Calls one decoded block through a direct Truffle call node.
     @NotNullByDefault
     private static final class CachedBlockCallNode extends Node {
+        /// The decoded block entry handled by this cached call.
+        private final BlockEntry entry;
+
         /// The guest program counter handled by this cached direct call.
         private final long pc;
 
@@ -489,9 +609,15 @@ public final class RiscVRootNode extends RootNode {
         @Child private DirectCallNode call;
 
         /// Creates a cached direct call for one decoded block.
-        private CachedBlockCallNode(long pc, RootCallTarget target) {
-            this.pc = pc;
-            this.call = DirectCallNode.create(target);
+        private CachedBlockCallNode(BlockEntry entry) {
+            this.entry = entry;
+            this.pc = entry.pc();
+            this.call = DirectCallNode.create(entry.target());
+        }
+
+        /// Returns the decoded block entry handled by this cached call.
+        private BlockEntry entry() {
+            return entry;
         }
 
         /// Returns true when this node handles the supplied guest program counter.
@@ -502,6 +628,273 @@ public final class RiscVRootNode extends RootNode {
         /// Executes the cached decoded block.
         private void call(Object[] arguments) {
             call.call(arguments);
+        }
+    }
+
+    /// Stores immutable metadata and executable target for one decoded guest block.
+    @NotNullByDefault
+    private static final class BlockEntry {
+        /// Successor observations required before a block can seed a trace.
+        private static final int HOT_SUCCESSOR_THRESHOLD = 64;
+
+        /// Saturating upper bound for successor observation counts.
+        private static final int MAX_SUCCESSOR_COUNT = 1 << 20;
+
+        /// The guest program counter where this block starts.
+        private final long pc;
+
+        /// The decoded block metadata used for trace formation.
+        private final DecodedBlock decodedBlock;
+
+        /// The executable block target.
+        private final RootCallTarget target;
+
+        /// The most recently stable successor PC observed after executing this block.
+        private long successorPc;
+
+        /// The number of consecutive observations for `successorPc`.
+        private int successorCount;
+
+        /// Creates a decoded block entry.
+        private BlockEntry(long pc, DecodedBlock decodedBlock, RootCallTarget target) {
+            this.pc = pc;
+            this.decodedBlock = decodedBlock;
+            this.target = target;
+        }
+
+        /// Returns the guest program counter where this block starts.
+        private long pc() {
+            return pc;
+        }
+
+        /// Returns the decoded block metadata.
+        private DecodedBlock decodedBlock() {
+            return decodedBlock;
+        }
+
+        /// Returns the executable block target.
+        private RootCallTarget target() {
+            return target;
+        }
+
+        /// Records the successor observed after executing this block once.
+        private void recordSuccessor(long nextPc) {
+            if (successorPc == nextPc) {
+                if (successorCount < MAX_SUCCESSOR_COUNT) {
+                    successorCount++;
+                }
+                return;
+            }
+
+            successorPc = nextPc;
+            successorCount = 1;
+        }
+
+        /// Returns true when the block has a hot successor suitable for trace formation.
+        private boolean hasHotSuccessor() {
+            return successorCount >= HOT_SUCCESSOR_THRESHOLD;
+        }
+
+        /// Returns the hot successor PC observed for this block.
+        private long hotSuccessorPc() {
+            return successorPc;
+        }
+
+        /// Returns true when this block is safe to include in a trace root.
+        private boolean isTraceable() {
+            for (DecodedInstruction instruction : decodedBlock.instructions()) {
+                RiscVOperation operation = instruction.operation();
+                if (operation == RiscVOperation.ECALL || operation == RiscVOperation.EBREAK) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /// Stores one compiled trace target.
+    ///
+    /// @param startPc the guest program counter where the trace starts
+    /// @param target the executable trace target
+    @NotNullByDefault
+    private record TraceEntry(
+            long startPc,
+            RootCallTarget target) {
+    }
+
+    /// Stores compiled hot traces in a primitive long-keyed open-addressing map.
+    @NotNullByDefault
+    private static final class TraceCache {
+        /// The initial number of slots in the trace cache.
+        private static final int INITIAL_CAPACITY = 64;
+
+        /// The maximum number of decoded blocks included in one trace.
+        private static final int MAX_TRACE_BLOCKS = 16;
+
+        /// The resize threshold numerator for the trace cache load factor.
+        private static final int LOAD_FACTOR_NUMERATOR = 1;
+
+        /// The resize threshold denominator for the trace cache load factor.
+        private static final int LOAD_FACTOR_DENOMINATOR = 2;
+
+        /// The language instance used to create trace roots.
+        private final RiscVLanguage language;
+
+        /// Guest program counters stored in cache slots.
+        private volatile long[] keys = new long[INITIAL_CAPACITY];
+
+        /// Trace values stored in the slot matching `keys`.
+        private volatile @Nullable TraceEntry[] values = new TraceEntry[INITIAL_CAPACITY];
+
+        /// The number of occupied trace cache slots.
+        private int size;
+
+        /// Creates a trace cache for one dispatch node.
+        private TraceCache(RiscVLanguage language) {
+            this.language = language;
+        }
+
+        /// Returns the compiled trace for a guest program counter, or null on miss.
+        private @Nullable TraceEntry get(long pc) {
+            long[] currentKeys = keys;
+            @Nullable TraceEntry[] currentValues = values;
+            int slot = findSlot(pc, currentKeys, currentValues);
+            return currentValues[slot];
+        }
+
+        /// Compiles a trace for a block whose successor edge is hot, unless one already exists.
+        private void compileIfHot(Memory memory, BlockCache blocks, BlockEntry start) {
+            if (!start.hasHotSuccessor() || !start.isTraceable() || get(start.pc()) != null) {
+                return;
+            }
+            compileAndCache(memory, blocks, start);
+        }
+
+        /// Compiles and caches a trace after a miss on the unsynchronized fast path.
+        private synchronized void compileAndCache(Memory memory, BlockCache blocks, BlockEntry start) {
+            int slot = findSlot(start.pc(), keys, values);
+            if (values[slot] != null || !start.hasHotSuccessor() || !start.isTraceable()) {
+                return;
+            }
+
+            TraceBuildResult result = buildTrace(memory, blocks, start);
+            if (result.blockCount() < 2) {
+                return;
+            }
+
+            CompilerDirectives.transferToInterpreter();
+            if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
+                grow();
+                slot = findSlot(start.pc(), keys, values);
+            }
+
+            TraceEntry trace = new TraceEntry(
+                    start.pc(),
+                    new RiscVMicroTraceRootNode(language, result.targets(), result.expectedNextPcs()).getCallTarget());
+            keys[slot] = start.pc();
+            values[slot] = trace;
+            size++;
+        }
+
+        /// Builds one linear trace by following currently hot successor edges.
+        private TraceBuildResult buildTrace(Memory memory, BlockCache blocks, BlockEntry start) {
+            RootCallTarget[] targets = new RootCallTarget[MAX_TRACE_BLOCKS];
+            long[] expectedNextPcs = new long[MAX_TRACE_BLOCKS - 1];
+            long[] pcs = new long[MAX_TRACE_BLOCKS];
+            int count = 0;
+            BlockEntry current = start;
+
+            while (count < MAX_TRACE_BLOCKS && current.isTraceable()) {
+                pcs[count] = current.pc();
+                targets[count] = current.target();
+                count++;
+
+                if (!current.hasHotSuccessor()) {
+                    break;
+                }
+
+                long successorPc = current.hotSuccessorPc();
+                if (containsPc(pcs, count, successorPc)) {
+                    break;
+                }
+
+                BlockEntry successor = blocks.getOrDecode(memory, successorPc);
+                if (!successor.isTraceable()) {
+                    break;
+                }
+
+                expectedNextPcs[count - 1] = successorPc;
+                current = successor;
+            }
+
+            RootCallTarget[] trimmedTargets = new RootCallTarget[count];
+            System.arraycopy(targets, 0, trimmedTargets, 0, count);
+            long[] trimmedExpectedNextPcs = new long[Math.max(0, count - 1)];
+            System.arraycopy(expectedNextPcs, 0, trimmedExpectedNextPcs, 0, trimmedExpectedNextPcs.length);
+            return new TraceBuildResult(trimmedTargets, trimmedExpectedNextPcs);
+        }
+
+        /// Returns true when the supplied PC is already present in the trace prefix.
+        private static boolean containsPc(long[] pcs, int count, long pc) {
+            for (int index = 0; index < count; index++) {
+                if (pcs[index] == pc) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Doubles the trace cache capacity and reinserts all existing entries.
+        private void grow() {
+            long[] oldKeys = keys;
+            @Nullable TraceEntry[] oldValues = values;
+            keys = new long[oldKeys.length << 1];
+            values = new TraceEntry[keys.length];
+
+            for (int index = 0; index < oldValues.length; index++) {
+                TraceEntry trace = oldValues[index];
+                if (trace != null) {
+                    int slot = findSlot(oldKeys[index], keys, values);
+                    keys[slot] = oldKeys[index];
+                    values[slot] = trace;
+                }
+            }
+        }
+
+        /// Finds the trace cache slot containing the key or the first empty slot for it.
+        private static int findSlot(long pc, long[] keys, @Nullable TraceEntry[] values) {
+            int mask = values.length - 1;
+            int slot = hash(pc) & mask;
+            while (true) {
+                TraceEntry trace = values[slot];
+                if (trace == null || keys[slot] == pc) {
+                    return slot;
+                }
+                slot = (slot + 1) & mask;
+            }
+        }
+
+        /// Hashes a guest program counter for open addressing.
+        private static int hash(long value) {
+            long hash = value ^ (value >>> 32);
+            hash ^= hash >>> 16;
+            hash *= 0x9e37_79b9_7f4a_7c15L;
+            hash ^= hash >>> 32;
+            return (int) hash;
+        }
+    }
+
+    /// Stores temporary trace build arrays trimmed to the number of selected blocks.
+    ///
+    /// @param targets the executable block targets in trace order
+    /// @param expectedNextPcs the expected successor PCs between adjacent trace blocks
+    @NotNullByDefault
+    private record TraceBuildResult(
+            RootCallTarget @Unmodifiable [] targets,
+            long @Unmodifiable [] expectedNextPcs) {
+        /// Returns the number of blocks in this trace.
+        private int blockCount() {
+            return targets.length;
         }
     }
 
@@ -524,7 +917,7 @@ public final class RiscVRootNode extends RootNode {
         private volatile long[] keys = new long[INITIAL_CAPACITY];
 
         /// Cache values stored in the slot matching `keys`.
-        private volatile @Nullable RootCallTarget[] values = new RootCallTarget[INITIAL_CAPACITY];
+        private volatile @Nullable BlockEntry[] values = new BlockEntry[INITIAL_CAPACITY];
 
         /// The number of occupied cache slots.
         private int size;
@@ -534,12 +927,17 @@ public final class RiscVRootNode extends RootNode {
             this.language = language;
         }
 
+        /// Returns the language instance used to compile blocks and traces.
+        private RiscVLanguage language() {
+            return language;
+        }
+
         /// Returns the cached block for a guest program counter, decoding it on a cache miss.
-        private RootCallTarget getOrDecode(Memory memory, long pc) {
+        private BlockEntry getOrDecode(Memory memory, long pc) {
             long[] currentKeys = keys;
-            @Nullable RootCallTarget[] currentValues = values;
+            @Nullable BlockEntry[] currentValues = values;
             int slot = findSlot(pc, currentKeys, currentValues);
-            RootCallTarget block = currentValues[slot];
+            BlockEntry block = currentValues[slot];
             if (block != null) {
                 return block;
             }
@@ -548,9 +946,9 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Decodes and caches a block after a miss on the unsynchronized fast path.
-        private synchronized RootCallTarget decodeAndCache(Memory memory, long pc) {
+        private synchronized BlockEntry decodeAndCache(Memory memory, long pc) {
             int slot = findSlot(pc, keys, values);
-            RootCallTarget block = values[slot];
+            BlockEntry block = values[slot];
             if (block != null) {
                 return block;
             }
@@ -562,7 +960,7 @@ public final class RiscVRootNode extends RootNode {
             }
 
             DecodedBlock decodedBlock = RiscVDecoder.decodeBlock(memory, pc);
-            block = RiscVMicroBlockCompiler.compile(language, decodedBlock);
+            block = new BlockEntry(pc, decodedBlock, RiscVMicroBlockCompiler.compile(language, decodedBlock));
             keys[slot] = pc;
             values[slot] = block;
             size++;
@@ -572,12 +970,12 @@ public final class RiscVRootNode extends RootNode {
         /// Doubles the cache capacity and reinserts all existing entries.
         private void grow() {
             long[] oldKeys = keys;
-            @Nullable RootCallTarget[] oldValues = values;
+            @Nullable BlockEntry[] oldValues = values;
             keys = new long[oldKeys.length << 1];
-            values = new RootCallTarget[keys.length];
+            values = new BlockEntry[keys.length];
 
             for (int index = 0; index < oldValues.length; index++) {
-                RootCallTarget block = oldValues[index];
+                BlockEntry block = oldValues[index];
                 if (block != null) {
                     int slot = findSlot(oldKeys[index], keys, values);
                     keys[slot] = oldKeys[index];
@@ -587,11 +985,11 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Finds the cache slot containing the key or the first empty slot for it.
-        private static int findSlot(long pc, long[] keys, @Nullable RootCallTarget[] values) {
+        private static int findSlot(long pc, long[] keys, @Nullable BlockEntry[] values) {
             int mask = values.length - 1;
             int slot = hash(pc) & mask;
             while (true) {
-                RootCallTarget block = values[slot];
+                BlockEntry block = values[slot];
                 if (block == null || keys[slot] == pc) {
                     return slot;
                 }
