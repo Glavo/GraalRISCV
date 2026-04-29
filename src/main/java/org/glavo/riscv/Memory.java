@@ -270,7 +270,7 @@ public final class Memory implements AutoCloseable {
             return false;
         }
 
-        MappedRegion region = new MappedRegion(address, length, mappedSegment);
+        MappedRegion region = new MappedRegion(address, mappedSegment.asSlice(0, length));
         int insertionIndex = insertionIndex(regions, address);
         MappedRegion[] newRegions = new MappedRegion[regions.length + 1];
         System.arraycopy(regions, 0, newRegions, 0, insertionIndex);
@@ -305,7 +305,6 @@ public final class Memory implements AutoCloseable {
                 long prefixLength = address - region.address();
                 newRegions.add(new MappedRegion(
                         region.address(),
-                        prefixLength,
                         region.segment().asSlice(0, prefixLength)));
             }
             if (endAddress < region.endAddress()) {
@@ -313,7 +312,6 @@ public final class Memory implements AutoCloseable {
                 long suffixLength = region.endAddress() - endAddress;
                 newRegions.add(new MappedRegion(
                         endAddress,
-                        suffixLength,
                         region.segment().asSlice(suffixOffset, suffixLength)));
             }
         }
@@ -512,15 +510,13 @@ public final class Memory implements AutoCloseable {
     /// Describes a sparse guest memory region created by a memory syscall.
     ///
     /// @param address the inclusive guest start address of the region
-    /// @param length the byte length of the region
-    /// @param segment the host segment backing the region
+    /// @param segment the host segment backing exactly this region
     private record MappedRegion(
             long address,
-            long length,
             MemorySegment segment) {
         /// Returns the exclusive guest end address of the region.
         long endAddress() {
-            return address + length;
+            return address + segment.byteSize();
         }
     }
 }
