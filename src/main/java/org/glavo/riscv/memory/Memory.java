@@ -743,9 +743,19 @@ public final class Memory implements AutoCloseable {
 
     /// Returns the committed page for a read access using the supplied software TLB.
     private Page readPage(long address, int length, boolean instruction, @Nullable MappedRegionCache cache) {
+        return readPage(address, length, instruction, cache, null);
+    }
+
+    /// Returns the committed page for a read access using the supplied software TLB and access-local cache.
+    private Page readPage(
+            long address,
+            int length,
+            boolean instruction,
+            @Nullable MappedRegionCache cache,
+            @Nullable Access access) {
         long requiredProtection = instruction ? PROTECTION_EXECUTE : PROTECTION_READ;
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, address, length, requiredProtection, instruction, cache);
+        @Nullable Page page = cachedPage(pageNumber, address, length, requiredProtection, instruction, cache, access);
         if (page != null) {
             return page;
         }
@@ -753,10 +763,10 @@ public final class Memory implements AutoCloseable {
         Vma vma = ensureValidMappedRange(address, length, requiredProtection);
         page = pages.get(pageNumber);
         if (page != null) {
-            setCachedPage(pageNumber, page, vma, instruction, cache);
+            setCachedPage(pageNumber, page, vma, instruction, cache, access);
         } else {
             page = zeroPage;
-            setCachedPage(pageNumber, page, vma, instruction, vma.protection() & ~PROTECTION_WRITE, cache);
+            setCachedPage(pageNumber, page, vma, instruction, vma.protection() & ~PROTECTION_WRITE, cache, access);
         }
         return page;
     }
@@ -768,8 +778,13 @@ public final class Memory implements AutoCloseable {
 
     /// Returns a committed page for a write access using the supplied software TLB.
     private Page writePage(long address, int length, @Nullable MappedRegionCache cache) {
+        return writePage(address, length, cache, null);
+    }
+
+    /// Returns a committed page for a write access using the supplied software TLB and access-local cache.
+    private Page writePage(long address, int length, @Nullable MappedRegionCache cache, @Nullable Access access) {
         long pageNumber = pageNumber(address);
-        @Nullable Page page = cachedPage(pageNumber, address, length, PROTECTION_WRITE, false, cache);
+        @Nullable Page page = cachedPage(pageNumber, address, length, PROTECTION_WRITE, false, cache, access);
         if (page != null) {
             return page;
         }
@@ -777,12 +792,12 @@ public final class Memory implements AutoCloseable {
         Vma vma = ensureValidMappedRange(address, length, PROTECTION_WRITE);
         page = pages.get(pageNumber);
         if (page != null) {
-            setCachedPage(pageNumber, page, vma, false, cache);
+            setCachedPage(pageNumber, page, vma, false, cache, access);
             return page;
         }
 
         page = commitPage(pageNumber);
-        setCachedPage(pageNumber, page, vma, false, cache);
+        setCachedPage(pageNumber, page, vma, false, cache, access);
         return page;
     }
 
@@ -862,8 +877,9 @@ public final class Memory implements AutoCloseable {
             int length,
             long requiredProtection,
             boolean instruction,
-            @Nullable MappedRegionCache cache) {
-        return cache == null ? null : cache.page(pageNumber, address, length, requiredProtection, generation, instruction);
+            @Nullable MappedRegionCache cache,
+            @Nullable Access access) {
+        return cache == null ? null : cache.page(pageNumber, address, length, requiredProtection, generation, instruction, access);
     }
 
     /// Stores a committed page in the supplied software TLB.
@@ -873,7 +889,18 @@ public final class Memory implements AutoCloseable {
             Vma vma,
             boolean instruction,
             @Nullable MappedRegionCache cache) {
-        setCachedPage(pageNumber, page, vma, instruction, vma.protection(), cache);
+        setCachedPage(pageNumber, page, vma, instruction, vma.protection(), cache, null);
+    }
+
+    /// Stores a committed page in the supplied software TLB and access-local cache.
+    private void setCachedPage(
+            long pageNumber,
+            Page page,
+            Vma vma,
+            boolean instruction,
+            @Nullable MappedRegionCache cache,
+            @Nullable Access access) {
+        setCachedPage(pageNumber, page, vma, instruction, vma.protection(), cache, access);
     }
 
     /// Stores a committed page in the supplied software TLB with an explicit protection mask.
@@ -884,11 +911,26 @@ public final class Memory implements AutoCloseable {
             boolean instruction,
             long protection,
             @Nullable MappedRegionCache cache) {
+        setCachedPage(pageNumber, page, vma, instruction, protection, cache, null);
+    }
+
+    /// Stores a committed page in the supplied software TLB and access-local cache with an explicit protection mask.
+    private void setCachedPage(
+            long pageNumber,
+            Page page,
+            Vma vma,
+            boolean instruction,
+            long protection,
+            @Nullable MappedRegionCache cache,
+            @Nullable Access access) {
+        long pageStart = pageNumber << pageShift;
+        long rangeStart = Math.max(vma.address(), pageStart);
+        long rangeEnd = Math.min(vma.endAddress(), pageStart + pageSize);
         if (cache != null) {
-            long pageStart = pageNumber << pageShift;
-            long rangeStart = Math.max(vma.address(), pageStart);
-            long rangeEnd = Math.min(vma.endAddress(), pageStart + pageSize);
             cache.setPage(pageNumber, rangeStart, rangeEnd, protection, generation, page, instruction);
+        }
+        if (!instruction && access != null) {
+            access.setDataPage(pageNumber, rangeStart, rangeEnd, protection, generation, page);
         }
     }
 
@@ -1014,6 +1056,24 @@ public final class Memory implements AutoCloseable {
         /// The software TLB for the current Truffle context and host thread.
         private final @Nullable MappedRegionCache cache;
 
+        /// The most recently accessed data page for this execution facade.
+        private @Nullable Page cachedDataPage;
+
+        /// The guest page number associated with `cachedDataPage`.
+        private long cachedDataPageNumber;
+
+        /// The inclusive guest address where `cachedDataPage` is valid.
+        private long cachedDataRangeStart;
+
+        /// The exclusive guest address where `cachedDataPage` stops being valid.
+        private long cachedDataRangeEnd;
+
+        /// The access protections available through `cachedDataPage`.
+        private long cachedDataProtection;
+
+        /// The memory generation associated with `cachedDataPage`.
+        private long cachedDataGeneration;
+
         /// Creates an access facade for a memory object and optional software TLB.
         private Access(Memory memory, @Nullable MappedRegionCache cache) {
             this.memory = memory;
@@ -1022,7 +1082,7 @@ public final class Memory implements AutoCloseable {
 
         /// Reads a signed byte from guest memory.
         public byte readByte(long address) {
-            Page page = memory.readPage(address, Byte.BYTES, false, cache);
+            Page page = readDataPage(address, Byte.BYTES);
             return UNSAFE.getByte(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
         }
 
@@ -1034,7 +1094,7 @@ public final class Memory implements AutoCloseable {
         /// Reads a signed little-endian 16-bit value from guest memory.
         public short readShort(long address) {
             if (memory.isSinglePageAccess(address, Short.BYTES)) {
-                Page page = memory.readPage(address, Short.BYTES, false, cache);
+                Page page = readDataPage(address, Short.BYTES);
                 short value = UNSAFE.getShort(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
                 return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
             }
@@ -1050,7 +1110,7 @@ public final class Memory implements AutoCloseable {
         /// Reads a signed little-endian 32-bit value from guest memory.
         public int readInt(long address) {
             if (memory.isSinglePageAccess(address, Integer.BYTES)) {
-                Page page = memory.readPage(address, Integer.BYTES, false, cache);
+                Page page = readDataPage(address, Integer.BYTES);
                 int value = UNSAFE.getInt(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
                 return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             }
@@ -1077,7 +1137,7 @@ public final class Memory implements AutoCloseable {
         /// Reads a signed little-endian 64-bit value from guest memory.
         public long readLong(long address) {
             if (memory.isSinglePageAccess(address, Long.BYTES)) {
-                Page page = memory.readPage(address, Long.BYTES, false, cache);
+                Page page = readDataPage(address, Long.BYTES);
                 long value = UNSAFE.getLong(page.baseObject(), page.byteOffset(memory.pageOffset(address)));
                 return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
             }
@@ -1087,14 +1147,14 @@ public final class Memory implements AutoCloseable {
 
         /// Writes a byte to guest memory.
         public void writeByte(long address, byte value) {
-            Page page = memory.writePage(address, Byte.BYTES, cache);
+            Page page = writeDataPage(address, Byte.BYTES);
             UNSAFE.putByte(page.baseObject(), page.byteOffset(memory.pageOffset(address)), value);
         }
 
         /// Writes a little-endian 16-bit value to guest memory.
         public void writeShort(long address, short value) {
             if (memory.isSinglePageAccess(address, Short.BYTES)) {
-                Page page = memory.writePage(address, Short.BYTES, cache);
+                Page page = writeDataPage(address, Short.BYTES);
                 short stored = NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
                 UNSAFE.putShort(page.baseObject(), page.byteOffset(memory.pageOffset(address)), stored);
                 return;
@@ -1106,7 +1166,7 @@ public final class Memory implements AutoCloseable {
         /// Writes a little-endian 32-bit value to guest memory.
         public void writeInt(long address, int value) {
             if (memory.isSinglePageAccess(address, Integer.BYTES)) {
-                Page page = memory.writePage(address, Integer.BYTES, cache);
+                Page page = writeDataPage(address, Integer.BYTES);
                 int stored = NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
                 UNSAFE.putInt(page.baseObject(), page.byteOffset(memory.pageOffset(address)), stored);
                 return;
@@ -1118,13 +1178,56 @@ public final class Memory implements AutoCloseable {
         /// Writes a little-endian 64-bit value to guest memory.
         public void writeLong(long address, long value) {
             if (memory.isSinglePageAccess(address, Long.BYTES)) {
-                Page page = memory.writePage(address, Long.BYTES, cache);
+                Page page = writeDataPage(address, Long.BYTES);
                 long stored = NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
                 UNSAFE.putLong(page.baseObject(), page.byteOffset(memory.pageOffset(address)), stored);
                 return;
             }
 
             memory.writeLittleEndianByBytes(address, value, Long.BYTES, cache);
+        }
+
+        /// Returns the cached data page for a read access, resolving and caching it on miss.
+        private Page readDataPage(long address, int length) {
+            @Nullable Page page = cachedDataPage(address, length, PROTECTION_READ);
+            return page == null ? memory.readPage(address, length, false, cache, this) : page;
+        }
+
+        /// Returns the cached data page for a write access, resolving and caching it on miss.
+        private Page writeDataPage(long address, int length) {
+            @Nullable Page page = cachedDataPage(address, length, PROTECTION_WRITE);
+            return page == null ? memory.writePage(address, length, cache, this) : page;
+        }
+
+        /// Returns the access-local cached data page, or null when the lookup misses.
+        private @Nullable Page cachedDataPage(long address, int length, long requiredProtection) {
+            long pageNumber = memory.pageNumber(address);
+            @Nullable Page page = cachedDataPage;
+            if (page != null
+                    && cachedDataPageNumber == pageNumber
+                    && cachedDataGeneration == memory.generation
+                    && address >= cachedDataRangeStart
+                    && length <= cachedDataRangeEnd - address
+                    && (cachedDataProtection & requiredProtection) == requiredProtection) {
+                return page;
+            }
+            return null;
+        }
+
+        /// Stores one data-page lookup in the access-local cache.
+        private void setDataPage(
+                long pageNumber,
+                long rangeStart,
+                long rangeEnd,
+                long protection,
+                long generation,
+                Page page) {
+            cachedDataPageNumber = pageNumber;
+            cachedDataRangeStart = rangeStart;
+            cachedDataRangeEnd = rangeEnd;
+            cachedDataProtection = protection;
+            cachedDataGeneration = generation;
+            cachedDataPage = page;
         }
     }
 
@@ -1376,7 +1479,8 @@ public final class Memory implements AutoCloseable {
                 int length,
                 long requiredProtection,
                 long generation,
-                boolean instruction) {
+                boolean instruction,
+                @Nullable Access access) {
             return instruction
                     ? page(
                             pageNumber,
@@ -1389,7 +1493,8 @@ public final class Memory implements AutoCloseable {
                             instructionRangeEnds,
                             instructionProtections,
                             instructionGenerations,
-                            instructionPages)
+                            instructionPages,
+                            null)
                     : page(
                             pageNumber,
                             address,
@@ -1401,7 +1506,8 @@ public final class Memory implements AutoCloseable {
                             dataRangeEnds,
                             dataProtections,
                             dataGenerations,
-                            dataPages);
+                            dataPages,
+                            access);
         }
 
         /// Stores a cached committed page.
@@ -1456,7 +1562,8 @@ public final class Memory implements AutoCloseable {
                 long[] rangeEnds,
                 long[] protections,
                 long[] generations,
-                @Nullable Page[] pages) {
+                @Nullable Page[] pages,
+                @Nullable Access access) {
             int index = cacheSlot(pageNumber, pages.length);
             @Nullable Page page = pages[index];
             if (page != null
@@ -1465,6 +1572,15 @@ public final class Memory implements AutoCloseable {
                     && address >= rangeStarts[index]
                     && length <= rangeEnds[index] - address
                     && (protections[index] & requiredProtection) == requiredProtection) {
+                if (access != null) {
+                    access.setDataPage(
+                            pageNumber,
+                            rangeStarts[index],
+                            rangeEnds[index],
+                            protections[index],
+                            generations[index],
+                            page);
+                }
                 return page;
             }
             return null;

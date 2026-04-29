@@ -467,20 +467,23 @@ public final class RiscVRootNode extends RootNode {
         /// The hot trace cache shared by all dispatch calls.
         private final TraceCache traces;
 
-        /// Direct-call entry for a stable hot guest trace.
-        @Child private @Nullable CachedTraceCallNode cachedTrace;
+        /// First direct-call entry for a stable hot guest trace.
+        @Child private @Nullable CachedTraceCallNode cachedTrace0;
+
+        /// Second direct-call entry for a stable hot guest trace.
+        @Child private @Nullable CachedTraceCallNode cachedTrace1;
+
+        /// Third direct-call entry for a stable hot guest trace.
+        @Child private @Nullable CachedTraceCallNode cachedTrace2;
+
+        /// Fourth direct-call entry for a stable hot guest trace.
+        @Child private @Nullable CachedTraceCallNode cachedTrace3;
 
         /// Direct-call entry for a stable self-looping guest block.
         @Child private @Nullable CachedBlockCallNode cachedCall;
 
         /// Fallback call node used after the direct-call cache is full.
         @Child private IndirectCallNode indirectCall = IndirectCallNode.create();
-
-        /// The trace start PC currently being considered for direct-call promotion.
-        private long traceCandidatePc;
-
-        /// Consecutive trace direct-call promotion observations for `traceCandidatePc`.
-        private int traceCandidateCount;
 
         /// The guest PC currently being considered for direct-call promotion.
         private long candidatePc;
@@ -508,8 +511,8 @@ public final class RiscVRootNode extends RootNode {
 
         /// Executes a cached direct trace call, or falls back to an indirect trace call.
         private long executeTraceCachedOrMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
-            CachedTraceCallNode cachedTrace = this.cachedTrace;
-            if (cachedTrace != null && cachedTrace.matches(trace.startPc())) {
+            @Nullable CachedTraceCallNode cachedTrace = cachedTrace(trace.startPc());
+            if (cachedTrace != null) {
                 cachedTrace.call(loopState.blockArguments());
                 return state.pc();
             }
@@ -518,7 +521,7 @@ public final class RiscVRootNode extends RootNode {
 
         /// Handles a direct trace-call cache miss for the supplied trace.
         private long executeTraceMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
-            if (CompilerDirectives.inInterpreter() && shouldInstallDirectTrace(trace.startPc())) {
+            if (CompilerDirectives.inInterpreter()) {
                 CachedTraceCallNode cachedTrace = installCachedTrace(trace);
                 if (cachedTrace != null) {
                     cachedTrace.call(loopState.blockArguments());
@@ -569,32 +572,51 @@ public final class RiscVRootNode extends RootNode {
             }
         }
 
-        /// Returns true after a trace PC has been reached repeatedly in the interpreter.
-        private boolean shouldInstallDirectTrace(long pc) {
-            if (cachedTrace != null) {
-                return false;
+        /// Returns a cached direct trace call for the supplied PC, or null on miss.
+        private @Nullable CachedTraceCallNode cachedTrace(long pc) {
+            @Nullable CachedTraceCallNode trace = cachedTrace0;
+            if (trace != null && trace.matches(pc)) {
+                return trace;
             }
-
-            if (traceCandidatePc == pc) {
-                traceCandidateCount++;
-            } else {
-                traceCandidatePc = pc;
-                traceCandidateCount = 1;
+            trace = cachedTrace1;
+            if (trace != null && trace.matches(pc)) {
+                return trace;
             }
-            return traceCandidateCount >= DIRECT_CALL_INSTALL_THRESHOLD;
+            trace = cachedTrace2;
+            if (trace != null && trace.matches(pc)) {
+                return trace;
+            }
+            trace = cachedTrace3;
+            if (trace != null && trace.matches(pc)) {
+                return trace;
+            }
+            return null;
         }
 
         /// Installs a direct trace call node for a newly observed hot trace.
         private @Nullable CachedTraceCallNode installCachedTrace(TraceEntry trace) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             synchronized (this) {
-                CachedTraceCallNode cachedTrace = this.cachedTrace;
+                @Nullable CachedTraceCallNode cachedTrace = cachedTrace(trace.startPc());
                 if (cachedTrace != null) {
-                    return cachedTrace.matches(trace.startPc()) ? cachedTrace : null;
+                    return cachedTrace;
                 }
 
-                cachedTrace = insert(new CachedTraceCallNode(trace));
-                this.cachedTrace = cachedTrace;
+                if (cachedTrace0 == null) {
+                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace0 = cachedTrace;
+                } else if (cachedTrace1 == null) {
+                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace1 = cachedTrace;
+                } else if (cachedTrace2 == null) {
+                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace2 = cachedTrace;
+                } else if (cachedTrace3 == null) {
+                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace3 = cachedTrace;
+                } else {
+                    return null;
+                }
                 return cachedTrace;
             }
         }
