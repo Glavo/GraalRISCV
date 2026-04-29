@@ -13,7 +13,6 @@ import org.jetbrains.annotations.Unmodifiable;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.concurrent.ConcurrentHashMap;
 
 /// Provides Linux-like paged virtual memory for guest address-space accesses.
 @NotNullByDefault
@@ -50,6 +49,9 @@ public final class Memory implements AutoCloseable {
 
     /// The VMA opts out of transparent huge pages.
     private static final byte HUGE_PAGE_PREFERENCE_DISABLED = 2;
+
+    /// The initial number of slots in the committed page table.
+    private static final int INITIAL_PAGE_TABLE_CAPACITY = 64;
 
     /// The inclusive base address of the guest virtual address window.
     private final long baseAddress;
@@ -88,7 +90,7 @@ public final class Memory implements AutoCloseable {
     private final @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion;
 
     /// Committed base pages keyed by guest base-page number.
-    private final ConcurrentHashMap<Long, Page> pages = new ConcurrentHashMap<>();
+    private final PageTable pages = new PageTable();
 
     /// The sorted immutable snapshot of mapped guest VMAs.
     private volatile VmaTable vmas;
@@ -576,10 +578,7 @@ public final class Memory implements AutoCloseable {
     /// Releases all committed heap page references held by this memory object.
     @Override
     public synchronized void close() {
-        for (Page page : pages.values()) {
-            page.close();
-        }
-        pages.clear();
+        pages.closeAndClear();
         committedPages = 0;
         reservedHugePages = 0;
         vmas = VmaTable.empty();
@@ -681,19 +680,9 @@ public final class Memory implements AutoCloseable {
 
     /// Removes committed pages overlapped by the supplied guest range.
     private void removeCommittedPages(long startAddress, long endAddress) {
-        for (Long pageNumber : pages.keySet()) {
-            long pageStart = pageNumber << pageShift;
-            long pageEnd = pageStart + pageSize;
-            if (!rangesOverlap(startAddress, endAddress, pageStart, pageEnd)) {
-                continue;
-            }
-
-            @Nullable Page removedPage = pages.remove(pageNumber);
-            if (removedPage != null) {
-                removedPage.close();
-                committedPages--;
-            }
-        }
+        long startPageNumber = pageNumber(startAddress);
+        long endPageNumber = pageNumber(endAddress - 1L) + 1L;
+        committedPages -= pages.removeRange(startPageNumber, endPageNumber);
     }
 
     /// Returns the VMA containing a valid guest access range.
@@ -834,6 +823,199 @@ public final class Memory implements AutoCloseable {
     /// Returns true when value is a positive power of two.
     private static boolean isPowerOfTwo(long value) {
         return value > 0 && (value & (value - 1L)) == 0;
+    }
+
+    /// Stores committed pages in a primitive long-key hash table.
+    @NotNullByDefault
+    private static final class PageTable {
+        /// A page-table slot that has never contained a page.
+        private static final byte EMPTY = 0;
+
+        /// A page-table slot currently containing a page.
+        private static final byte OCCUPIED = 1;
+
+        /// A page-table slot that previously contained a page.
+        private static final byte REMOVED = 2;
+
+        /// Guest page numbers for occupied slots.
+        private long[] pageNumbers = new long[INITIAL_PAGE_TABLE_CAPACITY];
+
+        /// Slot states parallel to `pageNumbers`.
+        private byte[] states = new byte[INITIAL_PAGE_TABLE_CAPACITY];
+
+        /// Committed pages parallel to `pageNumbers`.
+        private @Nullable Page[] pages = new Page[INITIAL_PAGE_TABLE_CAPACITY];
+
+        /// The number of occupied slots.
+        private int size;
+
+        /// The number of occupied or removed slots.
+        private int usedSlots;
+
+        /// Returns the committed page for a guest page number, or null when absent.
+        private synchronized @Nullable Page get(long pageNumber) {
+            int index = lookupSlot(pageNumber);
+            return index < 0 ? null : pages[index];
+        }
+
+        /// Stores a committed page for a guest page number.
+        private synchronized void put(long pageNumber, Page page) {
+            ensureInsertCapacity();
+
+            int firstRemoved = -1;
+            int index = hashIndex(pageNumber, pageNumbers.length);
+            while (states[index] != EMPTY) {
+                byte state = states[index];
+                if (state == OCCUPIED && pageNumbers[index] == pageNumber) {
+                    pages[index] = page;
+                    return;
+                }
+                if (state == REMOVED && firstRemoved < 0) {
+                    firstRemoved = index;
+                }
+                index = (index + 1) & (pageNumbers.length - 1);
+            }
+
+            int insertionIndex = firstRemoved >= 0 ? firstRemoved : index;
+            if (states[insertionIndex] == EMPTY) {
+                usedSlots++;
+            }
+            states[insertionIndex] = OCCUPIED;
+            pageNumbers[insertionIndex] = pageNumber;
+            pages[insertionIndex] = page;
+            size++;
+        }
+
+        /// Removes, closes, and counts pages with guest page numbers in the supplied half-open range.
+        private synchronized long removeRange(long startPageNumber, long endPageNumber) {
+            if (startPageNumber >= endPageNumber) {
+                return 0;
+            }
+
+            long removedPages = 0;
+            for (int index = 0; index < pages.length; index++) {
+                if (states[index] != OCCUPIED) {
+                    continue;
+                }
+
+                long pageNumber = pageNumbers[index];
+                if (pageNumber < startPageNumber || pageNumber >= endPageNumber) {
+                    continue;
+                }
+
+                @Nullable Page page = pages[index];
+                states[index] = REMOVED;
+                pages[index] = null;
+                size--;
+                removedPages++;
+                if (page != null) {
+                    page.close();
+                }
+            }
+
+            if (removedPages > 0 && usedSlots > Math.max(INITIAL_PAGE_TABLE_CAPACITY, size * 2)) {
+                rehash(pageNumbers.length);
+            }
+            return removedPages;
+        }
+
+        /// Closes every committed page and resets the table to its initial empty state.
+        private synchronized void closeAndClear() {
+            for (int index = 0; index < pages.length; index++) {
+                if (states[index] != OCCUPIED) {
+                    continue;
+                }
+
+                @Nullable Page page = pages[index];
+                if (page != null) {
+                    page.close();
+                }
+            }
+
+            pageNumbers = new long[INITIAL_PAGE_TABLE_CAPACITY];
+            states = new byte[INITIAL_PAGE_TABLE_CAPACITY];
+            pages = new Page[INITIAL_PAGE_TABLE_CAPACITY];
+            size = 0;
+            usedSlots = 0;
+        }
+
+        /// Returns the occupied slot for a page number, or -1 when absent.
+        private int lookupSlot(long pageNumber) {
+            int index = hashIndex(pageNumber, pageNumbers.length);
+            while (states[index] != EMPTY) {
+                if (states[index] == OCCUPIED && pageNumbers[index] == pageNumber) {
+                    return index;
+                }
+                index = (index + 1) & (pageNumbers.length - 1);
+            }
+            return -1;
+        }
+
+        /// Ensures at least one more page can be inserted without excessive probing.
+        private void ensureInsertCapacity() {
+            if ((usedSlots + 1L) * 4L < pageNumbers.length * 3L) {
+                return;
+            }
+
+            int newCapacity = size * 2 >= pageNumbers.length ? doubledCapacity(pageNumbers.length) : pageNumbers.length;
+            rehash(newCapacity);
+        }
+
+        /// Rebuilds the table with the supplied power-of-two capacity.
+        private void rehash(int newCapacity) {
+            long[] oldPageNumbers = pageNumbers;
+            byte[] oldStates = states;
+            @Nullable Page[] oldPages = pages;
+
+            pageNumbers = new long[newCapacity];
+            states = new byte[newCapacity];
+            pages = new Page[newCapacity];
+            size = 0;
+            usedSlots = 0;
+
+            for (int index = 0; index < oldPages.length; index++) {
+                @Nullable Page page = oldPages[index];
+                if (oldStates[index] == OCCUPIED && page != null) {
+                    insertRehashed(oldPageNumbers[index], page);
+                }
+            }
+        }
+
+        /// Inserts an existing page while rebuilding the table.
+        private void insertRehashed(long pageNumber, Page page) {
+            int index = hashIndex(pageNumber, pageNumbers.length);
+            while (states[index] == OCCUPIED) {
+                index = (index + 1) & (pageNumbers.length - 1);
+            }
+            states[index] = OCCUPIED;
+            pageNumbers[index] = pageNumber;
+            pages[index] = page;
+            size++;
+            usedSlots++;
+        }
+
+        /// Returns a doubled power-of-two capacity or fails when the table would exceed Java array limits.
+        private static int doubledCapacity(int capacity) {
+            if (capacity >= (1 << 30)) {
+                throw new RiscVException("Guest committed page table is too large");
+            }
+            return capacity << 1;
+        }
+
+        /// Returns the hash-table index for a page number.
+        private static int hashIndex(long pageNumber, int capacity) {
+            return (int) mix64(pageNumber) & (capacity - 1);
+        }
+
+        /// Mixes a 64-bit page number for open-addressed probing.
+        private static long mix64(long value) {
+            value ^= value >>> 33;
+            value *= 0xff51afd7ed558ccdL;
+            value ^= value >>> 33;
+            value *= 0xc4ceb9fe1a85ec53L;
+            value ^= value >>> 33;
+            return value;
+        }
     }
 
     /// Stores mutable software TLB state for one Truffle context and host thread.

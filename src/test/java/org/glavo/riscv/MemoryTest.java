@@ -225,4 +225,25 @@ public final class MemoryTest {
             assertEquals(0x9999_aaaa_bbbb_ccccL, memory.readLong(mappingAddress + 8192 + 16));
         }
     }
+
+    /// Verifies the sparse page table grows and removes committed pages by page-number range.
+    @Test
+    public void unmapRemovesCommittedPagesFromGrownPageTable() {
+        long pageSize = Memory.DEFAULT_PAGE_SIZE;
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 128 * pageSize, null)) {
+            assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, 128 * pageSize));
+            for (int page = 0; page < 80; page++) {
+                memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + page * pageSize, (byte) page);
+            }
+
+            assertEquals(80, memory.committedPages());
+
+            memory.unmap(Memory.DEFAULT_BASE_ADDRESS + 20 * pageSize, 40 * pageSize);
+
+            assertEquals(40, memory.committedPages());
+            assertEquals(19, memory.readUnsignedByte(Memory.DEFAULT_BASE_ADDRESS + 19 * pageSize));
+            assertThrows(RiscVException.class, () -> memory.readByte(Memory.DEFAULT_BASE_ADDRESS + 20 * pageSize));
+            assertEquals(60, memory.readUnsignedByte(Memory.DEFAULT_BASE_ADDRESS + 60 * pageSize));
+        }
+    }
 }
