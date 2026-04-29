@@ -1,5 +1,6 @@
 package org.glavo.riscv;
 
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -1297,6 +1298,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// A host exception thrown while executing a guest thread, or null when none has failed.
     private volatile @Nullable Throwable threadFailure;
+
+    /// Whether guest dispatch needs to poll process-wide thread and exit state between blocks.
+    private volatile boolean processStatusPollingRequired;
 
     /// The robust futex list head address supplied by `set_robust_list`.
     private long robustListHeadAddress;
@@ -3430,6 +3434,16 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Throws when another guest thread has failed or process termination has been requested.
     void checkProcessStatus() {
+        if (!processStatusPollingRequired) {
+            return;
+        }
+
+        checkProcessStatusSlow();
+    }
+
+    /// Performs the uncommon cross-thread process-status checks after polling has been enabled.
+    @CompilerDirectives.TruffleBoundary
+    private void checkProcessStatusSlow() {
         @Nullable Throwable failure = threadFailure;
         if (failure != null) {
             throw guestThreadFailure(failure);
@@ -3445,6 +3459,7 @@ public final class GuestSyscalls implements AutoCloseable {
             if (!processExitRequested) {
                 processExitRequested = true;
                 processExitCode = exitCode;
+                processStatusPollingRequired = true;
             }
             threadLock.notifyAll();
         }
@@ -3467,6 +3482,7 @@ public final class GuestSyscalls implements AutoCloseable {
             if (!processExitRequested && liveThreadCount == 0) {
                 processExitRequested = true;
                 processExitCode = exitCode;
+                processStatusPollingRequired = true;
             }
             threadLock.notifyAll();
         }
@@ -3480,6 +3496,7 @@ public final class GuestSyscalls implements AutoCloseable {
             }
             processExitRequested = true;
             processExitCode = 1;
+            processStatusPollingRequired = true;
             threadLock.notifyAll();
         }
     }
@@ -3573,6 +3590,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 if (!processExitRequested) {
                     processExitRequested = true;
                     processExitCode = exitCode;
+                    processStatusPollingRequired = true;
                 }
                 threadLock.notifyAll();
                 throw new ProgramExitException(exitCode);
@@ -3810,6 +3828,7 @@ public final class GuestSyscalls implements AutoCloseable {
             }
             liveThreadCount++;
             guestThreads.add(thread);
+            processStatusPollingRequired = true;
         }
 
         try {

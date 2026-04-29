@@ -258,6 +258,9 @@ public final class RiscVRootNode extends RootNode {
         /// The architectural state for the running guest thread.
         private final MachineState state;
 
+        /// The syscall handler shared by all guest threads in this process.
+        private final GuestSyscalls syscalls;
+
         /// The next guest program counter to dispatch.
         private long pc;
 
@@ -277,6 +280,7 @@ public final class RiscVRootNode extends RootNode {
         private GuestLoopState(Memory memory, MachineState state, long pc) {
             this.memory = memory;
             this.state = state;
+            this.syscalls = state.syscalls();
             this.pc = pc;
         }
 
@@ -288,6 +292,11 @@ public final class RiscVRootNode extends RootNode {
         /// Returns the architectural state for the running guest thread.
         private MachineState state() {
             return state;
+        }
+
+        /// Returns the syscall handler shared by all guest threads in this process.
+        private GuestSyscalls syscalls() {
+            return syscalls;
         }
 
         /// Returns the next guest program counter to dispatch.
@@ -360,7 +369,7 @@ public final class RiscVRootNode extends RootNode {
         public boolean executeRepeating(VirtualFrame frame) {
             GuestLoopState loopState = (GuestLoopState) frame.getArguments()[0];
             MachineState state = loopState.state();
-            state.syscalls().checkProcessStatus();
+            loopState.syscalls().checkProcessStatus();
             long pc = dispatch.execute(loopState, state);
             loopState.setPc(pc);
             return true;
