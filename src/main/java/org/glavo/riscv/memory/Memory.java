@@ -301,8 +301,7 @@ public final class Memory implements AutoCloseable {
     public short readShort(long address) {
         if (layout.isSinglePageShortAccess(address)) {
             MemoryPage page = readPage(address, Short.BYTES, false);
-            short value = MemoryUnsafe.UNSAFE.getShort(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
+            return MemoryUnsafe.readShortLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
         }
 
         return (short) readLittleEndianByBytes(address, Short.BYTES);
@@ -317,8 +316,7 @@ public final class Memory implements AutoCloseable {
     public int readInt(long address) {
         if (layout.isSinglePageIntAccess(address)) {
             MemoryPage page = readPage(address, Integer.BYTES, false);
-            int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+            return MemoryUnsafe.readIntLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
         }
 
         return (int) readLittleEndianByBytes(address, Integer.BYTES);
@@ -333,8 +331,7 @@ public final class Memory implements AutoCloseable {
     public int readInstructionInt(long address) {
         if (layout.isSinglePageIntAccess(address)) {
             MemoryPage page = readPage(address, Integer.BYTES, true);
-            int value = MemoryUnsafe.UNSAFE.getInt(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+            return MemoryUnsafe.readIntLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
         }
 
         return (int) readLittleEndianByBytes(address, Integer.BYTES);
@@ -344,8 +341,7 @@ public final class Memory implements AutoCloseable {
     public long readLong(long address) {
         if (layout.isSinglePageLongAccess(address)) {
             MemoryPage page = readPage(address, Long.BYTES, false);
-            long value = MemoryUnsafe.UNSAFE.getLong(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
+            return MemoryUnsafe.readLongLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
         }
 
         return readLittleEndianByBytes(address, Long.BYTES);
@@ -419,8 +415,7 @@ public final class Memory implements AutoCloseable {
     public void writeShort(long address, short value) {
         if (layout.isSinglePageShortAccess(address)) {
             MemoryPage page = writePage(address, Short.BYTES);
-            short stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
-            MemoryUnsafe.UNSAFE.putShort(page.baseObject(), page.byteOffset(layout.pageOffset(address)), stored);
+            MemoryUnsafe.writeShortLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)), value);
             return;
         }
 
@@ -431,8 +426,7 @@ public final class Memory implements AutoCloseable {
     public void writeInt(long address, int value) {
         if (layout.isSinglePageIntAccess(address)) {
             MemoryPage page = writePage(address, Integer.BYTES);
-            int stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
-            MemoryUnsafe.UNSAFE.putInt(page.baseObject(), page.byteOffset(layout.pageOffset(address)), stored);
+            MemoryUnsafe.writeIntLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)), value);
             return;
         }
 
@@ -443,8 +437,7 @@ public final class Memory implements AutoCloseable {
     public void writeLong(long address, long value) {
         if (layout.isSinglePageLongAccess(address)) {
             MemoryPage page = writePage(address, Long.BYTES);
-            long stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
-            MemoryUnsafe.UNSAFE.putLong(page.baseObject(), page.byteOffset(layout.pageOffset(address)), stored);
+            MemoryUnsafe.writeLongLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)), value);
             return;
         }
 

@@ -69,8 +69,7 @@ public final class MemoryAccess {
         if (layout.isSinglePageShortOffset(pageOffset)) {
             ensureReadableDataPage(address, Short.BYTES, layout);
             CachedPage cached = cachedDataPage;
-            short value = MemoryUnsafe.UNSAFE.getShort(cached.baseObject(), cached.baseOffset() + pageOffset);
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
+            return MemoryUnsafe.readShortLE(cached.baseObject(), cached.baseOffset() + pageOffset);
         }
 
         return (short) memory.readLittleEndianByBytes(address, Short.BYTES, cache, layout);
@@ -87,8 +86,7 @@ public final class MemoryAccess {
         if (layout.isSinglePageIntOffset(pageOffset)) {
             ensureReadableDataPage(address, Integer.BYTES, layout);
             CachedPage cached = cachedDataPage;
-            int value = MemoryUnsafe.UNSAFE.getInt(cached.baseObject(), cached.baseOffset() + pageOffset);
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+            return MemoryUnsafe.readIntLE(cached.baseObject(), cached.baseOffset() + pageOffset);
         }
 
         return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache, layout);
@@ -105,8 +103,7 @@ public final class MemoryAccess {
         if (layout.isSinglePageLongOffset(pageOffset)) {
             ensureReadableDataPage(address, Long.BYTES, layout);
             CachedPage cached = cachedDataPage;
-            long value = MemoryUnsafe.UNSAFE.getLong(cached.baseObject(), cached.baseOffset() + pageOffset);
-            return MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
+            return MemoryUnsafe.readLongLE(cached.baseObject(), cached.baseOffset() + pageOffset);
         }
 
         return memory.readLittleEndianByBytes(address, Long.BYTES, cache, layout);
@@ -125,9 +122,8 @@ public final class MemoryAccess {
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageShortOffset(pageOffset)) {
             ensureWritableDataPage(address, Short.BYTES, layout);
-            short stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
             CachedPage cached = cachedWriteDataPage;
-            MemoryUnsafe.UNSAFE.putShort(cached.baseObject(), cached.baseOffset() + pageOffset, stored);
+            MemoryUnsafe.writeShortLE(cached.baseObject(), cached.baseOffset() + pageOffset, value);
             return;
         }
 
@@ -139,9 +135,8 @@ public final class MemoryAccess {
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageIntOffset(pageOffset)) {
             ensureWritableDataPage(address, Integer.BYTES, layout);
-            int stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
             CachedPage cached = cachedWriteDataPage;
-            MemoryUnsafe.UNSAFE.putInt(cached.baseObject(), cached.baseOffset() + pageOffset, stored);
+            MemoryUnsafe.writeIntLE(cached.baseObject(), cached.baseOffset() + pageOffset, value);
             return;
         }
 
@@ -153,9 +148,8 @@ public final class MemoryAccess {
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageLongOffset(pageOffset)) {
             ensureWritableDataPage(address, Long.BYTES, layout);
-            long stored = MemoryUnsafe.NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
             CachedPage cached = cachedWriteDataPage;
-            MemoryUnsafe.UNSAFE.putLong(cached.baseObject(), cached.baseOffset() + pageOffset, stored);
+            MemoryUnsafe.writeLongLE(cached.baseObject(), cached.baseOffset() + pageOffset, value);
             return;
         }
 
