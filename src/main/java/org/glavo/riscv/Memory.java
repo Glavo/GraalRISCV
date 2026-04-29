@@ -46,8 +46,8 @@ public final class Memory implements AutoCloseable {
     /// The sorted immutable snapshot of sparse memory regions created by Linux user-mode memory syscalls.
     private volatile MappedRegions mappedRegions = MappedRegions.EMPTY;
 
-    /// The most recently accessed sparse memory region.
-    private volatile @Nullable MappedRegion cachedMappedRegion;
+    /// The current host thread's most recently accessed sparse memory region.
+    private final ThreadLocal<@Nullable RegionCache> cachedMappedRegion = new ThreadLocal<>();
 
     /// Creates a memory window at the supplied guest base address.
     public Memory(long baseAddress, long size) {
@@ -275,7 +275,7 @@ public final class Memory implements AutoCloseable {
         int insertionIndex = regions.insertionIndex(address);
         MappedRegions newRegions = regions.insert(insertionIndex, address, regionSegment);
         mappedRegions = newRegions;
-        cachedMappedRegion = region;
+        cachedMappedRegion.set(new RegionCache(newRegions, region));
         return true;
     }
 
@@ -289,7 +289,6 @@ public final class Memory implements AutoCloseable {
                     + Long.toUnsignedString(address, 16) + ", length=" + length);
         }
 
-        cachedMappedRegion = null;
         long endAddress = address + length;
         MappedRegions regions = mappedRegions;
         long[] newAddresses = new long[regions.size() + 1];
@@ -321,6 +320,7 @@ public final class Memory implements AutoCloseable {
             }
         }
         mappedRegions = MappedRegions.copyOf(newAddresses, newSegments, newSize);
+        cachedMappedRegion.remove();
     }
 
     /// Returns true when the supplied guest range has native backing.
@@ -412,15 +412,15 @@ public final class Memory implements AutoCloseable {
             return null;
         }
 
-        @Nullable MappedRegion cached = cachedMappedRegion;
-        if (cached != null && containsRange(cached, address, length)) {
-            return cached;
+        MappedRegions regions = mappedRegions;
+        @Nullable RegionCache cache = cachedMappedRegion.get();
+        if (cache != null && cache.regions() == regions && containsRange(cache.region(), address, length)) {
+            return cache.region();
         }
 
-        MappedRegions regions = mappedRegions;
         @Nullable MappedRegion region = regions.find(address, length);
         if (region != null && mappedRegions == regions) {
-            cachedMappedRegion = region;
+            cachedMappedRegion.set(new RegionCache(regions, region));
         }
         return region;
     }
@@ -454,6 +454,15 @@ public final class Memory implements AutoCloseable {
     private record MemoryAccess(
             MemorySegment segment,
             long offset) {
+    }
+
+    /// Caches a sparse region together with the immutable snapshot it belongs to.
+    ///
+    /// @param regions the sparse region snapshot that owns `region`
+    /// @param region the cached sparse region view
+    private record RegionCache(
+            MappedRegions regions,
+            MappedRegion region) {
     }
 
     /// Stores sorted sparse guest memory regions in parallel arrays.
