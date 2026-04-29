@@ -666,9 +666,6 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Default Linux resource-limit hard values.
     private static final long @Unmodifiable [] DEFAULT_RESOURCE_LIMIT_MAXIMUM = initialResourceLimitMaximum();
 
-    /// The guest page size used for page-based Linux memory syscalls.
-    private static final long PAGE_SIZE = 4096;
-
     /// The bit mask for Linux `mmap` protection values accepted by this simulator.
     private static final long SUPPORTED_MMAP_PROTECTION_MASK = 0x7;
 
@@ -689,6 +686,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `MAP_ANONYMOUS`.
     private static final long MAP_ANONYMOUS = 0x20;
+
+    /// Linux `MAP_HUGETLB`.
+    private static final long MAP_HUGETLB = 0x40000;
 
     /// Linux `MAP_FIXED_NOREPLACE`.
     private static final long MAP_FIXED_NOREPLACE = 0x100000;
@@ -1283,6 +1283,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The active anonymous mappings created by `mmap`.
     private final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
 
+    /// The guest base page size used for page-based memory syscalls.
+    private final long pageSize;
+
     /// The guest file descriptor table for host files opened by `openat`.
     private final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
 
@@ -1493,6 +1496,7 @@ public final class GuestSyscalls implements AutoCloseable {
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
         this.programBreakBackingEnd = initialProgramBreak;
+        this.pageSize = memory.pageSize();
         this.clock = clock;
         this.clockStartInstant = clock.instant();
     }
@@ -4649,14 +4653,17 @@ public final class GuestSyscalls implements AutoCloseable {
             return fileDescriptor < 0 ? EBADF : ENODEV;
         }
 
-        long alignedLength = alignUp(length, PAGE_SIZE);
+        boolean hugeTlb = (flags & MAP_HUGETLB) != 0;
+        long mappingAlignment = hugeTlb ? memory.hugePageSize() : pageSize;
+        long alignedLength = alignUp(length, mappingAlignment);
         if (alignedLength <= 0) {
             return ENOMEM;
         }
 
         long mappingAddress;
         if (requiresFixedMapping(flags)) {
-            if (!isPageAligned(address) || !isValidGuestRange(address, alignedLength)) {
+            if (!isPageAligned(address) || (hugeTlb && !isAligned(address, mappingAlignment))
+                    || !isValidGuestRange(address, alignedLength)) {
                 return ENOMEM;
             }
             if ((flags & MAP_FIXED_NOREPLACE) != 0 && overlapsMemoryMappings(address, alignedLength)) {
@@ -4665,14 +4672,14 @@ public final class GuestSyscalls implements AutoCloseable {
             removeMemoryMappings(address, alignedLength);
             mappingAddress = address;
         } else {
-            mappingAddress = findMmapAddress(address, alignedLength);
+            mappingAddress = findMmapAddress(address, alignedLength, mappingAlignment);
             if (mappingAddress == 0) {
                 return ENOMEM;
             }
         }
 
         if (isMemoryBackedProtection(protection)) {
-            if (!ensureMemoryBacking(mappingAddress, alignedLength)) {
+            if (!ensureMemoryBacking(mappingAddress, alignedLength, hugeTlb)) {
                 return ENOMEM;
             }
             memory.clear(mappingAddress, alignedLength);
@@ -4687,7 +4694,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return EINVAL;
         }
 
-        long alignedLength = alignUp(length, PAGE_SIZE);
+        long alignedLength = alignUp(length, pageSize);
         if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
             return EINVAL;
         }
@@ -4705,7 +4712,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
 
-        long alignedLength = alignUp(length, PAGE_SIZE);
+        long alignedLength = alignUp(length, pageSize);
         if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
             return ENOMEM;
         }
@@ -4729,7 +4736,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
 
-        long alignedLength = alignUp(length, PAGE_SIZE);
+        long alignedLength = alignUp(length, pageSize);
         if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
             return ENOMEM;
         }
@@ -4739,6 +4746,8 @@ public final class GuestSyscalls implements AutoCloseable {
 
         if (advice == MADV_DONTNEED || advice == MADV_FREE || advice == MADV_DONTNEED_LOCKED) {
             clearAdvisedMemory(address, alignedLength);
+        } else if (advice == MADV_HUGEPAGE || advice == MADV_NOHUGEPAGE) {
+            memory.adviseHugePagePreference(address, alignedLength, advice == MADV_HUGEPAGE);
         }
         return 0;
     }
@@ -5118,15 +5127,15 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Finds the first free page range for a new anonymous mapping.
-    private long findMmapAddress(long requestedAddress, long length) {
+    private long findMmapAddress(long requestedAddress, long length, long alignment) {
         if (requestedAddress != 0) {
-            long alignedAddress = alignUp(requestedAddress, PAGE_SIZE);
+            long alignedAddress = alignUp(requestedAddress, alignment);
             if (alignedAddress > 0 && isMmapRangeAvailable(alignedAddress, length)) {
                 return alignedAddress;
             }
         }
 
-        long candidateAddress = alignUp(programBreak, PAGE_SIZE);
+        long candidateAddress = alignUp(programBreak, alignment);
         while (candidateAddress > 0 && fitsGuestMemory(candidateAddress, length)) {
             MemoryMapping overlap = overlappingMemoryMapping(candidateAddress, length);
             long backingOverlapEnd = overlappingExplicitBackingEnd(candidateAddress, length);
@@ -5135,23 +5144,23 @@ public final class GuestSyscalls implements AutoCloseable {
             }
             long nextAddress = overlap == null ? backingOverlapEnd : overlap.endAddress();
             if (nextAddress <= candidateAddress) {
-                nextAddress = candidateAddress + PAGE_SIZE;
+                nextAddress = candidateAddress + alignment;
             }
-            candidateAddress = alignUp(nextAddress, PAGE_SIZE);
+            candidateAddress = alignUp(nextAddress, alignment);
         }
 
-        return findSparseMmapAddress(length);
+        return findSparseMmapAddress(length, alignment);
     }
 
     /// Finds the first free sparse range outside the initial memory window.
-    private long findSparseMmapAddress(long length) {
-        long candidateAddress = alignUp(Math.max(memory.endAddress(), programBreak), PAGE_SIZE);
+    private long findSparseMmapAddress(long length, long alignment) {
+        long candidateAddress = alignUp(Math.max(memory.endAddress(), programBreak), alignment);
         while (candidateAddress > 0 && isValidGuestRange(candidateAddress, length)) {
             MemoryMapping overlap = overlappingMemoryMapping(candidateAddress, length);
             if (overlap == null) {
                 return candidateAddress;
             }
-            candidateAddress = alignUp(overlap.endAddress(), PAGE_SIZE);
+            candidateAddress = alignUp(overlap.endAddress(), alignment);
         }
         return 0;
     }
@@ -5210,13 +5219,18 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Ensures that the supplied range has native backing for non-`PROT_NONE` access.
     private boolean ensureMemoryBacking(long address, long length) {
+        return ensureMemoryBacking(address, length, false);
+    }
+
+    /// Ensures that the supplied range has guest memory backing for non-`PROT_NONE` access.
+    private boolean ensureMemoryBacking(long address, long length, boolean hugeTlb) {
         if (!isValidGuestRange(address, length)) {
             return false;
         }
         if (memory.isBacked(address, length)) {
             return true;
         }
-        return memory.map(address, length);
+        return hugeTlb ? memory.mapHuge(address, length) : memory.map(address, length);
     }
 
     /// Ensures the newly grown part of the process heap has native backing.
@@ -5424,8 +5438,13 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Returns true when an address is aligned to the guest page size.
-    private static boolean isPageAligned(long address) {
-        return (address & (PAGE_SIZE - 1L)) == 0;
+    private boolean isPageAligned(long address) {
+        return (address & (pageSize - 1L)) == 0;
+    }
+
+    /// Returns true when an address is aligned to the supplied power-of-two alignment.
+    private static boolean isAligned(long address, long alignment) {
+        return (address & (alignment - 1L)) == 0;
     }
 
     /// Rounds a positive guest size or address up to a power-of-two alignment.

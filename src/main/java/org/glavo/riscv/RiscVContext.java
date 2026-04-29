@@ -24,6 +24,18 @@ public final class RiscVContext {
     /// The guest memory size in bytes.
     private final long memorySize;
 
+    /// The guest base page size in bytes.
+    private final long pageSize;
+
+    /// The maximum number of committed guest base pages, or zero when unlimited.
+    private final long maxCommittedPages;
+
+    /// The guest HugeTLB page size in bytes.
+    private final long hugePageSize;
+
+    /// The number of guest HugeTLB pages reserved for MAP_HUGETLB.
+    private final long hugePages;
+
     /// The maximum guest instruction count, or zero when unlimited.
     private final long maxInstructions;
 
@@ -47,6 +59,10 @@ public final class RiscVContext {
             TruffleLanguage.Env env,
             long memoryBase,
             long memorySize,
+            long pageSize,
+            long maxCommittedPages,
+            long hugePageSize,
+            long hugePages,
             long maxInstructions,
             boolean trace,
             Clock clock,
@@ -61,6 +77,14 @@ public final class RiscVContext {
         if (memoryBase != RiscVLanguage.AUTO_MEMORY_BASE && memoryBase > Long.MAX_VALUE - memorySize) {
             throw new RiscVException("Guest memory range overflows: base=" + memoryBase + ", size=" + memorySize);
         }
+        validatePageSize("riscv.pageSize", pageSize);
+        validateHugePageSize(pageSize, hugePageSize);
+        if (maxCommittedPages < 0) {
+            throw new RiscVException("riscv.maxCommittedPages must be non-negative: " + maxCommittedPages);
+        }
+        if (hugePages < 0) {
+            throw new RiscVException("riscv.hugePages must be non-negative: " + hugePages);
+        }
         if (maxInstructions < 0) {
             throw new RiscVException("riscv.maxInstructions must be non-negative: " + maxInstructions);
         }
@@ -74,6 +98,10 @@ public final class RiscVContext {
         this.env = env;
         this.memoryBase = memoryBase;
         this.memorySize = memorySize;
+        this.pageSize = pageSize;
+        this.maxCommittedPages = maxCommittedPages;
+        this.hugePageSize = hugePageSize;
+        this.hugePages = hugePages;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
         this.clock = clock;
@@ -95,6 +123,26 @@ public final class RiscVContext {
     /// Returns the configured guest memory size in bytes.
     public long memorySize() {
         return memorySize;
+    }
+
+    /// Returns the configured guest base page size in bytes.
+    public long pageSize() {
+        return pageSize;
+    }
+
+    /// Returns the maximum number of committed guest base pages, or zero when unlimited.
+    public long maxCommittedPages() {
+        return maxCommittedPages;
+    }
+
+    /// Returns the configured guest HugeTLB page size in bytes.
+    public long hugePageSize() {
+        return hugePageSize;
+    }
+
+    /// Returns the configured guest HugeTLB page pool size.
+    public long hugePages() {
+        return hugePages;
     }
 
     /// Returns the configured maximum guest instruction count, or zero when unlimited.
@@ -125,5 +173,26 @@ public final class RiscVContext {
     /// Returns the sparse memory lookup cache for the current Truffle context and host thread.
     public ContextThreadLocal<Memory.MappedRegionCache> mappedRegionCache() {
         return mappedRegionCache;
+    }
+
+    /// Validates a configured guest page size.
+    private static void validatePageSize(String optionName, long pageSize) {
+        if (pageSize < Memory.DEFAULT_PAGE_SIZE || pageSize > Integer.MAX_VALUE || !isPowerOfTwo(pageSize)) {
+            throw new RiscVException(optionName + " must be a power of two between "
+                    + Memory.DEFAULT_PAGE_SIZE + " and " + Integer.MAX_VALUE + ": " + pageSize);
+        }
+    }
+
+    /// Validates a configured guest HugeTLB page size.
+    private static void validateHugePageSize(long pageSize, long hugePageSize) {
+        if (hugePageSize < pageSize || !isPowerOfTwo(hugePageSize)) {
+            throw new RiscVException("riscv.hugePageSize must be a power of two at least riscv.pageSize: "
+                    + hugePageSize);
+        }
+    }
+
+    /// Returns true when a value is a positive power of two.
+    private static boolean isPowerOfTwo(long value) {
+        return value > 0 && (value & (value - 1L)) == 0;
     }
 }

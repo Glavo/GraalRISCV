@@ -10,10 +10,10 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-/// Tests checked guest memory access through MemorySegment.
+/// Tests checked guest memory access through paged virtual memory.
 @NotNullByDefault
 public final class MemoryTest {
     /// Verifies little-endian 64-bit guest memory access.
@@ -27,11 +27,14 @@ public final class MemoryTest {
         }
     }
 
-    /// Verifies that MemorySegment rejects unaligned data access.
+    /// Verifies that paged memory supports unaligned data access.
     @Test
-    public void rejectsMisalignedDataAccess() {
+    public void supportsMisalignedDataAccess() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            assertThrows(IllegalArgumentException.class, () -> memory.readInt(Memory.DEFAULT_BASE_ADDRESS + 2));
+            memory.writeInt(Memory.DEFAULT_BASE_ADDRESS + 2, 0x1122_3344);
+
+            assertEquals(0x1122_3344, memory.readInt(Memory.DEFAULT_BASE_ADDRESS + 2));
+            assertEquals(0x44, memory.readUnsignedByte(Memory.DEFAULT_BASE_ADDRESS + 2));
         }
     }
 
@@ -51,7 +54,7 @@ public final class MemoryTest {
     /// Verifies sparse mappings can be accessed after out-of-order insertion.
     @Test
     public void accessesMultipleSparseMappings() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
             long firstAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
             long secondAddress = Memory.DEFAULT_BASE_ADDRESS + 0x8000;
             long thirdAddress = Memory.DEFAULT_BASE_ADDRESS + 0xc000;
@@ -73,13 +76,94 @@ public final class MemoryTest {
     /// Verifies heap-backed regions share the same sparse access path as native mappings.
     @Test
     public void accessesHeapBackedMapping() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
             long mappingAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
 
             assertTrue(memory.mapHeap(mappingAddress, 4096));
             memory.writeLong(mappingAddress + 24, 0x1020_3040_5060_7080L);
 
             assertEquals(0x1020_3040_5060_7080L, memory.readLong(mappingAddress + 24));
+        }
+    }
+
+    /// Verifies mapped pages are committed lazily on first write.
+    @Test
+    public void commitsPagesLazily() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE, null)) {
+            assertEquals(0, memory.committedPages());
+            assertEquals(0, memory.readLong(Memory.DEFAULT_BASE_ADDRESS));
+            assertEquals(0, memory.committedPages());
+
+            memory.writeByte(Memory.DEFAULT_BASE_ADDRESS, (byte) 1);
+
+            assertEquals(1, memory.committedPages());
+            memory.clear(Memory.DEFAULT_BASE_ADDRESS + Memory.DEFAULT_PAGE_SIZE, Memory.DEFAULT_PAGE_SIZE);
+            assertEquals(1, memory.committedPages());
+        }
+    }
+
+    /// Verifies the configured committed-page limit is enforced before allocating new backing pages.
+    @Test
+    public void enforcesCommittedPageLimit() {
+        try (Memory memory = Memory.sparse(
+                Memory.DEFAULT_BASE_ADDRESS,
+                2L * Memory.DEFAULT_PAGE_SIZE,
+                Memory.DEFAULT_PAGE_SIZE,
+                1,
+                Memory.DEFAULT_HUGE_PAGE_SIZE,
+                0,
+                null)) {
+            assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE));
+            memory.writeByte(Memory.DEFAULT_BASE_ADDRESS, (byte) 1);
+
+            assertThrows(
+                    RiscVException.class,
+                    () -> memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + Memory.DEFAULT_PAGE_SIZE, (byte) 2));
+        }
+    }
+
+    /// Verifies sparse memory can use a configured base page size.
+    @Test
+    public void supportsConfiguredBasePageSize() {
+        int pageSize = 8192;
+        try (Memory memory = Memory.sparse(
+                Memory.DEFAULT_BASE_ADDRESS,
+                2L * pageSize,
+                pageSize,
+                0,
+                Memory.DEFAULT_HUGE_PAGE_SIZE,
+                0,
+                null)) {
+            assertEquals(pageSize, memory.pageSize());
+            assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, 2L * pageSize));
+
+            memory.writeLong(Memory.DEFAULT_BASE_ADDRESS + pageSize, 0x1122_3344_5566_7788L);
+
+            assertEquals(0x1122_3344_5566_7788L, memory.readLong(Memory.DEFAULT_BASE_ADDRESS + pageSize));
+            assertEquals(1, memory.committedPages());
+        }
+    }
+
+    /// Verifies MAP_HUGETLB-style mappings reserve and release the configured huge-page pool.
+    @Test
+    public void accountsHugePagePoolReservations() {
+        long hugePageSize = Memory.DEFAULT_HUGE_PAGE_SIZE;
+        try (Memory memory = Memory.sparse(
+                Memory.DEFAULT_BASE_ADDRESS,
+                2L * hugePageSize,
+                Memory.DEFAULT_PAGE_SIZE,
+                0,
+                hugePageSize,
+                1,
+                null)) {
+            assertTrue(memory.mapHuge(Memory.DEFAULT_BASE_ADDRESS, hugePageSize));
+            assertEquals(1, memory.reservedHugePages());
+            assertFalse(memory.mapHuge(Memory.DEFAULT_BASE_ADDRESS + hugePageSize, hugePageSize));
+
+            memory.unmap(Memory.DEFAULT_BASE_ADDRESS, hugePageSize);
+
+            assertEquals(0, memory.reservedHugePages());
+            assertTrue(memory.mapHuge(Memory.DEFAULT_BASE_ADDRESS + hugePageSize, hugePageSize));
         }
     }
 
@@ -126,7 +210,7 @@ public final class MemoryTest {
     /// Verifies unmapping the middle of a sparse mapping keeps the remaining slices addressable.
     @Test
     public void unmapSplitsSparseMapping() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
             long mappingAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
 
             assertTrue(memory.map(mappingAddress, 3 * 4096L));

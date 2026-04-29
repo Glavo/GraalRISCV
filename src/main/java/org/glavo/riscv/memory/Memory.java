@@ -4,78 +4,155 @@
 package org.glavo.riscv.memory;
 
 import com.oracle.truffle.api.ContextThreadLocal;
+import jdk.internal.misc.Unsafe;
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
-import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
+import java.lang.reflect.Field;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
 
-/// Provides MemorySegment-backed little-endian access to guest memory.
+/// Provides Linux-like paged virtual memory for guest address-space accesses.
 @NotNullByDefault
 public final class Memory implements AutoCloseable {
     /// The default base address used by the bare-metal guest memory image.
     public static final long DEFAULT_BASE_ADDRESS = 0x8000_0000L;
 
-    /// The little-endian 16-bit layout used for aligned guest accesses.
-    private static final ValueLayout.OfShort SHORT_LE = ValueLayout.JAVA_SHORT.withOrder(ByteOrder.LITTLE_ENDIAN);
+    /// The default base page size.
+    public static final int DEFAULT_PAGE_SIZE = 4096;
 
-    /// The little-endian 32-bit layout used for aligned guest accesses.
-    private static final ValueLayout.OfInt INT_LE = ValueLayout.JAVA_INT.withOrder(ByteOrder.LITTLE_ENDIAN);
+    /// The default huge page size.
+    public static final long DEFAULT_HUGE_PAGE_SIZE = 2L * 1024L * 1024L;
 
-    /// The little-endian 32-bit layout used for 16-bit-aligned instruction fetches.
-    private static final ValueLayout.OfInt INSTRUCTION_INT_LE = INT_LE.withByteAlignment(1);
+    /// The default committed-page limit, where zero means unlimited.
+    public static final long DEFAULT_MAX_COMMITTED_PAGES = 0;
 
-    /// The little-endian 64-bit layout used for aligned guest accesses.
-    private static final ValueLayout.OfLong LONG_LE = ValueLayout.JAVA_LONG.withOrder(ByteOrder.LITTLE_ENDIAN);
+    /// The default huge-page pool size.
+    public static final long DEFAULT_HUGE_PAGES = 0;
 
-    /// The inclusive base address of the memory window.
+    /// The Unsafe instance used to access heap page backing without MemorySegment overhead.
+    private static final Unsafe UNSAFE = lookupUnsafe();
+
+    /// The byte offset of the first element in a Java long array.
+    private static final long LONG_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
+
+    /// Whether the host CPU uses little-endian primitive layout.
+    private static final boolean NATIVE_LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
+
+    /// No transparent huge-page preference has been recorded for a VMA.
+    private static final byte HUGE_PAGE_PREFERENCE_DEFAULT = 0;
+
+    /// The VMA prefers transparent huge pages.
+    private static final byte HUGE_PAGE_PREFERENCE_ENABLED = 1;
+
+    /// The VMA opts out of transparent huge pages.
+    private static final byte HUGE_PAGE_PREFERENCE_DISABLED = 2;
+
+    /// The inclusive base address of the guest virtual address window.
     private final long baseAddress;
 
-    /// The arena that owns the guest memory segment lifetime.
-    private final Arena arena;
-
-    /// Whether the initial guest memory window has one dense backing segment.
-    private final boolean denseInitialBacking;
-
-    /// The mutable guest memory segment used by the dense initial backing path.
-    private final MemorySegment segment;
-
-    /// The byte size of the initial contiguous guest memory segment.
+    /// The byte size of the guest virtual address window.
     private final long size;
 
-    /// The exclusive end address of the initial contiguous guest memory segment.
+    /// The exclusive end address of the guest virtual address window.
     private final long endAddress;
 
-    /// The sorted immutable snapshot of every currently backed guest memory region.
-    private volatile MemoryRegions regions;
+    /// The base page size in bytes.
+    private final int pageSize;
 
-    /// The current Truffle context and host thread's most recently accessed memory region.
+    /// The right shift converting a guest address to a base-page number.
+    private final int pageShift;
+
+    /// The bit mask selecting the byte offset inside a base page.
+    private final long pageMask;
+
+    /// The number of long array elements in one base page.
+    private final int pageWords;
+
+    /// The maximum number of committed base pages, or zero when unlimited.
+    private final long maxCommittedPages;
+
+    /// The configured huge page size in bytes.
+    private final long hugePageSize;
+
+    /// The total number of huge pages available to MAP_HUGETLB mappings.
+    private final long hugePageCapacity;
+
+    /// Whether the initial virtual memory window is represented as one mapped VMA.
+    private final boolean initialWindowMapped;
+
+    /// The current Truffle context and host thread's most recently accessed memory pages.
     private final @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion;
 
-    /// Creates a memory window with a Truffle context-thread-local region cache.
+    /// Committed base pages keyed by guest base-page number.
+    private final ConcurrentHashMap<Long, Page> pages = new ConcurrentHashMap<>();
+
+    /// The sorted immutable snapshot of mapped guest VMAs.
+    private volatile VmaTable vmas;
+
+    /// The generation used to invalidate per-thread software TLB entries.
+    private volatile long generation;
+
+    /// The number of currently committed base pages.
+    private long committedPages;
+
+    /// The number of reserved huge pages.
+    private long reservedHugePages;
+
+    /// Creates a memory window with one mapped VMA and lazy page commitment.
     public Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
-        this(baseAddress, size, cachedMappedRegion, true);
+        this(
+                baseAddress,
+                size,
+                DEFAULT_PAGE_SIZE,
+                DEFAULT_MAX_COMMITTED_PAGES,
+                DEFAULT_HUGE_PAGE_SIZE,
+                DEFAULT_HUGE_PAGES,
+                cachedMappedRegion,
+                true);
     }
 
-    /// Creates a sparse memory window with no initial backing segment.
+    /// Creates a sparse memory window with no initially mapped VMA.
     public static Memory sparse(
             long baseAddress,
             long size,
             @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
-        return new Memory(baseAddress, size, cachedMappedRegion, false);
+        return sparse(
+                baseAddress,
+                size,
+                DEFAULT_PAGE_SIZE,
+                DEFAULT_MAX_COMMITTED_PAGES,
+                DEFAULT_HUGE_PAGE_SIZE,
+                DEFAULT_HUGE_PAGES,
+                cachedMappedRegion);
     }
 
-    /// Creates a memory window with either dense initial backing or explicit sparse regions only.
+    /// Creates a sparse memory window with explicit paging limits.
+    public static Memory sparse(
+            long baseAddress,
+            long size,
+            long pageSize,
+            long maxCommittedPages,
+            long hugePageSize,
+            long hugePages,
+            @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
+        return new Memory(baseAddress, size, pageSize, maxCommittedPages, hugePageSize, hugePages, cachedMappedRegion, false);
+    }
+
+    /// Creates a memory window with explicit paging limits.
     private Memory(
             long baseAddress,
             long size,
+            long pageSize,
+            long maxCommittedPages,
+            long hugePageSize,
+            long hugePages,
             @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion,
-            boolean denseInitialBacking) {
+            boolean initialWindowMapped) {
         if (baseAddress < 0) {
             throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
         }
@@ -85,70 +162,119 @@ public final class Memory implements AutoCloseable {
         if (baseAddress > Long.MAX_VALUE - size) {
             throw new RiscVException("Guest memory range overflows: base=" + baseAddress + ", size=" + size);
         }
+        if (maxCommittedPages < 0) {
+            throw new RiscVException("Maximum committed pages must be non-negative: " + maxCommittedPages);
+        }
+        if (hugePages < 0) {
+            throw new RiscVException("Huge page pool size must be non-negative: " + hugePages);
+        }
 
+        int validatedPageSize = validatePageSize("page size", pageSize);
+        long validatedHugePageSize = validateHugePageSize(validatedPageSize, hugePageSize);
         this.baseAddress = baseAddress;
-        this.arena = Arena.ofShared();
-        this.denseInitialBacking = denseInitialBacking;
-        this.segment = denseInitialBacking ? arena.allocate(size, Long.BYTES) : MemorySegment.NULL;
         this.size = size;
         this.endAddress = baseAddress + size;
-        this.regions = denseInitialBacking ? MemoryRegions.single(baseAddress, segment) : MemoryRegions.empty();
+        this.pageSize = validatedPageSize;
+        this.pageShift = Integer.numberOfTrailingZeros(validatedPageSize);
+        this.pageMask = validatedPageSize - 1L;
+        this.pageWords = validatedPageSize / Long.BYTES;
+        this.maxCommittedPages = maxCommittedPages;
+        this.hugePageSize = validatedHugePageSize;
+        this.hugePageCapacity = hugePages;
+        this.initialWindowMapped = initialWindowMapped;
         this.cachedMappedRegion = cachedMappedRegion;
+        this.vmas = initialWindowMapped
+                ? VmaTable.single(baseAddress, baseAddress + size, false, HUGE_PAGE_PREFERENCE_DEFAULT)
+                : VmaTable.empty();
     }
 
-    /// Returns the inclusive base address of the memory window.
+    /// Returns the inclusive base address of the guest virtual address window.
     public long baseAddress() {
         return baseAddress;
     }
 
-    /// Returns the memory window size in bytes.
+    /// Returns the guest virtual address window size in bytes.
     public long size() {
         return size;
     }
 
-    /// Returns the exclusive end address of the memory window.
+    /// Returns the exclusive end address of the guest virtual address window.
     public long endAddress() {
         return endAddress;
     }
 
-    /// Returns true when the full initial guest memory window is backed by one dense segment.
+    /// Returns the base page size in bytes.
+    public int pageSize() {
+        return pageSize;
+    }
+
+    /// Returns the configured huge page size in bytes.
+    public long hugePageSize() {
+        return hugePageSize;
+    }
+
+    /// Returns the configured committed base-page limit, or zero when unlimited.
+    public long maxCommittedPages() {
+        return maxCommittedPages;
+    }
+
+    /// Returns the number of committed base pages.
+    public synchronized long committedPages() {
+        return committedPages;
+    }
+
+    /// Returns the configured huge-page pool size.
+    public long hugePageCapacity() {
+        return hugePageCapacity;
+    }
+
+    /// Returns the number of huge pages currently reserved by MAP_HUGETLB mappings.
+    public synchronized long reservedHugePages() {
+        return reservedHugePages;
+    }
+
+    /// Returns true when the initial guest memory window is represented as one mapped VMA.
     public boolean hasDenseInitialBacking() {
-        return denseInitialBacking;
+        return initialWindowMapped;
     }
 
     /// Copies bytes from a host array into guest memory.
     public void load(long address, byte[] source, int offset, int length) {
-        long accessOffset = initialOffset(address, length);
-        if (accessOffset >= 0) {
-            MemorySegment.copy(source, offset, segment, ValueLayout.JAVA_BYTE, accessOffset, length);
-            return;
-        }
-
-        MemoryAccess access = access(address, length);
-        MemorySegment.copy(source, offset, access.segment(), ValueLayout.JAVA_BYTE, access.offset(), length);
+        writeBytes(address, source, offset, length);
     }
 
-    /// Fills a guest memory range with zero bytes.
+    /// Fills a mapped guest memory range with zero bytes without committing absent pages.
     public void clear(long address, long length) {
-        long accessOffset = initialOffset(address, length);
-        if (accessOffset >= 0) {
-            segment.asSlice(accessOffset, length).fill((byte) 0);
+        if (length < 0) {
+            throw new RiscVException("Negative memory clear length: " + length);
+        }
+        if (length == 0) {
             return;
         }
+        ensureValidMappedRange(address, length);
 
-        MemoryAccess access = access(address, length);
-        access.segment().asSlice(access.offset(), length).fill((byte) 0);
+        long end = address + length;
+        long cursor = address;
+        while (cursor < end) {
+            long mappedEnd = mappedRangeEnd(cursor);
+            if (mappedEnd <= cursor) {
+                throw accessFault(cursor, end - cursor);
+            }
+
+            long pageEnd = pageEnd(cursor);
+            int count = checkedPageByteCount(cursor, Math.min(end, Math.min(mappedEnd, pageEnd)) - cursor);
+            @Nullable Page page = pages.get(pageNumber(cursor));
+            if (page != null) {
+                UNSAFE.setMemory(page.data, pageByteOffset(cursor), count, (byte) 0);
+            }
+            cursor += count;
+        }
     }
 
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            return segment.get(ValueLayout.JAVA_BYTE, offset);
-        }
-
-        MemoryRegion region = region(address, Byte.BYTES);
-        return region.segment().get(ValueLayout.JAVA_BYTE, region.offset(address));
+        @Nullable Page page = readPage(address, Byte.BYTES, false);
+        return page == null ? 0 : UNSAFE.getByte(page.data, pageByteOffset(address));
     }
 
     /// Reads an unsigned byte from guest memory.
@@ -158,34 +284,72 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            return segment.get(SHORT_LE, offset);
+        if (isSinglePageAccess(address, Short.BYTES)) {
+            @Nullable Page page = readPage(address, Short.BYTES, false);
+            if (page == null) {
+                return 0;
+            }
+
+            short value = UNSAFE.getShort(page.data, pageByteOffset(address));
+            return NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
         }
 
-        MemoryRegion region = region(address, Short.BYTES);
-        return region.segment().get(SHORT_LE, region.offset(address));
+        return (short) readLittleEndianByBytes(address, Short.BYTES);
     }
 
-    /// Reads an unsigned little-endian 16-bit value from an aligned guest address.
+    /// Reads an unsigned little-endian 16-bit value from guest memory.
     public int readUnsignedShort(long address) {
         return readShort(address) & 0xffff;
     }
 
     /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            return segment.get(INT_LE, offset);
+        if (isSinglePageAccess(address, Integer.BYTES)) {
+            @Nullable Page page = readPage(address, Integer.BYTES, false);
+            if (page == null) {
+                return 0;
+            }
+
+            int value = UNSAFE.getInt(page.data, pageByteOffset(address));
+            return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
         }
 
-        MemoryRegion region = region(address, Integer.BYTES);
-        return region.segment().get(INT_LE, region.offset(address));
+        return (int) readLittleEndianByBytes(address, Integer.BYTES);
     }
 
-    /// Reads an unsigned little-endian 32-bit value from an aligned guest address.
+    /// Reads an unsigned little-endian 32-bit value from guest memory.
     public long readUnsignedInt(long address) {
         return readInt(address) & 0xffff_ffffL;
+    }
+
+    /// Reads a little-endian 32-bit instruction from a guest address.
+    public int readInstructionInt(long address) {
+        if (isSinglePageAccess(address, Integer.BYTES)) {
+            @Nullable Page page = readPage(address, Integer.BYTES, true);
+            if (page == null) {
+                return 0;
+            }
+
+            int value = UNSAFE.getInt(page.data, pageByteOffset(address));
+            return NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+        }
+
+        return (int) readLittleEndianByBytes(address, Integer.BYTES);
+    }
+
+    /// Reads a signed little-endian 64-bit value from guest memory.
+    public long readLong(long address) {
+        if (isSinglePageAccess(address, Long.BYTES)) {
+            @Nullable Page page = readPage(address, Long.BYTES, false);
+            if (page == null) {
+                return 0;
+            }
+
+            long value = UNSAFE.getLong(page.data, pageByteOffset(address));
+            return NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
+        }
+
+        return readLittleEndianByBytes(address, Long.BYTES);
     }
 
     /// Copies guest memory bytes into a new host byte array.
@@ -193,225 +357,231 @@ public final class Memory implements AutoCloseable {
         if (length > Integer.MAX_VALUE) {
             throw new RiscVException("Guest memory read range is too large: " + length);
         }
-
-        byte[] result = new byte[(int) length];
-        long offset = initialOffset(address, length);
-        if (offset >= 0) {
-            MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, offset, result, 0, (int) length);
-            return result;
+        if (length < 0) {
+            throw new RiscVException("Negative memory read length: " + length);
         }
 
-        MemoryAccess access = access(address, length);
-        MemorySegment.copy(access.segment(), ValueLayout.JAVA_BYTE, access.offset(), result, 0, (int) length);
+        byte[] result = new byte[(int) length];
+        long end = checkedRangeEnd(address, length);
+        long cursor = address;
+        int destinationOffset = 0;
+        while (cursor < end) {
+            long mappedEnd = mappedRangeEnd(cursor);
+            if (mappedEnd <= cursor) {
+                throw accessFault(cursor, end - cursor);
+            }
+
+            long pageEnd = pageEnd(cursor);
+            int count = checkedPageByteCount(cursor, Math.min(end, Math.min(mappedEnd, pageEnd)) - cursor);
+            @Nullable Page page = readPage(cursor, count, false);
+            if (page != null) {
+                UNSAFE.copyMemory(
+                        page.data,
+                        pageByteOffset(cursor),
+                        result,
+                        Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) destinationOffset,
+                        count);
+            }
+            cursor += count;
+            destinationOffset += count;
+        }
         return result;
     }
 
     /// Copies host bytes into guest memory.
     public void writeBytes(long address, byte[] source, int offset, int length) {
-        long accessOffset = initialOffset(address, length);
-        if (accessOffset >= 0) {
-            MemorySegment.copy(source, offset, segment, ValueLayout.JAVA_BYTE, accessOffset, length);
-            return;
+        if (offset < 0 || length < 0 || offset > source.length || length > source.length - offset) {
+            throw new IndexOutOfBoundsException("Invalid source slice: offset=" + offset + ", length=" + length);
         }
 
-        MemoryAccess access = access(address, length);
-        MemorySegment.copy(source, offset, access.segment(), ValueLayout.JAVA_BYTE, access.offset(), length);
-    }
-
-    /// Reads a little-endian 32-bit instruction from a 16-bit-aligned guest address.
-    public int readInstructionInt(long address) {
-        long fastOffset = initialScalarOffset(address);
-        if (fastOffset >= 0) {
-            return segment.get(INSTRUCTION_INT_LE, fastOffset);
+        long end = checkedRangeEnd(address, length);
+        long cursor = address;
+        int sourceOffset = offset;
+        while (cursor < end) {
+            long pageEnd = pageEnd(cursor);
+            int count = checkedPageByteCount(cursor, Math.min(end, pageEnd) - cursor);
+            Page page = writePage(cursor, count);
+            UNSAFE.copyMemory(
+                    source,
+                    Unsafe.ARRAY_BYTE_BASE_OFFSET + (long) sourceOffset,
+                    page.data,
+                    pageByteOffset(cursor),
+                    count);
+            cursor += count;
+            sourceOffset += count;
         }
-
-        MemoryRegion region = region(address, Integer.BYTES);
-        return region.segment().get(INSTRUCTION_INT_LE, region.offset(address));
-    }
-
-    /// Reads a signed little-endian 64-bit value from guest memory.
-    public long readLong(long address) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            return segment.get(LONG_LE, offset);
-        }
-
-        MemoryRegion region = region(address, Long.BYTES);
-        return region.segment().get(LONG_LE, region.offset(address));
     }
 
     /// Writes a byte to guest memory.
     public void writeByte(long address, byte value) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            segment.set(ValueLayout.JAVA_BYTE, offset, value);
-            return;
-        }
-
-        MemoryRegion region = region(address, Byte.BYTES);
-        region.segment().set(ValueLayout.JAVA_BYTE, region.offset(address), value);
+        Page page = writePage(address, Byte.BYTES);
+        UNSAFE.putByte(page.data, pageByteOffset(address), value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory.
     public void writeShort(long address, short value) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            segment.set(SHORT_LE, offset, value);
+        if (isSinglePageAccess(address, Short.BYTES)) {
+            Page page = writePage(address, Short.BYTES);
+            short stored = NATIVE_LITTLE_ENDIAN ? value : Short.reverseBytes(value);
+            UNSAFE.putShort(page.data, pageByteOffset(address), stored);
             return;
         }
 
-        MemoryRegion region = region(address, Short.BYTES);
-        region.segment().set(SHORT_LE, region.offset(address), value);
+        writeLittleEndianByBytes(address, value, Short.BYTES);
     }
 
     /// Writes a little-endian 32-bit value to guest memory.
     public void writeInt(long address, int value) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            segment.set(INT_LE, offset, value);
+        if (isSinglePageAccess(address, Integer.BYTES)) {
+            Page page = writePage(address, Integer.BYTES);
+            int stored = NATIVE_LITTLE_ENDIAN ? value : Integer.reverseBytes(value);
+            UNSAFE.putInt(page.data, pageByteOffset(address), stored);
             return;
         }
 
-        MemoryRegion region = region(address, Integer.BYTES);
-        region.segment().set(INT_LE, region.offset(address), value);
+        writeLittleEndianByBytes(address, value, Integer.BYTES);
     }
 
     /// Writes a little-endian 64-bit value to guest memory.
     public void writeLong(long address, long value) {
-        long offset = initialScalarOffset(address);
-        if (offset >= 0) {
-            segment.set(LONG_LE, offset, value);
+        if (isSinglePageAccess(address, Long.BYTES)) {
+            Page page = writePage(address, Long.BYTES);
+            long stored = NATIVE_LITTLE_ENDIAN ? value : Long.reverseBytes(value);
+            UNSAFE.putLong(page.data, pageByteOffset(address), stored);
             return;
         }
 
-        MemoryRegion region = region(address, Long.BYTES);
-        region.segment().set(LONG_LE, region.offset(address), value);
+        writeLittleEndianByBytes(address, value, Long.BYTES);
     }
 
-    /// Adds a guest memory region backed by a native memory segment.
+    /// Adds a lazily committed anonymous guest memory VMA.
     public synchronized boolean map(long address, long length) {
-        if (!canMap(address, length)) {
-            return false;
-        }
-
-        MemorySegment mappedSegment;
-        try {
-            mappedSegment = arena.allocate(length, Long.BYTES);
-        } catch (IllegalArgumentException | OutOfMemoryError exception) {
-            return false;
-        }
-
-        mapSegment(address, mappedSegment.asSlice(0, length));
-        return true;
+        return mapInternal(address, length, false);
     }
 
-    /// Adds a guest memory region backed by a Java heap array.
+    /// Adds a lazily committed MAP_HUGETLB guest memory VMA.
+    public synchronized boolean mapHuge(long address, long length) {
+        if (!isAligned(address, hugePageSize) || !isAligned(length, hugePageSize)) {
+            return false;
+        }
+        return mapInternal(address, length, true);
+    }
+
+    /// Adds a guest memory VMA whose committed pages are backed by Java heap long arrays.
     public synchronized boolean mapHeap(long address, int length) {
-        if (length <= 0 || !canMap(address, length)) {
-            return false;
-        }
-
-        long[] array;
-        try {
-            int wordCount = (int) (((long) length + Long.BYTES - 1) / Long.BYTES);
-            array = new long[wordCount];
-        } catch (OutOfMemoryError exception) {
-            return false;
-        }
-
-        mapSegment(address, MemorySegment.ofArray(array).asSlice(0, length));
-        return true;
+        return length > 0 && map(address, length);
     }
 
-    /// Returns true when a new region may be inserted at the supplied guest range.
-    private boolean canMap(long address, long length) {
-        return isValidRange(address, length) && length != 0 && !regions.overlaps(address, length);
-    }
-
-    /// Adds an already allocated host segment to the memory region table.
-    private void mapSegment(long address, MemorySegment regionSegment) {
-        MemoryRegion region = MemoryRegion.of(address, regionSegment);
-        MemoryRegions regions = this.regions;
-        int insertionIndex = regions.insertionIndex(address);
-        MemoryRegions newRegions = regions.insert(insertionIndex, region);
-        this.regions = newRegions;
-        setCachedMappedRegion(newRegions, region);
-    }
-
-    /// Removes non-initial guest memory backing overlapped by the supplied range.
+    /// Removes mapped VMAs and any committed pages overlapped by the supplied range.
     public synchronized void unmap(long address, long length) {
         if (length == 0) {
             return;
         }
-        if (!isValidRange(address, length)) {
+        long end = checkedRangeEnd(address, length);
+        if (!fitsWindow(address, length)) {
             throw new RiscVException("Invalid guest memory unmap range: address=0x"
                     + Long.toUnsignedString(address, 16) + ", length=" + length);
         }
 
-        long endAddress = address + length;
-        MemoryRegions regions = this.regions;
-        long[] newAddresses = new long[regions.size() + 1];
-        MemorySegment[] newSegments = new MemorySegment[regions.size() + 1];
-        long[] newBaseOffsets = new long[regions.size() + 1];
-        int newSize = 0;
-        for (int index = 0; index < regions.size(); index++) {
-            long regionAddress = regions.addresses[index];
-            MemorySegment regionSegment = regions.segments[index];
-            long regionBaseOffset = regions.baseOffsets[index];
-            long regionEndAddress = regionAddress + regionSegment.byteSize();
-            if (!rangesOverlap(address, endAddress, regionAddress, regionEndAddress)
-                    || isInitialRegion(regionAddress, regionSegment)) {
-                newAddresses[newSize] = regionAddress;
-                newSegments[newSize] = regionSegment;
-                newBaseOffsets[newSize] = regionBaseOffset;
-                newSize++;
+        VmaTable oldVmas = vmas;
+        ArrayList<Vma> newVmas = new ArrayList<>(oldVmas.size() + 2);
+        long releasedHugePages = 0;
+        for (int index = 0; index < oldVmas.size(); index++) {
+            Vma vma = oldVmas.vma(index);
+            if (!rangesOverlap(address, end, vma.address(), vma.endAddress())) {
+                newVmas.add(vma);
                 continue;
             }
 
-            if (regionAddress < address) {
-                long prefixLength = address - regionAddress;
-                newAddresses[newSize] = regionAddress;
-                newSegments[newSize] = regionSegment.asSlice(0, prefixLength);
-                newBaseOffsets[newSize] = -regionAddress;
-                newSize++;
+            long removedStart = Math.max(address, vma.address());
+            long removedEnd = Math.min(end, vma.endAddress());
+            if (vma.huge()) {
+                releasedHugePages += hugePagesForLength(removedEnd - removedStart);
             }
-            if (endAddress < regionEndAddress) {
-                long suffixOffset = endAddress - regionAddress;
-                long suffixLength = regionEndAddress - endAddress;
-                newAddresses[newSize] = endAddress;
-                newSegments[newSize] = regionSegment.asSlice(suffixOffset, suffixLength);
-                newBaseOffsets[newSize] = -endAddress;
-                newSize++;
+            if (vma.address() < removedStart) {
+                newVmas.add(new Vma(vma.address(), removedStart, vma.huge(), vma.hugePagePreference()));
+            }
+            if (removedEnd < vma.endAddress()) {
+                newVmas.add(new Vma(removedEnd, vma.endAddress(), vma.huge(), vma.hugePagePreference()));
             }
         }
-        this.regions = MemoryRegions.copyOf(newAddresses, newSegments, newBaseOffsets, newSize);
-        clearCachedMappedRegion();
+
+        if (releasedHugePages > reservedHugePages) {
+            reservedHugePages = 0;
+        } else {
+            reservedHugePages -= releasedHugePages;
+        }
+        removeCommittedPages(address, end);
+        vmas = VmaTable.copyOf(newVmas);
+        invalidateSoftwareTlb();
     }
 
-    /// Returns true when the supplied guest range has native backing.
-    public synchronized boolean isBacked(long address, long length) {
-        return findAccess(address, length) != null;
+    /// Returns true when the supplied guest range is currently mapped by a VMA.
+    public boolean isBacked(long address, long length) {
+        if (length < 0 || !isValidRange(address, length)) {
+            return false;
+        }
+        return vmas.find(address, length) != null;
     }
 
-    /// Returns the exclusive end address of the backed region containing the supplied address, or the address itself.
-    public synchronized long backedRangeEnd(long address) {
-        @Nullable MemoryRegion region = findRegion(address, 1);
-        return region == null ? address : region.endAddress();
+    /// Returns the exclusive end address of the mapped VMA containing the supplied address, or the address itself.
+    public long backedRangeEnd(long address) {
+        @Nullable Vma vma = vmas.find(address, 1);
+        return vma == null ? address : vma.endAddress();
     }
 
-    /// Returns the exclusive end address of the first backed region overlapping the supplied range, or the address itself.
-    public synchronized long overlappingBackingEnd(long address, long length) {
+    /// Returns the exclusive end address of the first mapped VMA overlapping the supplied range, or the address itself.
+    public long overlappingBackingEnd(long address, long length) {
         if (!isValidRange(address, length) || length == 0) {
             return address;
         }
-        @Nullable MemoryRegion region = regions.findOverlap(address, length);
-        return region == null ? address : region.endAddress();
+        @Nullable Vma vma = vmas.findOverlap(address, length);
+        return vma == null ? address : vma.endAddress();
     }
 
-    /// Releases the native memory segment backing this guest memory.
+    /// Records transparent huge-page advice for mapped VMAs overlapped by the supplied range.
+    public synchronized void adviseHugePagePreference(long address, long length, boolean enabled) {
+        if (length == 0) {
+            return;
+        }
+        long end = checkedRangeEnd(address, length);
+        if (!fitsWindow(address, length)) {
+            throw new RiscVException("Invalid guest memory advice range: address=0x"
+                    + Long.toUnsignedString(address, 16) + ", length=" + length);
+        }
+
+        byte preference = enabled ? HUGE_PAGE_PREFERENCE_ENABLED : HUGE_PAGE_PREFERENCE_DISABLED;
+        VmaTable oldVmas = vmas;
+        ArrayList<Vma> newVmas = new ArrayList<>(oldVmas.size() + 2);
+        for (int index = 0; index < oldVmas.size(); index++) {
+            Vma vma = oldVmas.vma(index);
+            if (!rangesOverlap(address, end, vma.address(), vma.endAddress())) {
+                newVmas.add(vma);
+                continue;
+            }
+
+            long adviceStart = Math.max(address, vma.address());
+            long adviceEnd = Math.min(end, vma.endAddress());
+            if (vma.address() < adviceStart) {
+                newVmas.add(new Vma(vma.address(), adviceStart, vma.huge(), vma.hugePagePreference()));
+            }
+            newVmas.add(new Vma(adviceStart, adviceEnd, vma.huge(), preference));
+            if (adviceEnd < vma.endAddress()) {
+                newVmas.add(new Vma(adviceEnd, vma.endAddress(), vma.huge(), vma.hugePagePreference()));
+            }
+        }
+        vmas = VmaTable.copyOf(newVmas);
+        invalidateSoftwareTlb();
+    }
+
+    /// Releases all committed heap page references held by this memory object.
     @Override
     public synchronized void close() {
-        arena.close();
+        pages.clear();
+        committedPages = 0;
+        reservedHugePages = 0;
+        vmas = VmaTable.empty();
+        invalidateSoftwareTlb();
     }
 
     /// Returns true when the supplied address range overlaps the supplied guest address.
@@ -421,120 +591,199 @@ public final class Memory implements AutoCloseable {
         return address < pointEnd && pointAddress < end;
     }
 
-    /// Converts a guest address range into a concrete host memory access.
-    private MemoryAccess access(long address, long length) {
-        @Nullable MemoryAccess access = findAccess(address, length);
-        if (access == null) {
-            throw new RiscVException("Guest memory access out of range: address=0x"
-                    + Long.toUnsignedString(address, 16) + ", length=" + length);
+    /// Reads a little-endian value byte-by-byte for cross-page accesses.
+    private long readLittleEndianByBytes(long address, int byteCount) {
+        long value = 0;
+        for (int index = 0; index < byteCount; index++) {
+            value |= (long) readUnsignedByte(address + index) << (index * Byte.SIZE);
         }
-        return access;
+        return value;
     }
 
-    /// Returns the memory region backing a guest range, or throws when it is absent.
-    private MemoryRegion region(long address, long length) {
-        @Nullable MemoryRegion region = findRegion(address, length);
-        if (region == null) {
-            throw new RiscVException("Guest memory access out of range: address=0x"
-                    + Long.toUnsignedString(address, 16) + ", length=" + length);
+    /// Writes a little-endian value byte-by-byte for cross-page accesses.
+    private void writeLittleEndianByBytes(long address, long value, int byteCount) {
+        for (int index = 0; index < byteCount; index++) {
+            writeByte(address + index, (byte) (value >>> (index * Byte.SIZE)));
         }
-        return region;
     }
 
-    /// Returns the offset inside the initial segment for a scalar access, or `-1` when it starts outside.
-    private long initialScalarOffset(long address) {
-        if (denseInitialBacking && address >= baseAddress && address < endAddress) {
-            return address - baseAddress;
+    /// Adds a VMA to the sorted VMA table.
+    private boolean mapInternal(long address, long length, boolean huge) {
+        if (length <= 0 || !fitsWindow(address, length) || vmas.overlaps(address, length)) {
+            return false;
         }
-        return -1;
+        if (huge) {
+            long requestedHugePages = hugePagesForLength(length);
+            if (requestedHugePages < 0 || requestedHugePages > hugePageCapacity - reservedHugePages) {
+                return false;
+            }
+            reservedHugePages += requestedHugePages;
+        }
+
+        vmas = vmas.insert(new Vma(address, address + length, huge, HUGE_PAGE_PREFERENCE_DEFAULT));
+        invalidateSoftwareTlb();
+        return true;
     }
 
-    /// Returns the offset inside the initial segment for a backed range, or `-1` when it is outside.
-    private long initialOffset(long address, long length) {
-        if (length < 0) {
-            throw new RiscVException("Negative memory access length: " + length);
+    /// Returns the committed page for a read access, or null for mapped zero-fill memory.
+    private @Nullable Page readPage(long address, int length, boolean instruction) {
+        long pageNumber = pageNumber(address);
+        @Nullable Page page = cachedPage(pageNumber, instruction);
+        if (page != null && containsMappedRange(address, length)) {
+            return page;
         }
 
-        if (denseInitialBacking && address >= baseAddress && address <= endAddress - length) {
-            return address - baseAddress;
+        ensureValidMappedRange(address, length);
+        page = pages.get(pageNumber);
+        if (page != null) {
+            setCachedPage(pageNumber, page, instruction);
         }
-        return -1;
+        return page;
     }
 
-    /// Finds the host segment and offset backing a guest range, or null when absent.
-    private @Nullable MemoryAccess findAccess(long address, long length) {
-        if (length < 0) {
-            throw new RiscVException("Negative memory access length: " + length);
+    /// Returns a committed page for a write access, allocating it on first write.
+    private Page writePage(long address, int length) {
+        long pageNumber = pageNumber(address);
+        @Nullable Page page = cachedPage(pageNumber, false);
+        if (page != null && containsMappedRange(address, length)) {
+            return page;
         }
 
-        long offset = initialOffset(address, length);
-        if (offset >= 0) {
-            return new MemoryAccess(segment, offset);
+        ensureValidMappedRange(address, length);
+        page = pages.get(pageNumber);
+        if (page != null) {
+            setCachedPage(pageNumber, page, false);
+            return page;
         }
 
-        if (!isValidRange(address, length)) {
-            return null;
-        }
-
-        @Nullable MemoryRegion region = findRegion(address, length);
-        if (region != null) {
-            return new MemoryAccess(region.segment(), region.offset(address));
-        }
-        return null;
+        page = commitPage(pageNumber);
+        setCachedPage(pageNumber, page, false);
+        return page;
     }
 
-    /// Finds the memory region backing a guest range, or null when absent.
-    private @Nullable MemoryRegion findRegion(long address, long length) {
-        if (length < 0) {
-            throw new RiscVException("Negative memory access length: " + length);
+    /// Allocates a heap long-array backing page after enforcing the committed-page limit.
+    private synchronized Page commitPage(long pageNumber) {
+        @Nullable Page page = pages.get(pageNumber);
+        if (page != null) {
+            return page;
         }
-        if (!isValidRange(address, length)) {
-            return null;
-        }
-
-        MemoryRegions regions = this.regions;
-        @Nullable MemoryRegion cachedRegion = cachedMappedRegion(regions, address, length);
-        if (cachedRegion != null) {
-            return cachedRegion;
+        if (maxCommittedPages != 0 && committedPages >= maxCommittedPages) {
+            throw new RiscVException("Guest committed page limit exceeded: limit=" + maxCommittedPages);
         }
 
-        @Nullable MemoryRegion region = regions.find(address, length);
-        if (region != null && this.regions == regions) {
-            setCachedMappedRegion(regions, region);
-        }
-        return region;
+        page = new Page(new long[pageWords]);
+        pages.put(pageNumber, page);
+        committedPages++;
+        return page;
     }
 
-    /// Returns the cached memory region for the current context and thread, or null when it misses.
-    private @Nullable MemoryRegion cachedMappedRegion(MemoryRegions regions, long address, long length) {
+    /// Removes committed pages overlapped by the supplied guest range.
+    private void removeCommittedPages(long startAddress, long endAddress) {
+        for (Long pageNumber : pages.keySet()) {
+            long pageStart = pageNumber << pageShift;
+            long pageEnd = pageStart + pageSize;
+            if (rangesOverlap(startAddress, endAddress, pageStart, pageEnd) && pages.remove(pageNumber) != null) {
+                committedPages--;
+            }
+        }
+    }
+
+    /// Ensures that a guest access range is valid and mapped.
+    private void ensureValidMappedRange(long address, long length) {
+        checkedRangeEnd(address, length);
+        if (length == 0) {
+            return;
+        }
+        if (!containsMappedRange(address, length)) {
+            throw accessFault(address, length);
+        }
+    }
+
+    /// Returns true when one VMA fully contains a guest access range.
+    private boolean containsMappedRange(long address, long length) {
+        return vmas.find(address, length) != null;
+    }
+
+    /// Returns the mapped range end for the VMA containing the supplied address, or the address itself.
+    private long mappedRangeEnd(long address) {
+        @Nullable Vma vma = vmas.find(address, 1);
+        return vma == null ? address : vma.endAddress();
+    }
+
+    /// Returns the cached committed page for the current context and thread, or null on miss.
+    private @Nullable Page cachedPage(long pageNumber, boolean instruction) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return cache == null ? null : cache.get().region(regions, address, length);
+        return cache == null ? null : cache.get().page(pageNumber, generation, instruction);
     }
 
-    /// Stores the cached memory region for the current context and thread when caching is available.
-    private void setCachedMappedRegion(MemoryRegions regions, MemoryRegion region) {
+    /// Stores a committed page in the current context and thread software TLB.
+    private void setCachedPage(long pageNumber, Page page, boolean instruction) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         if (cache != null) {
-            cache.get().setRegion(regions, region);
+            cache.get().setPage(pageNumber, generation, page, instruction);
         }
     }
 
-    /// Clears the cached memory region for the current context and thread when caching is available.
-    private void clearCachedMappedRegion() {
-        @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        if (cache != null) {
-            cache.get().clear();
+    /// Invalidates every future software TLB lookup by advancing the global generation.
+    private void invalidateSoftwareTlb() {
+        generation++;
+    }
+
+    /// Returns a RISC-V memory fault for the supplied guest range.
+    private static RiscVException accessFault(long address, long length) {
+        return new RiscVException("Guest memory access out of range: address=0x"
+                + Long.toUnsignedString(address, 16) + ", length=" + length);
+    }
+
+    /// Returns the guest page number containing the supplied address.
+    private long pageNumber(long address) {
+        return address >>> pageShift;
+    }
+
+    /// Returns the Unsafe byte offset inside a page's long-array backing.
+    private long pageByteOffset(long address) {
+        return LONG_ARRAY_BASE_OFFSET + (address & pageMask);
+    }
+
+    /// Returns the exclusive end address of the page containing the supplied address.
+    private long pageEnd(long address) {
+        return (address & ~pageMask) + pageSize;
+    }
+
+    /// Returns true when a scalar access stays within one base page.
+    private boolean isSinglePageAccess(long address, int length) {
+        return ((address & pageMask) + length) <= pageSize;
+    }
+
+    /// Returns a checked byte count within one page.
+    private static int checkedPageByteCount(long address, long length) {
+        if (length < 0 || length > Integer.MAX_VALUE) {
+            throw new RiscVException("Invalid page access length: address=0x"
+                    + Long.toUnsignedString(address, 16) + ", length=" + length);
         }
+        return (int) length;
     }
 
-    /// Returns true when a region describes the initial contiguous memory segment.
-    private boolean isInitialRegion(long address, MemorySegment regionSegment) {
-        return denseInitialBacking && address == baseAddress && regionSegment == segment;
+    /// Returns the checked exclusive end address for a guest range.
+    private static long checkedRangeEnd(long address, long length) {
+        if (!isValidRange(address, length)) {
+            throw new RiscVException("Invalid guest memory range: address=0x"
+                    + Long.toUnsignedString(address, 16) + ", length=" + length);
+        }
+        return address + length;
     }
 
-    /// Returns true when the supplied address and length form a non-overflowing guest range.
+    /// Returns true when the supplied range is non-negative and does not overflow.
     private static boolean isValidRange(long address, long length) {
         return address >= 0 && length >= 0 && address <= Long.MAX_VALUE - length;
+    }
+
+    /// Returns true when the supplied guest range fits inside the configured virtual window.
+    private boolean fitsWindow(long address, long length) {
+        return address >= baseAddress
+                && length >= 0
+                && address <= endAddress
+                && length <= endAddress - address;
     }
 
     /// Returns true when two half-open address ranges overlap.
@@ -542,213 +791,228 @@ public final class Memory implements AutoCloseable {
         return firstStart < secondEnd && secondStart < firstEnd;
     }
 
-    /// Returns true when the memory region fully contains the supplied guest range.
-    private static boolean containsRange(MemoryRegion region, long address, long length) {
-        long regionAddress = region.address();
-        long regionEndAddress = region.endAddress();
-        return address >= regionAddress && address <= regionEndAddress && length <= regionEndAddress - address;
+    /// Returns true when value is aligned to a power-of-two alignment.
+    private static boolean isAligned(long value, long alignment) {
+        return (value & (alignment - 1L)) == 0;
     }
 
-    /// Describes a concrete host segment access for a guest memory range.
-    ///
-    /// @param segment the host memory segment backing the guest range
-    /// @param offset the byte offset inside the host memory segment
-    private record MemoryAccess(
-            MemorySegment segment,
-            long offset) {
+    /// Returns the number of huge pages needed to cover a length.
+    private long hugePagesForLength(long length) {
+        long mask = hugePageSize - 1L;
+        if (length < 0 || length > Long.MAX_VALUE - mask) {
+            return -1;
+        }
+        return ((length + mask) & ~mask) / hugePageSize;
     }
 
-    /// Stores mutable memory-region lookup state for one Truffle context and host thread.
+    /// Validates a power-of-two base page size that can back a single Java array.
+    private static int validatePageSize(String name, long pageSize) {
+        if (pageSize < DEFAULT_PAGE_SIZE || pageSize > Integer.MAX_VALUE || !isPowerOfTwo(pageSize)) {
+            throw new RiscVException("Guest " + name + " must be a power of two between "
+                    + DEFAULT_PAGE_SIZE + " and " + Integer.MAX_VALUE + ": " + pageSize);
+        }
+        if ((pageSize & (Long.BYTES - 1L)) != 0) {
+            throw new RiscVException("Guest " + name + " must be aligned to long elements: " + pageSize);
+        }
+        return (int) pageSize;
+    }
+
+    /// Validates a huge page size against the base page size.
+    private static long validateHugePageSize(int pageSize, long hugePageSize) {
+        if (hugePageSize < pageSize || !isPowerOfTwo(hugePageSize)) {
+            throw new RiscVException("Guest huge page size must be a power of two at least page size: "
+                    + hugePageSize);
+        }
+        return hugePageSize;
+    }
+
+    /// Returns true when value is a positive power of two.
+    private static boolean isPowerOfTwo(long value) {
+        return value > 0 && (value & (value - 1L)) == 0;
+    }
+
+    /// Reflectively obtains jdk.internal.misc.Unsafe.
+    private static Unsafe lookupUnsafe() {
+        try {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            return (Unsafe) field.get(null);
+        } catch (ReflectiveOperationException exception) {
+            throw new ExceptionInInitializerError(exception);
+        }
+    }
+
+    /// Stores mutable software TLB state for one Truffle context and host thread.
     public static final class MappedRegionCache {
-        /// The newest region snapshot that owns the first cached region.
-        private @Nullable MemoryRegions firstRegions;
+        /// The cached data page number.
+        private long dataPageNumber;
 
-        /// The newest cached memory region.
-        private @Nullable MemoryRegion firstRegion;
+        /// The memory generation associated with the cached data page.
+        private long dataGeneration = -1;
 
-        /// The region snapshot that owns the second cached region.
-        private @Nullable MemoryRegions secondRegions;
+        /// The cached committed data page.
+        private @Nullable Page dataPage;
 
-        /// The second cached memory region.
-        private @Nullable MemoryRegion secondRegion;
+        /// The cached instruction page number.
+        private long instructionPageNumber;
 
-        /// The region snapshot that owns the third cached region.
-        private @Nullable MemoryRegions thirdRegions;
+        /// The memory generation associated with the cached instruction page.
+        private long instructionGeneration = -1;
 
-        /// The third cached memory region.
-        private @Nullable MemoryRegion thirdRegion;
+        /// The cached committed instruction page.
+        private @Nullable Page instructionPage;
 
-        /// The region snapshot that owns the fourth cached region.
-        private @Nullable MemoryRegions fourthRegions;
-
-        /// The fourth cached memory region.
-        private @Nullable MemoryRegion fourthRegion;
-
-        /// Creates an empty memory-region lookup cache.
+        /// Creates an empty software TLB.
         public MappedRegionCache() {
         }
 
-        /// Returns the cached memory region, or null when the cache misses.
-        private @Nullable MemoryRegion region(MemoryRegions regions, long address, long length) {
-            @Nullable MemoryRegion region = firstRegion;
-            if (region != null && firstRegions == regions && containsRange(region, address, length)) {
-                return region;
+        /// Returns a cached page, or null when the lookup misses.
+        private @Nullable Page page(long pageNumber, long generation, boolean instruction) {
+            if (instruction) {
+                return instructionPage != null
+                        && instructionPageNumber == pageNumber
+                        && instructionGeneration == generation
+                        ? instructionPage
+                        : null;
             }
-
-            region = secondRegion;
-            if (region != null && secondRegions == regions && containsRange(region, address, length)) {
-                return region;
-            }
-
-            region = thirdRegion;
-            if (region != null && thirdRegions == regions && containsRange(region, address, length)) {
-                return region;
-            }
-
-            region = fourthRegion;
-            if (region != null && fourthRegions == regions && containsRange(region, address, length)) {
-                return region;
-            }
-            return null;
+            return dataPage != null && dataPageNumber == pageNumber && dataGeneration == generation ? dataPage : null;
         }
 
-        /// Stores a memory-region cache entry.
-        private void setRegion(MemoryRegions regions, MemoryRegion region) {
-            if (isCachedRegion(firstRegions, firstRegion, regions, region)
-                    || isCachedRegion(secondRegions, secondRegion, regions, region)
-                    || isCachedRegion(thirdRegions, thirdRegion, regions, region)
-                    || isCachedRegion(fourthRegions, fourthRegion, regions, region)) {
+        /// Stores a cached committed page.
+        private void setPage(long pageNumber, long generation, Page page, boolean instruction) {
+            if (instruction) {
+                instructionPageNumber = pageNumber;
+                instructionGeneration = generation;
+                instructionPage = page;
                 return;
             }
 
-            fourthRegions = thirdRegions;
-            fourthRegion = thirdRegion;
-            thirdRegions = secondRegions;
-            thirdRegion = secondRegion;
-            secondRegions = firstRegions;
-            secondRegion = firstRegion;
-            firstRegions = regions;
-            firstRegion = region;
-        }
-
-        /// Clears this memory-region cache.
-        private void clear() {
-            firstRegions = null;
-            firstRegion = null;
-            secondRegions = null;
-            secondRegion = null;
-            thirdRegions = null;
-            thirdRegion = null;
-            fourthRegions = null;
-            fourthRegion = null;
-        }
-
-        /// Returns true when the supplied region is already cached for the same region snapshot.
-        private static boolean isCachedRegion(
-                @Nullable MemoryRegions cachedRegions,
-                @Nullable MemoryRegion cachedRegion,
-                MemoryRegions regions,
-                MemoryRegion region) {
-            return cachedRegions == regions
-                    && cachedRegion != null
-                    && cachedRegion.address() == region.address()
-                    && cachedRegion.segment() == region.segment();
+            dataPageNumber = pageNumber;
+            dataGeneration = generation;
+            dataPage = page;
         }
     }
 
-    /// Stores sorted guest memory regions in parallel arrays.
+    /// Stores one committed heap-backed guest page.
+    @NotNullByDefault
+    private static final class Page {
+        /// The heap long-array backing this guest page.
+        private final long[] data;
+
+        /// Creates a committed guest page backed by a zero-filled long array.
+        private Page(long[] data) {
+            this.data = data;
+        }
+    }
+
+    /// Describes a guest virtual memory area.
     ///
-    /// @param addresses the inclusive guest start addresses for the regions
-    /// @param segments the host segments backing the regions
-    /// @param baseOffsets the values added to guest addresses to produce host segment offsets
-    private record MemoryRegions(
+    /// @param address the inclusive guest start address of the VMA
+    /// @param endAddress the exclusive guest end address of the VMA
+    /// @param huge whether this VMA reserves MAP_HUGETLB pages
+    /// @param hugePagePreference the transparent huge-page advice recorded for this VMA
+    private record Vma(
+            long address,
+            long endAddress,
+            boolean huge,
+            byte hugePagePreference) {
+    }
+
+    /// Stores sorted guest VMAs in parallel arrays.
+    ///
+    /// @param addresses the inclusive guest start addresses for the VMAs
+    /// @param endAddresses the exclusive guest end addresses for the VMAs
+    /// @param huge whether each VMA reserves MAP_HUGETLB pages
+    /// @param hugePagePreferences the transparent huge-page advice for each VMA
+    private record VmaTable(
             long @Unmodifiable [] addresses,
-            MemorySegment @Unmodifiable [] segments,
-            long @Unmodifiable [] baseOffsets) {
-        /// Creates a region snapshot backed by same-length sorted arrays.
-        private MemoryRegions {
-            if (addresses.length != segments.length || addresses.length != baseOffsets.length) {
-                throw new IllegalArgumentException("Region arrays have different lengths");
+            long @Unmodifiable [] endAddresses,
+            boolean @Unmodifiable [] huge,
+            byte @Unmodifiable [] hugePagePreferences) {
+        /// Creates a VMA snapshot backed by same-length sorted arrays.
+        private VmaTable {
+            if (addresses.length != endAddresses.length
+                    || addresses.length != huge.length
+                    || addresses.length != hugePagePreferences.length) {
+                throw new IllegalArgumentException("VMA arrays have different lengths");
             }
         }
 
-        /// Creates a one-region snapshot.
-        private static MemoryRegions single(long address, MemorySegment segment) {
-            return new MemoryRegions(new long[]{address}, new MemorySegment[]{segment}, new long[]{-address});
+        /// Creates an empty VMA snapshot.
+        private static VmaTable empty() {
+            return new VmaTable(new long[0], new long[0], new boolean[0], new byte[0]);
         }
 
-        /// Creates an empty region snapshot.
-        private static MemoryRegions empty() {
-            return new MemoryRegions(new long[0], new MemorySegment[0], new long[0]);
+        /// Creates a one-VMA snapshot.
+        private static VmaTable single(long address, long endAddress, boolean huge, byte hugePagePreference) {
+            return new VmaTable(
+                    new long[]{address},
+                    new long[]{endAddress},
+                    new boolean[]{huge},
+                    new byte[]{hugePagePreference});
         }
 
-        /// Copies a prefix of the supplied arrays into a new region snapshot.
-        private static MemoryRegions copyOf(
-                long[] addresses,
-                MemorySegment[] segments,
-                long[] baseOffsets,
-                int size) {
-            return new MemoryRegions(
-                    Arrays.copyOf(addresses, size),
-                    Arrays.copyOf(segments, size),
-                    Arrays.copyOf(baseOffsets, size));
+        /// Copies a VMA list into a sorted immutable snapshot.
+        private static VmaTable copyOf(ArrayList<Vma> vmas) {
+            long[] addresses = new long[vmas.size()];
+            long[] endAddresses = new long[vmas.size()];
+            boolean[] huge = new boolean[vmas.size()];
+            byte[] hugePagePreferences = new byte[vmas.size()];
+            for (int index = 0; index < vmas.size(); index++) {
+                Vma vma = vmas.get(index);
+                addresses[index] = vma.address();
+                endAddresses[index] = vma.endAddress();
+                huge[index] = vma.huge();
+                hugePagePreferences[index] = vma.hugePagePreference();
+            }
+            return new VmaTable(addresses, endAddresses, huge, hugePagePreferences);
         }
 
-        /// Returns the number of regions in this snapshot.
-        int size() {
+        /// Returns the number of VMAs in this snapshot.
+        private int size() {
             return addresses.length;
         }
 
-        /// Returns a new snapshot with one region inserted at the supplied index.
-        MemoryRegions insert(int insertionIndex, MemoryRegion region) {
-            long[] newAddresses = new long[addresses.length + 1];
-            MemorySegment[] newSegments = new MemorySegment[segments.length + 1];
-            long[] newBaseOffsets = new long[baseOffsets.length + 1];
-            System.arraycopy(addresses, 0, newAddresses, 0, insertionIndex);
-            System.arraycopy(segments, 0, newSegments, 0, insertionIndex);
-            System.arraycopy(baseOffsets, 0, newBaseOffsets, 0, insertionIndex);
-            newAddresses[insertionIndex] = region.address();
-            newSegments[insertionIndex] = region.segment();
-            newBaseOffsets[insertionIndex] = region.baseOffset();
-            int copiedEntries = addresses.length - insertionIndex;
-            System.arraycopy(addresses, insertionIndex, newAddresses, insertionIndex + 1, copiedEntries);
-            System.arraycopy(segments, insertionIndex, newSegments, insertionIndex + 1, copiedEntries);
-            System.arraycopy(baseOffsets, insertionIndex, newBaseOffsets, insertionIndex + 1, copiedEntries);
-            return new MemoryRegions(newAddresses, newSegments, newBaseOffsets);
+        /// Returns the VMA at the supplied index.
+        private Vma vma(int index) {
+            return new Vma(addresses[index], endAddresses[index], huge[index], hugePagePreferences[index]);
         }
 
-        /// Returns true when any region overlaps the supplied guest range.
-        boolean overlaps(long address, long length) {
+        /// Returns a new snapshot with the supplied non-overlapping VMA inserted.
+        private VmaTable insert(Vma vma) {
+            int insertionIndex = insertionIndex(vma.address());
+            long[] newAddresses = new long[addresses.length + 1];
+            long[] newEndAddresses = new long[endAddresses.length + 1];
+            boolean[] newHuge = new boolean[huge.length + 1];
+            byte[] newHugePagePreferences = new byte[hugePagePreferences.length + 1];
+            System.arraycopy(addresses, 0, newAddresses, 0, insertionIndex);
+            System.arraycopy(endAddresses, 0, newEndAddresses, 0, insertionIndex);
+            System.arraycopy(huge, 0, newHuge, 0, insertionIndex);
+            System.arraycopy(hugePagePreferences, 0, newHugePagePreferences, 0, insertionIndex);
+            newAddresses[insertionIndex] = vma.address();
+            newEndAddresses[insertionIndex] = vma.endAddress();
+            newHuge[insertionIndex] = vma.huge();
+            newHugePagePreferences[insertionIndex] = vma.hugePagePreference();
+            int copiedEntries = addresses.length - insertionIndex;
+            System.arraycopy(addresses, insertionIndex, newAddresses, insertionIndex + 1, copiedEntries);
+            System.arraycopy(endAddresses, insertionIndex, newEndAddresses, insertionIndex + 1, copiedEntries);
+            System.arraycopy(huge, insertionIndex, newHuge, insertionIndex + 1, copiedEntries);
+            System.arraycopy(
+                    hugePagePreferences,
+                    insertionIndex,
+                    newHugePagePreferences,
+                    insertionIndex + 1,
+                    copiedEntries);
+            return new VmaTable(newAddresses, newEndAddresses, newHuge, newHugePagePreferences);
+        }
+
+        /// Returns true when any VMA overlaps the supplied guest range.
+        private boolean overlaps(long address, long length) {
             return findOverlap(address, length) != null;
         }
 
-        /// Finds the first region overlapping the supplied guest range, or null when absent.
-        private @Nullable MemoryRegion findOverlap(long address, long length) {
-            long endAddress = address + length;
-            int insertionIndex = insertionIndex(address);
-            if (insertionIndex > 0) {
-                int previousIndex = insertionIndex - 1;
-                long previousAddress = addresses[previousIndex];
-                MemorySegment previousSegment = segments[previousIndex];
-                long previousEndAddress = previousAddress + previousSegment.byteSize();
-                if (rangesOverlap(address, endAddress, previousAddress, previousEndAddress)) {
-                    return new MemoryRegion(previousAddress, previousSegment, baseOffsets[previousIndex]);
-                }
-            }
-            if (insertionIndex >= addresses.length) {
-                return null;
-            }
-            long nextAddress = addresses[insertionIndex];
-            MemorySegment nextSegment = segments[insertionIndex];
-            long nextEndAddress = nextAddress + nextSegment.byteSize();
-            if (rangesOverlap(address, endAddress, nextAddress, nextEndAddress)) {
-                return new MemoryRegion(nextAddress, nextSegment, baseOffsets[insertionIndex]);
-            }
-            return null;
-        }
-
-        /// Finds the region backing a guest range, or null when absent.
-        private @Nullable MemoryRegion find(long address, long length) {
+        /// Finds the VMA fully containing the supplied guest range, or null when absent.
+        private @Nullable Vma find(long address, long length) {
             int index = Arrays.binarySearch(addresses, address);
             if (index < 0) {
                 index = -index - 2;
@@ -756,49 +1020,35 @@ public final class Memory implements AutoCloseable {
             if (index < 0) {
                 return null;
             }
-            long regionAddress = addresses[index];
-            MemorySegment regionSegment = segments[index];
-            long regionEndAddress = regionAddress + regionSegment.byteSize();
-            if (!containsRange(regionAddress, regionEndAddress, address, length)) {
+            long vmaEndAddress = endAddresses[index];
+            if (address > vmaEndAddress || length > vmaEndAddress - address) {
                 return null;
             }
-            return new MemoryRegion(regionAddress, regionSegment, baseOffsets[index]);
+            return vma(index);
+        }
+
+        /// Finds the first VMA overlapping the supplied guest range, or null when absent.
+        private @Nullable Vma findOverlap(long address, long length) {
+            long endAddress = address + length;
+            int insertionIndex = insertionIndex(address);
+            if (insertionIndex > 0) {
+                int previousIndex = insertionIndex - 1;
+                if (rangesOverlap(address, endAddress, addresses[previousIndex], endAddresses[previousIndex])) {
+                    return vma(previousIndex);
+                }
+            }
+            if (insertionIndex >= addresses.length) {
+                return null;
+            }
+            return rangesOverlap(address, endAddress, addresses[insertionIndex], endAddresses[insertionIndex])
+                    ? vma(insertionIndex)
+                    : null;
         }
 
         /// Returns the insertion index for an address in this sorted snapshot.
-        int insertionIndex(long address) {
+        private int insertionIndex(long address) {
             int index = Arrays.binarySearch(addresses, address);
             return index >= 0 ? index : -index - 1;
-        }
-
-        /// Returns true when a region fully contains the supplied guest range.
-        private static boolean containsRange(long regionAddress, long regionEndAddress, long address, long length) {
-            return address >= regionAddress && address <= regionEndAddress && length <= regionEndAddress - address;
-        }
-    }
-
-    /// Describes a guest memory region.
-    ///
-    /// @param address the inclusive guest start address of the region
-    /// @param segment the host segment backing exactly this region
-    /// @param baseOffset the value added to a guest address to produce an offset in `segment`
-    private record MemoryRegion(
-            long address,
-            MemorySegment segment,
-            long baseOffset) {
-        /// Creates a region whose host segment begins at the guest start address.
-        private static MemoryRegion of(long address, MemorySegment segment) {
-            return new MemoryRegion(address, segment, -address);
-        }
-
-        /// Returns the host segment offset for the supplied guest address.
-        long offset(long address) {
-            return address + baseOffset;
-        }
-
-        /// Returns the exclusive guest end address of the region.
-        long endAddress() {
-            return address + segment.byteSize();
         }
     }
 }

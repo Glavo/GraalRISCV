@@ -36,9 +36,6 @@ import org.jetbrains.annotations.Unmodifiable;
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
 public final class RiscVRootNode extends RootNode {
-    /// The guest page size used for explicit runtime stack backing.
-    private static final long PAGE_SIZE = 4096;
-
     /// The initial Linux user stack backing size.
     private static final long INITIAL_STACK_SIZE = 8L * 1024L * 1024L;
 
@@ -67,7 +64,14 @@ public final class RiscVRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
-        try (Memory memory = new Memory(resolveMemoryBase(context), context.memorySize(), context.mappedRegionCache())) {
+        try (Memory memory = Memory.sparse(
+                resolveMemoryBase(context),
+                context.memorySize(),
+                context.pageSize(),
+                context.maxCommittedPages(),
+                context.hugePageSize(),
+                context.hugePages(),
+                context.mappedRegionCache())) {
             MachineState state = createState(context, memory);
             try {
                 return executeGuestLoop(memory, state);
@@ -171,12 +175,17 @@ public final class RiscVRootNode extends RootNode {
     /// Initializes the Linux user stack at the top of the contiguous guest memory segment.
     private long initializeLinuxStack(Memory memory, RiscVContext context) {
         if (memory.hasDenseInitialBacking()) {
-            return LinuxInitialStack.initialize(memory, memory.endAddress(), context.programArguments(), image);
+            return LinuxInitialStack.initialize(
+                    memory,
+                    memory.endAddress(),
+                    context.programArguments(),
+                    image,
+                    context.pageSize());
         }
 
         long stackTop = memory.endAddress();
         long stackSize = Math.min(INITIAL_STACK_SIZE, memory.size());
-        long stackBase = alignDown(stackTop - stackSize, PAGE_SIZE);
+        long stackBase = alignDown(stackTop - stackSize, context.pageSize());
         if (stackBase < memory.baseAddress()) {
             stackBase = memory.baseAddress();
         }
@@ -186,7 +195,7 @@ public final class RiscVRootNode extends RootNode {
                     + formatRange(stackBase, stackTop)
                     + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress()));
         }
-        return LinuxInitialStack.initialize(memory, stackTop, context.programArguments(), image);
+        return LinuxInitialStack.initialize(memory, stackTop, context.programArguments(), image, context.pageSize());
     }
 
     /// Resolves the memory base from context options or the lowest ELF load segment address.

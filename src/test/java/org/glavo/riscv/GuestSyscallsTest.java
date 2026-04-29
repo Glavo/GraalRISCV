@@ -768,6 +768,9 @@ public final class GuestSyscallsTest {
     /// Linux `MAP_ANONYMOUS`.
     private static final long MAP_ANONYMOUS = 0x20;
 
+    /// Linux `MAP_HUGETLB`.
+    private static final long MAP_HUGETLB = 0x40000;
+
     /// Linux `MAP_FIXED_NOREPLACE`.
     private static final long MAP_FIXED_NOREPLACE = 0x100000;
 
@@ -3785,6 +3788,52 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that `MAP_HUGETLB` consumes the configured guest huge-page pool.
+    @Test
+    public void mmapHugeTlbConsumesHugePagePool() {
+        try (Memory memory = Memory.sparse(
+                Memory.DEFAULT_BASE_ADDRESS,
+                3L * Memory.DEFAULT_HUGE_PAGE_SIZE,
+                Memory.DEFAULT_PAGE_SIZE,
+                0,
+                Memory.DEFAULT_HUGE_PAGE_SIZE,
+                1,
+                null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress() + PAGE_SIZE);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(memory.baseAddress() + Memory.DEFAULT_HUGE_PAGE_SIZE, state.register(10));
+            assertEquals(1, memory.reservedHugePages());
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+        }
+    }
+
     /// Verifies that released anonymous mappings can be reused by later `mmap` calls.
     @Test
     public void munmapReleasesAnonymousGuestPages() {
@@ -3910,7 +3959,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `PROT_NONE` reservations can be activated by fixed `mmap` calls.
     @Test
     public void mmapReservesProtNoneAndMapsFixedSparsePages() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 16 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,
@@ -3930,7 +3979,7 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
             long reservedAddress = state.register(10);
-            assertEquals(memory.endAddress(), reservedAddress);
+            assertEquals(initialBreak, reservedAddress);
             assertThrows(RiscVException.class, () -> memory.readByte(reservedAddress));
 
             long mappedAddress = reservedAddress + PAGE_SIZE;
@@ -3954,7 +4003,7 @@ public final class GuestSyscallsTest {
     /// Verifies that `mprotect` can activate and deactivate reserved sparse mappings.
     @Test
     public void mprotectUpdatesReservedSparseMappings() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 16 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
             MachineState state = state(
                     memory,

@@ -42,6 +42,18 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The default guest memory size in bytes.
     public static final long DEFAULT_MEMORY_SIZE = 128L * 1024L * 1024L;
 
+    /// The default guest base page size in bytes.
+    public static final long DEFAULT_PAGE_SIZE = Memory.DEFAULT_PAGE_SIZE;
+
+    /// The default committed-page limit, where zero means unlimited.
+    public static final long DEFAULT_MAX_COMMITTED_PAGES = Memory.DEFAULT_MAX_COMMITTED_PAGES;
+
+    /// The default HugeTLB page size in bytes.
+    public static final long DEFAULT_HUGE_PAGE_SIZE = Memory.DEFAULT_HUGE_PAGE_SIZE;
+
+    /// The default HugeTLB page pool size.
+    public static final long DEFAULT_HUGE_PAGES = Memory.DEFAULT_HUGE_PAGES;
+
     /// The sentinel value that asks the runtime to infer the memory base from ELF load segments.
     public static final long AUTO_MEMORY_BASE = -1L;
 
@@ -69,6 +81,38 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             category = OptionCategory.USER,
             stability = OptionStability.STABLE)
     static final OptionKey<Long> MEMORY_SIZE = new OptionKey<>(DEFAULT_MEMORY_SIZE);
+
+    /// The `riscv.pageSize` language option.
+    @Option(
+            name = "pageSize",
+            help = "Guest base page size in bytes. Default: 4096.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> PAGE_SIZE = new OptionKey<>(DEFAULT_PAGE_SIZE);
+
+    /// The `riscv.maxCommittedPages` language option.
+    @Option(
+            name = "maxCommittedPages",
+            help = "Maximum number of committed guest base pages. Zero means unlimited. Default: 0.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> MAX_COMMITTED_PAGES = new OptionKey<>(DEFAULT_MAX_COMMITTED_PAGES);
+
+    /// The `riscv.hugePageSize` language option.
+    @Option(
+            name = "hugePageSize",
+            help = "Guest HugeTLB page size in bytes. Default: 2097152.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> HUGE_PAGE_SIZE = new OptionKey<>(DEFAULT_HUGE_PAGE_SIZE);
+
+    /// The `riscv.hugePages` language option.
+    @Option(
+            name = "hugePages",
+            help = "Number of guest HugeTLB pages available to MAP_HUGETLB. Default: 0.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> HUGE_PAGES = new OptionKey<>(DEFAULT_HUGE_PAGES);
 
     /// The `riscv.maxInstructions` language option.
     @Option(
@@ -115,6 +159,10 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env,
                 env.getOptions().get(MEMORY_BASE),
                 env.getOptions().get(MEMORY_SIZE),
+                env.getOptions().get(PAGE_SIZE),
+                env.getOptions().get(MAX_COMMITTED_PAGES),
+                env.getOptions().get(HUGE_PAGE_SIZE),
+                env.getOptions().get(HUGE_PAGES),
                 env.getOptions().get(MAX_INSTRUCTIONS),
                 env.getOptions().get(TRACE),
                 clockFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),

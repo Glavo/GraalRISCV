@@ -33,6 +33,10 @@ public final class Main {
             Options:
               --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
               --memory-size <bytes>      Guest memory size in bytes.
+              --page-size <bytes>        Guest base page size in bytes.
+              --max-committed-pages <n>  Maximum committed guest base pages; 0 means unlimited.
+              --huge-page-size <bytes>   Guest HugeTLB page size in bytes.
+              --huge-pages <n>           Guest HugeTLB page pool size.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --host-root <path>         Host directory exposed to sandboxed guest file syscalls.
               --debug-fixed-clock-nanos <nanos>
@@ -114,6 +118,18 @@ public final class Main {
         if (options.memorySize() != null) {
             builder.option("riscv.memorySize", options.memorySize());
         }
+        if (options.pageSize() != null) {
+            builder.option("riscv.pageSize", options.pageSize());
+        }
+        if (options.maxCommittedPages() != null) {
+            builder.option("riscv.maxCommittedPages", options.maxCommittedPages());
+        }
+        if (options.hugePageSize() != null) {
+            builder.option("riscv.hugePageSize", options.hugePageSize());
+        }
+        if (options.hugePages() != null) {
+            builder.option("riscv.hugePages", options.hugePages());
+        }
         if (options.maxInstructions() != null) {
             builder.option("riscv.maxInstructions", options.maxInstructions());
         }
@@ -147,6 +163,10 @@ public final class Main {
     private static CliOptions parseArguments(String[] args, OutputStream out, PrintStream err) {
         @Nullable String memoryBase = null;
         @Nullable String memorySize = null;
+        @Nullable String pageSize = null;
+        @Nullable String maxCommittedPages = null;
+        @Nullable String hugePageSize = null;
+        @Nullable String hugePages = null;
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
         @Nullable Path hostRoot = null;
@@ -197,6 +217,62 @@ public final class Main {
                 }
                 memorySize = parseLongOption("--memory-size", args[index], err);
                 if (memorySize == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--page-size".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --page-size.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                pageSize = parseLongOption("--page-size", args[index], err);
+                if (pageSize == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--max-committed-pages".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --max-committed-pages.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                maxCommittedPages = parseLongOption("--max-committed-pages", args[index], err);
+                if (maxCommittedPages == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--huge-page-size".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --huge-page-size.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                hugePageSize = parseLongOption("--huge-page-size", args[index], err);
+                if (hugePageSize == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--huge-pages".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --huge-pages.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                hugePages = parseLongOption("--huge-pages", args[index], err);
+                if (hugePages == null) {
                     printUsage(err);
                     return CliOptions.error();
                 }
@@ -268,6 +344,10 @@ public final class Main {
                 programArguments,
                 memoryBase,
                 memorySize,
+                pageSize,
+                maxCommittedPages,
+                hugePageSize,
+                hugePages,
                 maxInstructions,
                 debugFixedClockNanos,
                 resolvedHostRoot,
@@ -344,6 +424,10 @@ public final class Main {
     /// @param programArguments the guest application arguments after the ELF path
     /// @param memoryBase the optional guest memory base option value
     /// @param memorySize the optional guest memory size option value
+    /// @param pageSize the optional guest base page size option value
+    /// @param maxCommittedPages the optional committed guest base page limit option value
+    /// @param hugePageSize the optional guest HugeTLB page size option value
+    /// @param hugePages the optional guest HugeTLB page pool size option value
     /// @param maxInstructions the optional maximum instruction count option value
     /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
     /// @param hostRoot the host directory exposed through sandboxed guest file syscalls
@@ -356,6 +440,10 @@ public final class Main {
             String @Unmodifiable [] programArguments,
             @Nullable String memoryBase,
             @Nullable String memorySize,
+            @Nullable String pageSize,
+            @Nullable String maxCommittedPages,
+            @Nullable String hugePageSize,
+            @Nullable String hugePages,
             @Nullable String maxInstructions,
             @Nullable String debugFixedClockNanos,
             Path hostRoot,
@@ -382,6 +470,10 @@ public final class Main {
                     null,
                     null,
                     null,
+                    null,
+                    null,
+                    null,
+                    null,
                     Path.of("."),
                     false,
                     false);
@@ -397,6 +489,10 @@ public final class Main {
                     null,
                     null,
                     null,
+                    null,
+                    null,
+                    null,
+                    null,
                     Path.of("."),
                     false,
                     false);
@@ -408,6 +504,10 @@ public final class Main {
                 List<String> programArguments,
                 @Nullable String memoryBase,
                 @Nullable String memorySize,
+                @Nullable String pageSize,
+                @Nullable String maxCommittedPages,
+                @Nullable String hugePageSize,
+                @Nullable String hugePages,
                 @Nullable String maxInstructions,
                 @Nullable String debugFixedClockNanos,
                 Path hostRoot,
@@ -419,6 +519,10 @@ public final class Main {
                     programArguments.toArray(String[]::new),
                     memoryBase,
                     memorySize,
+                    pageSize,
+                    maxCommittedPages,
+                    hugePageSize,
+                    hugePages,
                     maxInstructions,
                     debugFixedClockNanos,
                     hostRoot,

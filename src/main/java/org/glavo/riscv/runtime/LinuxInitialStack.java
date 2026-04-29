@@ -57,9 +57,6 @@ public final class LinuxInitialStack {
     /// Linux auxv effective group id type.
     private static final long AT_EGID = 14;
 
-    /// The guest page size exposed through auxv.
-    private static final long PAGE_SIZE = 4096;
-
     /// The deterministic Linux clock tick frequency exposed through auxv.
     private static final long CLOCK_TICKS_PER_SECOND = 100;
 
@@ -85,6 +82,11 @@ public final class LinuxInitialStack {
 
     /// Writes the initial stack and returns the aligned guest stack pointer.
     public static long initialize(Memory memory, long stackTop, String[] arguments, ElfImage image) {
+        return initialize(memory, stackTop, arguments, image, Memory.DEFAULT_PAGE_SIZE);
+    }
+
+    /// Writes the initial stack with an explicit guest page size and returns the aligned guest stack pointer.
+    public static long initialize(Memory memory, long stackTop, String[] arguments, ElfImage image, long pageSize) {
         long cursor = stackTop & ~0xfL;
         String[] argv = arguments.clone();
         long[] argumentPointers = new long[argv.length];
@@ -110,7 +112,7 @@ public final class LinuxInitialStack {
             addAuxiliaryVector(auxv, AT_PHENT, image.programHeaderEntrySize());
             addAuxiliaryVector(auxv, AT_PHNUM, image.programHeaderCount());
         }
-        addAuxiliaryVector(auxv, AT_PAGESZ, PAGE_SIZE);
+        addAuxiliaryVector(auxv, AT_PAGESZ, pageSize);
         addAuxiliaryVector(auxv, AT_ENTRY, image.entryPoint());
         addAuxiliaryVector(auxv, AT_UID, 0);
         addAuxiliaryVector(auxv, AT_EUID, 0);
