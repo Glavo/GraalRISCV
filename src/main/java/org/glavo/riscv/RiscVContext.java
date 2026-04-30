@@ -12,6 +12,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.time.Clock;
+import java.util.ArrayList;
 
 /// Stores per-context simulator configuration derived from Truffle language options.
 @NotNullByDefault
@@ -46,8 +47,11 @@ public final class RiscVContext {
     /// The clock exposed to guest time syscalls.
     private final Clock clock;
 
-    /// The configured host directory exposed through sandboxed guest file syscalls.
+    /// The host directory mounted at `/` when no explicit filesystem mounts are configured.
     private final String hostRoot;
+
+    /// The configured guest filesystem mounts.
+    private final String @Unmodifiable [] filesystemMounts;
 
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
@@ -68,6 +72,7 @@ public final class RiscVContext {
             boolean trace,
             Clock clock,
             String hostRoot,
+            String filesystemMounts,
             ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
@@ -90,11 +95,8 @@ public final class RiscVContext {
             throw new RiscVException("riscv.maxInstructions must be non-negative: " + maxInstructions);
         }
 
-        try {
-            env.getPublicTruffleFile(hostRoot);
-        } catch (IllegalArgumentException exception) {
-            throw new RiscVException("riscv.hostRoot is invalid: " + hostRoot, exception);
-        }
+        String[] parsedFilesystemMounts = parseFilesystemMounts(hostRoot, filesystemMounts);
+        validateFilesystemMounts(env, parsedFilesystemMounts);
 
         this.env = env;
         this.memoryBase = memoryBase;
@@ -107,6 +109,7 @@ public final class RiscVContext {
         this.trace = trace;
         this.clock = clock;
         this.hostRoot = hostRoot;
+        this.filesystemMounts = parsedFilesystemMounts;
         this.programArguments = env.getApplicationArguments().clone();
         this.mappedRegionCache = mappedRegionCache;
     }
@@ -161,9 +164,14 @@ public final class RiscVContext {
         return clock;
     }
 
-    /// Returns the configured host directory exposed through sandboxed guest file syscalls.
+    /// Returns the host directory mounted at `/` when no explicit filesystem mounts are configured.
     public String hostRoot() {
         return hostRoot;
+    }
+
+    /// Returns a copy of the configured guest filesystem mounts.
+    public String @Unmodifiable [] filesystemMounts() {
+        return filesystemMounts.clone();
     }
 
     /// Returns the guest application arguments supplied after the ELF path.
@@ -195,5 +203,73 @@ public final class RiscVContext {
     /// Returns true when a value is a positive power of two.
     private static boolean isPowerOfTwo(long value) {
         return value > 0 && (value & (value - 1L)) == 0;
+    }
+
+    /// Parses newline-separated mount entries, defaulting to `riscv.hostRoot` as `/`.
+    private static String @Unmodifiable [] parseFilesystemMounts(String hostRoot, String filesystemMounts) {
+        if (filesystemMounts.isEmpty()) {
+            return new String[]{"/=" + hostRoot};
+        }
+
+        ArrayList<String> result = new ArrayList<>();
+        for (String mount : filesystemMounts.split("\\R")) {
+            if (!mount.isEmpty()) {
+                result.add(normalizeMountSpec(mount));
+            }
+        }
+        if (result.isEmpty()) {
+            return new String[]{"/=" + hostRoot};
+        }
+        return result.toArray(String[]::new);
+    }
+
+    /// Validates configured mount paths through the Truffle environment.
+    private static void validateFilesystemMounts(
+            TruffleLanguage.Env env,
+            String @Unmodifiable [] filesystemMounts) {
+        for (String mount : filesystemMounts) {
+            int separator = mount.indexOf('=');
+            String guestPath = mount.substring(0, separator);
+            String hostPath = mount.substring(separator + 1);
+            try {
+                env.getPublicTruffleFile(hostPath);
+            } catch (IllegalArgumentException exception) {
+                throw new RiscVException("Filesystem mount target is invalid for " + guestPath + ": " + hostPath, exception);
+            }
+        }
+    }
+
+    /// Validates and normalizes a single `guest=host` mount entry.
+    private static String normalizeMountSpec(String mount) {
+        int separator = mount.indexOf('=');
+        if (separator <= 0 || separator == mount.length() - 1) {
+            throw new RiscVException("Invalid riscv.mounts entry: " + mount);
+        }
+        String guestPath = mount.substring(0, separator);
+        String hostPath = mount.substring(separator + 1);
+        return normalizeMountGuestPath(guestPath) + "=" + hostPath;
+    }
+
+    /// Normalizes an absolute Linux guest mount point.
+    private static String normalizeMountGuestPath(String guestPath) {
+        if (!guestPath.startsWith("/") || guestPath.indexOf('\\') >= 0 || guestPath.indexOf(':') >= 0) {
+            throw new RiscVException("Filesystem mount guest path must use absolute Linux syntax: " + guestPath);
+        }
+
+        ArrayList<String> segments = new ArrayList<>();
+        for (String segment : guestPath.split("/")) {
+            if (segment.isEmpty() || ".".equals(segment)) {
+                continue;
+            }
+            if ("..".equals(segment)) {
+                if (segments.isEmpty()) {
+                    throw new RiscVException("Filesystem mount guest path must not escape above `/`: " + guestPath);
+                }
+                segments.remove(segments.size() - 1);
+                continue;
+            }
+            segments.add(segment);
+        }
+        return segments.isEmpty() ? "/" : "/" + String.join("/", segments);
     }
 }

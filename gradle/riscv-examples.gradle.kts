@@ -536,7 +536,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileIoExample") {
 
 tasks.register<JavaExec>("testLinuxStaticFileIoExample") {
     group = "verification"
-    description = "Compiles a static musl file I/O example and verifies sandboxed host-root output."
+    description = "Compiles a static musl file I/O example and verifies sandboxed root-mount output."
 
     dependsOn("classes", "buildLinuxStaticFileIoExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -555,10 +555,10 @@ tasks.register<JavaExec>("testLinuxStaticFileIoExample") {
         val root = linuxStaticFileIoRoot.get().asFile
         delete(root)
         if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
+            throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileIoExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticFileIoExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -620,7 +620,7 @@ tasks.register<JavaExec>("testLinuxStaticDirectoryListExample") {
             throw GradleException("Failed to create nested example directory.")
         }
 
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticDirectoryListExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticDirectoryListExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -650,7 +650,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileMutationExamp
 
 tasks.register<JavaExec>("testLinuxStaticFileMutationExample") {
     group = "verification"
-    description = "Compiles a static musl file mutation example and verifies sandboxed host-root changes."
+    description = "Compiles a static musl file mutation example and verifies sandboxed root-mount changes."
 
     dependsOn("classes", "buildLinuxStaticFileMutationExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -669,10 +669,10 @@ tasks.register<JavaExec>("testLinuxStaticFileMutationExample") {
         val root = linuxStaticFileMutationRoot.get().asFile
         delete(root)
         if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
+            throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileMutationExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticFileMutationExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -725,10 +725,10 @@ tasks.register<JavaExec>("testLinuxStaticWorkingDirectoryExample") {
         val root = linuxStaticWorkingDirectoryRoot.get().asFile
         delete(root)
         if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
+            throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticWorkingDirectoryExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticWorkingDirectoryExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -782,10 +782,10 @@ tasks.register<JavaExec>("testLinuxStaticFilesystemStatusExample") {
         val root = linuxStaticFilesystemStatusRoot.get().asFile
         delete(root)
         if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
+            throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFilesystemStatusExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticFilesystemStatusExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -839,10 +839,10 @@ tasks.register<JavaExec>("testLinuxStaticStatxMetadataExample") {
         val root = linuxStaticStatxMetadataRoot.get().asFile
         delete(root)
         if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
+            throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticStatxMetadataExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticStatxMetadataExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -896,10 +896,10 @@ tasks.register<JavaExec>("testLinuxStaticPositionedIoExample") {
         val root = linuxStaticPositionedIoRoot.get().asFile
         delete(root)
         if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
+            throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticPositionedIoExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticPositionedIoExampleElf.get().asFile.absolutePath))
     }
 
     doLast {

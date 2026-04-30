@@ -145,10 +145,18 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The `riscv.hostRoot` language option.
     @Option(
             name = "hostRoot",
-            help = "Host directory exposed to sandboxed guest file syscalls. Default: current directory.",
+            help = "Host directory mounted at guest `/` when riscv.mounts is empty. Default: current directory.",
             category = OptionCategory.USER,
             stability = OptionStability.STABLE)
     static final OptionKey<String> HOST_ROOT = new OptionKey<>(".");
+
+    /// The `riscv.mounts` language option.
+    @Option(
+            name = "mounts",
+            help = "Newline-separated guest=host filesystem mounts. Default: use riscv.hostRoot as `/`.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<String> MOUNTS = new OptionKey<>("");
 
     /// Creates a RISC-V Truffle language instance.
     @SuppressWarnings("deprecation")
@@ -171,6 +179,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(TRACE),
                 clockFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),
                 env.getOptions().get(HOST_ROOT),
+                env.getOptions().get(MOUNTS),
                 mappedRegionCache);
     }
 

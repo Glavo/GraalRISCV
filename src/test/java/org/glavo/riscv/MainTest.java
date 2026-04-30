@@ -72,6 +72,21 @@ public final class MainTest {
     /// Linux `FUTEX_WAKE | FUTEX_PRIVATE_FLAG`.
     private static final int FUTEX_WAKE_PRIVATE = 129;
 
+    /// Linux `AT_FDCWD`.
+    private static final int AT_FDCWD = -100;
+
+    /// The Linux RISC-V syscall number for `openat`.
+    private static final int SYS_OPENAT = 56;
+
+    /// The Linux RISC-V syscall number for `read`.
+    private static final int SYS_READ = 63;
+
+    /// The Linux RISC-V syscall number for `write`.
+    private static final int SYS_WRITE = 64;
+
+    /// The Linux RISC-V syscall number for `exit`.
+    private static final int SYS_EXIT = 93;
+
     /// A temporary directory for generated ELF files.
     @TempDir
     private Path tempDirectory;
@@ -161,6 +176,32 @@ public final class MainTest {
 
         assertEquals(0, exitCode);
         assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that `--mount` exposes a host directory at the requested guest path.
+    @Test
+    public void mountOptionExposesHostDirectoryAtGuestPath() throws Exception {
+        Path elfPath = tempDirectory.resolve("mount-read.elf");
+        Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
+        Path mountedDirectory = tempDirectory.resolve("mounted");
+        Files.createDirectories(mountedDirectory);
+        Files.writeString(mountedDirectory.resolve("message.txt"), "mounted-data", StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "/data=" + mountedDirectory,
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
@@ -765,6 +806,42 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put((byte) 0);
+        return code.array();
+    }
+
+    /// Builds a freestanding program that reads `/data/message.txt` and writes it to stdout.
+    private static byte[] readMountedFileCode() {
+        byte[] path = "/data/message.txt\0".getBytes(StandardCharsets.UTF_8);
+        int pathOffset = Integer.BYTES * 32;
+        int bufferOffset = pathOffset + path.length;
+        int byteCount = "mounted-data".length();
+        ByteBuffer code = ByteBuffer.allocate(bufferOffset + byteCount).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadImmediate(code, 10, AT_FDCWD);
+        putLoadAddress(code, 11, pathOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_OPENAT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 10, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        putLoadAddress(code, 11, bufferOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, byteCount));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_READ));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 10, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        putLoadAddress(code, 11, bufferOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_WRITE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        code.position(pathOffset);
+        code.put(path);
+        code.position(bufferOffset);
+        code.put(new byte[byteCount]);
         return code.array();
     }
 

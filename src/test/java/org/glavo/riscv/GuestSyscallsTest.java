@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /// Tests guest syscall behavior directly against architectural state.
 @NotNullByDefault
 public final class GuestSyscallsTest {
-    /// A temporary host root for file syscall tests.
+    /// A temporary root mount for file syscall tests.
     @TempDir
     private Path tempDirectory;
 
@@ -1661,7 +1661,7 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that `openat` exposes read-only host files below the configured host root.
+    /// Verifies that `openat` exposes read-only host files below the configured root mount.
     @Test
     public void openatReadsHostFileBelowRoot() throws Exception {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
@@ -2226,7 +2226,7 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that `openat` exposes writable host files below the configured host root.
+    /// Verifies that `openat` exposes writable host files below the configured root mount.
     @Test
     public void openatWritesHostFilesBelowRoot() throws Exception {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
@@ -4394,7 +4394,7 @@ public final class GuestSyscallsTest {
         return state(memory, in, out, err, initialProgramBreak, Path.of("."));
     }
 
-    /// Creates test machine state with a syscall handler and host file root.
+    /// Creates test machine state with a syscall handler and root mount.
     private static MachineState state(
             Memory memory,
             InputStream in,
@@ -4405,7 +4405,7 @@ public final class GuestSyscallsTest {
         return state(memory, in, out, err, initialProgramBreak, hostRoot, Clock.systemUTC());
     }
 
-    /// Creates test machine state with a syscall handler, host file root, and guest clock.
+    /// Creates test machine state with a syscall handler, root mount, and guest clock.
     private static MachineState state(
             Memory memory,
             InputStream in,

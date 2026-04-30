@@ -39,7 +39,8 @@ public final class Main {
               --huge-page-size <bytes>   Guest HugeTLB page size in bytes.
               --huge-pages <n>           Guest HugeTLB page pool size.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-              --host-root <path>         Host directory exposed to sandboxed guest file syscalls.
+              --mount <guest>=<path>     Mount a host directory at an absolute guest path.
+              --host-root <path>         Alias for --mount /=<path>.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
               --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
@@ -145,7 +146,8 @@ public final class Main {
                     .option("engine.OSRCompilationThreshold", "10000")
                     .option("engine.TraceCompilation", "true");
         }
-        builder.option("riscv.hostRoot", options.hostRoot().toString());
+        builder.option("riscv.hostRoot", options.rootMount().toString());
+        builder.option("riscv.mounts", encodeMounts(options.mounts()));
         if (options.trace()) {
             builder.option("riscv.trace", "true");
         }
@@ -171,6 +173,7 @@ public final class Main {
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
         @Nullable Path hostRoot = null;
+        ArrayList<MountOption> mounts = new ArrayList<>();
         boolean debugTraceCompilation = false;
         boolean trace = false;
         @Nullable Path programPath = null;
@@ -321,6 +324,21 @@ public final class Main {
                 }
                 continue;
             }
+            if (parseOptions && "--mount".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --mount.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                @Nullable MountOption mount = parseMountOption(args[index], err);
+                if (mount == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                mounts.add(mount);
+                continue;
+            }
             if (programPath != null) {
                 programArguments.add(argument);
                 continue;
@@ -339,7 +357,10 @@ public final class Main {
             return CliOptions.error();
         }
 
-        Path resolvedHostRoot = hostRoot != null ? hostRoot : defaultHostRoot(programPath);
+        Path resolvedRootMount = hostRoot != null ? hostRoot : defaultRootMount(programPath);
+        if (mounts.stream().noneMatch(mount -> "/".equals(mount.guestPath()))) {
+            mounts.add(new MountOption("/", resolvedRootMount));
+        }
         return CliOptions.execute(
                 programPath,
                 programArguments,
@@ -351,7 +372,8 @@ public final class Main {
                 hugePages,
                 maxInstructions,
                 debugFixedClockNanos,
-                resolvedHostRoot,
+                resolvedRootMount,
+                mounts,
                 debugTraceCompilation,
                 trace);
     }
@@ -380,8 +402,66 @@ public final class Main {
         }
     }
 
-    /// Returns the default host root for a guest program.
-    private static Path defaultHostRoot(Path programPath) {
+    /// Parses a mount option of the form `guest=host`.
+    private static @Nullable MountOption parseMountOption(String value, PrintStream err) {
+        int separator = value.indexOf('=');
+        if (separator <= 0 || separator == value.length() - 1) {
+            err.println("Invalid value for --mount: " + value);
+            err.println("Expected --mount <guest-path>=<host-path>.");
+            return null;
+        }
+
+        @Nullable String guestPath = normalizeGuestMountPoint(value.substring(0, separator), err);
+        if (guestPath == null) {
+            return null;
+        }
+        @Nullable Path hostPath = parsePathOption("--mount", value.substring(separator + 1), err);
+        return hostPath == null ? null : new MountOption(guestPath, hostPath);
+    }
+
+    /// Normalizes an absolute Linux guest mount point.
+    private static @Nullable String normalizeGuestMountPoint(String guestPath, PrintStream err) {
+        if (!guestPath.startsWith("/")) {
+            err.println("Mount guest path must be absolute: " + guestPath);
+            return null;
+        }
+        if (guestPath.indexOf('\\') >= 0 || guestPath.indexOf(':') >= 0) {
+            err.println("Mount guest path must use Linux path syntax: " + guestPath);
+            return null;
+        }
+
+        ArrayList<String> segments = new ArrayList<>();
+        for (String segment : guestPath.split("/")) {
+            if (segment.isEmpty() || ".".equals(segment)) {
+                continue;
+            }
+            if ("..".equals(segment)) {
+                if (segments.isEmpty()) {
+                    err.println("Mount guest path must not escape above `/`: " + guestPath);
+                    return null;
+                }
+                segments.remove(segments.size() - 1);
+                continue;
+            }
+            segments.add(segment);
+        }
+        return segments.isEmpty() ? "/" : "/" + String.join("/", segments);
+    }
+
+    /// Encodes mount options for the Truffle language option.
+    private static String encodeMounts(MountOption @Unmodifiable [] mounts) {
+        StringBuilder builder = new StringBuilder();
+        for (MountOption mount : mounts) {
+            if (!builder.isEmpty()) {
+                builder.append('\n');
+            }
+            builder.append(mount.guestPath()).append('=').append(mount.hostPath());
+        }
+        return builder.toString();
+    }
+
+    /// Returns the default root mount for a guest program.
+    private static Path defaultRootMount(Path programPath) {
         Path absoluteProgramPath = programPath.toAbsolutePath().normalize();
         Path parent = absoluteProgramPath.getParent();
         return parent != null ? parent : Path.of(".").toAbsolutePath().normalize();
@@ -431,7 +511,8 @@ public final class Main {
     /// @param hugePages the optional guest HugeTLB page pool size option value
     /// @param maxInstructions the optional maximum instruction count option value
     /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
-    /// @param hostRoot the host directory exposed through sandboxed guest file syscalls
+    /// @param rootMount the host directory mounted at the guest root
+    /// @param mounts the configured guest filesystem mounts
     /// @param debugTraceCompilation whether Truffle compilation diagnostics should be enabled
     /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
@@ -447,18 +528,26 @@ public final class Main {
             @Nullable String hugePages,
             @Nullable String maxInstructions,
             @Nullable String debugFixedClockNanos,
-            Path hostRoot,
+            Path rootMount,
+            MountOption @Unmodifiable [] mounts,
             boolean debugTraceCompilation,
             boolean trace) {
         /// Creates parsed command-line options.
         private CliOptions {
             programArguments = programArguments.clone();
+            mounts = mounts.clone();
         }
 
         /// Returns a copy of the guest arguments after the ELF path.
         @Override
         public String @Unmodifiable [] programArguments() {
             return programArguments.clone();
+        }
+
+        /// Returns a copy of the configured filesystem mounts.
+        @Override
+        public MountOption @Unmodifiable [] mounts() {
+            return mounts.clone();
         }
 
         /// Creates options for printing help.
@@ -476,6 +565,7 @@ public final class Main {
                     null,
                     null,
                     Path.of("."),
+                    new MountOption[0],
                     false,
                     false);
         }
@@ -495,6 +585,7 @@ public final class Main {
                     null,
                     null,
                     Path.of("."),
+                    new MountOption[0],
                     false,
                     false);
         }
@@ -511,7 +602,8 @@ public final class Main {
                 @Nullable String hugePages,
                 @Nullable String maxInstructions,
                 @Nullable String debugFixedClockNanos,
-                Path hostRoot,
+                Path rootMount,
+                List<MountOption> mounts,
                 boolean debugTraceCompilation,
                 boolean trace) {
             return new CliOptions(
@@ -526,7 +618,8 @@ public final class Main {
                     hugePages,
                     maxInstructions,
                     debugFixedClockNanos,
-                    hostRoot,
+                    rootMount,
+                    mounts.toArray(MountOption[]::new),
                     debugTraceCompilation,
                     trace);
         }
@@ -538,5 +631,13 @@ public final class Main {
             System.arraycopy(programArguments, 0, result, 1, programArguments.length);
             return result;
         }
+    }
+
+    /// Stores one command-line filesystem mount.
+    ///
+    /// @param guestPath the absolute guest-visible mount point
+    /// @param hostPath the host directory backing the mount point
+    @NotNullByDefault
+    private record MountOption(String guestPath, Path hostPath) {
     }
 }

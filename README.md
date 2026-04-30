@@ -47,7 +47,8 @@ Options:
   --huge-page-size <bytes>   Guest HugeTLB page size in bytes.
   --huge-pages <n>           Guest HugeTLB page pool size.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-  --host-root <path>         Host directory exposed to sandboxed guest file syscalls.
+  --mount <guest>=<path>     Mount a host directory at an absolute guest path.
+  --host-root <path>         Alias for --mount /=<path>.
   --debug-fixed-clock-nanos <nanos>
                               Fixed epoch nanoseconds for deterministic guest time.
   --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
@@ -55,8 +56,11 @@ Options:
   -h, --help                 Print this help message.
 ```
 
-`--host-root` controls the host directory visible to guest file syscalls. If it
-is omitted, the CLI uses the directory containing the guest program.
+`--mount` controls the host directories visible to guest file syscalls. For
+example, `--mount /=sandbox` exposes `sandbox` as the guest `/`, and
+`--mount /data=dataset` overlays `dataset` at guest `/data`. If no `/` mount is
+provided, the CLI mounts the directory containing the guest program at `/`.
+`--host-root` remains as a compatibility alias for `--mount /=<path>`.
 
 ## Supported ELF Inputs
 
@@ -72,7 +76,8 @@ ELF metadata such as `PT_INTERP`, `PT_DYNAMIC`, `SHT_DYNAMIC`, `SHT_REL`, and
 
 The simulator implements enough Linux RISC-V user-mode behavior to run the
 bundled static musl examples, the static Go example, CoreMark, and similar
-static ELF programs. File access is sandboxed under `--host-root`.
+static ELF programs. File access is sandboxed under configured `--mount`
+entries.
 
 ## Examples
 
