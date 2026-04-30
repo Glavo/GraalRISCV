@@ -267,6 +267,96 @@ public final class MemoryTest {
         }
     }
 
+    /// Verifies mprotect-style VMA splitting preserves the unprotected outer ranges.
+    @Test
+    public void protectSplitsSparseMappingWithoutDroppingOuterRanges() {
+        long pageSize = Memory.DEFAULT_PAGE_SIZE;
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize, null)) {
+            long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
+
+            assertTrue(memory.map(
+                    baseAddress,
+                    4L * pageSize,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            memory.writeByte(baseAddress, (byte) 0x11);
+            memory.writeByte(baseAddress + pageSize, (byte) 0x22);
+            memory.writeByte(baseAddress + 3L * pageSize, (byte) 0x33);
+
+            assertTrue(memory.protect(baseAddress + pageSize, 2L * pageSize, Memory.PROTECTION_READ));
+
+            assertEquals(baseAddress + pageSize, memory.backedRangeEnd(baseAddress));
+            assertEquals(baseAddress + 3L * pageSize, memory.backedRangeEnd(baseAddress + pageSize));
+            assertEquals(baseAddress + 4L * pageSize, memory.backedRangeEnd(baseAddress + 3L * pageSize));
+            assertEquals(0x11, memory.readUnsignedByte(baseAddress));
+            assertEquals(0x22, memory.readUnsignedByte(baseAddress + pageSize));
+            assertEquals(0x33, memory.readUnsignedByte(baseAddress + 3L * pageSize));
+            assertThrows(RiscVException.class, () -> memory.writeByte(baseAddress + pageSize, (byte) 0x44));
+
+            memory.writeByte(baseAddress, (byte) 0x55);
+            memory.writeByte(baseAddress + 3L * pageSize, (byte) 0x66);
+
+            assertEquals(0x55, memory.readUnsignedByte(baseAddress));
+            assertEquals(0x66, memory.readUnsignedByte(baseAddress + 3L * pageSize));
+        }
+    }
+
+    /// Verifies transparent huge-page advice splits VMAs without changing normal access rights.
+    @Test
+    public void adviceSplitsSparseMappingWithoutChangingAccess() {
+        long pageSize = Memory.DEFAULT_PAGE_SIZE;
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize, null)) {
+            long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
+
+            assertTrue(memory.map(
+                    baseAddress,
+                    4L * pageSize,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            memory.writeInt(baseAddress, 0x1111_2222);
+            memory.writeInt(baseAddress + pageSize, 0x3333_4444);
+            memory.writeInt(baseAddress + 3L * pageSize, 0x5555_6666);
+
+            memory.adviseHugePagePreference(baseAddress + pageSize, 2L * pageSize, true);
+
+            assertTrue(memory.isBacked(baseAddress, pageSize));
+            assertTrue(memory.isBacked(baseAddress + pageSize, 2L * pageSize));
+            assertTrue(memory.isBacked(baseAddress + 3L * pageSize, pageSize));
+            assertEquals(baseAddress + pageSize, memory.backedRangeEnd(baseAddress));
+            assertEquals(baseAddress + 3L * pageSize, memory.backedRangeEnd(baseAddress + pageSize));
+            assertEquals(baseAddress + 4L * pageSize, memory.backedRangeEnd(baseAddress + 3L * pageSize));
+            assertEquals(0x1111_2222, memory.readInt(baseAddress));
+            assertEquals(0x3333_4444, memory.readInt(baseAddress + pageSize));
+            assertEquals(0x5555_6666, memory.readInt(baseAddress + 3L * pageSize));
+
+            memory.writeByte(baseAddress + pageSize, (byte) 0x77);
+
+            assertEquals(0x77, memory.readUnsignedByte(baseAddress + pageSize));
+        }
+    }
+
+    /// Verifies unmapping across split VMAs clears them so the range can be mapped again contiguously.
+    @Test
+    public void unmapAcrossSplitVmasAllowsContiguousRemap() {
+        long pageSize = Memory.DEFAULT_PAGE_SIZE;
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize, null)) {
+            long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
+
+            assertTrue(memory.map(
+                    baseAddress,
+                    4L * pageSize,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            assertTrue(memory.protect(baseAddress + pageSize, 2L * pageSize, Memory.PROTECTION_READ));
+
+            memory.unmap(baseAddress, 4L * pageSize);
+
+            assertFalse(memory.isBacked(baseAddress, pageSize));
+            assertTrue(memory.map(baseAddress, 4L * pageSize, Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            memory.writeLong(baseAddress + 2L * pageSize, 0x0102_0304_0506_0708L);
+
+            assertTrue(memory.isBacked(baseAddress, 4L * pageSize));
+            assertEquals(0x0102_0304_0506_0708L, memory.readLong(baseAddress + 2L * pageSize));
+        }
+    }
+
     /// Verifies the sparse page table grows and removes committed pages by page-number range.
     @Test
     public void unmapRemovesCommittedPagesFromGrownPageTable() {
