@@ -76,6 +76,12 @@ public final class MachineState {
     /// The `instret` user counter CSR address.
     private static final int INSTRET_CSR = 0xc02;
 
+    /// The first `hpmcounter` user hardware performance counter CSR address.
+    private static final int FIRST_HPMCOUNTER_CSR = 0xc03;
+
+    /// The last `hpmcounter` user hardware performance counter CSR address.
+    private static final int LAST_HPMCOUNTER_CSR = 0xc1f;
+
     /// The writable bit mask for `fflags`.
     private static final int FFLAGS_MASK = 0x1f;
 
@@ -323,6 +329,10 @@ public final class MachineState {
 
     /// Reads a supported control and status register.
     public long readControlStatusRegister(int csr) {
+        if (isHardwarePerformanceCounterCsr(csr)) {
+            return 0;
+        }
+
         return switch (csr) {
             case FFLAGS_CSR -> floatingPointControlStatus & FFLAGS_MASK;
             case FRM_CSR -> (floatingPointControlStatus >>> 5) & FRM_MASK;
@@ -338,6 +348,10 @@ public final class MachineState {
 
     /// Writes a supported writable control and status register.
     public void writeControlStatusRegister(int csr, long value) {
+        if (isReadOnlyCounterCsr(csr)) {
+            throw readOnlyControlStatusRegister(csr);
+        }
+
         switch (csr) {
             case FFLAGS_CSR -> {
                 floatingPointControlStatus = (floatingPointControlStatus & ~FFLAGS_MASK)
@@ -352,8 +366,6 @@ public final class MachineState {
                  PMPCFG0_CSR, PMPADDR0_CSR, MNSTATUS_CSR -> {
             }
             case MEPC_CSR -> machineExceptionProgramCounter = value;
-            case CYCLE_CSR, TIME_CSR, INSTRET_CSR -> throw new RiscVException(
-                    "Control status register is read-only: 0x" + Integer.toUnsignedString(csr, 16));
             default -> throw unsupportedControlStatusRegister(csr);
         }
     }
@@ -478,6 +490,26 @@ public final class MachineState {
     /// Adapts an output stream to a print stream without double-wrapping existing print streams.
     private static PrintStream asPrintStream(OutputStream stream) {
         return stream instanceof PrintStream printStream ? printStream : new PrintStream(stream, true);
+    }
+
+    /// Returns true when the CSR is a base user counter from `Zicntr`.
+    private static boolean isBaseCounterCsr(int csr) {
+        return csr == CYCLE_CSR || csr == TIME_CSR || csr == INSTRET_CSR;
+    }
+
+    /// Returns true when the CSR is a user hardware performance counter from `Zihpm`.
+    private static boolean isHardwarePerformanceCounterCsr(int csr) {
+        return csr >= FIRST_HPMCOUNTER_CSR && csr <= LAST_HPMCOUNTER_CSR;
+    }
+
+    /// Returns true when the CSR is a read-only user counter.
+    private static boolean isReadOnlyCounterCsr(int csr) {
+        return isBaseCounterCsr(csr) || isHardwarePerformanceCounterCsr(csr);
+    }
+
+    /// Creates a read-only CSR diagnostic.
+    private static RiscVException readOnlyControlStatusRegister(int csr) {
+        return new RiscVException("Control status register is read-only: 0x" + Integer.toUnsignedString(csr, 16));
     }
 
     /// Creates an unsupported CSR diagnostic.

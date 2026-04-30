@@ -44,8 +44,17 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_EXT_ZICNTR`.
     public static final long HWPROBE_EXT_ZICNTR = 1L << 50;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZIHPM`.
+    public static final long HWPROBE_EXT_ZIHPM = 1L << 51;
+
     /// Linux `RISCV_HWPROBE_EXT_ZICBOM`.
     public static final long HWPROBE_EXT_ZICBOM = 1L << 55;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZAAMO`.
+    public static final long HWPROBE_EXT_ZAAMO = 1L << 56;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZALRSC`.
+    public static final long HWPROBE_EXT_ZALRSC = 1L << 57;
 
     /// Linux `RISCV_HWPROBE_EXT_ZICBOP`.
     public static final long HWPROBE_EXT_ZICBOP = 1L << 60;
@@ -63,7 +72,10 @@ public final class RiscVExtensions {
                     | HWPROBE_EXT_ZIHINTNTL
                     | HWPROBE_EXT_ZIHINTPAUSE
                     | HWPROBE_EXT_ZICNTR
+                    | HWPROBE_EXT_ZIHPM
                     | HWPROBE_EXT_ZICBOM
+                    | HWPROBE_EXT_ZAAMO
+                    | HWPROBE_EXT_ZALRSC
                     | HWPROBE_EXT_ZICBOP;
 
     /// Prevents construction of this constants class.

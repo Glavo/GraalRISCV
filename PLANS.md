@@ -43,7 +43,9 @@
 - `Zfhmin` half-precision data-transfer and conversion instructions are decoded and executed, including `FLH`, `FSH`, `FMV.X.H`, `FMV.H.X`, `FCVT.S.H`, `FCVT.H.S`, and the `D`-dependent `FCVT.D.H` / `FCVT.H.D` conversions.
 - `Zfa` additional floating-point instructions are decoded and executed for the implemented RV64 F/D profile, including floating-point immediate loads, IEEE 754-2019 min/max-number, round-to-integer, modular double-to-word conversion, and quiet comparisons.
 - `Zicbom` cache-block clean, flush, and invalidate decode as no-ops in the current cacheless model; `Zicboz` zeroes the containing 64-byte cache block through normal guest memory writes.
-- Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, and existing `Zicntr` capabilities, plus 64-byte CBO block-size keys.
+- Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, `Zicntr`, `Zihpm`, `Zaamo`, and `Zalrsc` capabilities, plus 64-byte CBO block-size keys.
+- User hardware performance counter CSRs `hpmcounter3` through `hpmcounter31` are exposed as deterministic read-only zero counters, matching the minimal current `Zihpm` model without inventing host performance events.
+- Mandatory RVA22U64 `fence.tso` behavior is covered as a regular fence no-op distinct from `fence.i` instruction-fetch synchronization.
 - Linux `riscv_hwprobe` reports ordinary misaligned scalar accesses as software-emulated support while keeping misaligned vector accesses unsupported.
 - `hwprobe` regression coverage now asserts that optional or not-yet-claimed extensions such as `V`, full `Zfh`, `Zkt`, `Zacas`, `Zicond`, and `Zawrs` are not reported.
 - Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented first slice.

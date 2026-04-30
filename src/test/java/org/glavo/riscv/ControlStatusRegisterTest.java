@@ -52,6 +52,12 @@ public final class ControlStatusRegisterTest {
     /// The `instret` CSR address.
     private static final int INSTRET_CSR = 0xc02;
 
+    /// The first `hpmcounter` CSR address.
+    private static final int HPMCOUNTER3_CSR = 0xc03;
+
+    /// The last `hpmcounter` CSR address.
+    private static final int HPMCOUNTER31_CSR = 0xc1f;
+
     /// The first result register used by CSR tests.
     private static final int RESULT_REGISTER = 10;
 
@@ -133,6 +139,24 @@ public final class ControlStatusRegisterTest {
         }
     }
 
+    /// Verifies deterministic zero reads for user hardware performance counter CSRs.
+    @Test
+    public void hardwarePerformanceCounterCsrsReadZero() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    csrrs(RESULT_REGISTER, HPMCOUNTER3_CSR, 0),
+                    csrrs(SECOND_RESULT_REGISTER, HPMCOUNTER31_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+
+            runDecodedProgram(machine);
+
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+            assertEquals(0, machine.state().register(SECOND_RESULT_REGISTER));
+        }
+    }
+
     /// Verifies the minimal machine-mode CSR and `mret` behavior needed by `riscv-test-env`.
     @Test
     public void machineBootstrapCompatibilityCsrsExecute() {
@@ -169,6 +193,20 @@ public final class ControlStatusRegisterTest {
         }
     }
 
+    /// Verifies that writing a read-only hardware performance counter CSR fails with a useful diagnostic.
+    @Test
+    public void writingHardwarePerformanceCounterCsrFails() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(machine.memory(), csrrw(0, HPMCOUNTER3_CSR, 0), ElfTestImages.ecall());
+            prepareExit(machine.state());
+
+            RiscVException exception = assertThrows(RiscVException.class, () -> runDecodedProgram(machine, 1));
+
+            assertTrue(exception.getMessage().contains("read-only"));
+            assertTrue(exception.getMessage().contains("0xc03"));
+        }
+    }
+
     /// Verifies that unsupported user-mode CSR reads fail with a useful diagnostic.
     @Test
     public void unsupportedCsrFails() {
@@ -198,6 +236,25 @@ public final class ControlStatusRegisterTest {
 
             assertEquals(42, machine.state().register(RESULT_REGISTER));
             assertEquals(1, machine.state().instructionFetchGeneration());
+        }
+    }
+
+    /// Verifies that mandatory RVA22U64 `fence.tso` executes through the regular fence no-op path.
+    @Test
+    public void fenceTsoNoOpExecutes() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    ElfTestImages.addi(RESULT_REGISTER, 0, 41),
+                    fenceTso(),
+                    ElfTestImages.addi(RESULT_REGISTER, RESULT_REGISTER, 1),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+
+            runDecodedProgram(machine);
+
+            assertEquals(42, machine.state().register(RESULT_REGISTER));
+            assertEquals(0, machine.state().instructionFetchGeneration());
         }
     }
 
@@ -265,6 +322,11 @@ public final class ControlStatusRegisterTest {
     /// Encodes `fence.i`.
     private static int fenceI() {
         return 0x0000_100f;
+    }
+
+    /// Encodes `fence.tso`.
+    private static int fenceTso() {
+        return 0x8330_000f;
     }
 
     /// Encodes `mret`.

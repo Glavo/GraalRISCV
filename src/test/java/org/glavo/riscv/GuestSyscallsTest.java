@@ -3198,6 +3198,11 @@ public final class GuestSyscallsTest {
             assertEquals(RISCV_HWPROBE_BASE_BEHAVIOR_IMA, readHwprobeValue(memory, pairsAddress, 1));
             long imaExtensions = readHwprobeValue(memory, pairsAddress, 2);
             assertEquals(RiscVExtensions.HWPROBE_IMA_EXTENSIONS, imaExtensions);
+            long expectedSplitAtomicAndCounterExtensions =
+                    RiscVExtensions.HWPROBE_EXT_ZIHPM
+                            | RiscVExtensions.HWPROBE_EXT_ZAAMO
+                            | RiscVExtensions.HWPROBE_EXT_ZALRSC;
+            assertEquals(expectedSplitAtomicAndCounterExtensions, imaExtensions & expectedSplitAtomicAndCounterExtensions);
             long unreportedOptionalExtensions =
                     RISCV_HWPROBE_IMA_V
                             | RISCV_HWPROBE_EXT_ZKT
