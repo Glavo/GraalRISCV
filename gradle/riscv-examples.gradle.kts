@@ -11,6 +11,7 @@ import org.gradle.jvm.toolchain.JavaToolchainService
 import org.glavo.go.GoUtils
 import org.glavo.go.RiscVGoBuildTask
 import org.glavo.zig.AbstractRiscVZigCCTask
+import org.glavo.zig.ExtractZigTask
 import org.glavo.zig.RiscVFreestandingZigCCTask
 import org.glavo.zig.RiscVLinuxMuslStaticZigCCTask
 import org.glavo.zig.ZigUtils
@@ -24,9 +25,9 @@ val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.t
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
-val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
+val zigInstallDirectory = layout.buildDirectory.dir("tools/zig/${ZigUtils.getZigArchiveBaseName()}")
 val zigExecutableFile = zigInstallDirectory.map {
-    it.file("${ZigUtils.getZigArchiveBaseName()}/${ZigUtils.getZigExecutableName()}")
+    it.file(ZigUtils.getZigExecutableName())
 }
 val goArchiveName = GoUtils.getGoArchiveName()
 val goArchiveFile = layout.buildDirectory.file("downloads/go/$goArchiveName")
@@ -146,20 +147,13 @@ tasks.register<Exec>("goToolchainVersion") {
     }
 }
 
-val extractZig by tasks.registering {
+val extractZig by tasks.registering(ExtractZigTask::class) {
     group = "build setup"
     description = "Extracts the downloaded Zig toolchain."
 
     dependsOn(downloadZig)
-    inputs.file(zigArchiveFile)
-    outputs.file(zigExecutableFile)
-
-    doLast {
-        val installDirectory = zigInstallDirectory.get().asFile
-        delete(installDirectory)
-        val archive = zigArchiveFile.get().asFile
-        ZigUtils.extractZigArchive(archive, installDirectory)
-    }
+    archiveFile.set(zigArchiveFile)
+    installDirectory.set(zigInstallDirectory)
 }
 
 // Static Go hello-world example.
