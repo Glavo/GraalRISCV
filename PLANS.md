@@ -30,6 +30,7 @@
 ### 5. Build, documentation, and performance groundwork
 
 - Zig, Go, package smoke, CI aggregation, README, and native-image tasks are in place for the current example and packaging workflows.
+- Gradle can download the pinned `riscv-tests` and `riscv-test-env` source archives, then build RV64GC `p` ISA test ELFs with Zig CC on Windows without invoking Make.
 - Performance diagnostics have been kept out of the default hot paths; tracing and Truffle compilation diagnostics remain opt-in debug or task-level probes.
 - The current trace and micro-bytecode executor includes specialized block execution modes and dedicated floating-point micro-opcodes.
 
