@@ -7,6 +7,7 @@ import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
+import org.glavo.AbstractRiscVZigCCTask
 import org.glavo.RiscVFreestandingZigCCTask
 import org.glavo.RiscVLinuxMuslStaticZigCCTask
 import org.glavo.ZigUtils
@@ -46,14 +47,26 @@ val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
 val zigExecutableFile = zigInstallDirectory.map {
     it.file("${ZigUtils.getZigArchiveBaseName()}/${ZigUtils.getZigExecutableName()}")
 }
+val configuredZigExecutablePath = providers.gradleProperty("graalriscv.zigExecutable")
+    .orElse(providers.gradleProperty("zigExecutable"))
+    .orElse(providers.environmentVariable("ZIG_EXECUTABLE"))
 val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
 val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }
 
+fun AbstractRiscVZigCCTask.configureZigExecutable() {
+    val configuredPath = configuredZigExecutablePath.orNull
+    if (configuredPath != null) {
+        zigExecutable.fileValue(file(configuredPath))
+    } else {
+        dependsOn(extractZig)
+        zigExecutable.set(zigExecutableFile)
+    }
+}
+
 fun RiscVLinuxMuslStaticZigCCTask.configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
-    dependsOn(extractZig)
-    zigExecutable.set(zigExecutableFile)
+    configureZigExecutable()
     sourceFile.set(layout.projectDirectory.file("examples/linux-static/$sourceFileName"))
     outputFile.set(elfFile)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
@@ -96,10 +109,9 @@ val extractZig by tasks.registering {
 
 tasks.register<RiscVFreestandingZigCCTask>("buildHelloWorldExample") {
     group = "verification"
-    description = "Builds examples/freestanding/HelloWorld.c for RISC-V with the Gradle-managed Zig toolchain."
+    description = "Builds examples/freestanding/HelloWorld.c for RISC-V with Zig CC."
 
-    dependsOn(extractZig)
-    zigExecutable.set(zigExecutableFile)
+    configureZigExecutable()
     sourceFile.set(layout.projectDirectory.file("examples/freestanding/HelloWorld.c"))
     linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
     outputFile.set(helloWorldExampleElf)
@@ -109,10 +121,9 @@ tasks.register<RiscVFreestandingZigCCTask>("buildHelloWorldExample") {
 
 tasks.register<RiscVFreestandingZigCCTask>("buildHotLoopExample") {
     group = "verification"
-    description = "Builds examples/freestanding/HotLoop.c for RISC-V with the Gradle-managed Zig toolchain."
+    description = "Builds examples/freestanding/HotLoop.c for RISC-V with Zig CC."
 
-    dependsOn(extractZig)
-    zigExecutable.set(zigExecutableFile)
+    configureZigExecutable()
     sourceFile.set(layout.projectDirectory.file("examples/freestanding/HotLoop.c"))
     linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
     outputFile.set(hotLoopExampleElf)

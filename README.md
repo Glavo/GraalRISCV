@@ -130,7 +130,7 @@ Supported syscall families currently include:
 
 ## Build The Freestanding C Examples
 
-Gradle uses the managed Zig toolchain to build the freestanding RISC-V examples:
+Gradle uses Zig CC to build the freestanding RISC-V examples:
 
 ```text
 ./gradlew buildHelloWorldExample
@@ -156,8 +156,19 @@ Hello World!
 ## Build Static Linux C Examples
 
 The `examples/linux-static` directory contains static `riscv64-linux-musl`
-acceptance programs. They are built with Gradle-managed Zig and executed through
-the GraalRISCV CLI.
+acceptance programs. They are built with Zig CC and executed through the
+GraalRISCV CLI.
+
+By default Gradle downloads and extracts the configured Zig release. To use an
+existing Zig executable and skip the automatic download, pass either a Gradle
+property or an environment variable:
+
+```text
+./gradlew "-PzigExecutable=/path/to/zig" buildHelloWorldExample
+ZIG_EXECUTABLE=/path/to/zig ./gradlew buildHelloWorldExample
+```
+
+The namespaced `graalriscv.zigExecutable` Gradle property is also accepted.
 
 Run the static musl `printf` example:
 
@@ -214,8 +225,9 @@ Run the local CI verification task:
 
 This compiles main and test sources, runs the unit tests, builds distribution
 artifacts, builds the Shadow JAR, and runs no-toolchain package smoke checks.
-When the managed Zig archive or extracted toolchain is already present, it also
-runs the static Linux C example checks.
+When the managed Zig archive, extracted toolchain, or manual Zig executable
+configuration is already present, it also runs the static Linux C example
+checks.
 
 Run the Zig-backed CI example checks explicitly:
 

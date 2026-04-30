@@ -23,7 +23,11 @@ val javaLauncher = javaToolchains.launcherFor {
 val includeZigExampleChecks = providers.gradleProperty("graalriscvCiIncludeZigExamples")
     .map(String::toBooleanStrict)
     .orElse(providers.provider {
-        zigArchiveFile.get().asFile.isFile || zigExecutableFile.get().asFile.isFile
+        providers.gradleProperty("graalriscv.zigExecutable").isPresent
+                || providers.gradleProperty("zigExecutable").isPresent
+                || providers.environmentVariable("ZIG_EXECUTABLE").isPresent
+                || zigArchiveFile.get().asFile.isFile
+                || zigExecutableFile.get().asFile.isFile
     })
 
 fun verifySmokeOutput(taskName: String, stdout: ByteArrayOutputStream, stderr: ByteArrayOutputStream) {
@@ -118,7 +122,7 @@ tasks.register("packageSmokeTest") {
 
 tasks.register("ciZigExampleCheck") {
     group = "verification"
-    description = "Runs CI example checks that require the Gradle-managed Zig toolchain."
+    description = "Runs CI example checks that require a Zig toolchain."
 
     dependsOn("checkHelloWorldExample")
 }
