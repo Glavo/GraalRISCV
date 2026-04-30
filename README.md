@@ -4,40 +4,9 @@
 GraalRISCV is a pure Java 64-bit RISC-V user-mode emulator built with GraalVM’s Truffle framework.
 It can be used to run 64-bit RISC-V ELF executables on the JVM.
 
-The project is currently under development.
-
-We have implemented the complete RVA20U64 Profile (RV64GC) and are gradually adding support for more system calls.
-
-It can already run some programs statically linked against musl libc.
-
-For example, it can already run CoreMark:
-
-```
-> arch
-x86_64
-> file coremark.riscv64-musl
-coremark.riscv64-musl: ELF 64-bit LSB executable, UCB RISC-V, RVC, double-float ABI, version 1 (SYSV), statically linked, with debug_info, not stripped
-> java -jar GraalRISCV-1.0-SNAPSHOT-all.jar coremark.riscv64-musl
-2K performance run parameters for coremark.
-CoreMark Size    : 666
-Total ticks      : 12492
-Total time (secs): 12.492000
-Iterations/Sec   : 880.563561
-Iterations       : 11000
-Compiler version : Clang 21.1.0
-Compiler flags   : -O2   -lrt
-Memory location  : Please put data memory location here
-                        (e.g. code in flash, data on heap etc)
-seedcrc          : 0xe9f5
-[0]crclist       : 0xe714
-[0]crcmatrix     : 0x1fd7
-[0]crcstate      : 0x8e3a
-[0]crcfinal      : 0x33ff
-Correct operation validated. See README.md for run and reporting rules.
-CoreMark 1.0 : 880.563561 / Clang 21.1.0 -O2   -lrt / Heap
-```
-
-We are working to support more programs.
+The project is currently under development. It implements the complete
+RVA20U64 profile (RV64GC) and can already run freestanding examples, static
+musl C programs, static Go programs, and CoreMark.
 
 ## Requirements
 
@@ -101,136 +70,53 @@ ELF metadata such as `PT_INTERP`, `PT_DYNAMIC`, `SHT_DYNAMIC`, `SHT_REL`, and
 
 ## Current Linux User-Mode Support
 
-The simulator implements a deterministic single-process subset of the Linux
-RISC-V syscall ABI for static libc programs. File syscalls are implemented
-through Truffle file APIs and sandboxed under `--host-root`.
+The simulator implements enough Linux RISC-V user-mode behavior to run the
+bundled static musl examples, the static Go example, CoreMark, and similar
+static ELF programs. File access is sandboxed under `--host-root`.
 
-Supported syscall families currently include:
+## Examples
 
-- process exit and identity queries
-- `read`, `write`, `readv`, `writev`
-- `pread64`, `pwrite64`
-- `openat`, `close`, `fstat`, `newfstatat`, `readlinkat`, `getdents64`,
-  `mkdirat`, `unlinkat`, `renameat`, `renameat2`, `truncate`, `ftruncate`,
-  `statfs`, `fstatfs`, `statx`, `sync`, `fsync`, `fdatasync`, `syncfs`,
-  `lseek`, `ioctl`, `fcntl`, `dup`, `dup3`, and `pipe2`
-- deterministic single-process `eventfd2`, `epoll_create1`, `epoll_ctl`, and
-  zero-timeout `epoll_pwait`
-- `getcwd`, `chdir`, `fchdir`, `faccessat`, and `faccessat2`
-- `brk`, `mmap`, `munmap`, `mprotect`, `madvise`, and `riscv_hwprobe`
-- `clock_gettime`, `gettimeofday`, `times`, `nanosleep`, `getrusage`, and
-  `prlimit64`
-- deterministic compatibility for `set_tid_address`, `set_robust_list`,
-  signal-mask setup, signal-action setup, `sigaltstack`,
-  `sched_getaffinity`, `sched_yield`, and process-group probes
-- Linux thread-style `clone` and futex paths used by simple static musl pthread
-  joins
-- `getrandom`, which returns deterministic pseudo-random bytes for reproducible
-  runs
-
-## Build The Freestanding C Examples
-
-Gradle uses Zig CC to build the freestanding RISC-V examples:
-
-```text
-./gradlew buildHelloWorldExample
-./gradlew runHelloWorldExample
-./gradlew testHotLoopExample
-```
-
-Generated ELFs:
-
-```text
-build/examples/freestanding/hello.elf
-build/examples/freestanding/hot-loop.elf
-```
-
-The source files and linker script are under `examples/freestanding`.
-
-Expected `HelloWorld.c` simulator output:
-
-```text
-Hello World!
-```
-
-## Build Static Linux C Examples
-
-The `examples/linux-static` directory contains static `riscv64-linux-musl`
-acceptance programs. They are built with Zig CC and executed through the
-GraalRISCV CLI.
+Each `run...Example` and `test...Example` task builds the required RISC-V
+program before executing it.
 
 By default Gradle downloads and extracts the configured Zig release. To use an
-existing Zig executable and skip the automatic download, pass either a Gradle
-property or an environment variable:
+existing Zig executable, pass either a Gradle property or an environment
+variable:
 
 ```text
 ./gradlew "-PzigExecutable=/path/to/zig" buildHelloWorldExample
 ZIG_EXECUTABLE=/path/to/zig ./gradlew buildHelloWorldExample
 ```
 
-The namespaced `graalriscv.zigExecutable` Gradle property is also accepted.
+Gradle can also download and extract the configured Go toolchain. To use an
+existing Go executable, pass `goExecutable`, `graalriscv.goExecutable`, or
+`GO_EXECUTABLE`.
 
-Gradle can also download and extract the configured Go toolchain:
-
-```text
-./gradlew extractGo
-./gradlew goToolchainVersion
-```
-
-To use an existing Go executable, pass `goExecutable`,
-`graalriscv.goExecutable`, or `GO_EXECUTABLE`.
-
-Build and run the static Go hello-world example:
-
-```text
-./gradlew buildGoHelloWorldExample
-./gradlew runGoHelloWorldExample
-./gradlew testGoHelloWorldExample
-```
-
-Run the static musl `printf` example:
-
-```text
-./gradlew runLinuxStaticPrintfExample
-```
-
-Run the static Linux smoke checks:
-
-```text
-./gradlew testLinuxStaticPrintfExample
-./gradlew testLinuxStaticArgvExample
-./gradlew testLinuxStaticFileIoExample
-./gradlew testLinuxStaticDirectoryListExample
-./gradlew testLinuxStaticFileMutationExample
-./gradlew testLinuxStaticWorkingDirectoryExample
-./gradlew testLinuxStaticFilesystemStatusExample
-./gradlew testLinuxStaticStatxMetadataExample
-./gradlew testLinuxStaticPositionedIoExample
-./gradlew testLinuxStaticEventPollingExample
-./gradlew testLinuxStaticThreadJoinExample
-./gradlew testLinuxStaticRuntimeServicesExample
-./gradlew testLinuxStaticProcessSignalsExample
-```
-
-Build and run the downloaded CoreMark example:
-
-```text
-./gradlew buildCoreMarkExample
-./gradlew runCoreMarkExample
-./gradlew testCoreMarkExample
-```
-
-Run every built-in example smoke check:
-
-```text
-./gradlew checkHelloWorldExample
-```
-
-Generated static Linux ELFs are written under:
-
-```text
-build/examples/linux-static
-```
+| Example | Purpose | Command |
+| --- | --- | --- |
+| Freestanding Hello World | Run the smallest freestanding output example. | `./gradlew runHelloWorldExample` |
+| Freestanding Hello World check | Verify the freestanding output. | `./gradlew testHelloWorldExample` |
+| Freestanding hot loop | Run a small CPU hot-loop probe. | `./gradlew runHotLoopExample` |
+| Freestanding hot loop check | Verify the hot-loop result. | `./gradlew testHotLoopExample` |
+| Static Go hello-world | Build and run a static `linux/riscv64` Go program. | `./gradlew runGoHelloWorldExample` |
+| Static Go hello-world check | Verify the Go program output. | `./gradlew testGoHelloWorldExample` |
+| Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
+| Static musl printf check | Verify static musl `printf` output. | `./gradlew testLinuxStaticPrintfExample` |
+| Static Linux argv check | Verify guest argument passing. | `./gradlew testLinuxStaticArgvExample` |
+| Static Linux file I/O check | Verify basic file reads and writes. | `./gradlew testLinuxStaticFileIoExample` |
+| Static Linux directory listing check | Verify directory iteration. | `./gradlew testLinuxStaticDirectoryListExample` |
+| Static Linux file mutation check | Verify create, rename, and remove paths. | `./gradlew testLinuxStaticFileMutationExample` |
+| Static Linux working directory check | Verify guest working-directory operations. | `./gradlew testLinuxStaticWorkingDirectoryExample` |
+| Static Linux filesystem status check | Verify filesystem status queries. | `./gradlew testLinuxStaticFilesystemStatusExample` |
+| Static Linux statx metadata check | Verify file metadata queries. | `./gradlew testLinuxStaticStatxMetadataExample` |
+| Static Linux positioned I/O check | Verify positioned reads and writes. | `./gradlew testLinuxStaticPositionedIoExample` |
+| Static Linux event polling check | Verify simple event polling behavior. | `./gradlew testLinuxStaticEventPollingExample` |
+| Static Linux thread join check | Verify a simple guest thread join. | `./gradlew testLinuxStaticThreadJoinExample` |
+| Static Linux runtime services check | Verify runtime service calls used by libc programs. | `./gradlew testLinuxStaticRuntimeServicesExample` |
+| Static Linux process signals check | Verify process signal setup paths used by static programs. | `./gradlew testLinuxStaticProcessSignalsExample` |
+| CoreMark | Build and run the downloaded CoreMark benchmark. | `./gradlew runCoreMarkExample` |
+| CoreMark check | Verify CoreMark validation output. | `./gradlew testCoreMarkExample` |
+| All built-in example checks | Run all bundled smoke checks. | `./gradlew checkHelloWorldExample` |
 
 ## Package And CI Smoke Checks
 
