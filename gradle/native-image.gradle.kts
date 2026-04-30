@@ -27,6 +27,31 @@ val nativeImageSmokeElfFile = layout.buildDirectory.file("fixtures/smoke/smoke.e
 val nativeImageJavaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }
+val nativeImageTruffleRuntimeModules = "org.graalvm.truffle.runtime,org.graalvm.truffle.runtime.svm"
+val nativeImageJvmciExportArgs = listOf(
+    "jdk.vm.ci.code",
+    "jdk.vm.ci.code.stack",
+    "jdk.vm.ci.common",
+    "jdk.vm.ci.hotspot",
+    "jdk.vm.ci.meta",
+    "jdk.vm.ci.runtime",
+    "jdk.vm.ci.services",
+).map { packageName ->
+    "--add-exports=jdk.internal.vm.ci/$packageName=$nativeImageTruffleRuntimeModules"
+}
+val nativeImageModuleArgs = listOf(
+    "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED",
+    "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+    *nativeImageJvmciExportArgs.toTypedArray()
+)
+val nativeImageBuilderJvmArgs = listOf(
+    "-J--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED",
+    "-J--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+    "-J--sun-misc-unsafe-memory-access=allow"
+)
+val nativeImageTruffleArgs = listOf(
+    "--enable-native-access=org.graalvm.truffle"
+)
 val configuredNativeImageHome = providers.gradleProperty("nativeImageGraalVmHome")
     .orElse(providers.gradleProperty("graalVmHome"))
     .orElse(providers.environmentVariable("GRAALVM_HOME"))
@@ -77,6 +102,9 @@ tasks.register<Exec>("nativeCompile") {
     inputs.property("mainClassName", nativeImageMainClassName)
     inputs.property("executableName", nativeImageExecutableName)
     inputs.property("graalVmHome", configuredNativeImageHome.orNull ?: "")
+    inputs.property("nativeImageModuleArgs", nativeImageModuleArgs)
+    inputs.property("nativeImageBuilderJvmArgs", nativeImageBuilderJvmArgs)
+    inputs.property("nativeImageTruffleArgs", nativeImageTruffleArgs)
     outputs.file(nativeImageExecutableFile)
 
     doFirst {
@@ -89,7 +117,7 @@ tasks.register<Exec>("nativeCompile") {
 
         val nativeImageExecutable = resolveNativeImageExecutable()
         val runtimeClasspath = sourceSets.named("main").get().runtimeClasspath.asPath
-        val arguments = listOf(
+        val arguments = nativeImageBuilderJvmArgs + nativeImageModuleArgs + nativeImageTruffleArgs + listOf(
             "--no-fallback",
             "--initialize-at-build-time=org.glavo.riscv.RiscVLanguageProvider",
             "-o",
