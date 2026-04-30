@@ -139,6 +139,9 @@ public final class MachineState {
     /// The active LR/SC reservation address, or `ABSENT_ADDRESS` when none exists.
     private long reservationAddress = ElfImage.ABSENT_ADDRESS;
 
+    /// The byte width of the active LR/SC reservation.
+    private int reservationLength;
+
     /// Creates a new architectural state container.
     public MachineState(
             Memory memory,
@@ -418,20 +421,22 @@ public final class MachineState {
         }
     }
 
-    /// Sets the LR/SC reservation address.
-    public void reserve(long address) {
+    /// Sets the LR/SC reservation address and data width.
+    public void reserve(long address, int length) {
         reservationAddress = address;
+        reservationLength = length;
     }
 
-    /// Returns true when the supplied address matches the active LR/SC reservation.
-    public boolean hasReservation(long address) {
-        return reservationAddress == address;
+    /// Returns true when the supplied address and data width match the active LR/SC reservation.
+    public boolean hasReservation(long address, int length) {
+        return reservationAddress == address && reservationLength == length;
     }
 
     /// Clears the active LR/SC reservation.
     public void clearReservation() {
         if (reservationAddress != ElfImage.ABSENT_ADDRESS) {
             reservationAddress = ElfImage.ABSENT_ADDRESS;
+            reservationLength = 0;
         }
     }
 

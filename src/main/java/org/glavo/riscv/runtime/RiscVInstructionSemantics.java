@@ -2240,8 +2240,9 @@ public abstract sealed class RiscVInstructionSemantics {
     private void lrWord(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.decodedRegister(rs1);
+            requireAtomicAlignment(address, Integer.BYTES);
             state.setDecodedRegister(rd, memory.readInt(address));
-            state.reserve(address);
+            state.reserve(address, Integer.BYTES);
         }
         state.setPc(nextPc);
     }
@@ -2251,8 +2252,9 @@ public abstract sealed class RiscVInstructionSemantics {
     private void lrDouble(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.decodedRegister(rs1);
+            requireAtomicAlignment(address, Long.BYTES);
             state.setDecodedRegister(rd, memory.readLong(address));
-            state.reserve(address);
+            state.reserve(address, Long.BYTES);
         }
         state.setPc(nextPc);
     }
@@ -2262,7 +2264,8 @@ public abstract sealed class RiscVInstructionSemantics {
     private void scWord(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.decodedRegister(rs1);
-            if (state.hasReservation(address)) {
+            requireAtomicAlignment(address, Integer.BYTES);
+            if (state.hasReservation(address, Integer.BYTES)) {
                 memory.writeInt(address, (int) state.decodedRegister(rs2));
                 afterStore(state, address, Integer.BYTES);
                 state.setDecodedRegister(rd, 0);
@@ -2279,7 +2282,8 @@ public abstract sealed class RiscVInstructionSemantics {
     private void scDouble(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.decodedRegister(rs1);
-            if (state.hasReservation(address)) {
+            requireAtomicAlignment(address, Long.BYTES);
+            if (state.hasReservation(address, Long.BYTES)) {
                 memory.writeLong(address, state.decodedRegister(rs2));
                 afterStore(state, address, Long.BYTES);
                 state.setDecodedRegister(rd, 0);
@@ -2296,6 +2300,7 @@ public abstract sealed class RiscVInstructionSemantics {
     private void amoWord(MachineState state, Memory memory, long nextPc, AmoKind kind) {
         synchronized (memory) {
             long address = state.decodedRegister(rs1);
+            requireAtomicAlignment(address, Integer.BYTES);
             int oldValue = memory.readInt(address);
             int source = (int) state.decodedRegister(rs2);
             int newValue = switch (kind) {
@@ -2322,6 +2327,7 @@ public abstract sealed class RiscVInstructionSemantics {
     private void amoDouble(MachineState state, Memory memory, long nextPc, AmoKind kind) {
         synchronized (memory) {
             long address = state.decodedRegister(rs1);
+            requireAtomicAlignment(address, Long.BYTES);
             long oldValue = memory.readLong(address);
             long source = state.decodedRegister(rs2);
             long newValue = switch (kind) {
@@ -2341,6 +2347,15 @@ public abstract sealed class RiscVInstructionSemantics {
             state.clearReservation();
         }
         state.setPc(nextPc);
+    }
+
+    /// Verifies natural alignment for an atomic memory access.
+    private static void requireAtomicAlignment(long address, int length) {
+        if ((address & (length - 1L)) != 0) {
+            throw new RiscVException("Misaligned atomic memory access: address=0x"
+                    + Long.toUnsignedString(address, 16)
+                    + ", size=" + length);
+        }
     }
 
 

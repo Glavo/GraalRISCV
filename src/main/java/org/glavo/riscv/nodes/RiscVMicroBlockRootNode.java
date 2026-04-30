@@ -798,8 +798,9 @@ final class RiscVMicroBlockNode extends Node {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
+            requireAtomicAlignment(address, Integer.BYTES);
             writeRegister(registers, rd(operand), access.readInt(address, memoryLayout));
-            state.reserve(address);
+            state.reserve(address, Integer.BYTES);
         }
         finishInstruction(state, index, mode);
     }
@@ -816,8 +817,9 @@ final class RiscVMicroBlockNode extends Node {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
+            requireAtomicAlignment(address, Long.BYTES);
             writeRegister(registers, rd(operand), access.readLong(address, memoryLayout));
-            state.reserve(address);
+            state.reserve(address, Long.BYTES);
         }
         finishInstruction(state, index, mode);
     }
@@ -834,7 +836,8 @@ final class RiscVMicroBlockNode extends Node {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
-            if (state.hasReservation(address)) {
+            requireAtomicAlignment(address, Integer.BYTES);
+            if (state.hasReservation(address, Integer.BYTES)) {
                 access.writeInt(address, (int) registers[rs2(operand)], memoryLayout);
                 afterStore(state, address, Integer.BYTES, mode);
                 writeRegister(registers, rd(operand), 0);
@@ -858,7 +861,8 @@ final class RiscVMicroBlockNode extends Node {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
-            if (state.hasReservation(address)) {
+            requireAtomicAlignment(address, Long.BYTES);
+            if (state.hasReservation(address, Long.BYTES)) {
                 access.writeLong(address, registers[rs2(operand)], memoryLayout);
                 afterStore(state, address, Long.BYTES, mode);
                 writeRegister(registers, rd(operand), 0);
@@ -883,6 +887,7 @@ final class RiscVMicroBlockNode extends Node {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
+            requireAtomicAlignment(address, Integer.BYTES);
             int oldValue = access.readInt(address, memoryLayout);
             int source = (int) registers[rs2(operand)];
             int newValue = switch (kind) {
@@ -917,6 +922,7 @@ final class RiscVMicroBlockNode extends Node {
         beginMemoryInstruction(state, index, mode);
         synchronized (memory) {
             long address = registers[rs1(operand)];
+            requireAtomicAlignment(address, Long.BYTES);
             long oldValue = access.readLong(address, memoryLayout);
             long source = registers[rs2(operand)];
             long newValue = switch (kind) {
@@ -936,6 +942,15 @@ final class RiscVMicroBlockNode extends Node {
             state.clearReservation();
         }
         finishInstruction(state, index, mode);
+    }
+
+    /// Verifies natural alignment for an atomic memory access.
+    private static void requireAtomicAlignment(long address, int length) {
+        if ((address & (length - 1L)) != 0) {
+            throw new RiscVException("Misaligned atomic memory access: address=0x"
+                    + Long.toUnsignedString(address, 16)
+                    + ", size=" + length);
+        }
     }
 
     /// Handles optional simulator side effects after a store.

@@ -3,6 +3,7 @@
 
 package org.glavo.riscv;
 
+import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
@@ -13,6 +14,8 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// Tests single-threaded RV64A atomic instruction behavior.
 @NotNullByDefault
@@ -77,6 +80,36 @@ public final class AtomicInstructionSemanticsTest {
         }
     }
 
+    /// Verifies that store-conditional requires the same data width as the latest load-reserved.
+    @Test
+    public void storeConditionalRequiresMatchingLoadReservedWidth() {
+        try (TestMachine machine = TestMachine.create()) {
+            machine.memory().writeLong(DATA_ADDRESS, 0x1122_3344_5566_7788L);
+            machine.state().setRegister(ADDRESS_REGISTER, DATA_ADDRESS);
+
+            execute(machine, RiscVOperation.LR_W, RESULT_REGISTER, ADDRESS_REGISTER, 0, 0);
+
+            machine.state().setRegister(VALUE_REGISTER, 0x0102_0304_0506_0708L);
+            execute(machine, RiscVOperation.SC_D, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
+
+            assertEquals(1, machine.state().register(RESULT_REGISTER));
+            assertEquals(0x1122_3344_5566_7788L, machine.memory().readLong(DATA_ADDRESS));
+        }
+    }
+
+    /// Verifies that atomic memory instructions require natural alignment.
+    @Test
+    public void atomicMemoryInstructionsRequireNaturalAlignment() {
+        try (TestMachine machine = TestMachine.create()) {
+            machine.state().setRegister(ADDRESS_REGISTER, DATA_ADDRESS + 1);
+            machine.state().setRegister(VALUE_REGISTER, 2);
+
+            assertMisalignedAtomicAccess(machine, RiscVOperation.LR_W, 0);
+            assertMisalignedAtomicAccess(machine, RiscVOperation.SC_D, VALUE_REGISTER);
+            assertMisalignedAtomicAccess(machine, RiscVOperation.AMOADD_W, VALUE_REGISTER);
+        }
+    }
+
     /// Verifies that word AMOs return the old sign-extended value and store the new word value.
     @Test
     public void wordAmoReturnsOldValueAndStoresNewWord() {
@@ -128,6 +161,13 @@ public final class AtomicInstructionSemanticsTest {
                 false);
         instruction.execute(machine.state());
         assertEquals(pc + Integer.BYTES, machine.state().pc());
+    }
+
+    /// Verifies that one misaligned atomic operation throws the expected diagnostic.
+    private static void assertMisalignedAtomicAccess(TestMachine machine, RiscVOperation operation, int rs2) {
+        RiscVException exception = assertThrows(RiscVException.class, () ->
+                execute(machine, operation, RESULT_REGISTER, ADDRESS_REGISTER, rs2, 0));
+        assertTrue(exception.getMessage().contains("Misaligned atomic memory access"));
     }
 
     /// Owns an atomic-instruction test machine and its closeable resources.
