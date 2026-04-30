@@ -5,6 +5,7 @@ package org.glavo.riscv.memory;
 
 import com.oracle.truffle.api.ContextThreadLocal;
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.runtime.PerformanceCounters;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -245,8 +246,13 @@ public final class Memory implements AutoCloseable {
 
     /// Creates a memory access facade bound to the current Truffle context and host thread.
     public MemoryAccess newAccess() {
+        return newAccess(null);
+    }
+
+    /// Creates a memory access facade with optional performance counters.
+    public MemoryAccess newAccess(@Nullable PerformanceCounters performanceCounters) {
         @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return new MemoryAccess(this, cache == null ? null : cache.get());
+        return new MemoryAccess(this, cache == null ? null : cache.get(), performanceCounters);
     }
 
     /// Copies bytes from a host array into guest memory.
@@ -862,7 +868,15 @@ public final class Memory implements AutoCloseable {
             boolean instruction,
             @Nullable MappedRegionCache cache,
             @Nullable MemoryAccess access) {
-        return cache == null ? null : cache.page(pageNumber, address, length, requiredProtection, generation, instruction, access);
+        if (cache == null) {
+            return null;
+        }
+
+        @Nullable MemoryPage page = cache.page(pageNumber, address, length, requiredProtection, generation, instruction, access);
+        if (access != null) {
+            access.recordSoftwareTlbLookup(page != null);
+        }
+        return page;
     }
 
     /// Stores a committed page in the supplied software TLB and access-local cache.

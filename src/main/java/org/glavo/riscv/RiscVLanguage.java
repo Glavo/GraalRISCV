@@ -134,6 +134,14 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             stability = OptionStability.STABLE)
     static final OptionKey<Boolean> TRACE = new OptionKey<>(false);
 
+    /// The `riscv.debugPerformance` language option.
+    @Option(
+            name = "debugPerformance",
+            help = "Print low-overhead simulator performance counters to stderr when the guest exits. Default: false.",
+            category = OptionCategory.EXPERT,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Boolean> DEBUG_PERFORMANCE = new OptionKey<>(false);
+
     /// The `riscv.debugFixedClockNanos` language option.
     @Option(
             name = "debugFixedClockNanos",
@@ -169,6 +177,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(HUGE_PAGES),
                 env.getOptions().get(MAX_INSTRUCTIONS),
                 env.getOptions().get(TRACE),
+                env.getOptions().get(DEBUG_PERFORMANCE),
                 clockFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),
                 env.getOptions().get(HOST_ROOT),
                 mappedRegionCache);

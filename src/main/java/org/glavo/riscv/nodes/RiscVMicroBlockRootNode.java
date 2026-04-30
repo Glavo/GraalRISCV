@@ -18,8 +18,10 @@ import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.MachineState;
+import org.glavo.riscv.runtime.PerformanceCounters;
 import org.glavo.riscv.runtime.RiscVInstructionSemantics;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 /// Executes one decoded RISC-V basic block through the custom micro-bytecode interpreter.
@@ -448,6 +450,10 @@ final class RiscVMicroBlockNode extends Node {
     /// Executes a canonical operation that does not yet need a dedicated opcode value.
     private void executeOperation(MachineState state, int index, int operand) {
         RiscVOperation operation = operations[index];
+        @Nullable PerformanceCounters counters = state.performanceCounters();
+        if (counters != null) {
+            counters.recordGenericOperation(operation);
+        }
         RiscVInstructionSemantics.executeMicro(
                 state,
                 operation,

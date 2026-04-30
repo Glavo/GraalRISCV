@@ -42,6 +42,7 @@ public final class Main {
               --host-root <path>         Host directory exposed to sandboxed guest file syscalls.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
+              --debug-performance         Print simulator performance counters when the guest exits.
               --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
               --trace                    Print guest instruction trace lines.
               -h, --help                 Print this help message.
@@ -137,6 +138,9 @@ public final class Main {
         if (options.debugFixedClockNanos() != null) {
             builder.option("riscv.debugFixedClockNanos", options.debugFixedClockNanos());
         }
+        if (options.debugPerformance()) {
+            builder.option("riscv.debugPerformance", "true");
+        }
         if (options.debugTraceCompilation()) {
             builder.allowExperimentalOptions(true)
                     .option("engine.Compilation", "true")
@@ -171,6 +175,7 @@ public final class Main {
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
         @Nullable Path hostRoot = null;
+        boolean debugPerformance = false;
         boolean debugTraceCompilation = false;
         boolean trace = false;
         @Nullable Path programPath = null;
@@ -189,6 +194,10 @@ public final class Main {
             }
             if (parseOptions && "--trace".equals(argument)) {
                 trace = true;
+                continue;
+            }
+            if (parseOptions && "--debug-performance".equals(argument)) {
+                debugPerformance = true;
                 continue;
             }
             if (parseOptions && "--debug-trace-compilation".equals(argument)) {
@@ -352,6 +361,7 @@ public final class Main {
                 maxInstructions,
                 debugFixedClockNanos,
                 resolvedHostRoot,
+                debugPerformance,
                 debugTraceCompilation,
                 trace);
     }
@@ -432,6 +442,7 @@ public final class Main {
     /// @param maxInstructions the optional maximum instruction count option value
     /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
     /// @param hostRoot the host directory exposed through sandboxed guest file syscalls
+    /// @param debugPerformance whether simulator performance counters should be printed
     /// @param debugTraceCompilation whether Truffle compilation diagnostics should be enabled
     /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
@@ -448,6 +459,7 @@ public final class Main {
             @Nullable String maxInstructions,
             @Nullable String debugFixedClockNanos,
             Path hostRoot,
+            boolean debugPerformance,
             boolean debugTraceCompilation,
             boolean trace) {
         /// Creates parsed command-line options.
@@ -477,6 +489,7 @@ public final class Main {
                     null,
                     Path.of("."),
                     false,
+                    false,
                     false);
         }
 
@@ -496,6 +509,7 @@ public final class Main {
                     null,
                     Path.of("."),
                     false,
+                    false,
                     false);
         }
 
@@ -512,6 +526,7 @@ public final class Main {
                 @Nullable String maxInstructions,
                 @Nullable String debugFixedClockNanos,
                 Path hostRoot,
+                boolean debugPerformance,
                 boolean debugTraceCompilation,
                 boolean trace) {
             return new CliOptions(
@@ -527,6 +542,7 @@ public final class Main {
                     maxInstructions,
                     debugFixedClockNanos,
                     hostRoot,
+                    debugPerformance,
                     debugTraceCompilation,
                     trace);
         }
