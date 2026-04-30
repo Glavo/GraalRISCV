@@ -675,6 +675,24 @@ public final class GuestSyscallsTest {
     /// The Linux generic kernel `sigset_t` size accepted by signal syscalls.
     private static final long KERNEL_SIGSET_SIZE = 8;
 
+    /// Linux `SIGKILL`.
+    private static final long SIGKILL = 9;
+
+    /// Linux `SIGUSR1`.
+    private static final long SIGUSR1 = 10;
+
+    /// Linux `SIGSTOP`.
+    private static final long SIGSTOP = 19;
+
+    /// Linux `SIG_BLOCK` signal-mask operation.
+    private static final long SIG_BLOCK = 0;
+
+    /// Linux `SIG_UNBLOCK` signal-mask operation.
+    private static final long SIG_UNBLOCK = 1;
+
+    /// Linux `SIG_SETMASK` signal-mask operation.
+    private static final long SIG_SETMASK = 2;
+
     /// The byte offset of `ss_sp` inside Linux RISC-V 64-bit `stack_t`.
     private static final long SIGNAL_STACK_POINTER_OFFSET = 0;
 
@@ -2051,6 +2069,9 @@ public final class GuestSyscallsTest {
             long bufferAddress = memory.baseAddress();
             long eventAddress = memory.baseAddress() + 128;
             long eventsAddress = memory.baseAddress() + 256;
+            long signalSetAddress = memory.baseAddress() + 512;
+            long oldSignalSetAddress = memory.baseAddress() + 520;
+            long userSignalMask = signalMask(SIGUSR1);
 
             setSyscall(state, SYS_EVENTFD2, 0, O_NONBLOCK | O_CLOEXEC, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -2123,6 +2144,42 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
+
+            memory.writeLong(signalSetAddress, userSignalMask);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_SETMASK, signalSetAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(signalSetAddress, 0);
+            setSyscall(
+                    state,
+                    SYS_EPOLL_PWAIT,
+                    epollFileDescriptor,
+                    eventsAddress,
+                    1,
+                    0,
+                    signalSetAddress,
+                    KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(oldSignalSetAddress, -1);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, 0, oldSignalSetAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(userSignalMask, memory.readLong(oldSignalSetAddress));
+
+            setSyscall(
+                    state,
+                    SYS_EPOLL_PWAIT,
+                    epollFileDescriptor,
+                    eventsAddress,
+                    1,
+                    0,
+                    signalSetAddress,
+                    KERNEL_SIGSET_SIZE - 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
 
             memory.writeLong(bufferAddress, 5);
             setSyscall(state, SYS_WRITE, eventFileDescriptor, bufferAddress, Long.BYTES);
@@ -3824,18 +3881,50 @@ public final class GuestSyscallsTest {
 
     /// Verifies deterministic signal-mask handling for single-threaded guests.
     @Test
-    public void rtSigprocmaskReportsEmptyMask() {
+    public void rtSigprocmaskTracksThreadSignalMask() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long newSetAddress = memory.baseAddress() + 64;
             long oldSetAddress = memory.baseAddress() + 128;
-            memory.writeLong(newSetAddress, 1);
+            long userSignalMask = signalMask(SIGUSR1);
+            long unblockableSignalMask = signalMask(SIGKILL) | signalMask(SIGSTOP);
+            memory.writeLong(newSetAddress, userSignalMask | unblockableSignalMask);
             memory.writeLong(oldSetAddress, -1);
 
-            setSyscall(state, SYS_RT_SIGPROCMASK, 2, newSetAddress, oldSetAddress, KERNEL_SIGSET_SIZE);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, newSetAddress, oldSetAddress, KERNEL_SIGSET_SIZE);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
             assertEquals(0, memory.readLong(oldSetAddress));
+
+            memory.writeLong(oldSetAddress, -1);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, 0, oldSetAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(userSignalMask, memory.readLong(oldSetAddress));
+
+            memory.writeLong(newSetAddress, userSignalMask);
+            memory.writeLong(oldSetAddress, -1);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_UNBLOCK, newSetAddress, oldSetAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(userSignalMask, memory.readLong(oldSetAddress));
+
+            memory.writeLong(oldSetAddress, -1);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, 0, oldSetAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(oldSetAddress));
+
+            memory.writeLong(newSetAddress, -1);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_SETMASK, newSetAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(oldSetAddress, 0);
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, 0, oldSetAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(-1L & ~unblockableSignalMask, memory.readLong(oldSetAddress));
 
             setSyscall(state, SYS_RT_SIGPROCMASK, 9, newSetAddress, 0, KERNEL_SIGSET_SIZE);
             state.syscalls().handle(state, TEST_PC);
@@ -4441,6 +4530,11 @@ public final class GuestSyscallsTest {
     /// Reads `ss_size` from a Linux RISC-V 64-bit `stack_t`.
     private static long readSignalStackSize(Memory memory, long address) {
         return memory.readLong(address + SIGNAL_STACK_SIZE_OFFSET);
+    }
+
+    /// Returns the Linux `sigset_t` bit for a signal number.
+    private static long signalMask(long signalNumber) {
+        return 1L << (signalNumber - 1L);
     }
 
     /// Writes a `struct riscv_hwprobe` key with a zero value.

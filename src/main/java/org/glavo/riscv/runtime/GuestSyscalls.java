@@ -1094,6 +1094,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The highest regular Linux signal number accepted by signal syscalls.
     private static final long MAX_SIGNAL_NUMBER = 64;
 
+    /// Linux `SIGKILL`.
+    private static final long SIGKILL = 9;
+
+    /// Linux `SIGSTOP`.
+    private static final long SIGSTOP = 19;
+
     /// Linux `SIG_BLOCK` signal-mask operation.
     private static final long SIG_BLOCK = 0;
 
@@ -1102,6 +1108,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `SIG_SETMASK` signal-mask operation.
     private static final long SIG_SETMASK = 2;
+
+    /// Signal bits that Linux silently excludes from process signal masks.
+    private static final long UNBLOCKABLE_SIGNAL_MASK = signalMask(SIGKILL) | signalMask(SIGSTOP);
 
     /// The `st_ino` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_INODE_OFFSET = 8;
@@ -1541,6 +1550,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     (int) state.register(12),
                     state.register(13)));
             case SYS_EPOLL_PWAIT -> state.setRegister(10, epollPwait(
+                    state,
                     (int) state.register(10),
                     state.register(11),
                     (int) state.register(12),
@@ -1641,6 +1651,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13)));
             case SYS_RT_SIGPROCMASK -> state.setRegister(10, rtSigprocmask(
+                    state,
                     state.register(10),
                     state.register(11),
                     state.register(12),
@@ -1882,6 +1893,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns currently ready events from an in-memory `epoll` descriptor without blocking the host thread.
     private long epollPwait(
+            MachineState state,
             int epollFileDescriptor,
             long eventsAddress,
             int maximumEvents,
@@ -1903,20 +1915,31 @@ public final class GuestSyscalls implements AutoCloseable {
             return EINVAL;
         }
 
-        int count = 0;
-        EpollSet epollSet = epollFile.epollSet();
-        for (int index = 0; index < epollSet.size() && count < maximumEvents; index++) {
-            EpollInterest interest = epollSet.interest(index);
-            int readyEvents = readyEventsFor(interest.fileDescriptor());
-            int reportedEvents = (readyEvents & interest.events()) | (readyEvents & (EPOLLERR | EPOLLHUP));
-            if (reportedEvents == 0) {
-                continue;
-            }
-
-            writeEpollEvent(eventsAddress + (long) count * EPOLL_EVENT_SIZE, reportedEvents, interest.data());
-            count++;
+        GuestThread thread = state.guestThread();
+        long savedSignalMask = thread.signalMask();
+        if (signalMaskAddress != 0) {
+            thread.setSignalMask(memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK);
         }
-        return count;
+        try {
+            int count = 0;
+            EpollSet epollSet = epollFile.epollSet();
+            for (int index = 0; index < epollSet.size() && count < maximumEvents; index++) {
+                EpollInterest interest = epollSet.interest(index);
+                int readyEvents = readyEventsFor(interest.fileDescriptor());
+                int reportedEvents = (readyEvents & interest.events()) | (readyEvents & (EPOLLERR | EPOLLHUP));
+                if (reportedEvents == 0) {
+                    continue;
+                }
+
+                writeEpollEvent(eventsAddress + (long) count * EPOLL_EVENT_SIZE, reportedEvents, interest.data());
+                count++;
+            }
+            return count;
+        } finally {
+            if (signalMaskAddress != 0) {
+                thread.setSignalMask(savedSignalMask);
+            }
+        }
     }
 
     /// Creates an in-memory pipe and writes its read and write descriptors to guest memory.
@@ -3841,6 +3864,7 @@ public final class GuestSyscalls implements AutoCloseable {
             if (childThread == null) {
                 return ENOMEM;
             }
+            childThread.setSignalMask(state.guestThread().signalMask());
         }
         long threadId = childThread.id();
 
@@ -4243,6 +4267,11 @@ public final class GuestSyscalls implements AutoCloseable {
         return signalNumber == 0 || (signalNumber >= MIN_SIGNAL_NUMBER && signalNumber <= MAX_SIGNAL_NUMBER);
     }
 
+    /// Returns the Linux `sigset_t` bit for a signal number.
+    private static long signalMask(long signalNumber) {
+        return 1L << (signalNumber - 1L);
+    }
+
     /// Returns true when a thread id belongs to a live thread in the current guest process.
     private boolean isKnownGuestThreadId(long threadId) {
         return guestThread(threadId) != null;
@@ -4467,8 +4496,8 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
-    /// Accepts signal-mask queries and no-op updates for a single-threaded guest.
-    private long rtSigprocmask(long how, long setAddress, long oldSetAddress, long sigsetSize) {
+    /// Reads and updates the calling guest thread's signal mask.
+    private long rtSigprocmask(MachineState state, long how, long setAddress, long oldSetAddress, long sigsetSize) {
         if (sigsetSize != KERNEL_SIGSET_SIZE) {
             return EINVAL;
         }
@@ -4476,8 +4505,22 @@ public final class GuestSyscalls implements AutoCloseable {
             return EINVAL;
         }
 
+        GuestThread thread = state.guestThread();
+        long oldMask = thread.signalMask();
         if (oldSetAddress != 0) {
-            memory.writeLong(oldSetAddress, 0);
+            memory.writeLong(oldSetAddress, oldMask);
+        }
+        if (setAddress != 0) {
+            long requestedMask = memory.readLong(setAddress) & ~UNBLOCKABLE_SIGNAL_MASK;
+            long updatedMask = oldMask;
+            if (how == SIG_BLOCK) {
+                updatedMask |= requestedMask;
+            } else if (how == SIG_UNBLOCK) {
+                updatedMask &= ~requestedMask;
+            } else {
+                updatedMask = requestedMask;
+            }
+            thread.setSignalMask(updatedMask);
         }
         return 0;
     }

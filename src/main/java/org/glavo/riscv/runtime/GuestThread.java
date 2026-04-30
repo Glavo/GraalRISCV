@@ -32,6 +32,9 @@ final class GuestThread {
     /// The guest alternate signal stack flags reported by `sigaltstack`.
     private long alternateSignalStackFlags = SIGNAL_STACK_DISABLED;
 
+    /// The Linux signal mask currently installed for this guest thread.
+    private long signalMask;
+
     /// Whether this thread has a registered restartable sequence area.
     private boolean restartableSequenceRegistered;
 
@@ -107,6 +110,16 @@ final class GuestThread {
         alternateSignalStackPointer = pointer;
         alternateSignalStackSize = size;
         alternateSignalStackFlags = flags;
+    }
+
+    /// Returns the Linux signal mask currently installed for this thread.
+    long signalMask() {
+        return signalMask;
+    }
+
+    /// Updates the Linux signal mask currently installed for this thread.
+    void setSignalMask(long signalMask) {
+        this.signalMask = signalMask;
     }
 
     /// Returns true when this thread has a registered restartable sequence area.

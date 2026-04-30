@@ -111,6 +111,19 @@ int main(void) {
     if (sigprocmask(SIG_BLOCK, &block_set, &old_set) != 0) {
         return fail("sigprocmask-failed");
     }
+    if (sigismember(&old_set, SIGUSR1) != 0) {
+        return fail("sigprocmask-old-mask-failed");
+    }
+    sigset_t current_set;
+    memset(&current_set, 0, sizeof(current_set));
+    if (sigprocmask(SIG_SETMASK, NULL, &current_set) != 0 || sigismember(&current_set, SIGUSR1) != 1) {
+        return fail("sigprocmask-current-mask-failed");
+    }
+    if (sigprocmask(SIG_UNBLOCK, &block_set, NULL) != 0
+            || sigprocmask(SIG_SETMASK, NULL, &current_set) != 0
+            || sigismember(&current_set, SIGUSR1) != 0) {
+        return fail("sigprocmask-unblock-failed");
+    }
 
     /* Signal number 0 probes validate process and thread existence without delivery. */
     if (kill(pid, 0) != 0 || syscall(SYS_tgkill, pid, tid, 0) != 0) {
