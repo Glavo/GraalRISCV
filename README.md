@@ -76,8 +76,8 @@ static ELF programs. File access is sandboxed under `--host-root`.
 
 ## Examples
 
-Each `run...Example` and `test...Example` task builds the required RISC-V
-program before executing it.
+Each `run...Example` task builds the required RISC-V program before executing
+it.
 
 By default Gradle downloads and extracts the configured Zig release. To use an
 existing Zig executable, pass either a Gradle property or an environment
@@ -95,28 +95,10 @@ existing Go executable, pass `goExecutable`, `graalriscv.goExecutable`, or
 | Example | Purpose | Command |
 | --- | --- | --- |
 | Freestanding Hello World | Run the smallest freestanding output example. | `./gradlew runHelloWorldExample` |
-| Freestanding Hello World check | Verify the freestanding output. | `./gradlew testHelloWorldExample` |
 | Freestanding hot loop | Run a small CPU hot-loop probe. | `./gradlew runHotLoopExample` |
-| Freestanding hot loop check | Verify the hot-loop result. | `./gradlew testHotLoopExample` |
 | Static Go hello-world | Build and run a static `linux/riscv64` Go program. | `./gradlew runGoHelloWorldExample` |
-| Static Go hello-world check | Verify the Go program output. | `./gradlew testGoHelloWorldExample` |
 | Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
-| Static musl printf check | Verify static musl `printf` output. | `./gradlew testLinuxStaticPrintfExample` |
-| Static Linux argv check | Verify guest argument passing. | `./gradlew testLinuxStaticArgvExample` |
-| Static Linux file I/O check | Verify basic file reads and writes. | `./gradlew testLinuxStaticFileIoExample` |
-| Static Linux directory listing check | Verify directory iteration. | `./gradlew testLinuxStaticDirectoryListExample` |
-| Static Linux file mutation check | Verify create, rename, and remove paths. | `./gradlew testLinuxStaticFileMutationExample` |
-| Static Linux working directory check | Verify guest working-directory operations. | `./gradlew testLinuxStaticWorkingDirectoryExample` |
-| Static Linux filesystem status check | Verify filesystem status queries. | `./gradlew testLinuxStaticFilesystemStatusExample` |
-| Static Linux statx metadata check | Verify file metadata queries. | `./gradlew testLinuxStaticStatxMetadataExample` |
-| Static Linux positioned I/O check | Verify positioned reads and writes. | `./gradlew testLinuxStaticPositionedIoExample` |
-| Static Linux event polling check | Verify simple event polling behavior. | `./gradlew testLinuxStaticEventPollingExample` |
-| Static Linux thread join check | Verify a simple guest thread join. | `./gradlew testLinuxStaticThreadJoinExample` |
-| Static Linux runtime services check | Verify runtime service calls used by libc programs. | `./gradlew testLinuxStaticRuntimeServicesExample` |
-| Static Linux process signals check | Verify process signal setup paths used by static programs. | `./gradlew testLinuxStaticProcessSignalsExample` |
 | CoreMark | Build and run the downloaded CoreMark benchmark. | `./gradlew runCoreMarkExample` |
-| CoreMark check | Verify CoreMark validation output. | `./gradlew testCoreMarkExample` |
-| All built-in example checks | Run all bundled smoke checks. | `./gradlew checkHelloWorldExample` |
 
 ## Package And CI Smoke Checks
 
