@@ -51,7 +51,7 @@
 - Linux `riscv_hwprobe` reports ordinary misaligned scalar accesses as software-emulated support while keeping misaligned vector accesses unsupported.
 - `hwprobe` regression coverage now asserts that functional RVA22U64 extension bits and compatible extras are reported while optional or not-yet-claimed extensions such as `V`, full `Zfh`, `Zkt`, `Zacas`, `Zicond`, and `Zawrs` are not reported.
 - Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented profile behavior and compatible extras.
-- Repository-owned RVA22U64 assembly acceptance tests now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zfa`, `Zicbom`, `Zicboz`, `Zicbop`, `Zihintntl`, and `Zihintpause` instructions from real assembler-generated ELFs.
+- Repository-owned RVA22U64 assembly acceptance tests under `src/test/asm` now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zfa`, `Zicbom`, `Zicboz`, `Zicbop`, `Zihintntl`, and `Zihintpause` instructions from real assembler-generated ELFs.
 - RVA22U64 non-instruction acceptance now covers ordinary misaligned scalar load/store behavior, user counter CSR reads, and `fence.i` visibility for self-modifying code; decoded block, direct-call, and trace caches are keyed by an instruction-fetch generation refreshed by `fence.i`.
 - LR/SC reservation tracking now records the reserved access width, store-conditional success requires matching address and data size, atomic memory operations require natural alignment, and repository-owned RVA22U64 acceptance covers LR/SC success and failure cases.
 

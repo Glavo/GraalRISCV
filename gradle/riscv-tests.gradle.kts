@@ -27,7 +27,7 @@ val riscVTestEnvArchiveFile =
     layout.buildDirectory.file("downloads/riscv-test-env/riscv-test-env-$riscVTestEnvRevision.zip")
 val riscVTestEnvSourceDirectory = layout.buildDirectory.dir("downloads/riscv-test-env/$riscVTestEnvRevision")
 val riscVTestsElfDirectory = layout.buildDirectory.dir("riscv-tests/rv64gc-p")
-val rva22AcceptanceSourceInputDirectory = layout.projectDirectory.dir("src/riscv-acceptance/rva22")
+val rva22AcceptanceSourceInputDirectory = layout.projectDirectory.dir("src/test/asm/rva22")
 val rva22AcceptanceGeneratedSourceDirectory = layout.buildDirectory.dir("generated/rva22-acceptance")
 val rva22AcceptanceElfDirectory = layout.buildDirectory.dir("riscv-tests/rva22-acceptance")
 val riscVTestsMaxInstructions = providers.gradleProperty("graalriscv.riscvTestsMaxInstructions")
