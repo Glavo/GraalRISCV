@@ -112,9 +112,7 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 
 ## RISC-V ISA Acceptance Tests
 
-The build can download pinned `riscv-tests` and `riscv-test-env` source
-archives, build the RV64GC `p` ISA tests with Zig CC, and run the generated
-ELFs through the GraalRISCV CLI:
+Run the RV64GC `riscv-tests` ISA acceptance tests through the GraalRISCV CLI:
 
 ```text
 ./gradlew buildRiscVTests
