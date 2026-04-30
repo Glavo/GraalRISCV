@@ -338,6 +338,9 @@ public final class RiscVRootNode extends RootNode {
         /// The syscall handler shared by all guest threads in this process.
         private final GuestSyscalls syscalls;
 
+        /// The execution policy shared by decoded blocks in this guest loop.
+        private final byte executionPolicy;
+
         /// Reusable block call arguments used to avoid per-block varargs allocation.
         private final Object[] blockArguments;
 
@@ -356,6 +359,7 @@ public final class RiscVRootNode extends RootNode {
             this.memoryLayout = memory.layout();
             this.state = state;
             this.syscalls = state.syscalls();
+            this.executionPolicy = executionPolicy(state);
             this.blockArguments = new Object[] { state, memory };
             this.pc = pc;
         }
@@ -378,6 +382,11 @@ public final class RiscVRootNode extends RootNode {
         /// Returns the syscall handler shared by all guest threads in this process.
         private GuestSyscalls syscalls() {
             return syscalls;
+        }
+
+        /// Returns the decoded-block execution policy for this guest loop.
+        private byte executionPolicy() {
+            return executionPolicy;
         }
 
         /// Returns the reusable arguments array passed to decoded block call targets.
@@ -409,14 +418,24 @@ public final class RiscVRootNode extends RootNode {
         private BlockEntry blockFor(BlockCache blocks) {
             int slot = localBlockSlot(pc);
             BlockEntry block = localBlocks[slot];
-            if (block != null && localBlockPcs[slot] == pc) {
+            if (block != null && localBlockPcs[slot] == pc && block.executionPolicy() == executionPolicy) {
                 return block;
             }
 
-            block = blocks.getOrDecode(memory, pc, memoryLayout);
+            block = blocks.getOrDecode(memory, pc, memoryLayout, executionPolicy);
             localBlockPcs[slot] = pc;
             localBlocks[slot] = block;
             return block;
+        }
+
+        /// Selects the guest-loop execution policy from stable machine-state flags.
+        private static byte executionPolicy(MachineState state) {
+            if (!state.canRetireBlock()) {
+                return RiscVMicroBlockNode.CHECKED_MODE;
+            }
+            return state.hasStoreSideEffects()
+                    ? RiscVMicroBlockNode.PRECISE_FAST_MODE
+                    : RiscVMicroBlockNode.BATCHED_FAST_MODE;
         }
 
         /// Hashes a guest PC into the thread-local decoded-block cache.
@@ -518,14 +537,15 @@ public final class RiscVRootNode extends RootNode {
         private long execute(GuestLoopState loopState, MachineState state) {
             long pc = loopState.pc();
             MemoryLayout memoryLayout = loopState.memoryLayout();
-            if (state.canRetireBlock()) {
-                @Nullable CachedTraceCallNode cachedTrace = cachedTrace(pc, memoryLayout);
+            byte executionPolicy = loopState.executionPolicy();
+            if (executionPolicy != RiscVMicroBlockNode.CHECKED_MODE) {
+                @Nullable CachedTraceCallNode cachedTrace = cachedTrace(pc, memoryLayout, executionPolicy);
                 if (cachedTrace != null) {
                     cachedTrace.call(loopState.blockArguments());
                     return state.pc();
                 }
 
-                TraceEntry trace = traces.get(pc, memoryLayout);
+                TraceEntry trace = traces.get(pc, memoryLayout, executionPolicy);
                 if (trace != null) {
                     return executeTraceMiss(loopState, state, trace);
                 }
@@ -551,10 +571,10 @@ public final class RiscVRootNode extends RootNode {
         private long executeBlockCachedOrMiss(GuestLoopState loopState, MachineState state, long pc) {
             MemoryLayout memoryLayout = loopState.memoryLayout();
             CachedBlockCallNode cachedCall = this.cachedCall;
-            if (cachedCall != null && cachedCall.matches(pc, memoryLayout)) {
+            if (cachedCall != null && cachedCall.matches(pc, memoryLayout, loopState.executionPolicy())) {
                 cachedCall.call(loopState.blockArguments());
                 long nextPc = state.pc();
-                observeTransition(loopState.memory(), state, cachedCall.entry(), nextPc);
+                observeTransition(loopState.memory(), cachedCall.entry(), nextPc);
                 return nextPc;
             }
             return executeBlockMiss(loopState, state, pc);
@@ -563,46 +583,47 @@ public final class RiscVRootNode extends RootNode {
         /// Handles a direct-call cache miss for the supplied guest program counter.
         private long executeBlockMiss(GuestLoopState loopState, MachineState state, long pc) {
             BlockEntry entry = loopState.blockFor(blocks);
-            if (CompilerDirectives.inInterpreter() && shouldInstallDirectCall(pc, loopState.memoryLayout())) {
+            if (CompilerDirectives.inInterpreter()
+                    && shouldInstallDirectCall(pc, loopState.memoryLayout(), loopState.executionPolicy())) {
                 CachedBlockCallNode cachedCall = installCachedCall(entry);
                 if (cachedCall != null) {
                     cachedCall.call(loopState.blockArguments());
                     long nextPc = state.pc();
-                    observeTransition(loopState.memory(), state, entry, nextPc);
+                    observeTransition(loopState.memory(), entry, nextPc);
                     return nextPc;
                 }
             }
 
             indirectCall.call(entry.target(), loopState.blockArguments());
             long nextPc = state.pc();
-            observeTransition(loopState.memory(), state, entry, nextPc);
+            observeTransition(loopState.memory(), entry, nextPc);
             return nextPc;
         }
 
         /// Records a block transition and compiles a trace when the successor edge is hot.
-        private void observeTransition(Memory memory, MachineState state, BlockEntry entry, long nextPc) {
+        private void observeTransition(Memory memory, BlockEntry entry, long nextPc) {
             entry.recordSuccessor(nextPc);
-            if (state.canRetireBlock() && CompilerDirectives.inInterpreter()) {
+            if (entry.executionPolicy() != RiscVMicroBlockNode.CHECKED_MODE && CompilerDirectives.inInterpreter()) {
                 traces.compileIfHot(memory, blocks, entry);
             }
         }
 
         /// Returns a cached direct trace call for the supplied PC, or null on miss.
-        private @Nullable CachedTraceCallNode cachedTrace(long pc, MemoryLayout memoryLayout) {
+        private @Nullable CachedTraceCallNode cachedTrace(long pc, MemoryLayout memoryLayout, byte executionPolicy) {
             @Nullable CachedTraceCallNode trace = cachedTrace0;
-            if (trace != null && trace.matches(pc, memoryLayout)) {
+            if (trace != null && trace.matches(pc, memoryLayout, executionPolicy)) {
                 return trace;
             }
             trace = cachedTrace1;
-            if (trace != null && trace.matches(pc, memoryLayout)) {
+            if (trace != null && trace.matches(pc, memoryLayout, executionPolicy)) {
                 return trace;
             }
             trace = cachedTrace2;
-            if (trace != null && trace.matches(pc, memoryLayout)) {
+            if (trace != null && trace.matches(pc, memoryLayout, executionPolicy)) {
                 return trace;
             }
             trace = cachedTrace3;
-            if (trace != null && trace.matches(pc, memoryLayout)) {
+            if (trace != null && trace.matches(pc, memoryLayout, executionPolicy)) {
                 return trace;
             }
             return null;
@@ -612,7 +633,10 @@ public final class RiscVRootNode extends RootNode {
         private @Nullable CachedTraceCallNode installCachedTrace(TraceEntry trace) {
             CompilerDirectives.transferToInterpreterAndInvalidate();
             synchronized (this) {
-                @Nullable CachedTraceCallNode cachedTrace = cachedTrace(trace.startPc(), trace.memoryLayout());
+                @Nullable CachedTraceCallNode cachedTrace = cachedTrace(
+                        trace.startPc(),
+                        trace.memoryLayout(),
+                        trace.executionPolicy());
                 if (cachedTrace != null) {
                     return cachedTrace;
                 }
@@ -639,17 +663,23 @@ public final class RiscVRootNode extends RootNode {
         /// The memory layout currently being considered for direct-call promotion.
         private @Nullable MemoryLayout candidateMemoryLayout;
 
-        /// Returns true after a guest PC and layout have shown stable self-loop behavior in the interpreter.
-        private boolean shouldInstallDirectCall(long pc, MemoryLayout memoryLayout) {
+        /// The execution policy currently being considered for direct-call promotion.
+        private byte candidateExecutionPolicy;
+
+        /// Returns true after a guest PC, layout, and execution policy have shown stable self-loop behavior.
+        private boolean shouldInstallDirectCall(long pc, MemoryLayout memoryLayout, byte executionPolicy) {
             if (cachedCall != null) {
                 return false;
             }
 
-            if (candidatePc == pc && candidateMemoryLayout == memoryLayout) {
+            if (candidatePc == pc
+                    && candidateMemoryLayout == memoryLayout
+                    && candidateExecutionPolicy == executionPolicy) {
                 candidateCount++;
             } else {
                 candidatePc = pc;
                 candidateMemoryLayout = memoryLayout;
+                candidateExecutionPolicy = executionPolicy;
                 candidateCount = 1;
             }
             return candidateCount >= DIRECT_CALL_INSTALL_THRESHOLD;
@@ -661,7 +691,9 @@ public final class RiscVRootNode extends RootNode {
             synchronized (this) {
                 CachedBlockCallNode cachedCall = this.cachedCall;
                 if (cachedCall != null) {
-                    return cachedCall.matches(entry.pc(), entry.memoryLayout()) ? cachedCall : null;
+                    return cachedCall.matches(entry.pc(), entry.memoryLayout(), entry.executionPolicy())
+                            ? cachedCall
+                            : null;
                 }
 
                 cachedCall = insert(new CachedBlockCallNode(entry));
@@ -680,6 +712,9 @@ public final class RiscVRootNode extends RootNode {
         /// The memory layout handled by this cached trace.
         private final MemoryLayout memoryLayout;
 
+        /// The execution policy handled by this cached trace.
+        private final byte executionPolicy;
+
         /// The direct call node for the decoded trace target.
         @Child private DirectCallNode call;
 
@@ -687,12 +722,13 @@ public final class RiscVRootNode extends RootNode {
         private CachedTraceCallNode(TraceEntry trace) {
             this.pc = trace.startPc();
             this.memoryLayout = trace.memoryLayout();
+            this.executionPolicy = trace.executionPolicy();
             this.call = DirectCallNode.create(trace.target());
         }
 
-        /// Returns true when this node handles the supplied trace start PC and memory layout.
-        private boolean matches(long pc, MemoryLayout memoryLayout) {
-            return this.pc == pc && this.memoryLayout == memoryLayout;
+        /// Returns true when this node handles the supplied trace start PC, memory layout, and execution policy.
+        private boolean matches(long pc, MemoryLayout memoryLayout, byte executionPolicy) {
+            return this.pc == pc && this.memoryLayout == memoryLayout && this.executionPolicy == executionPolicy;
         }
 
         /// Executes the cached decoded trace.
@@ -713,6 +749,9 @@ public final class RiscVRootNode extends RootNode {
         /// The memory layout handled by this cached direct call.
         private final MemoryLayout memoryLayout;
 
+        /// The execution policy handled by this cached direct call.
+        private final byte executionPolicy;
+
         /// The direct call node for the decoded block target.
         @Child private DirectCallNode call;
 
@@ -721,6 +760,7 @@ public final class RiscVRootNode extends RootNode {
             this.entry = entry;
             this.pc = entry.pc();
             this.memoryLayout = entry.memoryLayout();
+            this.executionPolicy = entry.executionPolicy();
             this.call = DirectCallNode.create(entry.target());
         }
 
@@ -729,9 +769,9 @@ public final class RiscVRootNode extends RootNode {
             return entry;
         }
 
-        /// Returns true when this node handles the supplied guest program counter and memory layout.
-        private boolean matches(long pc, MemoryLayout memoryLayout) {
-            return this.pc == pc && this.memoryLayout == memoryLayout;
+        /// Returns true when this node handles the supplied guest program counter, memory layout, and execution policy.
+        private boolean matches(long pc, MemoryLayout memoryLayout, byte executionPolicy) {
+            return this.pc == pc && this.memoryLayout == memoryLayout && this.executionPolicy == executionPolicy;
         }
 
         /// Executes the cached decoded block.
@@ -755,6 +795,9 @@ public final class RiscVRootNode extends RootNode {
         /// The memory layout captured by this decoded block target.
         private final MemoryLayout memoryLayout;
 
+        /// The execution policy captured by this decoded block target.
+        private final byte executionPolicy;
+
         /// The decoded block metadata used for trace formation.
         private final DecodedBlock decodedBlock;
 
@@ -768,9 +811,15 @@ public final class RiscVRootNode extends RootNode {
         private int successorCount;
 
         /// Creates a decoded block entry.
-        private BlockEntry(long pc, MemoryLayout memoryLayout, DecodedBlock decodedBlock, RootCallTarget target) {
+        private BlockEntry(
+                long pc,
+                MemoryLayout memoryLayout,
+                byte executionPolicy,
+                DecodedBlock decodedBlock,
+                RootCallTarget target) {
             this.pc = pc;
             this.memoryLayout = memoryLayout;
+            this.executionPolicy = executionPolicy;
             this.decodedBlock = decodedBlock;
             this.target = target;
         }
@@ -783,6 +832,11 @@ public final class RiscVRootNode extends RootNode {
         /// Returns the memory layout captured by this decoded block target.
         private MemoryLayout memoryLayout() {
             return memoryLayout;
+        }
+
+        /// Returns the execution policy captured by this decoded block target.
+        private byte executionPolicy() {
+            return executionPolicy;
         }
 
         /// Returns the decoded block metadata.
@@ -834,11 +888,13 @@ public final class RiscVRootNode extends RootNode {
     ///
     /// @param startPc the guest program counter where the trace starts
     /// @param memoryLayout the memory layout captured by the trace target
+    /// @param executionPolicy the execution policy captured by the trace target
     /// @param target the executable trace target
     @NotNullByDefault
     private record TraceEntry(
             long startPc,
             MemoryLayout memoryLayout,
+            byte executionPolicy,
             RootCallTarget target) {
     }
 
@@ -866,6 +922,9 @@ public final class RiscVRootNode extends RootNode {
         /// Memory layouts stored in cache slots.
         private volatile @Nullable MemoryLayout[] layouts = new MemoryLayout[INITIAL_CAPACITY];
 
+        /// Execution policies stored in cache slots.
+        private volatile byte[] executionPolicies = new byte[INITIAL_CAPACITY];
+
         /// Trace values stored in the slot matching `keys`.
         private volatile @Nullable TraceEntry[] values = new TraceEntry[INITIAL_CAPACITY];
 
@@ -878,18 +937,28 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Returns the compiled trace for a guest program counter, or null on miss.
-        private @Nullable TraceEntry get(long pc, MemoryLayout memoryLayout) {
+        private @Nullable TraceEntry get(long pc, MemoryLayout memoryLayout, byte executionPolicy) {
             long[] currentKeys = keys;
             @Nullable MemoryLayout[] currentLayouts = layouts;
+            byte[] currentExecutionPolicies = executionPolicies;
             @Nullable TraceEntry[] currentValues = values;
-            int slot = findSlot(pc, memoryLayout, currentKeys, currentLayouts, currentValues);
+            int slot = findSlot(
+                    pc,
+                    memoryLayout,
+                    executionPolicy,
+                    currentKeys,
+                    currentLayouts,
+                    currentExecutionPolicies,
+                    currentValues);
             return currentValues[slot];
         }
 
         /// Compiles a trace for a block whose successor edge is hot, unless one already exists.
         private void compileIfHot(Memory memory, BlockCache blocks, BlockEntry start) {
             MemoryLayout memoryLayout = memory.layout();
-            if (!start.hasHotSuccessor() || !start.isTraceable() || get(start.pc(), memoryLayout) != null) {
+            if (!start.hasHotSuccessor()
+                    || !start.isTraceable()
+                    || get(start.pc(), memoryLayout, start.executionPolicy()) != null) {
                 return;
             }
             compileAndCache(memory, blocks, start);
@@ -898,7 +967,14 @@ public final class RiscVRootNode extends RootNode {
         /// Compiles and caches a trace after a miss on the unsynchronized fast path.
         private synchronized void compileAndCache(Memory memory, BlockCache blocks, BlockEntry start) {
             MemoryLayout memoryLayout = memory.layout();
-            int slot = findSlot(start.pc(), memoryLayout, keys, layouts, values);
+            int slot = findSlot(
+                    start.pc(),
+                    memoryLayout,
+                    start.executionPolicy(),
+                    keys,
+                    layouts,
+                    executionPolicies,
+                    values);
             if (values[slot] != null || !start.hasHotSuccessor() || !start.isTraceable()) {
                 return;
             }
@@ -911,19 +987,29 @@ public final class RiscVRootNode extends RootNode {
             CompilerDirectives.transferToInterpreter();
             if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
                 grow();
-                slot = findSlot(start.pc(), memoryLayout, keys, layouts, values);
+                slot = findSlot(
+                        start.pc(),
+                        memoryLayout,
+                        start.executionPolicy(),
+                        keys,
+                        layouts,
+                        executionPolicies,
+                        values);
             }
 
             TraceEntry trace = new TraceEntry(
                     start.pc(),
                     memoryLayout,
+                    start.executionPolicy(),
                     new RiscVMicroTraceRootNode(
                             language,
                             memoryLayout,
+                            start.executionPolicy(),
                             result.decodedBlocks(),
                             result.expectedNextPcs()).getCallTarget());
             keys[slot] = start.pc();
             layouts[slot] = memoryLayout;
+            executionPolicies[slot] = start.executionPolicy();
             values[slot] = trace;
             size++;
         }
@@ -954,7 +1040,11 @@ public final class RiscVRootNode extends RootNode {
                     break;
                 }
 
-                BlockEntry successor = blocks.getOrDecode(memory, successorPc, start.memoryLayout());
+                BlockEntry successor = blocks.getOrDecode(
+                        memory,
+                        successorPc,
+                        start.memoryLayout(),
+                        start.executionPolicy());
                 if (!successor.isTraceable()) {
                     break;
                 }
@@ -984,9 +1074,11 @@ public final class RiscVRootNode extends RootNode {
         private void grow() {
             long[] oldKeys = keys;
             @Nullable MemoryLayout[] oldLayouts = layouts;
+            byte[] oldExecutionPolicies = executionPolicies;
             @Nullable TraceEntry[] oldValues = values;
             keys = new long[oldKeys.length << 1];
             layouts = new MemoryLayout[keys.length];
+            executionPolicies = new byte[keys.length];
             values = new TraceEntry[keys.length];
 
             for (int index = 0; index < oldValues.length; index++) {
@@ -996,9 +1088,17 @@ public final class RiscVRootNode extends RootNode {
                     if (memoryLayout == null) {
                         continue;
                     }
-                    int slot = findSlot(oldKeys[index], memoryLayout, keys, layouts, values);
+                    int slot = findSlot(
+                            oldKeys[index],
+                            memoryLayout,
+                            oldExecutionPolicies[index],
+                            keys,
+                            layouts,
+                            executionPolicies,
+                            values);
                     keys[slot] = oldKeys[index];
                     layouts[slot] = memoryLayout;
+                    executionPolicies[slot] = oldExecutionPolicies[index];
                     values[slot] = trace;
                 }
             }
@@ -1008,26 +1108,32 @@ public final class RiscVRootNode extends RootNode {
         private static int findSlot(
                 long pc,
                 MemoryLayout memoryLayout,
+                byte executionPolicy,
                 long[] keys,
                 @Nullable MemoryLayout[] layouts,
+                byte[] executionPolicies,
                 @Nullable TraceEntry[] values) {
             int mask = values.length - 1;
-            int slot = hash(pc, memoryLayout) & mask;
+            int slot = hash(pc, memoryLayout, executionPolicy) & mask;
             while (true) {
                 TraceEntry trace = values[slot];
-                if (trace == null || (keys[slot] == pc && layouts[slot] == memoryLayout)) {
+                if (trace == null
+                        || (keys[slot] == pc
+                        && layouts[slot] == memoryLayout
+                        && executionPolicies[slot] == executionPolicy)) {
                     return slot;
                 }
                 slot = (slot + 1) & mask;
             }
         }
 
-        /// Hashes a guest program counter and memory layout for open addressing.
-        private static int hash(long value, MemoryLayout memoryLayout) {
+        /// Hashes a guest program counter, memory layout, and execution policy for open addressing.
+        private static int hash(long value, MemoryLayout memoryLayout, byte executionPolicy) {
             long hash = value >>> 1;
             hash ^= value >>> 9;
             hash ^= value >>> 17;
             hash ^= memoryLayout.pageShift();
+            hash ^= (long) executionPolicy << 24;
             return (int) hash;
         }
     }
@@ -1067,6 +1173,9 @@ public final class RiscVRootNode extends RootNode {
         /// Memory layouts stored in cache slots.
         private volatile @Nullable MemoryLayout[] layouts = new MemoryLayout[INITIAL_CAPACITY];
 
+        /// Execution policies stored in cache slots.
+        private volatile byte[] executionPolicies = new byte[INITIAL_CAPACITY];
+
         /// Cache values stored in the slot matching `keys`.
         private volatile @Nullable BlockEntry[] values = new BlockEntry[INITIAL_CAPACITY];
 
@@ -1083,28 +1192,39 @@ public final class RiscVRootNode extends RootNode {
             return language;
         }
 
-        /// Returns the cached block for a guest program counter, decoding it on a cache miss.
-        private BlockEntry getOrDecode(Memory memory, long pc) {
-            return getOrDecode(memory, pc, memory.layout());
-        }
-
-        /// Returns the cached block for a guest program counter and memory layout, decoding it on a cache miss.
-        private BlockEntry getOrDecode(Memory memory, long pc, MemoryLayout memoryLayout) {
+        /// Returns the cached block for a guest program counter, layout, and execution policy.
+        private BlockEntry getOrDecode(
+                Memory memory,
+                long pc,
+                MemoryLayout memoryLayout,
+                byte executionPolicy) {
             long[] currentKeys = keys;
             @Nullable MemoryLayout[] currentLayouts = layouts;
+            byte[] currentExecutionPolicies = executionPolicies;
             @Nullable BlockEntry[] currentValues = values;
-            int slot = findSlot(pc, memoryLayout, currentKeys, currentLayouts, currentValues);
+            int slot = findSlot(
+                    pc,
+                    memoryLayout,
+                    executionPolicy,
+                    currentKeys,
+                    currentLayouts,
+                    currentExecutionPolicies,
+                    currentValues);
             BlockEntry block = currentValues[slot];
             if (block != null) {
                 return block;
             }
 
-            return decodeAndCache(memory, pc, memoryLayout);
+            return decodeAndCache(memory, pc, memoryLayout, executionPolicy);
         }
 
         /// Decodes and caches a block after a miss on the unsynchronized fast path.
-        private synchronized BlockEntry decodeAndCache(Memory memory, long pc, MemoryLayout memoryLayout) {
-            int slot = findSlot(pc, memoryLayout, keys, layouts, values);
+        private synchronized BlockEntry decodeAndCache(
+                Memory memory,
+                long pc,
+                MemoryLayout memoryLayout,
+                byte executionPolicy) {
+            int slot = findSlot(pc, memoryLayout, executionPolicy, keys, layouts, executionPolicies, values);
             BlockEntry block = values[slot];
             if (block != null) {
                 return block;
@@ -1113,17 +1233,19 @@ public final class RiscVRootNode extends RootNode {
             CompilerDirectives.transferToInterpreter();
             if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
                 grow();
-                slot = findSlot(pc, memoryLayout, keys, layouts, values);
+                slot = findSlot(pc, memoryLayout, executionPolicy, keys, layouts, executionPolicies, values);
             }
 
             DecodedBlock decodedBlock = RiscVDecoder.decodeBlock(memory, pc);
             block = new BlockEntry(
                     pc,
                     memoryLayout,
+                    executionPolicy,
                     decodedBlock,
-                    RiscVMicroBlockCompiler.compile(language, decodedBlock, memoryLayout));
+                    RiscVMicroBlockCompiler.compile(language, decodedBlock, memoryLayout, executionPolicy));
             keys[slot] = pc;
             layouts[slot] = memoryLayout;
+            executionPolicies[slot] = executionPolicy;
             values[slot] = block;
             size++;
             return block;
@@ -1133,9 +1255,11 @@ public final class RiscVRootNode extends RootNode {
         private void grow() {
             long[] oldKeys = keys;
             @Nullable MemoryLayout[] oldLayouts = layouts;
+            byte[] oldExecutionPolicies = executionPolicies;
             @Nullable BlockEntry[] oldValues = values;
             keys = new long[oldKeys.length << 1];
             layouts = new MemoryLayout[keys.length];
+            executionPolicies = new byte[keys.length];
             values = new BlockEntry[keys.length];
 
             for (int index = 0; index < oldValues.length; index++) {
@@ -1145,9 +1269,17 @@ public final class RiscVRootNode extends RootNode {
                     if (memoryLayout == null) {
                         continue;
                     }
-                    int slot = findSlot(oldKeys[index], memoryLayout, keys, layouts, values);
+                    int slot = findSlot(
+                            oldKeys[index],
+                            memoryLayout,
+                            oldExecutionPolicies[index],
+                            keys,
+                            layouts,
+                            executionPolicies,
+                            values);
                     keys[slot] = oldKeys[index];
                     layouts[slot] = memoryLayout;
+                    executionPolicies[slot] = oldExecutionPolicies[index];
                     values[slot] = block;
                 }
             }
@@ -1157,26 +1289,32 @@ public final class RiscVRootNode extends RootNode {
         private static int findSlot(
                 long pc,
                 MemoryLayout memoryLayout,
+                byte executionPolicy,
                 long[] keys,
                 @Nullable MemoryLayout[] layouts,
+                byte[] executionPolicies,
                 @Nullable BlockEntry[] values) {
             int mask = values.length - 1;
-            int slot = hash(pc, memoryLayout) & mask;
+            int slot = hash(pc, memoryLayout, executionPolicy) & mask;
             while (true) {
                 BlockEntry block = values[slot];
-                if (block == null || (keys[slot] == pc && layouts[slot] == memoryLayout)) {
+                if (block == null
+                        || (keys[slot] == pc
+                        && layouts[slot] == memoryLayout
+                        && executionPolicies[slot] == executionPolicy)) {
                     return slot;
                 }
                 slot = (slot + 1) & mask;
             }
         }
 
-        /// Hashes a guest program counter and memory layout for open addressing.
-        private static int hash(long value, MemoryLayout memoryLayout) {
+        /// Hashes a guest program counter, memory layout, and execution policy for open addressing.
+        private static int hash(long value, MemoryLayout memoryLayout, byte executionPolicy) {
             long hash = value >>> 1;
             hash ^= value >>> 9;
             hash ^= value >>> 17;
             hash ^= memoryLayout.pageShift();
+            hash ^= (long) executionPolicy << 24;
             return (int) hash;
         }
     }

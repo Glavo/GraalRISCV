@@ -191,49 +191,22 @@ public final class MemoryAccess {
 
     /// Returns true when the readable data-page cache satisfies the supplied range.
     private boolean hasCachedDataPage(long address, int length, MemoryLayout layout) {
-        return hasCachedPage(
-                cachedDataPageNumber,
-                cachedDataRangeStart,
-                cachedDataRangeEnd,
-                cachedDataProtection,
-                cachedDataGeneration,
-                address,
-                length,
-                Memory.PROTECTION_READ,
-                layout);
+        long pageNumber = layout.pageNumber(address);
+        return cachedDataPageNumber == pageNumber
+                && cachedDataGeneration == generation
+                && address >= cachedDataRangeStart
+                && length <= cachedDataRangeEnd - address
+                && (cachedDataProtection & Memory.PROTECTION_READ) != 0;
     }
 
     /// Returns true when the writable data-page cache satisfies the supplied range.
     private boolean hasCachedWriteDataPage(long address, int length, MemoryLayout layout) {
-        return hasCachedPage(
-                cachedWriteDataPageNumber,
-                cachedWriteDataRangeStart,
-                cachedWriteDataRangeEnd,
-                cachedWriteDataProtection,
-                cachedWriteDataGeneration,
-                address,
-                length,
-                Memory.PROTECTION_WRITE,
-                layout);
-    }
-
-    /// Returns true when an access-local page cache entry satisfies the supplied range and protection.
-    private boolean hasCachedPage(
-            long cachedPageNumber,
-            long cachedRangeStart,
-            long cachedRangeEnd,
-            long cachedProtection,
-            long cachedGeneration,
-            long address,
-            int length,
-            long requiredProtection,
-            MemoryLayout layout) {
         long pageNumber = layout.pageNumber(address);
-        return cachedPageNumber == pageNumber
-                && cachedGeneration == generation
-                && address >= cachedRangeStart
-                && length <= cachedRangeEnd - address
-                && (cachedProtection & requiredProtection) == requiredProtection;
+        return cachedWriteDataPageNumber == pageNumber
+                && cachedWriteDataGeneration == generation
+                && address >= cachedWriteDataRangeStart
+                && length <= cachedWriteDataRangeEnd - address
+                && (cachedWriteDataProtection & Memory.PROTECTION_WRITE) != 0;
     }
 
     /// Stores one data-page lookup in the access-local cache.

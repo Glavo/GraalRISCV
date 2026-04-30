@@ -26,13 +26,13 @@ import org.jetbrains.annotations.Unmodifiable;
 @NotNullByDefault
 final class RiscVMicroBlockNode extends Node {
     /// Execution mode used when tracing or instruction-budget checks are active.
-    private static final byte CHECKED_MODE = 0;
+    static final byte CHECKED_MODE = 0;
 
     /// Execution mode used when the fast path still needs precise per-instruction state.
-    private static final byte PRECISE_FAST_MODE = 1;
+    static final byte PRECISE_FAST_MODE = 1;
 
     /// Execution mode used when retired instructions can be counted once after the block.
-    private static final byte BATCHED_FAST_MODE = 2;
+    static final byte BATCHED_FAST_MODE = 2;
 
     /// Five-bit mask for one packed RISC-V register index.
     private static final int REGISTER_MASK = 0x1f;
@@ -99,10 +99,10 @@ final class RiscVMicroBlockNode extends Node {
     /// Whether the final instruction explicitly transferred control out of the block.
     private final boolean endsWithTerminator;
 
-    /// Whether this block must keep precise fast-path instruction retirement.
-    private final boolean requiresPreciseFastState;
+    /// The concrete execution mode selected when this block was compiled.
+    private final byte executionMode;
 
-    /// Creates a micro-bytecode block node.
+    /// Creates a micro-bytecode block node with a concrete execution mode.
     RiscVMicroBlockNode(
             MemoryLayout memoryLayout,
             byte @Unmodifiable [] opcodes,
@@ -114,7 +114,7 @@ final class RiscVMicroBlockNode extends Node {
             long @Unmodifiable [] immediates,
             long fallThroughPc,
             boolean endsWithTerminator,
-            boolean requiresPreciseFastState) {
+            byte executionMode) {
         this.memoryLayout = memoryLayout;
         this.opcodes = opcodes.clone();
         this.operations = operations.clone();
@@ -125,21 +125,18 @@ final class RiscVMicroBlockNode extends Node {
         this.immediates = immediates.clone();
         this.fallThroughPc = fallThroughPc;
         this.endsWithTerminator = endsWithTerminator;
-        this.requiresPreciseFastState = requiresPreciseFastState;
+        this.executionMode = executionMode;
     }
 
     /// Executes the block with the supplied machine state and memory access facade.
     void execute(MachineState state, MemoryAccess access) {
         Memory memory = state.memory();
         long[] registers = state.decodedRegisters();
-        if (state.canRetireBlock()) {
-            if (!requiresPreciseFastState && !state.hasStoreSideEffects()) {
-                executeBatchedFast(state, memory, access, registers);
-            } else {
-                executePreciseFast(state, memory, access, registers);
-            }
-        } else {
-            executeChecked(state, memory, access, registers);
+        switch (executionMode) {
+            case BATCHED_FAST_MODE -> executeBatchedFast(state, memory, access, registers);
+            case PRECISE_FAST_MODE -> executePreciseFast(state, memory, access, registers);
+            case CHECKED_MODE -> executeChecked(state, memory, access, registers);
+            default -> throw new AssertionError("Unknown block execution mode: " + executionMode);
         }
     }
 

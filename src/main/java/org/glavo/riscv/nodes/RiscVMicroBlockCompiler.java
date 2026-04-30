@@ -20,14 +20,23 @@ final class RiscVMicroBlockCompiler {
     private RiscVMicroBlockCompiler() {
     }
 
-    /// Builds a Truffle call target backed by the custom micro-bytecode interpreter.
-    static RootCallTarget compile(RiscVLanguage language, DecodedBlock block, MemoryLayout memoryLayout) {
-        RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(language, compileNode(block, memoryLayout));
+    /// Builds a Truffle call target backed by the custom micro-bytecode interpreter and execution policy.
+    static RootCallTarget compile(
+            RiscVLanguage language,
+            DecodedBlock block,
+            MemoryLayout memoryLayout,
+            byte executionPolicy) {
+        RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(
+                language,
+                compileNode(block, memoryLayout, executionPolicy));
         return root.getCallTarget();
     }
 
     /// Builds an executable micro-bytecode block node for direct embedding in a root.
-    static RiscVMicroBlockNode compileNode(DecodedBlock block, MemoryLayout memoryLayout) {
+    static RiscVMicroBlockNode compileNode(
+            DecodedBlock block,
+            MemoryLayout memoryLayout,
+            byte executionPolicy) {
         DecodedInstruction @Unmodifiable [] instructions = block.instructions();
         int instructionCount = instructions.length;
         byte[] opcodes = new byte[instructionCount];
@@ -62,7 +71,15 @@ final class RiscVMicroBlockCompiler {
                 immediates,
                 block.fallThroughPc(),
                 block.endsWithTerminator(),
-                requiresPreciseFastState);
+                executionMode(executionPolicy, requiresPreciseFastState));
+    }
+
+    /// Returns the concrete execution mode for one block under a guest-loop policy.
+    private static byte executionMode(byte executionPolicy, boolean requiresPreciseFastState) {
+        if (executionPolicy == RiscVMicroBlockNode.BATCHED_FAST_MODE && requiresPreciseFastState) {
+            return RiscVMicroBlockNode.PRECISE_FAST_MODE;
+        }
+        return executionPolicy;
     }
 
     /// Converts a decoded operation to a micro-bytecode opcode.

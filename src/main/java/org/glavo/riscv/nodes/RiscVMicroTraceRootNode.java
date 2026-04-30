@@ -26,16 +26,17 @@ final class RiscVMicroTraceRootNode extends RootNode {
     @CompilationFinal(dimensions = 1)
     private final long @Unmodifiable [] expectedNextPcs;
 
-    /// Creates a trace root from decoded blocks and side-exit guards.
+    /// Creates a trace root from decoded blocks, side-exit guards, and a stable execution policy.
     RiscVMicroTraceRootNode(
             RiscVLanguage language,
             MemoryLayout memoryLayout,
+            byte executionPolicy,
             DecodedBlock @Unmodifiable [] decodedBlocks,
             long @Unmodifiable [] expectedNextPcs) {
         super(language);
         this.blocks = new RiscVMicroBlockNode[decodedBlocks.length];
         for (int index = 0; index < decodedBlocks.length; index++) {
-            this.blocks[index] = RiscVMicroBlockCompiler.compileNode(decodedBlocks[index], memoryLayout);
+            this.blocks[index] = RiscVMicroBlockCompiler.compileNode(decodedBlocks[index], memoryLayout, executionPolicy);
         }
         this.expectedNextPcs = expectedNextPcs.clone();
     }
