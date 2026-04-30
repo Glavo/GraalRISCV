@@ -89,5 +89,6 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 apply(from = "gradle/riscv-examples.gradle.kts")
+apply(from = "gradle/riscv-tests.gradle.kts")
 apply(from = "gradle/packaging-smoke.gradle.kts")
 apply(from = "gradle/native-image.gradle.kts")

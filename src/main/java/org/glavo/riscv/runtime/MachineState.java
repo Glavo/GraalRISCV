@@ -31,6 +31,42 @@ public final class MachineState {
     /// The `fcsr` floating-point control and status CSR address.
     private static final int FCSR_CSR = 0x003;
 
+    /// The `satp` supervisor address translation and protection CSR address.
+    private static final int SATP_CSR = 0x180;
+
+    /// The `stvec` supervisor trap-vector CSR address.
+    private static final int STVEC_CSR = 0x105;
+
+    /// The `mstatus` machine status CSR address.
+    private static final int MSTATUS_CSR = 0x300;
+
+    /// The `medeleg` machine exception delegation CSR address.
+    private static final int MEDELEG_CSR = 0x302;
+
+    /// The `mideleg` machine interrupt delegation CSR address.
+    private static final int MIDELEG_CSR = 0x303;
+
+    /// The `mie` machine interrupt-enable CSR address.
+    private static final int MIE_CSR = 0x304;
+
+    /// The `mtvec` machine trap-vector CSR address.
+    private static final int MTVEC_CSR = 0x305;
+
+    /// The `mepc` machine exception program-counter CSR address.
+    private static final int MEPC_CSR = 0x341;
+
+    /// The first PMP configuration CSR address used by `riscv-test-env`.
+    private static final int PMPCFG0_CSR = 0x3a0;
+
+    /// The first PMP address CSR address used by `riscv-test-env`.
+    private static final int PMPADDR0_CSR = 0x3b0;
+
+    /// The `mnstatus` resumable NMI CSR address used by `riscv-test-env`.
+    private static final int MNSTATUS_CSR = 0x744;
+
+    /// The `mhartid` machine hardware-thread id CSR address.
+    private static final int MHARTID_CSR = 0xf14;
+
     /// The `cycle` user counter CSR address.
     private static final int CYCLE_CSR = 0xc00;
 
@@ -87,6 +123,9 @@ public final class MachineState {
 
     /// The current guest program counter.
     private long pc;
+
+    /// The compatibility storage for `mepc`, used by `mret` during `riscv-test-env` startup.
+    private long machineExceptionProgramCounter;
 
     /// The number of retired guest instructions.
     private long instructionCount;
@@ -275,18 +314,22 @@ public final class MachineState {
         thread.setClearChildTidAddress(clearChildTidAddress);
     }
 
-    /// Reads a supported user-mode control and status register.
+    /// Reads a supported control and status register.
     public long readControlStatusRegister(int csr) {
         return switch (csr) {
             case FFLAGS_CSR -> floatingPointControlStatus & FFLAGS_MASK;
             case FRM_CSR -> (floatingPointControlStatus >>> 5) & FRM_MASK;
             case FCSR_CSR -> floatingPointControlStatus & FCSR_MASK;
+            case SATP_CSR, STVEC_CSR, MSTATUS_CSR, MEDELEG_CSR, MIDELEG_CSR, MIE_CSR, MTVEC_CSR,
+                 PMPCFG0_CSR, PMPADDR0_CSR, MNSTATUS_CSR -> 0;
+            case MEPC_CSR -> machineExceptionProgramCounter;
+            case MHARTID_CSR -> 0;
             case CYCLE_CSR, TIME_CSR, INSTRET_CSR -> instructionCount;
             default -> throw unsupportedControlStatusRegister(csr);
         };
     }
 
-    /// Writes a supported writable user-mode control and status register.
+    /// Writes a supported writable control and status register.
     public void writeControlStatusRegister(int csr, long value) {
         switch (csr) {
             case FFLAGS_CSR -> {
@@ -298,10 +341,19 @@ public final class MachineState {
                         | (((int) value & FRM_MASK) << 5);
             }
             case FCSR_CSR -> floatingPointControlStatus = (int) value & FCSR_MASK;
+            case SATP_CSR, STVEC_CSR, MSTATUS_CSR, MEDELEG_CSR, MIDELEG_CSR, MIE_CSR, MTVEC_CSR,
+                 PMPCFG0_CSR, PMPADDR0_CSR, MNSTATUS_CSR -> {
+            }
+            case MEPC_CSR -> machineExceptionProgramCounter = value;
             case CYCLE_CSR, TIME_CSR, INSTRET_CSR -> throw new RiscVException(
                     "Control status register is read-only: 0x" + Integer.toUnsignedString(csr, 16));
             default -> throw unsupportedControlStatusRegister(csr);
         }
+    }
+
+    /// Returns the compatibility `mepc` value used by `mret`.
+    public long machineExceptionProgramCounter() {
+        return machineExceptionProgramCounter;
     }
 
     /// Returns the current floating-point dynamic rounding mode.

@@ -401,6 +401,9 @@ public final class RiscVDecoder {
         if (raw == 0x0010_0073) {
             return instruction(address, raw, RiscVOperation.EBREAK, 0, 0, 0, 0, true);
         }
+        if (raw == 0x3020_0073) {
+            return instruction(address, raw, RiscVOperation.MRET, 0, 0, 0, 0, true);
+        }
 
         RiscVOperation operation = switch (funct3(raw)) {
             case 1 -> RiscVOperation.CSRRW;

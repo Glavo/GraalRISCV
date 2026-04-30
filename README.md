@@ -110,6 +110,26 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 | Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
 | CoreMark | Build and run the downloaded CoreMark benchmark. | `./gradlew runCoreMarkExample` |
 
+## RISC-V ISA Acceptance Tests
+
+The build can download pinned `riscv-tests` and `riscv-test-env` source
+archives, build the RV64GC `p` ISA tests with Zig CC, and run the generated
+ELFs through the GraalRISCV CLI:
+
+```text
+./gradlew buildRiscVTests
+./gradlew testRiscVTests
+```
+
+Use `graalriscv.riscvTestsFilter` to run a subset by ELF filename regex, and
+`graalriscv.riscvTestsMaxInstructions` to override the per-ELF instruction
+limit:
+
+```text
+./gradlew "-Pgraalriscv.riscvTestsFilter=^rv64ui-p-.*[.]elf$" testRiscVTests
+./gradlew "-Pgraalriscv.riscvTestsMaxInstructions=20000000" testRiscVTests
+```
+
 ## Package And CI Smoke Checks
 
 Run package smoke tests that do not require Zig:

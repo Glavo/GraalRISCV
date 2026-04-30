@@ -116,6 +116,21 @@ public final class RiscVMicroBlockFloatingPointTest {
         }
     }
 
+    /// Verifies that the micro-opcode for `fmv.x.w` copies raw low bits without NaN-boxing.
+    @Test
+    public void singleMoveToIntegerMicroOpcodeUsesRawLowWord() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(machine.memory(), fmvXW(10, 1), fmvXW(11, 2), jal(0));
+            machine.state().setFloatingPointRegister(1, 0x7fff_ffff_1111_1111L);
+            machine.state().setFloatingPointRegister(2, 0xffff_ffff_9234_5678L);
+
+            executeMicroBlock(machine);
+
+            assertEquals(0x1111_1111L, machine.state().register(10));
+            assertEquals(0xffff_ffff_9234_5678L, machine.state().register(11));
+        }
+    }
+
     /// Executes one decoded block through the micro-bytecode node.
     private static void executeMicroBlock(TestMachine machine) {
         RiscVMicroBlockNode block = RiscVMicroBlockCompiler.compileNode(
@@ -175,6 +190,11 @@ public final class RiscVMicroBlockFloatingPointTest {
     /// Encodes `fclass.d`.
     private static int fclassD(int rd, int rs1) {
         return opFp(0x71, rd, 1, rs1, 0);
+    }
+
+    /// Encodes `fmv.x.w`.
+    private static int fmvXW(int rd, int rs1) {
+        return opFp(0x70, rd, 0, rs1, 0);
     }
 
     /// Encodes `fcvt.s.d`.

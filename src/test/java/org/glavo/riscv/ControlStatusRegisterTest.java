@@ -34,6 +34,15 @@ public final class ControlStatusRegisterTest {
     /// The `fcsr` CSR address.
     private static final int FCSR_CSR = 0x003;
 
+    /// The `mstatus` CSR address.
+    private static final int MSTATUS_CSR = 0x300;
+
+    /// The `mepc` CSR address.
+    private static final int MEPC_CSR = 0x341;
+
+    /// The `mhartid` CSR address.
+    private static final int MHARTID_CSR = 0xf14;
+
     /// The `cycle` CSR address.
     private static final int CYCLE_CSR = 0xc00;
 
@@ -121,6 +130,28 @@ public final class ControlStatusRegisterTest {
             assertEquals(1, machine.state().register(RESULT_REGISTER));
             assertEquals(2, machine.state().register(SECOND_RESULT_REGISTER));
             assertEquals(3, machine.state().register(THIRD_RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies the minimal machine-mode CSR and `mret` behavior needed by `riscv-test-env`.
+    @Test
+    public void machineBootstrapCompatibilityCsrsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    csrrs(RESULT_REGISTER, MHARTID_CSR, 0),
+                    csrrw(0, MSTATUS_CSR, 0),
+                    csrrw(0, MEPC_CSR, SOURCE_REGISTER),
+                    mret(),
+                    ElfTestImages.addi(SECOND_RESULT_REGISTER, 0, 13),
+                    ElfTestImages.ecall());
+            machine.state().setRegister(SOURCE_REGISTER, TEST_PC + 4L * Integer.BYTES);
+            prepareExit(machine.state());
+
+            runDecodedProgram(machine);
+
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+            assertEquals(13, machine.state().register(SECOND_RESULT_REGISTER));
         }
     }
 
@@ -233,6 +264,11 @@ public final class ControlStatusRegisterTest {
     /// Encodes `fence.i`.
     private static int fenceI() {
         return 0x0000_100f;
+    }
+
+    /// Encodes `mret`.
+    private static int mret() {
+        return 0x3020_0073;
     }
 
     /// Owns a CSR test machine and its closeable resources.

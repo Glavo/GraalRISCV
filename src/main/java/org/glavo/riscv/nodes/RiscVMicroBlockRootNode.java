@@ -600,7 +600,7 @@ final class RiscVMicroBlockNode extends Node {
     private void moveFloatingPointToInteger(MachineState state, long[] registers, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         long value = floatingPointFormat(index) == SINGLE_FLOAT_FORMAT
-                ? (int) readSingleBits(state, rs1(operand))
+                ? (int) state.decodedFloatingPointRegister(rs1(operand))
                 : state.decodedFloatingPointRegister(rs1(operand));
         writeRegister(registers, rd(operand), value);
         finishInstruction(state, index, mode);

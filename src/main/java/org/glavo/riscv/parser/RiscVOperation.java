@@ -198,6 +198,8 @@ public enum RiscVOperation {
     ECALL,
     /// Environment break.
     EBREAK,
+    /// Return from machine-mode trap, used only as a test-environment bootstrap compatibility instruction.
+    MRET,
     /// Atomic read/write CSR.
     CSRRW,
     /// Atomic read and set bits in CSR.
@@ -255,4 +257,3 @@ public enum RiscVOperation {
     /// Atomic unsigned maximum doubleword.
     AMOMAXU_D
 }
-

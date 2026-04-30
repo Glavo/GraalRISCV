@@ -169,7 +169,7 @@ public abstract class RiscVTestsBuildTask extends DefaultTask {
         File localCache = getLocalCacheDirectory().get().getAsFile();
         File globalCache = getGlobalCacheDirectory().get().getAsFile();
 
-        fileSystemOperations.delete(spec -> spec.delete(outputDirectory));
+        cleanOutputDirectory(outputDirectory);
         createDirectory(outputDirectory);
         createDirectory(localCache);
         createDirectory(globalCache);
@@ -215,6 +215,23 @@ public abstract class RiscVTestsBuildTask extends DefaultTask {
     private static void createDirectory(File directory) {
         if (!directory.isDirectory() && !directory.mkdirs()) {
             throw new GradleException("Failed to create directory: " + directory);
+        }
+    }
+
+    /// Deletes stale generated files while keeping the output directory itself stable for Windows file locking.
+    ///
+    /// @param outputDirectory the output directory to clean
+    private void cleanOutputDirectory(File outputDirectory) {
+        if (!outputDirectory.isDirectory()) {
+            return;
+        }
+
+        File[] children = outputDirectory.listFiles();
+        if (children == null) {
+            throw new GradleException("Failed to list riscv-tests output directory: " + outputDirectory);
+        }
+        for (File child : children) {
+            fileSystemOperations.delete(spec -> spec.delete(child));
         }
     }
 

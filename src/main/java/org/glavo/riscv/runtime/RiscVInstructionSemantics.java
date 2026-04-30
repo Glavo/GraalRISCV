@@ -161,7 +161,7 @@ public abstract sealed class RiscVInstructionSemantics {
             case BGEU -> new BgeuInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case ECALL -> new EcallInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case EBREAK -> new EbreakInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
+            case MRET, CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
                     new ControlInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LB -> new LbInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LH -> new LhInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
@@ -416,7 +416,7 @@ public abstract sealed class RiscVInstructionSemantics {
             Memory memory = state.memory();
             switch (operation) {
                 case NOP, FENCE, FENCE_I, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU,
-                        CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, ECALL, EBREAK -> executeControl(state, nextPc);
+                        CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, ECALL, EBREAK, MRET -> executeControl(state, nextPc);
                 case LB, LH, LW, LD, LBU, LHU, LWU -> executeLoad(state, memory, nextPc);
                 case FLW, FLD -> executeFloatingPointLoad(state, memory, nextPc);
                 case SB, SH, SW, SD -> executeStore(state, memory, nextPc);
@@ -1568,6 +1568,7 @@ public abstract sealed class RiscVInstructionSemantics {
             case CSRRCI -> setClearControlStatusRegister(state, nextPc, rs1, false);
             case ECALL -> ecall(state);
             case EBREAK -> throw new ProgramExitException(0);
+            case MRET -> state.setPc(state.machineExceptionProgramCounter());
             default -> throw unexpectedOperationGroup("control");
         }
     }
@@ -1723,7 +1724,7 @@ public abstract sealed class RiscVInstructionSemantics {
             case FCVT_FP_INT -> convertIntegerToFloatingPoint(state, nextPc);
             case FMV_X_FP -> {
                 state.setDecodedRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
-                        ? (int) readSingleBits(state, rs1)
+                        ? (int) state.decodedFloatingPointRegister(rs1)
                         : state.decodedFloatingPointRegister(rs1));
                 state.setPc(nextPc);
             }

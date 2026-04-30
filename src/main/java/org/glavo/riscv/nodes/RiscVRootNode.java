@@ -876,7 +876,9 @@ public final class RiscVRootNode extends RootNode {
         private boolean isTraceable() {
             for (DecodedInstruction instruction : decodedBlock.instructions()) {
                 RiscVOperation operation = instruction.operation();
-                if (operation == RiscVOperation.ECALL || operation == RiscVOperation.EBREAK) {
+                if (operation == RiscVOperation.ECALL
+                        || operation == RiscVOperation.EBREAK
+                        || operation == RiscVOperation.MRET) {
                     return false;
                 }
             }

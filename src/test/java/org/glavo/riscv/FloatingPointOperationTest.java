@@ -526,6 +526,26 @@ public final class FloatingPointOperationTest {
         }
     }
 
+    /// Verifies that `fmv.x.w` copies raw low bits without applying NaN-boxing rules.
+    @Test
+    public void singleMoveToIntegerUsesRawLowWord() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fmvXW(RESULT_REGISTER, LEFT_FLOAT_REGISTER),
+                    fmvXW(SECOND_RESULT_REGISTER, RIGHT_FLOAT_REGISTER),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setFloatingPointRegister(LEFT_FLOAT_REGISTER, 0x7fff_ffff_1111_1111L);
+            machine.state().setFloatingPointRegister(RIGHT_FLOAT_REGISTER, 0xffff_ffff_9234_5678L);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0x1111_1111L, machine.state().register(RESULT_REGISTER));
+            assertEquals(0xffff_ffff_9234_5678L, machine.state().register(SECOND_RESULT_REGISTER));
+        }
+    }
+
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
     private static void prepareExit(MachineState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);

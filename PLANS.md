@@ -11,6 +11,7 @@
 ### 2. Linux user-mode execution scope
 
 - The implementation remains user-mode only; privileged mode, guest page tables, interrupts, devices, and Linux kernel boot have not been added.
+- A narrow `riscv-test-env` bootstrap compatibility shim supports the machine CSRs and `mret` needed to enter its `p` tests without implementing full privileged mode.
 - Static ELF execution now covers the bundled freestanding examples, static musl C examples, static Go hello-world example, and CoreMark.
 - The default memory layout is Linux-like and sparse: base address `0`, a large virtual address window, and `memorySize` as a guest virtual address window size rather than an eager host-memory allocation size.
 
@@ -30,7 +31,7 @@
 ### 5. Build, documentation, and performance groundwork
 
 - Zig, Go, package smoke, CI aggregation, README, and native-image tasks are in place for the current example and packaging workflows.
-- Gradle can download the pinned `riscv-tests` and `riscv-test-env` source archives, then build RV64GC `p` ISA test ELFs with Zig CC on Windows without invoking Make.
+- Gradle can download pinned `riscv-tests` and `riscv-test-env` source archives, build RV64GC `p` ISA test ELFs with Zig CC on Windows without invoking Make, and run the built ELFs against the simulator.
 - Performance diagnostics have been kept out of the default hot paths; tracing and Truffle compilation diagnostics remain opt-in debug or task-level probes.
 - The current trace and micro-bytecode executor includes specialized block execution modes and dedicated floating-point micro-opcodes.
 
@@ -60,7 +61,7 @@
 
 - Keep Zig, Go, package smoke, CI aggregation, and README coverage in sync as examples change.
 - Keep paged-memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and current VMA split/merge behavior as the syscall layer is simplified.
-- Keep freestanding, static musl, static Go, and CoreMark examples as acceptance workloads for the paged-memory migration.
+- Keep freestanding, static musl, static Go, CoreMark, and `riscv-tests` as acceptance workloads for the paged-memory migration and RV64GC behavior.
 - Tune the existing trace executor instead of adding a separate branch-prediction subsystem: measure and adjust trace length, hot-successor thresholds, batched store fast paths, the trace direct-call PIC, trace lookup hashing, side-exit behavior, and interaction with Graal compilation diagnostics.
 - Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.
 - Treat `@TruffleBoundary` on hot generic instruction execution, MethodHandle or lambda-based instruction dispatch, broad ELF predecode, and broad synchronization removal as experiment-only ideas unless diagnostics identify them as real bottlenecks.
