@@ -239,7 +239,7 @@ public abstract sealed class RiscVInstructionSemantics {
             long immediate,
             boolean terminator) {
         return switch (operation) {
-            case NOP, FENCE, FENCE_I ->
+            case NOP, FENCE ->
                     new AdvancePcInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LUI -> new LuiInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case AUIPC -> new AuipcInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
@@ -253,7 +253,7 @@ public abstract sealed class RiscVInstructionSemantics {
             case BGEU -> new BgeuInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case ECALL -> new EcallInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case EBREAK -> new EbreakInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case MRET, CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
+            case FENCE_I, MRET, CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI ->
                     new ControlInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LB -> new LbInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LH -> new LhInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
@@ -1666,7 +1666,11 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes control-flow and system operations.
     protected final void executeControl(MachineState state, long nextPc) {
         switch (operation) {
-            case NOP, FENCE, FENCE_I -> state.setPc(nextPc);
+            case NOP, FENCE -> state.setPc(nextPc);
+            case FENCE_I -> {
+                state.fenceInstructionFetch();
+                state.setPc(nextPc);
+            }
             case LUI -> {
                 state.setDecodedRegister(rd, immediate);
                 state.setPc(nextPc);

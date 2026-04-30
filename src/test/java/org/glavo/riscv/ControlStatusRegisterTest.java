@@ -183,7 +183,7 @@ public final class ControlStatusRegisterTest {
         }
     }
 
-    /// Verifies that `fence.i` decodes and executes as a user-mode no-op.
+    /// Verifies that `fence.i` executes as a user-mode no-op while refreshing instruction-fetch visibility.
     @Test
     public void fenceInstructionNoOpExecutes() {
         try (TestMachine machine = TestMachine.create()) {
@@ -197,6 +197,7 @@ public final class ControlStatusRegisterTest {
             runDecodedProgram(machine);
 
             assertEquals(42, machine.state().register(RESULT_REGISTER));
+            assertEquals(1, machine.state().instructionFetchGeneration());
         }
     }
 

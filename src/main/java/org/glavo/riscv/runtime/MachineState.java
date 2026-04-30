@@ -130,6 +130,9 @@ public final class MachineState {
     /// The number of retired guest instructions.
     private long instructionCount;
 
+    /// The current instruction-fetch visibility generation, incremented by `fence.i`.
+    private long instructionFetchGeneration;
+
     /// The low eight bits of the floating-point control and status register.
     private int floatingPointControlStatus;
 
@@ -294,6 +297,7 @@ public final class MachineState {
         System.arraycopy(registers, 0, child.registers, 0, registers.length);
         System.arraycopy(floatingPointRegisters, 0, child.floatingPointRegisters, 0, floatingPointRegisters.length);
         child.floatingPointControlStatus = floatingPointControlStatus;
+        child.instructionFetchGeneration = instructionFetchGeneration;
         child.pc = childPc;
         child.registers[0] = 0;
         child.registers[2] = stackAddress;
@@ -389,6 +393,16 @@ public final class MachineState {
     /// Records one guest instruction retirement without budget or trace checks.
     public void retireInstructionUnchecked() {
         instructionCount++;
+    }
+
+    /// Returns the current instruction-fetch visibility generation.
+    public long instructionFetchGeneration() {
+        return instructionFetchGeneration;
+    }
+
+    /// Makes subsequent instruction fetches see code modifications ordered before a `fence.i`.
+    public void fenceInstructionFetch() {
+        instructionFetchGeneration++;
     }
 
     /// Records one guest instruction retirement on configurations that need checks or tracing.

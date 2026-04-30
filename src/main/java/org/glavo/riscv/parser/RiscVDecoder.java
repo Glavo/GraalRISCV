@@ -87,7 +87,7 @@ public final class RiscVDecoder {
             return instruction(address, raw, RiscVOperation.FENCE, 0, 0, 0, 0, false);
         }
         if (funct3 == 1 && rd(raw) == 0 && rs1(raw) == 0 && (raw >>> 20) == 0) {
-            return instruction(address, raw, RiscVOperation.FENCE_I, 0, 0, 0, 0, false);
+            return instruction(address, raw, RiscVOperation.FENCE_I, 0, 0, 0, 0, true);
         }
         if (funct3 == 2 && rd(raw) == 0 && ((raw >>> 25) & 0x7f) == 0) {
             RiscVOperation operation = switch (rs2(raw)) {

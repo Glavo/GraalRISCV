@@ -46,6 +46,7 @@
 - Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, and existing `Zicntr` capabilities, plus 64-byte CBO block-size keys.
 - Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented first slice.
 - Repository-owned RVA22U64 assembly acceptance tests now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zfa`, `Zicbom`, `Zicboz`, `Zicbop`, `Zihintntl`, and `Zihintpause` instructions from real assembler-generated ELFs.
+- RVA22U64 non-instruction acceptance now covers ordinary misaligned scalar load/store behavior, user counter CSR reads, and `fence.i` visibility for self-modifying code; decoded block, direct-call, and trace caches are keyed by an instruction-fetch generation refreshed by `fence.i`.
 
 ## Remaining Work
 
@@ -72,7 +73,7 @@
 ### 4. Finish RVA22U64 functional user-mode readiness
 
 - Audit the implemented user-visible RVA22U64 instruction set against the exact profile requirements and add any missing functional coverage found by that audit.
-- Audit existing behavior against the non-instruction RVA22U64 requirements that matter in user mode, including misaligned access behavior, LR/SC reservation constraints, counter CSRs, self-modifying-code visibility, and `hwprobe` block-size reporting.
+- Finish auditing existing behavior against the non-instruction RVA22U64 requirements that matter in user mode, especially exact LR/SC reservation constraints and any remaining profile details not covered by the current misaligned-access, counter CSR, self-modifying-code, and `hwprobe` tests.
 - Do not report optional RVA22U64 extensions such as `V`, full `Zfh`, `Zicond`, `Zacas`, or `Zawrs` until they are implemented and tested.
 - Do not claim timing-certified `Zkt` behavior in documentation or `hwprobe`; keep the target as functional user-mode support unless a later plan explicitly adds timing conformance work.
 - Preserve existing `Zifencei` support as a compatibility extension even though it is not a mandatory RVA22U64 user-profile extension.
