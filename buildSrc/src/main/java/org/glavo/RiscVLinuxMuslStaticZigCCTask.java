@@ -22,7 +22,7 @@ import javax.inject.Inject;
 import java.util.ArrayList;
 import java.util.List;
 
-/// Builds a static `riscv64-linux-musl` ELF from a C source file with Zig CC.
+/// Builds a static `riscv64-linux-musl` ELF from C source files with Zig CC.
 @NotNullByDefault
 public abstract class RiscVLinuxMuslStaticZigCCTask extends AbstractRiscVZigCCTask {
     /// Creates the static Linux musl Zig CC task and sets Linux target defaults.

@@ -27,7 +27,7 @@ import javax.inject.Inject;
 import java.io.File;
 import java.util.ArrayList;
 
-/// Builds a freestanding `riscv64-freestanding` ELF from a C source file with Zig CC.
+/// Builds a freestanding `riscv64-freestanding` ELF from C source files with Zig CC.
 @NotNullByDefault
 public abstract class RiscVFreestandingZigCCTask extends AbstractRiscVZigCCTask {
     /// Creates the freestanding Zig CC task.

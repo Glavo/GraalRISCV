@@ -17,12 +17,14 @@ package org.glavo;
 
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
+import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
+import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.LocalState;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
@@ -65,12 +67,12 @@ public abstract class AbstractRiscVZigCCTask extends DefaultTask {
     @PathSensitive(PathSensitivity.NONE)
     public abstract RegularFileProperty getZigExecutable();
 
-    /// Returns the C source file to compile.
+    /// Returns the C source files to compile and link.
     ///
-    /// @return the source file property
-    @InputFile
+    /// @return the source file collection
+    @InputFiles
     @PathSensitive(PathSensitivity.RELATIVE)
-    public abstract RegularFileProperty getSourceFile();
+    public abstract ConfigurableFileCollection getSourceFiles();
 
     /// Returns the generated ELF output file.
     ///
@@ -188,7 +190,12 @@ public abstract class AbstractRiscVZigCCTask extends DefaultTask {
         arguments.addAll(getAdditionalCompilerArguments().get());
         arguments.add("-o");
         arguments.add(outputFile.getAbsolutePath());
-        arguments.add(getSourceFile().get().getAsFile().getAbsolutePath());
+        if (getSourceFiles().isEmpty()) {
+            throw new GradleException("At least one C source file is required.");
+        }
+        for (File sourceFile : getSourceFiles().getFiles()) {
+            arguments.add(sourceFile.getAbsolutePath());
+        }
         return arguments;
     }
 

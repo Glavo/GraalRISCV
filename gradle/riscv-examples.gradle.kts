@@ -1,5 +1,6 @@
 import java.io.ByteArrayOutputStream
 import java.nio.charset.StandardCharsets
+import org.gradle.api.file.RelativePath
 import org.gradle.api.file.RegularFile
 import org.gradle.api.plugins.JavaApplication
 import org.gradle.api.provider.Provider
@@ -45,7 +46,7 @@ fun AbstractRiscVZigCCTask.configureZigExecutable() {
 
 fun RiscVLinuxMuslStaticZigCCTask.configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
     configureZigExecutable()
-    sourceFile.set(layout.projectDirectory.file("examples/linux-static/$sourceFileName"))
+    sourceFiles.from(layout.projectDirectory.file("examples/linux-static/$sourceFileName"))
     outputFile.set(elfFile)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
@@ -93,7 +94,7 @@ tasks.register<RiscVFreestandingZigCCTask>("buildHelloWorldExample") {
     description = "Builds examples/freestanding/HelloWorld.c for RISC-V with Zig CC."
 
     configureZigExecutable()
-    sourceFile.set(layout.projectDirectory.file("examples/freestanding/HelloWorld.c"))
+    sourceFiles.from(layout.projectDirectory.file("examples/freestanding/HelloWorld.c"))
     linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
     outputFile.set(helloWorldExampleElf)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
@@ -212,7 +213,7 @@ tasks.register<RiscVFreestandingZigCCTask>("buildHotLoopExample") {
     description = "Builds examples/freestanding/HotLoop.c for RISC-V with Zig CC."
 
     configureZigExecutable()
-    sourceFile.set(layout.projectDirectory.file("examples/freestanding/HotLoop.c"))
+    sourceFiles.from(layout.projectDirectory.file("examples/freestanding/HotLoop.c"))
     linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
     outputFile.set(hotLoopExampleElf)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
@@ -949,6 +950,161 @@ tasks.register<JavaExec>("testLinuxStaticProcessSignalsExample") {
         val actualError = stderr.toString(StandardCharsets.UTF_8)
         if (actualError.isNotEmpty()) {
             throw GradleException("Static process signals example wrote to stderr: $actualError")
+        }
+    }
+}
+
+// Downloaded static Linux CoreMark example.
+val coreMarkRevision = "1f483d5b8316753a742cbf5590caf5bd0a4e4777"
+val coreMarkArchiveRoot = "coremark-$coreMarkRevision"
+val coreMarkArchiveFile = layout.buildDirectory.file("downloads/coremark/coremark-$coreMarkRevision.zip")
+val coreMarkSourceDirectory = layout.buildDirectory.dir("downloads/coremark/$coreMarkRevision")
+val coreMarkExampleElf = layout.buildDirectory.file("examples/linux-static/coremark.elf")
+val coreMarkSourcePaths = listOf(
+    "core_list_join.c",
+    "core_main.c",
+    "core_matrix.c",
+    "core_state.c",
+    "core_util.c",
+    "coremark.h",
+    "simple/core_portme.c",
+    "simple/core_portme.h"
+)
+val coreMarkSourceFiles = coreMarkSourcePaths.associateWith { sourcePath ->
+    coreMarkSourceDirectory.map { directory -> directory.file(sourcePath) }
+}
+
+val downloadCoreMarkArchive by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
+    group = "build setup"
+    description = "Downloads EEMBC CoreMark source archive revision $coreMarkRevision."
+
+    src("https://github.com/eembc/coremark/archive/$coreMarkRevision.zip")
+    dest(coreMarkArchiveFile.get().asFile)
+    overwrite(false)
+    tempAndMove(true)
+    retries(3)
+    connectTimeout(30_000)
+    readTimeout(30_000)
+
+    doFirst {
+        val archive = coreMarkArchiveFile.get().asFile
+        val parent = archive.parentFile
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            throw GradleException("Failed to create CoreMark archive directory: $parent")
+        }
+        if (archive.isFile && archive.length() == 0L) {
+            delete(archive)
+        }
+    }
+}
+
+tasks.register("extractCoreMarkSources") {
+    group = "build setup"
+    description = "Extracts the selected EEMBC CoreMark sources used by the CoreMark example."
+
+    dependsOn(downloadCoreMarkArchive)
+    inputs.file(coreMarkArchiveFile)
+    outputs.files(coreMarkSourceFiles.values)
+
+    doLast {
+        copy {
+            from(zipTree(coreMarkArchiveFile.get().asFile)) {
+                coreMarkSourcePaths.forEach { sourcePath ->
+                    include("$coreMarkArchiveRoot/$sourcePath")
+                }
+                eachFile {
+                    relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray())
+                }
+                includeEmptyDirs = false
+            }
+            into(coreMarkSourceDirectory)
+        }
+        val missingFiles = coreMarkSourceFiles.values
+            .map { it.get().asFile }
+            .filterNot { it.isFile }
+        if (missingFiles.isNotEmpty()) {
+            throw GradleException("CoreMark archive did not contain expected files: ${missingFiles.joinToString()}")
+        }
+    }
+}
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildCoreMarkExample") {
+    group = "verification"
+    description = "Downloads EEMBC CoreMark and builds it as a static riscv64-linux-musl executable."
+
+    dependsOn("extractCoreMarkSources")
+    configureZigExecutable()
+    sourceFiles.from(
+        coreMarkSourceFiles.getValue("core_main.c"),
+        coreMarkSourceFiles.getValue("core_list_join.c"),
+        coreMarkSourceFiles.getValue("core_matrix.c"),
+        coreMarkSourceFiles.getValue("core_state.c"),
+        coreMarkSourceFiles.getValue("core_util.c"),
+        coreMarkSourceFiles.getValue("simple/core_portme.c")
+    )
+    outputFile.set(coreMarkExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        listOf(
+            "-O2",
+            "-g0",
+            "-no-pie",
+            "-DPERFORMANCE_RUN=1",
+            "-DITERATIONS=6000",
+            "-DFLAGS_STR=\"-O2 -static -DPERFORMANCE_RUN=1 -DITERATIONS=6000\"",
+            "-I${coreMarkSourceDirectory.get().asFile.absolutePath}",
+            "-I${coreMarkSourceDirectory.get().dir("simple").asFile.absolutePath}"
+        )
+    )
+}
+
+tasks.register<JavaExec>("runCoreMarkExample") {
+    group = "verification"
+    description = "Runs the downloaded static CoreMark example with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildCoreMarkExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(coreMarkExampleElf.get().asFile.absolutePath))
+    }
+}
+
+tasks.register<JavaExec>("testCoreMarkExample") {
+    group = "verification"
+    description = "Runs the downloaded static CoreMark example and verifies CoreMark validation output."
+
+    dependsOn("classes", "buildCoreMarkExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(coreMarkExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (!actualOutput.contains("Correct operation validated.")) {
+            throw GradleException("CoreMark validation did not succeed: ${actualOutput.trim()}")
+        }
+        if (actualOutput.contains("Errors detected")) {
+            throw GradleException("CoreMark reported errors: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("CoreMark example wrote to stderr: $actualError")
         }
     }
 }
