@@ -56,20 +56,11 @@ record VmaTable(
 
     /// Copies a VMA list into a sorted immutable snapshot.
     static VmaTable copyOf(ArrayList<Vma> vmas) {
-        long[] addresses = new long[vmas.size()];
-        long[] endAddresses = new long[vmas.size()];
-        boolean[] huge = new boolean[vmas.size()];
-        byte[] hugePagePreferences = new byte[vmas.size()];
-        long[] protections = new long[vmas.size()];
-        for (int index = 0; index < vmas.size(); index++) {
-            Vma vma = vmas.get(index);
-            addresses[index] = vma.address();
-            endAddresses[index] = vma.endAddress();
-            huge[index] = vma.huge();
-            hugePagePreferences[index] = vma.hugePagePreference();
-            protections[index] = vma.protection();
+        ArrayList<Vma> mergedVmas = new ArrayList<>(vmas.size());
+        for (Vma vma : vmas) {
+            appendMerged(mergedVmas, vma);
         }
-        return new VmaTable(addresses, endAddresses, huge, hugePagePreferences, protections);
+        return fromMergedList(mergedVmas);
     }
 
     /// Returns the number of VMAs in this snapshot.
@@ -90,32 +81,36 @@ record VmaTable(
     /// Returns a new snapshot with the supplied non-overlapping VMA inserted.
     VmaTable insert(Vma vma) {
         int insertionIndex = insertionIndex(vma.address());
-        long[] newAddresses = new long[addresses.length + 1];
-        long[] newEndAddresses = new long[endAddresses.length + 1];
-        boolean[] newHuge = new boolean[huge.length + 1];
-        byte[] newHugePagePreferences = new byte[hugePagePreferences.length + 1];
-        long[] newProtections = new long[protections.length + 1];
-        System.arraycopy(addresses, 0, newAddresses, 0, insertionIndex);
-        System.arraycopy(endAddresses, 0, newEndAddresses, 0, insertionIndex);
-        System.arraycopy(huge, 0, newHuge, 0, insertionIndex);
-        System.arraycopy(hugePagePreferences, 0, newHugePagePreferences, 0, insertionIndex);
-        System.arraycopy(protections, 0, newProtections, 0, insertionIndex);
-        newAddresses[insertionIndex] = vma.address();
-        newEndAddresses[insertionIndex] = vma.endAddress();
-        newHuge[insertionIndex] = vma.huge();
-        newHugePagePreferences[insertionIndex] = vma.hugePagePreference();
-        newProtections[insertionIndex] = vma.protection();
-        int copiedEntries = addresses.length - insertionIndex;
-        System.arraycopy(addresses, insertionIndex, newAddresses, insertionIndex + 1, copiedEntries);
-        System.arraycopy(endAddresses, insertionIndex, newEndAddresses, insertionIndex + 1, copiedEntries);
-        System.arraycopy(huge, insertionIndex, newHuge, insertionIndex + 1, copiedEntries);
-        System.arraycopy(
-                hugePagePreferences,
-                insertionIndex,
+        boolean mergePrevious = insertionIndex > 0 && canMergeEntryBefore(insertionIndex - 1, vma);
+        boolean mergeNext = insertionIndex < addresses.length && canMergeEntryAfter(vma, insertionIndex);
+        int mergedIndex = mergePrevious ? insertionIndex - 1 : insertionIndex;
+        int newSize = addresses.length + 1 - (mergePrevious ? 1 : 0) - (mergeNext ? 1 : 0);
+        long mergedAddress = mergePrevious ? addresses[insertionIndex - 1] : vma.address();
+        long mergedEndAddress = mergeNext ? endAddresses[insertionIndex] : vma.endAddress();
+
+        long[] newAddresses = new long[newSize];
+        long[] newEndAddresses = new long[newSize];
+        boolean[] newHuge = new boolean[newSize];
+        byte[] newHugePagePreferences = new byte[newSize];
+        long[] newProtections = new long[newSize];
+        copyRange(0, mergedIndex, newAddresses, newEndAddresses, newHuge, newHugePagePreferences, newProtections);
+        newAddresses[mergedIndex] = mergedAddress;
+        newEndAddresses[mergedIndex] = mergedEndAddress;
+        newHuge[mergedIndex] = vma.huge();
+        newHugePagePreferences[mergedIndex] = vma.hugePagePreference();
+        newProtections[mergedIndex] = vma.protection();
+
+        int sourceIndex = insertionIndex + (mergeNext ? 1 : 0);
+        int destinationIndex = mergedIndex + 1;
+        copyRange(
+                sourceIndex,
+                addresses.length - sourceIndex,
+                newAddresses,
+                newEndAddresses,
+                newHuge,
                 newHugePagePreferences,
-                insertionIndex + 1,
-                copiedEntries);
-        System.arraycopy(protections, insertionIndex, newProtections, insertionIndex + 1, copiedEntries);
+                newProtections,
+                destinationIndex);
         return new VmaTable(newAddresses, newEndAddresses, newHuge, newHugePagePreferences, newProtections);
     }
 
@@ -162,6 +157,106 @@ record VmaTable(
     private int insertionIndex(long address) {
         int index = Arrays.binarySearch(addresses, address);
         return index >= 0 ? index : -index - 1;
+    }
+
+    /// Copies a range from this table to destination arrays at the same offset.
+    private void copyRange(
+            int sourceIndex,
+            int length,
+            long[] newAddresses,
+            long[] newEndAddresses,
+            boolean[] newHuge,
+            byte[] newHugePagePreferences,
+            long[] newProtections) {
+        copyRange(
+                sourceIndex,
+                length,
+                newAddresses,
+                newEndAddresses,
+                newHuge,
+                newHugePagePreferences,
+                newProtections,
+                sourceIndex);
+    }
+
+    /// Copies a range from this table to destination arrays.
+    private void copyRange(
+            int sourceIndex,
+            int length,
+            long[] newAddresses,
+            long[] newEndAddresses,
+            boolean[] newHuge,
+            byte[] newHugePagePreferences,
+            long[] newProtections,
+            int destinationIndex) {
+        System.arraycopy(addresses, sourceIndex, newAddresses, destinationIndex, length);
+        System.arraycopy(endAddresses, sourceIndex, newEndAddresses, destinationIndex, length);
+        System.arraycopy(huge, sourceIndex, newHuge, destinationIndex, length);
+        System.arraycopy(hugePagePreferences, sourceIndex, newHugePagePreferences, destinationIndex, length);
+        System.arraycopy(protections, sourceIndex, newProtections, destinationIndex, length);
+    }
+
+    /// Copies a pre-merged VMA list into parallel arrays.
+    private static VmaTable fromMergedList(ArrayList<Vma> vmas) {
+        long[] addresses = new long[vmas.size()];
+        long[] endAddresses = new long[vmas.size()];
+        boolean[] huge = new boolean[vmas.size()];
+        byte[] hugePagePreferences = new byte[vmas.size()];
+        long[] protections = new long[vmas.size()];
+        for (int index = 0; index < vmas.size(); index++) {
+            Vma vma = vmas.get(index);
+            addresses[index] = vma.address();
+            endAddresses[index] = vma.endAddress();
+            huge[index] = vma.huge();
+            hugePagePreferences[index] = vma.hugePagePreference();
+            protections[index] = vma.protection();
+        }
+        return new VmaTable(addresses, endAddresses, huge, hugePagePreferences, protections);
+    }
+
+    /// Appends a VMA to a sorted list, merging with the previous VMA when all attributes match.
+    private static void appendMerged(ArrayList<Vma> vmas, Vma vma) {
+        int lastIndex = vmas.size() - 1;
+        if (lastIndex < 0) {
+            vmas.add(vma);
+            return;
+        }
+
+        Vma previous = vmas.get(lastIndex);
+        if (canMerge(previous, vma)) {
+            vmas.set(lastIndex, new Vma(
+                    previous.address(),
+                    vma.endAddress(),
+                    previous.huge(),
+                    previous.hugePagePreference(),
+                    previous.protection()));
+        } else {
+            vmas.add(vma);
+        }
+    }
+
+    /// Returns true when two adjacent VMAs can be represented as one equivalent VMA.
+    private static boolean canMerge(Vma first, Vma second) {
+        return first.endAddress() == second.address()
+                && first.huge() == second.huge()
+                && first.hugePagePreference() == second.hugePagePreference()
+                && first.protection() == second.protection();
+    }
+
+    /// Returns true when an existing VMA can be merged before the supplied VMA.
+    private boolean canMergeEntryBefore(int index, Vma vma) {
+        return endAddresses[index] == vma.address()
+                && huge[index] == vma.huge()
+                && hugePagePreferences[index] == vma.hugePagePreference()
+                && protections[index] == vma.protection();
+    }
+
+    /// Returns true when an existing VMA can be merged after the supplied VMA.
+    private boolean canMergeEntryAfter(Vma vma, int index) {
+        return vma.endAddress() == addresses[index]
+                && vma.huge() == huge[index]
+                && vma.hugePagePreference() == hugePagePreferences[index]
+                && vma.protection() == protections[index];
     }
 
     /// Returns true when two half-open address ranges overlap.

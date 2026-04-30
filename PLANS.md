@@ -30,7 +30,7 @@
 - Keep Zig and Go example tasks, CI aggregation tasks, and README coverage in sync as examples change.
 - Continue measuring the embedded hot trace executor, especially trace length, trigger thresholds, batched store fast paths, the small trace direct-call PIC, trace lookup hashing, and interaction with Graal compilation diagnostics.
 - Continue improving paged-memory slow paths, especially cross-page accesses, richer fault reporting, TLB lookup behavior, page-table lookup costs, and VMA protection checks.
-- Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, current VMA split behavior, and future VMA merge behavior as the syscall layer is simplified.
+- Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and current VMA split/merge behavior as the syscall layer is simplified.
 - Keep CoreMark, Zig examples, Go examples, and the local Go demo as acceptance workloads for the paged-memory migration.
 - Profile the remaining generic complex floating-point arithmetic and conversion micro-op path before deciding whether to split it further.
 - Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.

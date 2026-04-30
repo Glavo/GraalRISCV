@@ -297,6 +297,13 @@ public final class MemoryTest {
 
             assertEquals(0x55, memory.readUnsignedByte(baseAddress));
             assertEquals(0x66, memory.readUnsignedByte(baseAddress + 3L * pageSize));
+
+            assertTrue(memory.protect(
+                    baseAddress + pageSize,
+                    2L * pageSize,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            assertTrue(memory.isBacked(baseAddress, 4L * pageSize));
+            assertEquals(baseAddress + 4L * pageSize, memory.backedRangeEnd(baseAddress));
         }
     }
 
@@ -330,6 +337,29 @@ public final class MemoryTest {
             memory.writeByte(baseAddress + pageSize, (byte) 0x77);
 
             assertEquals(0x77, memory.readUnsignedByte(baseAddress + pageSize));
+
+            memory.adviseHugePagePreference(baseAddress, 4L * pageSize, false);
+
+            assertTrue(memory.isBacked(baseAddress, 4L * pageSize));
+            assertEquals(baseAddress + 4L * pageSize, memory.backedRangeEnd(baseAddress));
+        }
+    }
+
+    /// Verifies adjacent mappings with matching attributes are represented as one VMA.
+    @Test
+    public void adjacentSparseMappingsWithSameAttributesAreMerged() {
+        long pageSize = Memory.DEFAULT_PAGE_SIZE;
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 2L * pageSize, null)) {
+            long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
+
+            assertTrue(memory.map(baseAddress, pageSize, Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+            assertTrue(memory.map(
+                    baseAddress + pageSize,
+                    pageSize,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
+
+            assertTrue(memory.isBacked(baseAddress, 2L * pageSize));
+            assertEquals(baseAddress + 2L * pageSize, memory.backedRangeEnd(baseAddress));
         }
     }
 
