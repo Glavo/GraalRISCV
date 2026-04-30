@@ -88,8 +88,94 @@ public final class RiscVInstructionSemanticsTest {
         assertEquals(-1L, executeRegisterOperation(RiscVOperation.SRAW, 0xffff_ffffL, 63));
     }
 
+    /// Verifies Zba address-generation instructions.
+    @Test
+    public void zbaAddressGenerationOperationsUseExpectedOperands() {
+        assertEquals(0x21, executeRegisterOperation(RiscVOperation.SH1ADD, 0x10, 1));
+        assertEquals(0x41, executeRegisterOperation(RiscVOperation.SH2ADD, 0x10, 1));
+        assertEquals(0x81, executeRegisterOperation(RiscVOperation.SH3ADD, 0x10, 1));
+        assertEquals(0x1_0000_0001L, executeRegisterOperation(RiscVOperation.ADD_UW, 0xffff_ffffL, 2));
+        assertEquals(0x1_ffff_ffffL, executeRegisterOperation(RiscVOperation.SH1ADD_UW, 0xffff_ffffL, 1));
+        assertEquals(0xffff_ffff0L, executeImmediateOperation(RiscVOperation.SLLI_UW, 0xffff_ffffL, 0, 4));
+    }
+
+    /// Verifies Zbb logical, counting, min/max, sign-extension, byte, and rotation instructions.
+    @Test
+    public void zbbOperationsFollowBitManipulationRules() {
+        assertEquals(0x30L, executeRegisterOperation(RiscVOperation.ANDN, 0x3f, 0x0f));
+        assertEquals(~0x0cL, executeRegisterOperation(RiscVOperation.ORN, 0x03, 0x0c));
+        assertEquals(~0xffL, executeRegisterOperation(RiscVOperation.XNOR, 0xf0, 0x0f));
+        assertEquals(63, executeImmediateOperation(RiscVOperation.CLZ, 1, 0, 0));
+        assertEquals(4, executeImmediateOperation(RiscVOperation.CTZ, 0x10, 0, 0));
+        assertEquals(32, executeImmediateOperation(RiscVOperation.CPOP, 0xffff_ffffL, 0, 0));
+        assertEquals(31, executeImmediateOperation(RiscVOperation.CLZW, 1, 0, 0));
+        assertEquals(4, executeImmediateOperation(RiscVOperation.CTZW, 0x10, 0, 0));
+        assertEquals(32, executeImmediateOperation(RiscVOperation.CPOPW, 0xffff_ffffL, 0, 0));
+        assertEquals(2, executeRegisterOperation(RiscVOperation.MAX, -1, 2));
+        assertEquals(-1L, executeRegisterOperation(RiscVOperation.MAXU, -1, 2));
+        assertEquals(-1L, executeRegisterOperation(RiscVOperation.MIN, -1, 2));
+        assertEquals(2, executeRegisterOperation(RiscVOperation.MINU, -1, 2));
+        assertEquals(-128L, executeImmediateOperation(RiscVOperation.SEXT_B, 0x80, 0, 0));
+        assertEquals(-32768L, executeImmediateOperation(RiscVOperation.SEXT_H, 0x8000, 0, 0));
+        assertEquals(0xabcdL, executeImmediateOperation(RiscVOperation.ZEXT_H, 0xffff_ffff_ffff_abcdL, 0, 0));
+        assertEquals(0xff00_ff00_00ff_00ffL, executeImmediateOperation(RiscVOperation.ORC_B, 0x1200_0100_0040_0080L, 0, 0));
+        assertEquals(0x8877_6655_4433_2211L, executeImmediateOperation(RiscVOperation.REV8, 0x1122_3344_5566_7788L, 0, 0));
+        assertEquals(0x3456_789a_bcde_f012L, executeRegisterOperation(RiscVOperation.ROL, 0x1234_5678_9abc_def0L, 8));
+        assertEquals(0xdef0_1234_5678_9abcL, executeImmediateOperation(RiscVOperation.RORI, 0x1234_5678_9abc_def0L, 0, 16));
+        assertEquals(0x0000_0000_3456_7812L, executeRegisterOperation(RiscVOperation.ROLW, 0x1234_5678L, 8));
+        assertEquals(0x0000_0000_5678_1234L, executeImmediateOperation(RiscVOperation.RORIW, 0x1234_5678L, 0, 16));
+    }
+
+    /// Verifies Zbs single-bit instructions use the architectural six-bit index mask.
+    @Test
+    public void zbsOperationsMaskBitIndexes() {
+        assertEquals(0, executeRegisterOperation(RiscVOperation.BCLR, 1, 64));
+        assertEquals(1, executeRegisterOperation(RiscVOperation.BEXT, 1, 64));
+        assertEquals(0, executeRegisterOperation(RiscVOperation.BINV, 1, 64));
+        assertEquals(Long.MIN_VALUE, executeImmediateOperation(RiscVOperation.BSETI, 0, 0, 63));
+    }
+
+    /// Verifies `cbo.zero` clears the containing 64-byte block and preserves adjacent bytes.
+    @Test
+    public void cacheBlockZeroClearsContainingCacheBlock() {
+        try (TestMachine machine = TestMachine.create()) {
+            long base = TEST_PC + 256;
+            for (int index = 0; index < 128; index++) {
+                machine.memory().writeByte(base + index, (byte) 0x7f);
+            }
+            machine.state().setRegister(LEFT_REGISTER, base + 71);
+
+            RiscVInstructionSemantics instruction = RiscVInstructionSemantics.create(
+                    TEST_PC,
+                    0,
+                    Integer.BYTES,
+                    RiscVOperation.CBO_ZERO,
+                    0,
+                    LEFT_REGISTER,
+                    0,
+                    0,
+                    false);
+            instruction.execute(machine.state());
+
+            for (int index = 0; index < 64; index++) {
+                assertEquals(0, machine.memory().readUnsignedByte(base + 64 + index));
+            }
+            assertEquals(0x7f, machine.memory().readUnsignedByte(base + 63));
+        }
+    }
+
     /// Executes one register-register instruction and returns its destination register value.
     private static long executeRegisterOperation(RiscVOperation operation, long leftValue, long rightValue) {
+        return executeOperation(operation, leftValue, rightValue, 0);
+    }
+
+    /// Executes one register-immediate instruction and returns its destination register value.
+    private static long executeImmediateOperation(RiscVOperation operation, long leftValue, long rightValue, long immediate) {
+        return executeOperation(operation, leftValue, rightValue, immediate);
+    }
+
+    /// Executes one standalone instruction and returns its destination register value.
+    private static long executeOperation(RiscVOperation operation, long leftValue, long rightValue, long immediate) {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             GuestSyscalls syscalls = new GuestSyscalls(
                     memory,
@@ -117,7 +203,7 @@ public final class RiscVInstructionSemanticsTest {
                         RESULT_REGISTER,
                         LEFT_REGISTER,
                         RIGHT_REGISTER,
-                        0,
+                        immediate,
                         false);
                 instruction.execute(state);
 
@@ -125,6 +211,47 @@ public final class RiscVInstructionSemanticsTest {
                 return state.register(RESULT_REGISTER);
             } finally {
                 syscalls.close();
+            }
+        }
+    }
+
+    /// Owns a standalone instruction-test machine and its closeable resources.
+    ///
+    /// @param memory the guest memory under test
+    /// @param syscalls the syscall handler attached to the machine state
+    /// @param state the mutable architectural state under test
+    @NotNullByDefault
+    private record TestMachine(
+            Memory memory,
+            GuestSyscalls syscalls,
+            MachineState state) implements AutoCloseable {
+        /// Creates a test machine initialized at the standalone instruction test address.
+        private static TestMachine create() {
+            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
+            GuestSyscalls syscalls = new GuestSyscalls(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            MachineState state = new MachineState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            state.setPc(TEST_PC);
+            return new TestMachine(memory, syscalls, state);
+        }
+
+        /// Closes the syscall handler and guest memory backing this test machine.
+        @Override
+        public void close() {
+            try {
+                syscalls.close();
+            } finally {
+                memory.close();
             }
         }
     }

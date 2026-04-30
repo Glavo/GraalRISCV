@@ -5,7 +5,7 @@ package org.glavo.riscv.parser;
 
 import org.jetbrains.annotations.NotNullByDefault;
 
-/// Stores the immutable decode result for one RV64GC guest instruction.
+/// Stores the immutable decode result for one RV64 guest instruction.
 ///
 /// @param address the guest address of the instruction
 /// @param raw the original 16-bit or 32-bit little-endian instruction bits

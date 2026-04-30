@@ -61,6 +61,53 @@ public final class RiscVDecoderEdgeTest {
         assertDecodedRegisterResult(-1L, sraw(RESULT_REGISTER, LEFT_REGISTER, RIGHT_REGISTER), 0xffff_ffffL, 63);
     }
 
+    /// Verifies decoding for the first implemented RVA22U64 integer bit-manipulation instructions.
+    @Test
+    public void decodedRva22BitManipulationInstructionsExecute() {
+        assertDecodedRegisterResult(0x21, rType(0x33, RESULT_REGISTER, 2, LEFT_REGISTER, RIGHT_REGISTER, 0x10), 0x10, 1);
+        assertDecodedRegisterResult(0x1_0000_0001L, rType(0x3b, RESULT_REGISTER, 0, LEFT_REGISTER, RIGHT_REGISTER, 0x04), 0xffff_ffffL, 2);
+        assertDecodedRegisterResult(0xffff_ffff0L, iType(0x1b, RESULT_REGISTER, 1, LEFT_REGISTER, 0x084), 0xffff_ffffL, 0);
+        assertDecodedRegisterResult(63, iType(0x13, RESULT_REGISTER, 1, LEFT_REGISTER, 0x600), 1, 0);
+        assertDecodedRegisterResult(0x8877_6655_4433_2211L, iType(0x13, RESULT_REGISTER, 5, LEFT_REGISTER, 0x6b8), 0x1122_3344_5566_7788L, 0);
+        assertDecodedRegisterResult(Long.MIN_VALUE, iType(0x13, RESULT_REGISTER, 1, LEFT_REGISTER, 0x2bf), 0, 0);
+        assertDecodedRegisterResult(1, rType(0x33, RESULT_REGISTER, 5, LEFT_REGISTER, RIGHT_REGISTER, 0x24), 0x80, 7);
+    }
+
+    /// Verifies decoded cache-block management instructions and `pause` have the expected side effects.
+    @Test
+    public void decodedCacheBlockInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long base = TEST_PC + 256;
+            for (int index = 0; index < 128; index++) {
+                machine.memory().writeByte(base + index, (byte) 0x55);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    pause(),
+                    ntl(2),
+                    ntl(3),
+                    ntl(4),
+                    ntl(5),
+                    prefetch(0, LEFT_REGISTER),
+                    prefetch(1, LEFT_REGISTER),
+                    prefetch(3, LEFT_REGISTER),
+                    cbo(0, LEFT_REGISTER),
+                    cbo(1, LEFT_REGISTER),
+                    cbo(2, LEFT_REGISTER),
+                    cbo(4, LEFT_REGISTER),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(LEFT_REGISTER, base + 67);
+
+            runDecodedProgram(machine);
+
+            for (int index = 0; index < 64; index++) {
+                assertEquals(0, machine.memory().readUnsignedByte(base + 64 + index));
+            }
+            assertEquals(0x55, machine.memory().readUnsignedByte(base + 63));
+        }
+    }
+
     /// Verifies branch decoding, signedness, and taken versus fall-through control flow.
     @Test
     public void decodedBranchesUseExpectedControlFlow() {
@@ -314,6 +361,36 @@ public final class RiscVDecoderEdgeTest {
     /// Encodes `sraw`.
     private static int sraw(int rd, int rs1, int rs2) {
         return ElfTestImages.rType(0x3b, rd, 5, rs1, rs2, 0x20);
+    }
+
+    /// Encodes an I-type instruction.
+    private static int iType(int opcode, int rd, int funct3, int rs1, int immediate) {
+        return ElfTestImages.iType(opcode, rd, funct3, rs1, immediate);
+    }
+
+    /// Encodes an R-type instruction.
+    private static int rType(int opcode, int rd, int funct3, int rs1, int rs2, int funct7) {
+        return ElfTestImages.rType(opcode, rd, funct3, rs1, rs2, funct7);
+    }
+
+    /// Encodes a cache-block operation.
+    private static int cbo(int function, int rs1) {
+        return (function << 20) | (rs1 << 15) | (2 << 12) | 0x0f;
+    }
+
+    /// Encodes a non-temporal locality hint.
+    private static int ntl(int selectorRegister) {
+        return ElfTestImages.rType(0x33, 0, 0, 0, selectorRegister, 0);
+    }
+
+    /// Encodes a cache-block prefetch hint.
+    private static int prefetch(int function, int rs1) {
+        return ElfTestImages.iType(0x13, 0, 6, rs1, function);
+    }
+
+    /// Encodes `pause`.
+    private static int pause() {
+        return 0x0100_000f;
     }
 
     /// Encodes `lui`.

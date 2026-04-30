@@ -190,6 +190,94 @@ public enum RiscVOperation {
     REMW,
     /// Remainder unsigned word.
     REMUW,
+    /// Shift-left-by-one and add.
+    SH1ADD,
+    /// Shift-left-by-two and add.
+    SH2ADD,
+    /// Shift-left-by-three and add.
+    SH3ADD,
+    /// Add a zero-extended unsigned word to a register.
+    ADD_UW,
+    /// Shift-left-by-one an unsigned word and add.
+    SH1ADD_UW,
+    /// Shift-left-by-two an unsigned word and add.
+    SH2ADD_UW,
+    /// Shift-left-by-three an unsigned word and add.
+    SH3ADD_UW,
+    /// Shift-left an unsigned word by an immediate.
+    SLLI_UW,
+    /// And with inverted second operand.
+    ANDN,
+    /// Or with inverted second operand.
+    ORN,
+    /// Exclusive-nor registers.
+    XNOR,
+    /// Count leading zero bits.
+    CLZ,
+    /// Count trailing zero bits.
+    CTZ,
+    /// Count one bits.
+    CPOP,
+    /// Count leading zero bits in a word.
+    CLZW,
+    /// Count trailing zero bits in a word.
+    CTZW,
+    /// Count one bits in a word.
+    CPOPW,
+    /// Signed maximum.
+    MAX,
+    /// Unsigned maximum.
+    MAXU,
+    /// Signed minimum.
+    MIN,
+    /// Unsigned minimum.
+    MINU,
+    /// Sign-extend byte.
+    SEXT_B,
+    /// Sign-extend halfword.
+    SEXT_H,
+    /// Zero-extend halfword.
+    ZEXT_H,
+    /// Or-combine bytes.
+    ORC_B,
+    /// Reverse byte order.
+    REV8,
+    /// Rotate left.
+    ROL,
+    /// Rotate right.
+    ROR,
+    /// Rotate right by immediate.
+    RORI,
+    /// Rotate word left.
+    ROLW,
+    /// Rotate word right.
+    RORW,
+    /// Rotate word right by immediate.
+    RORIW,
+    /// Clear one bit selected by a register.
+    BCLR,
+    /// Clear one bit selected by an immediate.
+    BCLRI,
+    /// Extract one bit selected by a register.
+    BEXT,
+    /// Extract one bit selected by an immediate.
+    BEXTI,
+    /// Invert one bit selected by a register.
+    BINV,
+    /// Invert one bit selected by an immediate.
+    BINVI,
+    /// Set one bit selected by a register.
+    BSET,
+    /// Set one bit selected by an immediate.
+    BSETI,
+    /// Cache-block invalidate.
+    CBO_INVAL,
+    /// Cache-block clean.
+    CBO_CLEAN,
+    /// Cache-block flush.
+    CBO_FLUSH,
+    /// Cache-block zero.
+    CBO_ZERO,
     /// Memory fence no-op for the single-threaded MVP.
     FENCE,
     /// Instruction-fetch fence no-op for the single-threaded MVP.

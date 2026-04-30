@@ -7,6 +7,7 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.RiscVLanguage;
+import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
@@ -919,15 +920,6 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0`.
     private static final long RISCV_HWPROBE_KEY_IMA_EXT_0 = 4;
 
-    /// Linux `RISCV_HWPROBE_IMA_FD`.
-    private static final long RISCV_HWPROBE_IMA_FD = 1;
-
-    /// Linux `RISCV_HWPROBE_IMA_C`.
-    private static final long RISCV_HWPROBE_IMA_C = 1 << 1;
-
-    /// Linux `RISCV_HWPROBE_EXT_ZICNTR`.
-    private static final long RISCV_HWPROBE_EXT_ZICNTR = 1L << 50;
-
     /// Linux `RISCV_HWPROBE_KEY_CPUPERF_0`.
     private static final long RISCV_HWPROBE_KEY_CPUPERF_0 = 5;
 
@@ -963,10 +955,6 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE`.
     private static final long RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE = 15;
-
-    /// The extension bits reported through `RISCV_HWPROBE_KEY_IMA_EXT_0`.
-    private static final long RISCV_HWPROBE_IMA_EXTENSIONS =
-            RISCV_HWPROBE_IMA_FD | RISCV_HWPROBE_IMA_C | RISCV_HWPROBE_EXT_ZICNTR;
 
     /// Linux `CLOCK_REALTIME`.
     private static final long CLOCK_REALTIME = 0;
@@ -4229,14 +4217,14 @@ public final class GuestSyscalls implements AutoCloseable {
             case (int) RISCV_HWPROBE_KEY_MVENDORID,
                     (int) RISCV_HWPROBE_KEY_MARCHID,
                     (int) RISCV_HWPROBE_KEY_MIMPID,
-                    (int) RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE,
                     (int) RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0,
-                    (int) RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE,
                     (int) RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0,
-                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0,
-                    (int) RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE -> 0;
+                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0 -> 0;
+            case (int) RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE,
+                    (int) RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE,
+                    (int) RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE -> RiscVExtensions.CACHE_BLOCK_SIZE;
             case (int) RISCV_HWPROBE_KEY_BASE_BEHAVIOR -> RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
-            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> RISCV_HWPROBE_IMA_EXTENSIONS;
+            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> RiscVExtensions.HWPROBE_IMA_EXTENSIONS;
             case (int) RISCV_HWPROBE_KEY_CPUPERF_0,
                     (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF,
                     (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_UNSUPPORTED;

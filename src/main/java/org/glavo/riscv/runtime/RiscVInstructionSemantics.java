@@ -5,6 +5,7 @@ package org.glavo.riscv.runtime;
 
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.parser.DecodedInstruction;
 import org.glavo.riscv.parser.RiscVOperation;
@@ -12,7 +13,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.math.BigInteger;
 
-/// Executes one decoded RV64GC guest instruction through shared semantic helpers.
+/// Executes one decoded RV64 guest instruction through shared semantic helpers.
 @NotNullByDefault
 public abstract sealed class RiscVInstructionSemantics {
     /// The immediate bit offset used for the packed floating-point format field.
@@ -210,6 +211,12 @@ public abstract sealed class RiscVInstructionSemantics {
             case MULW -> new MulwInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, DIVW, DIVUW, REMW, REMUW ->
                     new MultiplyDivideInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case SH1ADD, SH2ADD, SH3ADD, ADD_UW, SH1ADD_UW, SH2ADD_UW, SH3ADD_UW, SLLI_UW,
+                    ANDN, ORN, XNOR, CLZ, CTZ, CPOP, CLZW, CTZW, CPOPW, MAX, MAXU, MIN, MINU,
+                    SEXT_B, SEXT_H, ZEXT_H, ORC_B, REV8, ROL, ROR, RORI, ROLW, RORW, RORIW,
+                    BCLR, BCLRI, BEXT, BEXTI, BINV, BINVI, BSET, BSETI,
+                    CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO ->
+                    new Rva22InstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
                     FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
                     FMV_X_FP, FMV_FP_X ->
@@ -427,6 +434,11 @@ public abstract sealed class RiscVInstructionSemantics {
                         executeRegisterInteger(state, nextPc);
                 case MUL, MULH, MULHSU, MULHU, DIV, DIVU, REM, REMU, MULW, DIVW, DIVUW, REMW, REMUW ->
                         executeMultiplyDivide(state, nextPc);
+                case SH1ADD, SH2ADD, SH3ADD, ADD_UW, SH1ADD_UW, SH2ADD_UW, SH3ADD_UW, SLLI_UW,
+                        ANDN, ORN, XNOR, CLZ, CTZ, CPOP, CLZW, CTZW, CPOPW, MAX, MAXU, MIN, MINU,
+                        SEXT_B, SEXT_H, ZEXT_H, ORC_B, REV8, ROL, ROR, RORI, ROLW, RORW, RORIW,
+                        BCLR, BCLRI, BEXT, BEXTI, BINV, BINVI, BSET, BSETI,
+                        CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO -> executeRva22(state, memory, nextPc);
                 case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
                         FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
                         FMV_X_FP, FMV_FP_X -> executeFloatingPointOperation(state, nextPc);
@@ -1485,6 +1497,30 @@ public abstract sealed class RiscVInstructionSemantics {
 
     }
 
+    /// Executes RVA22U64 integer bit-manipulation and cache-block operations.
+    private static final class Rva22InstructionSemantics extends RiscVInstructionSemantics {
+        /// Creates a decoded RVA22U64 instruction semantic helper.
+        private Rva22InstructionSemantics(
+                long address,
+                int raw,
+                int length,
+                RiscVOperation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded RVA22U64 instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeRva22(state, state.memory(), nextPc);
+        }
+
+    }
+
     /// Executes floating-point arithmetic and conversion operations as a specialized instruction semantic helper.
     private static final class FloatingPointInstructionSemantics extends RiscVInstructionSemantics {
         /// Creates a decoded floating-point arithmetic or conversion instruction semantic helper.
@@ -1686,6 +1722,60 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
 
+    /// Executes RVA22U64 integer bit-manipulation and cache-block operations.
+    protected final void executeRva22(MachineState state, Memory memory, long nextPc) {
+        switch (operation) {
+            case SH1ADD -> binaryRegister(state, nextPc, (state.decodedRegister(rs1) << 1) + state.decodedRegister(rs2));
+            case SH2ADD -> binaryRegister(state, nextPc, (state.decodedRegister(rs1) << 2) + state.decodedRegister(rs2));
+            case SH3ADD -> binaryRegister(state, nextPc, (state.decodedRegister(rs1) << 3) + state.decodedRegister(rs2));
+            case ADD_UW -> binaryRegister(state, nextPc, unsignedWord(state.decodedRegister(rs1)) + state.decodedRegister(rs2));
+            case SH1ADD_UW -> binaryRegister(state, nextPc, (unsignedWord(state.decodedRegister(rs1)) << 1) + state.decodedRegister(rs2));
+            case SH2ADD_UW -> binaryRegister(state, nextPc, (unsignedWord(state.decodedRegister(rs1)) << 2) + state.decodedRegister(rs2));
+            case SH3ADD_UW -> binaryRegister(state, nextPc, (unsignedWord(state.decodedRegister(rs1)) << 3) + state.decodedRegister(rs2));
+            case SLLI_UW -> binaryRegister(state, nextPc, unsignedWord(state.decodedRegister(rs1)) << immediate);
+            case ANDN -> binaryRegister(state, nextPc, state.decodedRegister(rs1) & ~state.decodedRegister(rs2));
+            case ORN -> binaryRegister(state, nextPc, state.decodedRegister(rs1) | ~state.decodedRegister(rs2));
+            case XNOR -> binaryRegister(state, nextPc, ~(state.decodedRegister(rs1) ^ state.decodedRegister(rs2)));
+            case CLZ -> binaryRegister(state, nextPc, Long.numberOfLeadingZeros(state.decodedRegister(rs1)));
+            case CTZ -> binaryRegister(state, nextPc, Long.numberOfTrailingZeros(state.decodedRegister(rs1)));
+            case CPOP -> binaryRegister(state, nextPc, Long.bitCount(state.decodedRegister(rs1)));
+            case CLZW -> binaryRegister(state, nextPc, Integer.numberOfLeadingZeros((int) state.decodedRegister(rs1)));
+            case CTZW -> binaryRegister(state, nextPc, Integer.numberOfTrailingZeros((int) state.decodedRegister(rs1)));
+            case CPOPW -> binaryRegister(state, nextPc, Integer.bitCount((int) state.decodedRegister(rs1)));
+            case MAX -> binaryRegister(state, nextPc, Math.max(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MAXU -> binaryRegister(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) >= 0
+                    ? state.decodedRegister(rs1)
+                    : state.decodedRegister(rs2));
+            case MIN -> binaryRegister(state, nextPc, Math.min(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MINU -> binaryRegister(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) <= 0
+                    ? state.decodedRegister(rs1)
+                    : state.decodedRegister(rs2));
+            case SEXT_B -> binaryRegister(state, nextPc, (byte) state.decodedRegister(rs1));
+            case SEXT_H -> binaryRegister(state, nextPc, (short) state.decodedRegister(rs1));
+            case ZEXT_H -> binaryRegister(state, nextPc, state.decodedRegister(rs1) & 0xffffL);
+            case ORC_B -> binaryRegister(state, nextPc, orCombineBytes(state.decodedRegister(rs1)));
+            case REV8 -> binaryRegister(state, nextPc, Long.reverseBytes(state.decodedRegister(rs1)));
+            case ROL -> binaryRegister(state, nextPc, Long.rotateLeft(state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            case ROR -> binaryRegister(state, nextPc, Long.rotateRight(state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            case RORI -> binaryRegister(state, nextPc, Long.rotateRight(state.decodedRegister(rs1), (int) immediate));
+            case ROLW -> wordRegister(state, nextPc, Integer.rotateLeft((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            case RORW -> wordRegister(state, nextPc, Integer.rotateRight((int) state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
+            case RORIW -> wordRegister(state, nextPc, Integer.rotateRight((int) state.decodedRegister(rs1), (int) immediate));
+            case BCLR -> binaryRegister(state, nextPc, clearBit(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case BCLRI -> binaryRegister(state, nextPc, clearBit(state.decodedRegister(rs1), immediate));
+            case BEXT -> binaryRegister(state, nextPc, extractBit(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case BEXTI -> binaryRegister(state, nextPc, extractBit(state.decodedRegister(rs1), immediate));
+            case BINV -> binaryRegister(state, nextPc, invertBit(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case BINVI -> binaryRegister(state, nextPc, invertBit(state.decodedRegister(rs1), immediate));
+            case BSET -> binaryRegister(state, nextPc, setBit(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case BSETI -> binaryRegister(state, nextPc, setBit(state.decodedRegister(rs1), immediate));
+            case CBO_INVAL, CBO_CLEAN, CBO_FLUSH -> state.setPc(nextPc);
+            case CBO_ZERO -> cacheBlockZero(state, memory, nextPc);
+            default -> throw unexpectedOperationGroup("RVA22");
+        }
+    }
+
+
     /// Executes floating-point arithmetic, conversion, move, compare, and classify operations.
     protected final void executeFloatingPointOperation(MachineState state, long nextPc) {
         switch (operation) {
@@ -1822,6 +1912,53 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Writes a sign-extended 32-bit register arithmetic result and advances the program counter.
     private void wordRegister(MachineState state, long nextPc, int value) {
         state.setDecodedRegister(rd, value);
+        state.setPc(nextPc);
+    }
+
+    /// Zero-extends the low 32 bits of a register value.
+    private static long unsignedWord(long value) {
+        return value & 0xffff_ffffL;
+    }
+
+    /// Implements the `orc.b` byte-wise nonzero propagation.
+    private static long orCombineBytes(long value) {
+        long result = 0;
+        for (int shift = 0; shift < Long.SIZE; shift += Byte.SIZE) {
+            if (((value >>> shift) & 0xffL) != 0) {
+                result |= 0xffL << shift;
+            }
+        }
+        return result;
+    }
+
+    /// Clears one bit selected by the low six bits of the index.
+    private static long clearBit(long value, long index) {
+        return value & ~(1L << (index & 0x3f));
+    }
+
+    /// Extracts one bit selected by the low six bits of the index.
+    private static long extractBit(long value, long index) {
+        return (value >>> (index & 0x3f)) & 1;
+    }
+
+    /// Inverts one bit selected by the low six bits of the index.
+    private static long invertBit(long value, long index) {
+        return value ^ (1L << (index & 0x3f));
+    }
+
+    /// Sets one bit selected by the low six bits of the index.
+    private static long setBit(long value, long index) {
+        return value | (1L << (index & 0x3f));
+    }
+
+    /// Zeroes the 64-byte cache block containing the supplied base address.
+    private void cacheBlockZero(MachineState state, Memory memory, long nextPc) {
+        long address = state.decodedRegister(rs1) & -RiscVExtensions.CACHE_BLOCK_SIZE;
+        for (long offset = 0; offset < RiscVExtensions.CACHE_BLOCK_SIZE; offset += Long.BYTES) {
+            memory.writeLong(address + offset, 0);
+        }
+        afterStore(state, address, (int) RiscVExtensions.CACHE_BLOCK_SIZE);
+        state.clearReservation();
         state.setPc(nextPc);
     }
 

@@ -6,10 +6,11 @@ package org.glavo.riscv.parser;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 
-/// Decodes RV64GC guest instruction subsets from guest memory into immutable block data.
+/// Decodes RV64 guest instruction subsets from guest memory into immutable block data.
 @NotNullByDefault
 public final class RiscVDecoder {
     /// The maximum number of straight-line instructions decoded into one block.
@@ -87,6 +88,16 @@ public final class RiscVDecoder {
         }
         if (funct3 == 1 && rd(raw) == 0 && rs1(raw) == 0 && (raw >>> 20) == 0) {
             return instruction(address, raw, RiscVOperation.FENCE_I, 0, 0, 0, 0, false);
+        }
+        if (funct3 == 2 && rd(raw) == 0 && ((raw >>> 25) & 0x7f) == 0) {
+            RiscVOperation operation = switch (rs2(raw)) {
+                case 0 -> RiscVOperation.CBO_INVAL;
+                case 1 -> RiscVOperation.CBO_CLEAN;
+                case 2 -> RiscVOperation.CBO_FLUSH;
+                case 4 -> RiscVOperation.CBO_ZERO;
+                default -> throw illegalException(address, raw);
+            };
+            return instruction(address, raw, operation, 0, rs1(raw), 0, 0, false);
         }
         throw illegalException(address, raw);
     }
@@ -279,12 +290,21 @@ public final class RiscVDecoder {
             case 7 -> RiscVOperation.ANDI;
             case 1 -> {
                 int imm = raw >>> 20;
+                RiscVOperation bitManipulation = decodeShiftLeftImmediateBitManipulation(raw, imm);
+                if (bitManipulation != null) {
+                    yield bitManipulation;
+                }
                 if ((imm & ~0x3f) != 0) {
                     throw illegalException(address, raw);
                 }
                 yield RiscVOperation.SLLI;
             }
             case 5 -> {
+                int imm = raw >>> 20;
+                RiscVOperation bitManipulation = decodeShiftRightImmediateBitManipulation(raw, imm);
+                if (bitManipulation != null) {
+                    yield bitManipulation;
+                }
                 int funct6 = (raw >>> 26) & 0x3f;
                 if (funct6 == 0) {
                     yield RiscVOperation.SRLI;
@@ -300,12 +320,54 @@ public final class RiscVDecoder {
         return instruction(address, raw, operation, rd(raw), rs1(raw), 0, immediate, false);
     }
 
+    /// Decodes `funct3=001` OP-IMM bit-manipulation instructions.
+    private static @Nullable RiscVOperation decodeShiftLeftImmediateBitManipulation(int raw, int imm) {
+        return switch (imm) {
+            case 0x600 -> RiscVOperation.CLZ;
+            case 0x601 -> RiscVOperation.CTZ;
+            case 0x602 -> RiscVOperation.CPOP;
+            case 0x604 -> RiscVOperation.SEXT_B;
+            case 0x605 -> RiscVOperation.SEXT_H;
+            default -> switch ((raw >>> 26) & 0x3f) {
+                case 0x0a -> RiscVOperation.BSETI;
+                case 0x12 -> RiscVOperation.BCLRI;
+                case 0x1a -> RiscVOperation.BINVI;
+                default -> null;
+            };
+        };
+    }
+
+    /// Decodes `funct3=101` OP-IMM bit-manipulation instructions.
+    private static @Nullable RiscVOperation decodeShiftRightImmediateBitManipulation(int raw, int imm) {
+        return switch (imm) {
+            case 0x287 -> RiscVOperation.ORC_B;
+            case 0x6b8 -> RiscVOperation.REV8;
+            default -> switch ((raw >>> 26) & 0x3f) {
+                case 0x12 -> RiscVOperation.BEXTI;
+                case 0x18 -> RiscVOperation.RORI;
+                default -> null;
+            };
+        };
+    }
+
     /// Decodes word-width immediate arithmetic instructions.
     private static DecodedInstruction decodeOpImmediateWord(long address, int raw) {
-        int shift = (raw >>> 20) & 0x1f;
         RiscVOperation operation = switch (funct3(raw)) {
             case 0 -> RiscVOperation.ADDIW;
             case 1 -> {
+                int imm = raw >>> 20;
+                RiscVOperation bitManipulation = switch (imm) {
+                    case 0x600 -> RiscVOperation.CLZW;
+                    case 0x601 -> RiscVOperation.CTZW;
+                    case 0x602 -> RiscVOperation.CPOPW;
+                    default -> null;
+                };
+                if (bitManipulation != null) {
+                    yield bitManipulation;
+                }
+                if (((raw >>> 26) & 0x3f) == 0x02) {
+                    yield RiscVOperation.SLLI_UW;
+                }
                 if (((raw >>> 25) & 0x7f) != 0) {
                     throw illegalException(address, raw);
                 }
@@ -319,11 +381,14 @@ public final class RiscVDecoder {
                 if (funct7 == 0x20) {
                     yield RiscVOperation.SRAIW;
                 }
+                if (funct7 == 0x30) {
+                    yield RiscVOperation.RORIW;
+                }
                 throw illegalException(address, raw);
             }
             default -> throw illegalException(address, raw);
         };
-        long immediate = funct3(raw) == 0 ? iImmediate(raw) : shift;
+        long immediate = funct3(raw) == 0 ? iImmediate(raw) : ((raw >>> 20) & 0x3f);
         return instruction(address, raw, operation, rd(raw), rs1(raw), 0, immediate, false);
     }
 
@@ -345,7 +410,10 @@ public final class RiscVDecoder {
             };
             case 0x20 -> switch (funct3) {
                 case 0 -> RiscVOperation.SUB;
+                case 4 -> RiscVOperation.XNOR;
                 case 5 -> RiscVOperation.SRA;
+                case 6 -> RiscVOperation.ORN;
+                case 7 -> RiscVOperation.ANDN;
                 default -> throw illegalException(address, raw);
             };
             case 0x01 -> switch (funct3) {
@@ -357,6 +425,37 @@ public final class RiscVDecoder {
                 case 5 -> RiscVOperation.DIVU;
                 case 6 -> RiscVOperation.REM;
                 case 7 -> RiscVOperation.REMU;
+                default -> throw illegalException(address, raw);
+            };
+            case 0x05 -> switch (funct3) {
+                case 4 -> RiscVOperation.MIN;
+                case 5 -> RiscVOperation.MINU;
+                case 6 -> RiscVOperation.MAX;
+                case 7 -> RiscVOperation.MAXU;
+                default -> throw illegalException(address, raw);
+            };
+            case 0x10 -> switch (funct3) {
+                case 2 -> RiscVOperation.SH1ADD;
+                case 4 -> RiscVOperation.SH2ADD;
+                case 6 -> RiscVOperation.SH3ADD;
+                default -> throw illegalException(address, raw);
+            };
+            case 0x14 -> switch (funct3) {
+                case 1 -> RiscVOperation.BSET;
+                default -> throw illegalException(address, raw);
+            };
+            case 0x24 -> switch (funct3) {
+                case 1 -> RiscVOperation.BCLR;
+                case 5 -> RiscVOperation.BEXT;
+                default -> throw illegalException(address, raw);
+            };
+            case 0x30 -> switch (funct3) {
+                case 1 -> RiscVOperation.ROL;
+                case 5 -> RiscVOperation.ROR;
+                default -> throw illegalException(address, raw);
+            };
+            case 0x34 -> switch (funct3) {
+                case 1 -> RiscVOperation.BINV;
                 default -> throw illegalException(address, raw);
             };
             default -> throw illegalException(address, raw);
@@ -375,9 +474,30 @@ public final class RiscVDecoder {
                 case 5 -> RiscVOperation.SRLW;
                 default -> throw illegalException(address, raw);
             };
+            case 0x04 -> switch (funct3) {
+                case 0 -> RiscVOperation.ADD_UW;
+                case 4 -> {
+                    if (rs2(raw) != 0) {
+                        throw illegalException(address, raw);
+                    }
+                    yield RiscVOperation.ZEXT_H;
+                }
+                default -> throw illegalException(address, raw);
+            };
+            case 0x10 -> switch (funct3) {
+                case 2 -> RiscVOperation.SH1ADD_UW;
+                case 4 -> RiscVOperation.SH2ADD_UW;
+                case 6 -> RiscVOperation.SH3ADD_UW;
+                default -> throw illegalException(address, raw);
+            };
             case 0x20 -> switch (funct3) {
                 case 0 -> RiscVOperation.SUBW;
                 case 5 -> RiscVOperation.SRAW;
+                default -> throw illegalException(address, raw);
+            };
+            case 0x30 -> switch (funct3) {
+                case 1 -> RiscVOperation.ROLW;
+                case 5 -> RiscVOperation.RORW;
                 default -> throw illegalException(address, raw);
             };
             case 0x01 -> switch (funct3) {
