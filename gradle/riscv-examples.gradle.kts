@@ -157,12 +157,12 @@ val extractZig by tasks.registering(ExtractZigTask::class) {
 }
 
 // Static Go hello-world example.
-val goHelloWorldExampleDirectory = layout.projectDirectory.dir("examples/go-hello")
-val goHelloWorldExampleElf = layout.buildDirectory.file("examples/go-hello/hello-world")
+val goHelloWorldExampleDirectory = layout.projectDirectory.dir("examples/go/go-hello")
+val goHelloWorldExampleElf = layout.buildDirectory.file("examples/go/go-hello/hello-world")
 
 tasks.register<RiscVGoBuildTask>("buildGoHelloWorldExample") {
     group = "verification"
-    description = "Builds examples/go-hello as a static linux/riscv64 Go executable."
+    description = "Builds examples/go/go-hello as a static linux/riscv64 Go executable."
 
     configureGoExecutable()
     moduleDirectory.set(goHelloWorldExampleDirectory)
