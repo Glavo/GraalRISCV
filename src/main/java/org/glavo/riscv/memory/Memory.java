@@ -334,7 +334,7 @@ public final class Memory implements AutoCloseable {
             return MemoryUnsafe.readIntLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
         }
 
-        return (int) readLittleEndianByBytes(address, Integer.BYTES);
+        return (int) readLittleEndianByBytes(address, Integer.BYTES, true);
     }
 
     /// Reads a signed little-endian 64-bit value from guest memory.
@@ -660,7 +660,12 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a little-endian value byte-by-byte for cross-page accesses.
     private long readLittleEndianByBytes(long address, int byteCount) {
-        return readLittleEndianByBytes(address, byteCount, currentMappedRegionCache(), layout);
+        return readLittleEndianByBytes(address, byteCount, false);
+    }
+
+    /// Reads a little-endian value byte-by-byte for cross-page accesses.
+    private long readLittleEndianByBytes(long address, int byteCount, boolean instruction) {
+        return readLittleEndianByBytes(address, byteCount, instruction, currentMappedRegionCache(), layout);
     }
 
     /// Reads a little-endian value byte-by-byte using the supplied software TLB and page layout.
@@ -669,9 +674,19 @@ public final class Memory implements AutoCloseable {
             int byteCount,
             @Nullable MappedRegionCache cache,
             MemoryLayout layout) {
+        return readLittleEndianByBytes(address, byteCount, false, cache, layout);
+    }
+
+    /// Reads a little-endian value byte-by-byte using the supplied software TLB and page layout.
+    private long readLittleEndianByBytes(
+            long address,
+            int byteCount,
+            boolean instruction,
+            @Nullable MappedRegionCache cache,
+            MemoryLayout layout) {
         long value = 0;
         for (int index = 0; index < byteCount; index++) {
-            MemoryPage page = readPage(address + index, Byte.BYTES, false, cache, null, layout);
+            MemoryPage page = readPage(address + index, Byte.BYTES, instruction, cache, null, layout);
             int b = MemoryUnsafe.UNSAFE.getByte(
                     page.baseObject(),
                     page.byteOffset(layout.pageOffset(address + index))) & 0xff;

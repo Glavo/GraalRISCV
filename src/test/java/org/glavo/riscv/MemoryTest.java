@@ -452,4 +452,33 @@ public final class MemoryTest {
             assertEquals(0x0000_0513, memory.readInstructionInt(Memory.DEFAULT_BASE_ADDRESS));
         }
     }
+
+    /// Verifies that cross-page instruction fetches require execute permission on every touched page.
+    @Test
+    public void crossPageInstructionFetchRequiresExecuteProtectionOnBothPages() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE, null)) {
+            long instructionAddress = Memory.DEFAULT_BASE_ADDRESS + Memory.DEFAULT_PAGE_SIZE - Short.BYTES;
+            assertTrue(memory.map(
+                    Memory.DEFAULT_BASE_ADDRESS,
+                    2L * Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ_WRITE_EXECUTE));
+            memory.writeInt(instructionAddress, 0x0000_0513);
+
+            assertTrue(memory.protect(
+                    Memory.DEFAULT_BASE_ADDRESS,
+                    Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_EXECUTE));
+            assertTrue(memory.protect(
+                    Memory.DEFAULT_BASE_ADDRESS + Memory.DEFAULT_PAGE_SIZE,
+                    Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ));
+            assertThrows(RiscVException.class, () -> memory.readInstructionInt(instructionAddress));
+
+            assertTrue(memory.protect(
+                    Memory.DEFAULT_BASE_ADDRESS + Memory.DEFAULT_PAGE_SIZE,
+                    Memory.DEFAULT_PAGE_SIZE,
+                    Memory.PROTECTION_READ | Memory.PROTECTION_EXECUTE));
+            assertEquals(0x0000_0513, memory.readInstructionInt(instructionAddress));
+        }
+    }
 }
