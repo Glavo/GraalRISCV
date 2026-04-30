@@ -45,7 +45,7 @@
 - `Zicbom` cache-block clean, flush, and invalidate decode as no-ops in the current cacheless model; `Zicboz` zeroes the containing 64-byte cache block through normal guest memory writes.
 - Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, and existing `Zicntr` capabilities, plus 64-byte CBO block-size keys.
 - Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented first slice.
-- Repository-owned RVA22U64 assembly acceptance tests now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, and `Zfa` instructions from real assembler-generated ELFs.
+- Repository-owned RVA22U64 assembly acceptance tests now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zfa`, `Zicbom`, `Zicboz`, `Zicbop`, `Zihintntl`, and `Zihintpause` instructions from real assembler-generated ELFs.
 
 ## Remaining Work
 

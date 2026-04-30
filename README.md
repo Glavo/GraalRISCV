@@ -127,6 +127,12 @@ Run the RV64GC `riscv-tests` ISA acceptance tests through the GraalRISCV CLI:
 ./gradlew testRiscVTests
 ```
 
+Run the repository-owned RVA22U64 extension acceptance tests:
+
+```text
+./gradlew testRva22Acceptance
+```
+
 Use `graalriscv.riscvTestsFilter` to run a subset by ELF filename regex, and
 `graalriscv.riscvTestsMaxInstructions` to override the per-ELF instruction
 limit:

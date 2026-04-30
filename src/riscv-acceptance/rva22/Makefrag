@@ -1,2 +1,3 @@
 rva22_sc_tests = \
-	rva22-zba-zbb-zbs-zfhmin-zfa
+	rva22-zba-zbb-zbs-zfhmin-zfa \
+	rva22-zicbo-zihint
