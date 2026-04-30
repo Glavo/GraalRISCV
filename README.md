@@ -79,18 +79,23 @@ static ELF programs. File access is sandboxed under `--host-root`.
 Each `run...Example` task builds the required RISC-V program before executing
 it.
 
-By default Gradle downloads and extracts the configured Zig release. To use an
-existing Zig executable, pass either a Gradle property or an environment
-variable:
+The C and CoreMark examples use Zig CC. Gradle downloads the configured Zig
+release when needed. To use an existing Zig executable, set one of
+`ZIG_EXECUTABLE`, `zigExecutable`, or `graalriscv.zigExecutable`:
 
 ```text
-./gradlew "-PzigExecutable=/path/to/zig" buildHelloWorldExample
-ZIG_EXECUTABLE=/path/to/zig ./gradlew buildHelloWorldExample
+ZIG_EXECUTABLE=/path/to/zig ./gradlew runLinuxStaticPrintfExample
+./gradlew "-PzigExecutable=/path/to/zig" runLinuxStaticPrintfExample
 ```
 
-Gradle can also download and extract the configured Go toolchain. To use an
-existing Go executable, pass `goExecutable`, `graalriscv.goExecutable`, or
-`GO_EXECUTABLE`.
+The Go example uses the Go toolchain. Gradle downloads the configured Go
+release when needed. To use an existing Go executable, set one of
+`GO_EXECUTABLE`, `goExecutable`, or `graalriscv.goExecutable`:
+
+```text
+GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
+./gradlew "-PgoExecutable=/path/to/go" runGoHelloWorldExample
+```
 
 | Example | Purpose | Command |
 | --- | --- | --- |
