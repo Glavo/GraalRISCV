@@ -29,7 +29,6 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -1409,11 +1408,8 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The next deterministic random state used by `getrandom`.
     private long randomState = RANDOM_SEED;
 
-    /// The clock exposed to guest time syscalls.
-    private final Clock clock;
-
-    /// The guest clock instant captured when the syscall handler was created.
-    private final Instant clockStartInstant;
+    /// The time source exposed to guest time syscalls.
+    private final TimeSource timeSource;
 
     /// Creates the default process name used by `PR_GET_NAME`.
     private static byte[] initialProcessName() {
@@ -1458,7 +1454,7 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
-        this(memory, in, out, err, initialProgramBreak, null, null, new String[0], Clock.systemUTC(), null);
+        this(memory, in, out, err, initialProgramBreak, null, null, new String[0], TimeSource.system(), null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and resolved root mount.
@@ -1469,10 +1465,10 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream err,
             long initialProgramBreak,
             @Nullable TruffleFile hostRoot) {
-        this(memory, in, out, err, initialProgramBreak, hostRoot, Clock.systemUTC());
+        this(memory, in, out, err, initialProgramBreak, hostRoot, TimeSource.system());
     }
 
-    /// Creates a syscall handler backed by the supplied streams, resolved root mount, and guest clock.
+    /// Creates a syscall handler backed by the supplied streams, resolved root mount, and guest time source.
     public GuestSyscalls(
             Memory memory,
             InputStream in,
@@ -1480,8 +1476,8 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream err,
             long initialProgramBreak,
             @Nullable TruffleFile hostRoot,
-            Clock clock) {
-        this(memory, in, out, err, initialProgramBreak, rootMount(hostRoot), null, new String[0], clock, null);
+            TimeSource timeSource) {
+        this(memory, in, out, err, initialProgramBreak, rootMount(hostRoot), null, new String[0], timeSource, null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy root mount.
@@ -1493,10 +1489,10 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             TruffleLanguage.Env env,
             String hostRootPath) {
-        this(memory, in, out, err, initialProgramBreak, env, hostRootPath, Clock.systemUTC());
+        this(memory, in, out, err, initialProgramBreak, env, hostRootPath, TimeSource.system());
     }
 
-    /// Creates a syscall handler backed by the supplied streams, lazy root mount, and guest clock.
+    /// Creates a syscall handler backed by the supplied streams, lazy root mount, and guest time source.
     public GuestSyscalls(
             Memory memory,
             InputStream in,
@@ -1505,11 +1501,11 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             TruffleLanguage.Env env,
             String hostRootPath,
-            Clock clock) {
-        this(memory, in, out, err, initialProgramBreak, env, new String[]{"/=" + hostRootPath}, clock, null);
+            TimeSource timeSource) {
+        this(memory, in, out, err, initialProgramBreak, env, new String[]{"/=" + hostRootPath}, timeSource, null);
     }
 
-    /// Creates a syscall handler backed by streams, lazy root mount, guest clock, and guest thread runner.
+    /// Creates a syscall handler backed by streams, lazy root mount, guest time source, and guest thread runner.
     public GuestSyscalls(
             Memory memory,
             InputStream in,
@@ -1518,12 +1514,12 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             TruffleLanguage.Env env,
             String hostRootPath,
-            Clock clock,
+            TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
-        this(memory, in, out, err, initialProgramBreak, env, new String[]{"/=" + hostRootPath}, clock, guestThreadRunner);
+        this(memory, in, out, err, initialProgramBreak, env, new String[]{"/=" + hostRootPath}, timeSource, guestThreadRunner);
     }
 
-    /// Creates a syscall handler backed by the supplied streams, lazy filesystem mounts, and guest clock.
+    /// Creates a syscall handler backed by the supplied streams, lazy filesystem mounts, and guest time source.
     public GuestSyscalls(
             Memory memory,
             InputStream in,
@@ -1532,11 +1528,11 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
-            Clock clock) {
-        this(memory, in, out, err, initialProgramBreak, env, filesystemMountSpecs, clock, null);
+            TimeSource timeSource) {
+        this(memory, in, out, err, initialProgramBreak, env, filesystemMountSpecs, timeSource, null);
     }
 
-    /// Creates a syscall handler backed by streams, lazy filesystem mounts, guest clock, and guest thread runner.
+    /// Creates a syscall handler backed by streams, lazy filesystem mounts, guest time source, and guest thread runner.
     public GuestSyscalls(
             Memory memory,
             InputStream in,
@@ -1545,9 +1541,9 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
-            Clock clock,
+            TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
-        this(memory, in, out, err, initialProgramBreak, null, env, filesystemMountSpecs, clock, guestThreadRunner);
+        this(memory, in, out, err, initialProgramBreak, null, env, filesystemMountSpecs, timeSource, guestThreadRunner);
     }
 
     /// Creates a syscall handler with either eager or lazy filesystem mounts.
@@ -1560,7 +1556,7 @@ public final class GuestSyscalls implements AutoCloseable {
             HostMount @Nullable [] filesystemMounts,
             @Nullable TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
-            Clock clock,
+            TimeSource timeSource,
             @Nullable GuestThreadRunner guestThreadRunner) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
@@ -1579,8 +1575,7 @@ public final class GuestSyscalls implements AutoCloseable {
         this.programBreak = initialProgramBreak;
         this.programBreakBackingEnd = initialProgramBreak;
         this.pageSize = memory.pageSize();
-        this.clock = clock;
-        this.clockStartInstant = clock.instant();
+        this.timeSource = timeSource;
     }
 
     /// Returns the process-leader thread state used by the initial architectural state.
@@ -3811,14 +3806,14 @@ public final class GuestSyscalls implements AutoCloseable {
             futexWaiters.add(waiter);
             try {
                 long remainingNanos = timeoutNanos;
-                long lastNanos = timeoutNanos >= 0 ? System.nanoTime() : 0;
+                long lastNanos = timeoutNanos >= 0 ? timeSource.monotonicNanoseconds() : 0;
                 while (!waiter.woken && !processExitRequested && threadFailure == null) {
                     if (remainingNanos >= 0) {
                         if (remainingNanos <= 0) {
                             return ETIMEDOUT;
                         }
                         waitNanos(remainingNanos);
-                        long now = System.nanoTime();
+                        long now = timeSource.monotonicNanoseconds();
                         long elapsed = Math.max(0, now - lastNanos);
                         remainingNanos = elapsed >= remainingNanos ? 0 : remainingNanos - elapsed;
                         lastNanos = now;
@@ -3886,7 +3881,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return targetNanos;
         }
 
-        long nowNanos = instantToSaturatedNanoseconds(clock.instant());
+        long nowNanos = instantToSaturatedNanoseconds(timeSource.realtimeInstant());
         return targetNanos <= nowNanos ? 0 : targetNanos - nowNanos;
     }
 
@@ -4097,7 +4092,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
 
-        long startNanoseconds = System.nanoTime();
+        long startNanoseconds = timeSource.monotonicNanoseconds();
         try {
             Thread.sleep(
                     totalNanoseconds / NANOSECONDS_PER_MILLISECOND,
@@ -4106,7 +4101,7 @@ public final class GuestSyscalls implements AutoCloseable {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             if (remainingAddress != 0) {
-                long elapsedNanoseconds = Math.max(0, System.nanoTime() - startNanoseconds);
+                long elapsedNanoseconds = Math.max(0, timeSource.monotonicNanoseconds() - startNanoseconds);
                 long remainingNanoseconds = Math.max(0, totalNanoseconds - elapsedNanoseconds);
                 writeTimespecFromNanoseconds(remainingAddress, remainingNanoseconds);
             }
@@ -4117,7 +4112,7 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns the relative wait needed to reach an absolute clock time.
     private long absoluteClockSleepNanoseconds(long clockId, long targetSeconds, long targetNanoseconds) {
         if (isRealtimeClock(clockId)) {
-            Instant instant = clock.instant();
+            Instant instant = timeSource.realtimeInstant();
             return relativeNanosecondsUntil(targetSeconds, targetNanoseconds, instant.getEpochSecond(), instant.getNano());
         }
 
@@ -4429,7 +4424,7 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Writes Linux `struct timeval` and optional `struct timezone` values.
     private long gettimeofday(long timevalAddress, long timezoneAddress) {
         if (timevalAddress != 0) {
-            Instant instant = clock.instant();
+            Instant instant = timeSource.realtimeInstant();
             memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, instant.getEpochSecond());
             memory.writeLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET, instant.getNano() / 1000L);
         }
@@ -4442,8 +4437,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns the non-negative elapsed duration since the syscall handler was created.
     private Duration elapsedDuration() {
-        Duration duration = Duration.between(clockStartInstant, clock.instant());
-        return duration.isNegative() ? Duration.ZERO : duration;
+        return timeSource.elapsedDuration();
     }
 
     /// Returns elapsed Linux clock ticks since the syscall handler was created.
@@ -4458,7 +4452,7 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         if (isRealtimeClock(clockId)) {
-            writeTimespecFromInstant(timespecAddress, clock.instant());
+            writeTimespecFromInstant(timespecAddress, timeSource.realtimeInstant());
         } else {
             writeTimespecFromDuration(timespecAddress, elapsedDuration());
         }

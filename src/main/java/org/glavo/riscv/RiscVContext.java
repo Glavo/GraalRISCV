@@ -8,10 +8,10 @@ import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.runtime.TimeSource;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
-import java.time.Clock;
 import java.util.ArrayList;
 
 /// Stores per-context simulator configuration derived from Truffle language options.
@@ -44,8 +44,8 @@ public final class RiscVContext {
     /// Whether guest instruction tracing is enabled.
     private final boolean trace;
 
-    /// The clock exposed to guest time syscalls.
-    private final Clock clock;
+    /// The time source exposed to guest time syscalls.
+    private final TimeSource timeSource;
 
     /// The host directory mounted at `/` when no explicit filesystem mounts are configured.
     private final String hostRoot;
@@ -70,7 +70,7 @@ public final class RiscVContext {
             long hugePages,
             long maxInstructions,
             boolean trace,
-            Clock clock,
+            TimeSource timeSource,
             String hostRoot,
             String filesystemMounts,
             ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
@@ -107,7 +107,7 @@ public final class RiscVContext {
         this.hugePages = hugePages;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
-        this.clock = clock;
+        this.timeSource = timeSource;
         this.hostRoot = hostRoot;
         this.filesystemMounts = parsedFilesystemMounts;
         this.programArguments = env.getApplicationArguments().clone();
@@ -159,9 +159,9 @@ public final class RiscVContext {
         return trace;
     }
 
-    /// Returns the clock exposed to guest time syscalls.
-    public Clock clock() {
-        return clock;
+    /// Returns the time source exposed to guest time syscalls.
+    public TimeSource timeSource() {
+        return timeSource;
     }
 
     /// Returns the host directory mounted at `/` when no explicit filesystem mounts are configured.

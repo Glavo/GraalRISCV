@@ -27,6 +27,7 @@
 - ELF segments, the initial stack, auxv, `brk`, anonymous `mmap`, `munmap`, `mremap`, `mprotect`, and `madvise` are wired through the current paged-memory implementation for the accepted static workloads.
 - `GuestProcess` and `GuestThread` state now exists for thread ids, clear-child-TID wakeups, robust futex lists, alternate signal stacks, restartable sequence registration, and per-thread signal masks.
 - Thread-style `clone`, futex wait/wake, deterministic process and signal setup syscalls, `epoll_pwait` signal-mask handling, and unsupported-syscall diagnostics with syscall number, guest PC, and argument registers are covered by tests.
+- Guest syscall time reads now go through a dedicated `TimeSource` abstraction instead of exposing `java.time.Clock` through the simulator context or syscall constructors.
 
 ### 5. Build, documentation, and performance groundwork
 

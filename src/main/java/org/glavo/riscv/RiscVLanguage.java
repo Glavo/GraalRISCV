@@ -14,15 +14,12 @@ import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.nodes.RiscVRootNode;
 import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.ElfLoader;
+import org.glavo.riscv.runtime.TimeSource;
 import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
 import org.graalvm.options.OptionStability;
 import org.jetbrains.annotations.NotNullByDefault;
-
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
 
 /// Registers the RISC-V ELF simulator as a Truffle language.
 @TruffleLanguage.Registration(
@@ -63,9 +60,6 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
 
     /// The sentinel `riscv.debugFixedClockNanos` value that asks the runtime to use the host clock.
     public static final long HOST_CLOCK_NANOS = -1L;
-
-    /// The number of nanoseconds in one second.
-    private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
 
     /// The per-context and per-host-thread sparse memory lookup cache.
     private final ContextThreadLocal<MappedRegionCache> mappedRegionCache;
@@ -177,7 +171,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(HUGE_PAGES),
                 env.getOptions().get(MAX_INSTRUCTIONS),
                 env.getOptions().get(TRACE),
-                clockFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),
+                timeSourceFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),
                 env.getOptions().get(HOST_ROOT),
                 env.getOptions().get(MOUNTS),
                 mappedRegionCache);
@@ -189,21 +183,17 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
         return true;
     }
 
-    /// Creates the guest clock from the fixed-clock debug option.
-    static Clock clockFromDebugFixedClockNanos(long debugFixedClockNanos) {
+    /// Creates the guest time source from the fixed-clock debug option.
+    static TimeSource timeSourceFromDebugFixedClockNanos(long debugFixedClockNanos) {
         if (debugFixedClockNanos == HOST_CLOCK_NANOS) {
-            return Clock.systemUTC();
+            return TimeSource.system();
         }
         if (debugFixedClockNanos < HOST_CLOCK_NANOS) {
             throw new RiscVException("riscv.debugFixedClockNanos must be non-negative or -1 for host clocks: "
                     + debugFixedClockNanos);
         }
 
-        return Clock.fixed(
-                Instant.ofEpochSecond(
-                        debugFixedClockNanos / NANOSECONDS_PER_SECOND,
-                        debugFixedClockNanos % NANOSECONDS_PER_SECOND),
-                ZoneOffset.UTC);
+        return TimeSource.fixedEpochNanoseconds(debugFixedClockNanos);
     }
 
     /// Parses an ELF byte source into a root call target.

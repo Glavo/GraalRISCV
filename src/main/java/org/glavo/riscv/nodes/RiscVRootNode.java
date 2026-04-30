@@ -147,7 +147,7 @@ public final class RiscVRootNode extends RootNode {
                 initialProgramBreak,
                 context.env(),
                 context.filesystemMounts(),
-                context.clock(),
+                context.timeSource(),
                 childState -> runGuestThread(memory, childState));
         MachineState state = new MachineState(
                 memory,

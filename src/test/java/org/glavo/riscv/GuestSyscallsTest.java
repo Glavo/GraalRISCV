@@ -23,9 +23,7 @@ import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneOffset;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -3315,14 +3313,12 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that a configured fixed clock makes `clock_gettime` deterministic.
+    /// Verifies that a configured fixed time source makes `clock_gettime` deterministic.
     @Test
-    public void clockGettimeUsesConfiguredClock() {
+    public void clockGettimeUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            Clock fixedClock = Clock.fixed(
-                    Instant.ofEpochSecond(1_700_000_000L, 123_456_789L),
-                    ZoneOffset.UTC);
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 123_456_789L));
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long timespecAddress = memory.baseAddress() + 64;
 
             setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_REALTIME, timespecAddress, 0);
@@ -3378,14 +3374,12 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that `gettimeofday` uses the configured guest clock.
+    /// Verifies that `gettimeofday` uses the configured guest time source.
     @Test
-    public void gettimeofdayUsesConfiguredClock() {
+    public void gettimeofdayUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            Clock fixedClock = Clock.fixed(
-                    Instant.ofEpochSecond(1_700_000_000L, 987_654_321L),
-                    ZoneOffset.UTC);
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 987_654_321L));
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long timevalAddress = memory.baseAddress() + 64;
             long timezoneAddress = memory.baseAddress() + 80;
 
@@ -3410,10 +3404,8 @@ public final class GuestSyscallsTest {
     @Test
     public void clockNanosleepHandlesRelativeAndAbsoluteRequests() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            Clock fixedClock = Clock.fixed(
-                    Instant.ofEpochSecond(1_700_000_000L, 123_456_789L),
-                    ZoneOffset.UTC);
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 123_456_789L));
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long requestAddress = memory.baseAddress() + 64;
             long remainingAddress = memory.baseAddress() + 80;
 
@@ -3456,10 +3448,10 @@ public final class GuestSyscallsTest {
 
     /// Verifies `times` reports deterministic process CPU ticks.
     @Test
-    public void timesUsesConfiguredClock() {
+    public void timesUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            Clock fixedClock = Clock.fixed(Instant.ofEpochSecond(1_700_000_000L), ZoneOffset.UTC);
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long tmsAddress = memory.baseAddress() + 64;
 
             memory.writeLong(tmsAddress + TMS_USER_TIME_OFFSET, -1);
@@ -3483,10 +3475,10 @@ public final class GuestSyscallsTest {
 
     /// Verifies `getrusage` reports deterministic zero usage for a fixed clock.
     @Test
-    public void getrusageUsesConfiguredClock() {
+    public void getrusageUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            Clock fixedClock = Clock.fixed(Instant.ofEpochSecond(1_700_000_000L), ZoneOffset.UTC);
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedClock);
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long rusageAddress = memory.baseAddress() + 64;
 
             memory.writeLong(rusageAddress + RUSAGE_USER_TIME_OFFSET, -1);
@@ -4618,8 +4610,8 @@ public final class GuestSyscallsTest {
         return state(memory, in, new ByteArrayOutputStream(), new ByteArrayOutputStream(), memory.baseAddress());
     }
 
-    /// Creates test machine state with a configured guest clock.
-    private static MachineState state(Memory memory, ByteArrayInputStream in, Clock clock) {
+    /// Creates test machine state with a configured guest time source.
+    private static MachineState state(Memory memory, ByteArrayInputStream in, TimeSource timeSource) {
         return state(
                 memory,
                 in,
@@ -4627,7 +4619,7 @@ public final class GuestSyscallsTest {
                 new ByteArrayOutputStream(),
                 memory.baseAddress(),
                 Path.of("."),
-                clock);
+                timeSource);
     }
 
     /// Creates test machine state with a syscall handler.
@@ -4648,10 +4640,10 @@ public final class GuestSyscallsTest {
             OutputStream err,
             long initialProgramBreak,
             Path hostRoot) {
-        return state(memory, in, out, err, initialProgramBreak, hostRoot, Clock.systemUTC());
+        return state(memory, in, out, err, initialProgramBreak, hostRoot, TimeSource.system());
     }
 
-    /// Creates test machine state with a syscall handler, root mount, and guest clock.
+    /// Creates test machine state with a syscall handler, root mount, and guest time source.
     private static MachineState state(
             Memory memory,
             InputStream in,
@@ -4659,7 +4651,7 @@ public final class GuestSyscallsTest {
             OutputStream err,
             long initialProgramBreak,
             Path hostRoot,
-            Clock clock) {
+            TimeSource timeSource) {
         GuestSyscalls syscalls = new GuestSyscalls(
                 memory,
                 in,
@@ -4667,7 +4659,7 @@ public final class GuestSyscallsTest {
                 err,
                 initialProgramBreak,
                 testTruffleFile(hostRoot),
-                clock);
+                timeSource);
         return new MachineState(
                 memory,
                 0,
