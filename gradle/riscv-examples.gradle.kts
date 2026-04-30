@@ -9,6 +9,7 @@ import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 import org.glavo.go.GoUtils
+import org.glavo.go.RiscVGoBuildTask
 import org.glavo.zig.AbstractRiscVZigCCTask
 import org.glavo.zig.RiscVFreestandingZigCCTask
 import org.glavo.zig.RiscVLinuxMuslStaticZigCCTask
@@ -51,6 +52,16 @@ fun AbstractRiscVZigCCTask.configureZigExecutable() {
     } else {
         dependsOn(extractZig)
         zigExecutable.set(zigExecutableFile)
+    }
+}
+
+fun RiscVGoBuildTask.configureGoExecutable() {
+    val configuredPath = configuredGoExecutablePath.orNull
+    if (configuredPath != null) {
+        goExecutable.fileValue(file(configuredPath))
+    } else {
+        dependsOn(extractGo)
+        goExecutable.set(goExecutableFile)
     }
 }
 
@@ -109,6 +120,10 @@ val extractGo by tasks.registering {
     outputs.file(goExecutableFile)
 
     doLast {
+        if (goExecutableFile.get().asFile.isFile) {
+            return@doLast
+        }
+
         val installDirectory = goInstallDirectory.get().asFile
         delete(installDirectory)
         val archive = goArchiveFile.get().asFile
@@ -144,6 +159,76 @@ val extractZig by tasks.registering {
         delete(installDirectory)
         val archive = zigArchiveFile.get().asFile
         ZigUtils.extractZigArchive(archive, installDirectory)
+    }
+}
+
+// Static Go hello-world example.
+val goHelloWorldExampleDirectory = layout.projectDirectory.dir("examples/go-hello")
+val goHelloWorldExampleElf = layout.buildDirectory.file("examples/go-hello/hello-world")
+
+tasks.register<RiscVGoBuildTask>("buildGoHelloWorldExample") {
+    group = "verification"
+    description = "Builds examples/go-hello as a static linux/riscv64 Go executable."
+
+    configureGoExecutable()
+    moduleDirectory.set(goHelloWorldExampleDirectory)
+    outputFile.set(goHelloWorldExampleElf)
+    buildCacheDirectory.set(layout.buildDirectory.dir("go-build-cache"))
+    moduleCacheDirectory.set(layout.buildDirectory.dir("go-module-cache"))
+}
+
+tasks.register<JavaExec>("testGoHelloWorldExample") {
+    group = "verification"
+    description = "Builds and verifies the static linux/riscv64 Go hello-world example."
+
+    dependsOn("classes", "buildGoHelloWorldExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(goHelloWorldExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val expectedOutput = """
+            Hello and welcome, gopher!
+            i = 100
+            i = 50
+            i = 33
+            i = 25
+            i = 20
+        """.trimIndent() + "\n"
+        if (actualOutput != expectedOutput) {
+            throw GradleException("Unexpected Go hello-world output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Go hello-world example wrote to stderr: $actualError")
+        }
+    }
+}
+
+tasks.register<JavaExec>("runGoHelloWorldExample") {
+    group = "verification"
+    description = "Runs the static linux/riscv64 Go hello-world example with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildGoHelloWorldExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(goHelloWorldExampleElf.get().asFile.absolutePath))
     }
 }
 
@@ -1180,6 +1265,7 @@ tasks.register("checkHelloWorldExample") {
 
     dependsOn(
         "testHelloWorldExample",
+        "testGoHelloWorldExample",
         "testLinuxStaticPrintfExample",
         "testLinuxStaticArgvExample",
         "testLinuxStaticFileIoExample",

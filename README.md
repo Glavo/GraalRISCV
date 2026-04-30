@@ -180,6 +180,14 @@ Gradle can also download and extract the configured Go toolchain:
 To use an existing Go executable, pass `goExecutable`,
 `graalriscv.goExecutable`, or `GO_EXECUTABLE`.
 
+Build and run the static Go hello-world example:
+
+```text
+./gradlew buildGoHelloWorldExample
+./gradlew runGoHelloWorldExample
+./gradlew testGoHelloWorldExample
+```
+
 Run the static musl `printf` example:
 
 ```text
@@ -212,7 +220,7 @@ Build and run the downloaded CoreMark example:
 ./gradlew testCoreMarkExample
 ```
 
-Run every built-in C example check:
+Run every built-in example smoke check:
 
 ```text
 ./gradlew checkHelloWorldExample
