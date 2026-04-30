@@ -33,6 +33,18 @@
 
 ## Remaining Work
 
+### Implement RVA23U64 User-Mode Profile
+
+- Treat RVA23U64 as a complete-profile target, not a partial feature flag. Do not report RVA23U64 through README, `riscv_hwprobe`, or profile constants until all mandatory user-mode requirements and acceptance tests pass.
+- Add `Rva23Profile` alongside `Rva22Profile`, with mandatory, optional, compatibility, and reported-hwprobe capability sets derived from one source of truth.
+- Implement the new mandatory scalar extensions over RVA22U64: `Zicond`, `Zimop`, `Zcmop`, `Zcb`, and `Zawrs`; promote existing `Zfa` and `Zihintntl` from compatibility extensions to RVA23U64 mandatory extensions.
+- Implement vector support for correctness first through the interpreter: vector architectural state, vector CSRs, configurable `VLEN`, `V` 1.0 base behavior, `Zvfhmin`, `Zvbb`, and `Zvkt`. Micro-block and trace execution may initially fall back to shared interpreter semantics for vector instructions.
+- Add `--vector-vlen <bits>`, defaulting to `128`, and accept only power-of-two values that can satisfy the implemented vector register layout. RVA23U64 reporting requires a configuration that satisfies the profile minimum.
+- Implement `Supm` through a CLI-selected pointer masking mode with `--pointer-mask-bits <0|7>`, defaulting to `0`; apply masking consistently to user-mode instruction fetch, memory accesses, atomics, CBO operations, and syscall guest pointers.
+- Extend `riscv_hwprobe` reporting for RVA23U64 mandatory scalar and vector capabilities, update misaligned vector reporting to match the implementation, and continue leaving optional extensions such as `Zvkng`, `Zvksg`, and `Zacas` unreported until implemented.
+- Add `src/test/asm/rva23` and a `testRva23Acceptance` Gradle task using `-march=rva23u64` or the equivalent explicit extension string; keep `testRva22Acceptance` as a regression suite.
+- Cover scalar additions, vector configuration, vector integer/FP/load-store behavior, vector bit-manipulation, `Zvkt` data-independent behavior, Supm masking, `hwprobe`, and illegal opcode boundaries with unit and assembly acceptance tests.
+
 ### Broaden Static Linux Compatibility
 
 - Expand ELF, auxv, stack, `mmap`, and static-runtime behavior only when direct tests or acceptance workloads require it.
