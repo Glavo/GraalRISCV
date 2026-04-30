@@ -88,6 +88,6 @@ tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.add("--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED")
 }
 
-apply(from = "gradle/hello-world-example.gradle.kts")
+apply(from = "gradle/riscv-examples.gradle.kts")
 apply(from = "gradle/packaging-smoke.gradle.kts")
 apply(from = "gradle/native-image.gradle.kts")

@@ -7,7 +7,8 @@ import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
-import org.glavo.RiscVZigCcTask
+import org.glavo.RiscVFreestandingZigCCTask
+import org.glavo.RiscVLinuxMuslStaticZigCCTask
 import org.glavo.ZigUtils
 
 val applicationExtension = extensions.getByType<JavaApplication>()
@@ -50,19 +51,13 @@ val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }
 
-fun RiscVZigCcTask.configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
+fun RiscVLinuxMuslStaticZigCCTask.configureLinuxStaticExample(sourceFileName: String, elfFile: Provider<RegularFile>) {
     dependsOn(extractZig)
     zigExecutable.set(zigExecutableFile)
     sourceFile.set(layout.projectDirectory.file("examples/linux-static/$sourceFileName"))
     outputFile.set(elfFile)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
-    target.set("riscv64-linux-musl")
-    enabledTargetFeatures.set(listOf("m", "a", "f", "d", "c", "zicsr", "zifencei"))
-    abi.set("lp64d")
-    codeModel.set("medany")
-    freestanding.set(false)
-    staticLinking.set(true)
     additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie"))
 }
 
@@ -99,7 +94,7 @@ val extractZig by tasks.registering {
     }
 }
 
-tasks.register<RiscVZigCcTask>("buildHelloWorldExample") {
+tasks.register<RiscVFreestandingZigCCTask>("buildHelloWorldExample") {
     group = "verification"
     description = "Builds examples/freestanding/HelloWorld.c for RISC-V with the Gradle-managed Zig toolchain."
 
@@ -112,7 +107,7 @@ tasks.register<RiscVZigCcTask>("buildHelloWorldExample") {
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
 }
 
-tasks.register<RiscVZigCcTask>("buildHotLoopExample") {
+tasks.register<RiscVFreestandingZigCCTask>("buildHotLoopExample") {
     group = "verification"
     description = "Builds examples/freestanding/HotLoop.c for RISC-V with the Gradle-managed Zig toolchain."
 
@@ -126,77 +121,77 @@ tasks.register<RiscVZigCcTask>("buildHotLoopExample") {
     additionalCompilerArguments.set(listOf("-O2", "-g0", "-DHOT_LOOP_ITERATIONS=1000000UL"))
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticPrintfExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticPrintfExample") {
     group = "verification"
     description = "Builds examples/linux-static/PrintfHelloWorld.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("PrintfHelloWorld.c", linuxStaticPrintfExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticArgvExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticArgvExample") {
     group = "verification"
     description = "Builds examples/linux-static/ArgvEcho.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("ArgvEcho.c", linuxStaticArgvExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticFileIoExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileIoExample") {
     group = "verification"
     description = "Builds examples/linux-static/FileIo.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("FileIo.c", linuxStaticFileIoExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticDirectoryListExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticDirectoryListExample") {
     group = "verification"
     description = "Builds examples/linux-static/DirectoryList.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("DirectoryList.c", linuxStaticDirectoryListExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticFileMutationExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileMutationExample") {
     group = "verification"
     description = "Builds examples/linux-static/FileMutation.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("FileMutation.c", linuxStaticFileMutationExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticWorkingDirectoryExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticWorkingDirectoryExample") {
     group = "verification"
     description = "Builds examples/linux-static/WorkingDirectory.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("WorkingDirectory.c", linuxStaticWorkingDirectoryExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticFilesystemStatusExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFilesystemStatusExample") {
     group = "verification"
     description = "Builds examples/linux-static/FilesystemStatus.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("FilesystemStatus.c", linuxStaticFilesystemStatusExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticStatxMetadataExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticStatxMetadataExample") {
     group = "verification"
     description = "Builds examples/linux-static/StatxMetadata.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("StatxMetadata.c", linuxStaticStatxMetadataExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticPositionedIoExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticPositionedIoExample") {
     group = "verification"
     description = "Builds examples/linux-static/PositionedIo.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("PositionedIo.c", linuxStaticPositionedIoExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticEventPollingExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticEventPollingExample") {
     group = "verification"
     description = "Builds examples/linux-static/EventPolling.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("EventPolling.c", linuxStaticEventPollingExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticThreadJoinExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticThreadJoinExample") {
     group = "verification"
     description = "Builds examples/linux-static/ThreadJoin.c as a static riscv64-linux-musl executable."
 
@@ -204,14 +199,14 @@ tasks.register<RiscVZigCcTask>("buildLinuxStaticThreadJoinExample") {
     additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie", "-pthread"))
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticRuntimeServicesExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticRuntimeServicesExample") {
     group = "verification"
     description = "Builds examples/linux-static/RuntimeServices.c as a static riscv64-linux-musl executable."
 
     configureLinuxStaticExample("RuntimeServices.c", linuxStaticRuntimeServicesExampleElf)
 }
 
-tasks.register<RiscVZigCcTask>("buildLinuxStaticProcessSignalsExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticProcessSignalsExample") {
     group = "verification"
     description = "Builds examples/linux-static/ProcessSignals.c as a static riscv64-linux-musl executable."
 

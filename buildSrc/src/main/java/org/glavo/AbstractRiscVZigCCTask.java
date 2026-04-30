@@ -24,7 +24,6 @@ import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.LocalState;
-import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
@@ -32,34 +31,30 @@ import org.gradle.api.tasks.TaskAction;
 import org.gradle.process.ExecOperations;
 import org.gradle.work.DisableCachingByDefault;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
 
 import javax.inject.Inject;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-/// Builds a RISC-V ELF from a C source file with the Gradle-managed Zig compiler.
+/// Provides shared `zig cc` execution logic for RISC-V example build tasks.
 @DisableCachingByDefault(because = "The compiled ELF is a local verification artifact.")
 @NotNullByDefault
-public abstract class RiscVZigCcTask extends DefaultTask {
+public abstract class AbstractRiscVZigCCTask extends DefaultTask {
 
     /// The Gradle service used to execute the Zig compiler process.
     private final ExecOperations execOperations;
 
-    /// Creates the task and sets the default compiler options used by the example programs.
+    /// Creates the task and sets compiler options common to the example programs.
     ///
     /// @param execOperations the Gradle execution service
     @Inject
-    public RiscVZigCcTask(ExecOperations execOperations) {
+    public AbstractRiscVZigCCTask(ExecOperations execOperations) {
         this.execOperations = execOperations;
 
-        getTarget().convention("riscv64-freestanding");
         getEnabledTargetFeatures().convention(List.of("m", "a", "c"));
         getAbi().convention("lp64");
         getCodeModel().convention("medany");
-        getFreestanding().convention(true);
-        getStaticLinking().convention(false);
         getAdditionalCompilerArguments().convention(List.of());
     }
 
@@ -76,14 +71,6 @@ public abstract class RiscVZigCcTask extends DefaultTask {
     @InputFile
     @PathSensitive(PathSensitivity.RELATIVE)
     public abstract RegularFileProperty getSourceFile();
-
-    /// Returns the linker script used for the ELF image layout.
-    ///
-    /// @return the linker script file property
-    @InputFile
-    @Optional
-    @PathSensitive(PathSensitivity.RELATIVE)
-    public abstract RegularFileProperty getLinkerScript();
 
     /// Returns the generated ELF output file.
     ///
@@ -103,11 +90,13 @@ public abstract class RiscVZigCcTask extends DefaultTask {
     @LocalState
     public abstract DirectoryProperty getGlobalCacheDirectory();
 
-    /// Returns the Zig target triple passed to {@code zig cc}.
+    /// Returns the Zig target triple passed to `zig cc`.
     ///
-    /// @return the target triple property
+    /// @return the target triple
     @Input
-    public abstract Property<String> getTarget();
+    public final String getTarget() {
+        return targetTriple();
+    }
 
     /// Returns the RISC-V target features enabled with Clang target-feature options.
     ///
@@ -127,25 +116,13 @@ public abstract class RiscVZigCcTask extends DefaultTask {
     @Input
     public abstract Property<String> getCodeModel();
 
-    /// Returns whether the task should build a freestanding no-libc executable.
-    ///
-    /// @return the freestanding mode property
-    @Input
-    public abstract Property<Boolean> getFreestanding();
-
-    /// Returns whether the task should request static linking from the toolchain.
-    ///
-    /// @return the static-linking property
-    @Input
-    public abstract Property<Boolean> getStaticLinking();
-
     /// Returns additional compiler and linker arguments appended before the output path.
     ///
     /// @return the additional compiler argument list property
     @Input
     public abstract ListProperty<String> getAdditionalCompilerArguments();
 
-    /// Invokes {@code zig cc} and writes the configured ELF output.
+    /// Invokes `zig cc` and writes the configured ELF output.
     @TaskAction
     public void compile() {
         File outputFile = getOutputFile().get().getAsFile();
@@ -167,6 +144,16 @@ public abstract class RiscVZigCcTask extends DefaultTask {
         });
     }
 
+    /// Returns the target triple passed to `zig cc`.
+    ///
+    /// @return the target triple
+    protected abstract String targetTriple();
+
+    /// Adds target-kind-specific compiler and linker arguments.
+    ///
+    /// @param arguments the mutable compiler argument list
+    protected abstract void addTargetArguments(ArrayList<String> arguments);
+
     /// Creates a directory if it does not already exist.
     ///
     /// @param directory the directory to create
@@ -177,14 +164,14 @@ public abstract class RiscVZigCcTask extends DefaultTask {
         }
     }
 
-    /// Creates the {@code zig cc} argument list.
+    /// Creates the `zig cc` argument list.
     ///
     /// @param outputFile the output ELF file
     /// @return the compiler arguments
     private List<String> createCompilerArguments(File outputFile) {
         ArrayList<String> arguments = new ArrayList<>();
         arguments.add("cc");
-        arguments.add("--target=" + getTarget().get());
+        arguments.add("--target=" + targetTriple());
 
         for (String feature : getEnabledTargetFeatures().get()) {
             arguments.add("-Xclang");
@@ -195,34 +182,8 @@ public abstract class RiscVZigCcTask extends DefaultTask {
 
         arguments.add("-mabi=" + getAbi().get());
         arguments.add("-mcmodel=" + getCodeModel().get());
-
-        if (getStaticLinking().get()) {
-            arguments.add("-static");
-        }
-
-        if (getFreestanding().get()) {
-            arguments.add("-nostdlib");
-            arguments.add("-ffreestanding");
-        }
-
         arguments.add("-fno-sanitize=undefined");
-        if (getFreestanding().get()) {
-            arguments.add("-fno-builtin");
-            arguments.add("-fno-pic");
-            arguments.add("-fno-pie");
-            arguments.add("-fno-stack-protector");
-            arguments.add("-fno-asynchronous-unwind-tables");
-        }
-
-        @Nullable File linkerScript = getLinkerScript().isPresent()
-                ? getLinkerScript().get().getAsFile()
-                : null;
-        if (linkerScript != null) {
-            arguments.add("-Wl,-T," + linkerScript.getAbsolutePath());
-        } else if (getFreestanding().get()) {
-            throw new GradleException("A linker script is required for freestanding RISC-V examples.");
-        }
-
+        addTargetArguments(arguments);
         arguments.add("-Wl,--build-id=none");
         arguments.addAll(getAdditionalCompilerArguments().get());
         arguments.add("-o");
