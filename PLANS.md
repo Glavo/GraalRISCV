@@ -28,7 +28,7 @@
 ### 4. Maintain build, docs, and performance probes
 
 - Keep Zig and Go example tasks, CI aggregation tasks, and README coverage in sync as examples change.
-- Use the new `--debug-performance` diagnostics to guide major tuning: compare `EXECUTE_OPERATION` counts by `RiscVOperation`, `MemoryAccess` local-cache and software-TLB hit rates, block-cache hit rates, trace-cache hit rates, trace side exits, and direct-call PIC hits before and after each optimization.
+- Use performance diagnostics only when they do not change the default hot-path shape. Prefer external profilers, isolated benchmark builds, or debug-only execution variants over counter fields, nullable branches, or additional dispatch checks in default `MemoryAccess`, micro-op execution, block dispatch, or trace dispatch.
 - Split hot generic floating-point operations into dedicated micro-opcodes after diagnostics confirm they matter for the workload. Prioritize `FMADD`, `FMSUB`, `FNMSUB`, `FNMADD`, `FADD`, `FSUB`, `FMUL`, `FDIV`, `FSQRT`, `FCVT_S_D`, `FCVT_D_S`, `FCVT_INT_FP`, and `FCVT_FP_INT`; keep correctness and floating-point flag behavior unchanged.
 - Continue improving paged-memory hot and slow paths, especially `MemoryAccess` local-cache checks, cross-page accesses, richer fault reporting, TLB lookup behavior, page-table lookup costs, and VMA protection checks.
 - Tune the existing trace executor instead of adding a separate branch-prediction subsystem: measure and adjust trace length, hot-successor thresholds, batched store fast paths, the trace direct-call PIC, trace lookup hashing, side-exit behavior, and interaction with Graal compilation diagnostics.

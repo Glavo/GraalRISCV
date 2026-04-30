@@ -3,7 +3,6 @@
 
 package org.glavo.riscv.memory;
 
-import org.glavo.riscv.runtime.PerformanceCounters;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
@@ -15,9 +14,6 @@ public final class MemoryAccess {
 
     /// The software TLB for the current Truffle context and host thread.
     private final @Nullable MappedRegionCache cache;
-
-    /// Optional performance counters, or null when diagnostics are disabled.
-    private final @Nullable PerformanceCounters performanceCounters;
 
     /// The memory generation observed at the current guest block boundary.
     private long generation;
@@ -65,13 +61,9 @@ public final class MemoryAccess {
     private long cachedWriteDataBaseOffset;
 
     /// Creates an access facade for a memory object and optional software TLB.
-    MemoryAccess(
-            Memory memory,
-            @Nullable MappedRegionCache cache,
-            @Nullable PerformanceCounters performanceCounters) {
+    MemoryAccess(Memory memory, @Nullable MappedRegionCache cache) {
         this.memory = memory;
         this.cache = cache;
-        this.performanceCounters = performanceCounters;
         this.generation = memory.generation;
     }
 
@@ -185,18 +177,14 @@ public final class MemoryAccess {
 
     /// Ensures the readable data-page cache covers the supplied range.
     private void ensureReadableDataPage(long address, int length, MemoryLayout layout) {
-        boolean hit = hasCachedDataPage(address, length, layout);
-        recordLocalLookup(hit);
-        if (!hit) {
+        if (!hasCachedDataPage(address, length, layout)) {
             memory.readPage(address, length, false, cache, this, layout);
         }
     }
 
     /// Ensures the writable data-page cache covers the supplied range.
     private void ensureWritableDataPage(long address, int length, MemoryLayout layout) {
-        boolean hit = hasCachedWriteDataPage(address, length, layout);
-        recordLocalLookup(hit);
-        if (!hit) {
+        if (!hasCachedWriteDataPage(address, length, layout)) {
             memory.writePage(address, length, cache, this, layout);
         }
     }
@@ -274,22 +262,6 @@ public final class MemoryAccess {
             cachedWriteDataGeneration = generation;
             cachedWriteDataBaseObject = page.baseObject();
             cachedWriteDataBaseOffset = page.baseOffset();
-        }
-    }
-
-    /// Records whether the access-local cache satisfied a memory lookup.
-    private void recordLocalLookup(boolean hit) {
-        @Nullable PerformanceCounters counters = performanceCounters;
-        if (counters != null) {
-            counters.recordMemoryLocalLookup(hit);
-        }
-    }
-
-    /// Records whether the context-thread software TLB satisfied a memory lookup.
-    void recordSoftwareTlbLookup(boolean hit) {
-        @Nullable PerformanceCounters counters = performanceCounters;
-        if (counters != null) {
-            counters.recordMemorySoftwareTlbLookup(hit);
         }
     }
 

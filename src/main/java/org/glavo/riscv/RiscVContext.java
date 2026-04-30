@@ -8,9 +8,7 @@ import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
-import org.glavo.riscv.runtime.PerformanceCounters;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.time.Clock;
@@ -45,9 +43,6 @@ public final class RiscVContext {
     /// Whether guest instruction tracing is enabled.
     private final boolean trace;
 
-    /// Optional performance counters enabled by `riscv.debugPerformance`.
-    private final @Nullable PerformanceCounters performanceCounters;
-
     /// The clock exposed to guest time syscalls.
     private final Clock clock;
 
@@ -71,7 +66,6 @@ public final class RiscVContext {
             long hugePages,
             long maxInstructions,
             boolean trace,
-            boolean debugPerformance,
             Clock clock,
             String hostRoot,
             ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
@@ -111,7 +105,6 @@ public final class RiscVContext {
         this.hugePages = hugePages;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
-        this.performanceCounters = debugPerformance ? new PerformanceCounters() : null;
         this.clock = clock;
         this.hostRoot = hostRoot;
         this.programArguments = env.getApplicationArguments().clone();
@@ -161,11 +154,6 @@ public final class RiscVContext {
     /// Returns whether guest instruction tracing is enabled.
     public boolean trace() {
         return trace;
-    }
-
-    /// Returns optional performance counters, or null when diagnostics are disabled.
-    public @Nullable PerformanceCounters performanceCounters() {
-        return performanceCounters;
     }
 
     /// Returns the clock exposed to guest time syscalls.

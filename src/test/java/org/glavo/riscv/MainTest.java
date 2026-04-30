@@ -312,29 +312,6 @@ public final class MainTest {
         assertTrue(diagnostics.contains("pc=0x80000008 raw=0x"));
     }
 
-    /// Verifies that performance diagnostics are printed only when explicitly requested.
-    @Test
-    public void writesPerformanceCountersToErrorStream() throws Exception {
-        Path elfPath = tempDirectory.resolve("performance.elf");
-        Files.write(elfPath, ElfTestImages.executable(helloWorldCode()));
-
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        ByteArrayOutputStream err = new ByteArrayOutputStream();
-        int exitCode = Main.run(
-                new String[]{"--debug-performance", elfPath.toString()},
-                new ByteArrayInputStream(new byte[0]),
-                out,
-                err);
-
-        String diagnostics = err.toString(StandardCharsets.UTF_8);
-        assertEquals(0, exitCode);
-        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
-        assertTrue(diagnostics.contains("RISC-V performance counters:"));
-        assertTrue(diagnostics.contains("memory.localPageCache.hits="));
-        assertTrue(diagnostics.contains("traces.cache.hits="));
-        assertTrue(diagnostics.contains("micro.genericOperations="));
-    }
-
     /// Verifies that the CLI debug clock option is exposed to guest `clock_gettime`.
     @Test
     public void usesDebugFixedClockNanosOption() throws Exception {

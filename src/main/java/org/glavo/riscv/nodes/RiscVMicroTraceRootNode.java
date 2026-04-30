@@ -13,9 +13,7 @@ import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.runtime.MachineState;
-import org.glavo.riscv.runtime.PerformanceCounters;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 /// Executes a hot linear sequence of decoded RISC-V basic blocks through embedded block nodes.
@@ -56,10 +54,6 @@ final class RiscVMicroTraceRootNode extends RootNode {
         for (int index = 0; index < blocks.length; index++) {
             blocks[index].execute(state, access);
             if (index < expectedNextPcs.length && state.pc() != expectedNextPcs[index]) {
-                @Nullable PerformanceCounters counters = state.performanceCounters();
-                if (counters != null) {
-                    counters.recordTraceSideExit();
-                }
                 return;
             }
         }

@@ -9,7 +9,6 @@ import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.parser.ElfImage;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
@@ -83,9 +82,6 @@ public final class MachineState {
     /// The syscall handler for guest environment calls.
     private final GuestSyscalls syscalls;
 
-    /// Optional performance counters shared by all guest threads in this process.
-    private final @Nullable PerformanceCounters performanceCounters;
-
     /// The Linux user-mode thread state paired with this architectural state.
     private final GuestThread thread;
 
@@ -121,19 +117,6 @@ public final class MachineState {
             long fromhostAddress,
             GuestSyscalls syscalls,
             OutputStream traceStream) {
-        this(memory, maxInstructions, trace, tohostAddress, fromhostAddress, syscalls, traceStream, null);
-    }
-
-    /// Creates a new architectural state container with an explicit trace stream and optional counters.
-    public MachineState(
-            Memory memory,
-            long maxInstructions,
-            boolean trace,
-            long tohostAddress,
-            long fromhostAddress,
-            GuestSyscalls syscalls,
-            OutputStream traceStream,
-            @Nullable PerformanceCounters performanceCounters) {
         this(
                 memory,
                 maxInstructions,
@@ -142,8 +125,7 @@ public final class MachineState {
                 fromhostAddress,
                 syscalls,
                 asPrintStream(traceStream),
-                syscalls.initialThread(),
-                performanceCounters);
+                syscalls.initialThread());
     }
 
     /// Creates a new architectural state container with a prepared trace print stream.
@@ -155,8 +137,7 @@ public final class MachineState {
             long fromhostAddress,
             GuestSyscalls syscalls,
             PrintStream traceStream,
-            GuestThread thread,
-            @Nullable PerformanceCounters performanceCounters) {
+            GuestThread thread) {
         this.memory = memory;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
@@ -166,7 +147,6 @@ public final class MachineState {
         this.fromhostAddress = fromhostAddress;
         this.storeSideEffectsEnabled = tohostAddress != ElfImage.ABSENT_ADDRESS;
         this.syscalls = syscalls;
-        this.performanceCounters = performanceCounters;
         this.thread = thread;
     }
 
@@ -246,11 +226,6 @@ public final class MachineState {
         return syscalls;
     }
 
-    /// Returns optional performance counters, or null when diagnostics are disabled.
-    public @Nullable PerformanceCounters performanceCounters() {
-        return performanceCounters;
-    }
-
     /// Returns the Linux thread id represented by this guest state.
     public int threadId() {
         return thread.id();
@@ -276,8 +251,7 @@ public final class MachineState {
                 fromhostAddress,
                 syscalls,
                 traceStream,
-                childThread,
-                performanceCounters);
+                childThread);
         System.arraycopy(registers, 0, child.registers, 0, registers.length);
         System.arraycopy(floatingPointRegisters, 0, child.floatingPointRegisters, 0, floatingPointRegisters.length);
         child.floatingPointControlStatus = floatingPointControlStatus;

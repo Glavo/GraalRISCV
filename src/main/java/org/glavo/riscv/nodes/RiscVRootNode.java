@@ -31,7 +31,6 @@ import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxInitialStack;
 import org.glavo.riscv.runtime.MachineState;
-import org.glavo.riscv.runtime.PerformanceCounters;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -88,10 +87,6 @@ public final class RiscVRootNode extends RootNode {
             } finally {
                 state.syscalls().joinGuestThreads();
                 state.syscalls().close();
-                @Nullable PerformanceCounters counters = context.performanceCounters();
-                if (counters != null) {
-                    counters.writeSummary(context.env().err());
-                }
             }
         }
     }
@@ -161,8 +156,7 @@ public final class RiscVRootNode extends RootNode {
                 image.tohostAddress(),
                 image.fromhostAddress(),
                 syscalls,
-                context.env().err(),
-                context.performanceCounters());
+                context.env().err());
         state.setPc(image.entryPoint());
         state.setRegister(2, initializeLinuxStack(memory, context));
         return state;
@@ -344,9 +338,6 @@ public final class RiscVRootNode extends RootNode {
         /// The syscall handler shared by all guest threads in this process.
         private final GuestSyscalls syscalls;
 
-        /// Optional performance counters shared by all guest threads in this process.
-        private final @Nullable PerformanceCounters performanceCounters;
-
         /// Reusable block call arguments used to avoid per-block varargs allocation.
         private final Object[] blockArguments;
 
@@ -365,7 +356,6 @@ public final class RiscVRootNode extends RootNode {
             this.memoryLayout = memory.layout();
             this.state = state;
             this.syscalls = state.syscalls();
-            this.performanceCounters = state.performanceCounters();
             this.blockArguments = new Object[] { state, memory };
             this.pc = pc;
         }
@@ -390,11 +380,6 @@ public final class RiscVRootNode extends RootNode {
             return syscalls;
         }
 
-        /// Returns optional performance counters, or null when diagnostics are disabled.
-        private @Nullable PerformanceCounters performanceCounters() {
-            return performanceCounters;
-        }
-
         /// Returns the reusable arguments array passed to decoded block call targets.
         private Object[] blockArguments() {
             return blockArguments;
@@ -402,7 +387,7 @@ public final class RiscVRootNode extends RootNode {
 
         /// Initializes block-call memory access inside an entered Truffle context.
         private void initializeMemoryAccess() {
-            blockArguments[1] = memory.newAccess(performanceCounters);
+            blockArguments[1] = memory.newAccess();
         }
 
         /// Refreshes memory generation-sensitive caches before dispatching another guest block.
@@ -425,23 +410,13 @@ public final class RiscVRootNode extends RootNode {
             int slot = localBlockSlot(pc);
             BlockEntry block = localBlocks[slot];
             if (block != null && localBlockPcs[slot] == pc) {
-                recordLocalBlockCacheLookup(true);
                 return block;
             }
 
-            recordLocalBlockCacheLookup(false);
-            block = blocks.getOrDecode(memory, pc, memoryLayout, performanceCounters);
+            block = blocks.getOrDecode(memory, pc, memoryLayout);
             localBlockPcs[slot] = pc;
             localBlocks[slot] = block;
             return block;
-        }
-
-        /// Records whether the loop-local decoded block cache satisfied a lookup.
-        private void recordLocalBlockCacheLookup(boolean hit) {
-            @Nullable PerformanceCounters counters = performanceCounters;
-            if (counters != null) {
-                counters.recordLocalBlockCacheLookup(hit);
-            }
         }
 
         /// Hashes a guest PC into the thread-local decoded-block cache.
@@ -546,13 +521,11 @@ public final class RiscVRootNode extends RootNode {
             if (state.canRetireBlock()) {
                 @Nullable CachedTraceCallNode cachedTrace = cachedTrace(pc, memoryLayout);
                 if (cachedTrace != null) {
-                    recordDirectTraceCallLookup(loopState, true);
                     cachedTrace.call(loopState.blockArguments());
                     return state.pc();
                 }
-                recordDirectTraceCallLookup(loopState, false);
 
-                TraceEntry trace = traces.get(pc, memoryLayout, loopState.performanceCounters());
+                TraceEntry trace = traces.get(pc, memoryLayout);
                 if (trace != null) {
                     return executeTraceMiss(loopState, state, trace);
                 }
@@ -579,14 +552,10 @@ public final class RiscVRootNode extends RootNode {
             MemoryLayout memoryLayout = loopState.memoryLayout();
             CachedBlockCallNode cachedCall = this.cachedCall;
             if (cachedCall != null && cachedCall.matches(pc, memoryLayout)) {
-                recordDirectBlockCallLookup(loopState, true);
                 cachedCall.call(loopState.blockArguments());
                 long nextPc = state.pc();
                 observeTransition(loopState.memory(), state, cachedCall.entry(), nextPc);
                 return nextPc;
-            }
-            if (cachedCall != null) {
-                recordDirectBlockCallLookup(loopState, false);
             }
             return executeBlockMiss(loopState, state, pc);
         }
@@ -614,23 +583,7 @@ public final class RiscVRootNode extends RootNode {
         private void observeTransition(Memory memory, MachineState state, BlockEntry entry, long nextPc) {
             entry.recordSuccessor(nextPc);
             if (state.canRetireBlock() && CompilerDirectives.inInterpreter()) {
-                traces.compileIfHot(memory, blocks, entry, state.performanceCounters());
-            }
-        }
-
-        /// Records whether the direct trace-call inline cache handled a dispatch.
-        private static void recordDirectTraceCallLookup(GuestLoopState loopState, boolean hit) {
-            @Nullable PerformanceCounters counters = loopState.performanceCounters();
-            if (counters != null) {
-                counters.recordDirectTraceCallLookup(hit);
-            }
-        }
-
-        /// Records whether the direct block-call inline cache handled a dispatch.
-        private static void recordDirectBlockCallLookup(GuestLoopState loopState, boolean hit) {
-            @Nullable PerformanceCounters counters = loopState.performanceCounters();
-            if (counters != null) {
-                counters.recordDirectBlockCallLookup(hit);
+                traces.compileIfHot(memory, blocks, entry);
             }
         }
 
@@ -925,42 +878,25 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Returns the compiled trace for a guest program counter, or null on miss.
-        private @Nullable TraceEntry get(
-                long pc,
-                MemoryLayout memoryLayout,
-                @Nullable PerformanceCounters performanceCounters) {
+        private @Nullable TraceEntry get(long pc, MemoryLayout memoryLayout) {
             long[] currentKeys = keys;
             @Nullable MemoryLayout[] currentLayouts = layouts;
             @Nullable TraceEntry[] currentValues = values;
             int slot = findSlot(pc, memoryLayout, currentKeys, currentLayouts, currentValues);
-            @Nullable TraceEntry trace = currentValues[slot];
-            if (performanceCounters != null) {
-                performanceCounters.recordTraceCacheLookup(trace != null);
-            }
-            return trace;
+            return currentValues[slot];
         }
 
         /// Compiles a trace for a block whose successor edge is hot, unless one already exists.
-        private void compileIfHot(
-                Memory memory,
-                BlockCache blocks,
-                BlockEntry start,
-                @Nullable PerformanceCounters performanceCounters) {
+        private void compileIfHot(Memory memory, BlockCache blocks, BlockEntry start) {
             MemoryLayout memoryLayout = memory.layout();
-            if (!start.hasHotSuccessor()
-                    || !start.isTraceable()
-                    || findTrace(start.pc(), memoryLayout) != null) {
+            if (!start.hasHotSuccessor() || !start.isTraceable() || get(start.pc(), memoryLayout) != null) {
                 return;
             }
-            compileAndCache(memory, blocks, start, performanceCounters);
+            compileAndCache(memory, blocks, start);
         }
 
         /// Compiles and caches a trace after a miss on the unsynchronized fast path.
-        private synchronized void compileAndCache(
-                Memory memory,
-                BlockCache blocks,
-                BlockEntry start,
-                @Nullable PerformanceCounters performanceCounters) {
+        private synchronized void compileAndCache(Memory memory, BlockCache blocks, BlockEntry start) {
             MemoryLayout memoryLayout = memory.layout();
             int slot = findSlot(start.pc(), memoryLayout, keys, layouts, values);
             if (values[slot] != null || !start.hasHotSuccessor() || !start.isTraceable()) {
@@ -990,9 +926,6 @@ public final class RiscVRootNode extends RootNode {
             layouts[slot] = memoryLayout;
             values[slot] = trace;
             size++;
-            if (performanceCounters != null) {
-                performanceCounters.recordCompiledTrace(result.blockCount());
-            }
         }
 
         /// Builds one linear trace by following currently hot successor edges.
@@ -1021,7 +954,7 @@ public final class RiscVRootNode extends RootNode {
                     break;
                 }
 
-                BlockEntry successor = blocks.getOrDecode(memory, successorPc, start.memoryLayout(), null);
+                BlockEntry successor = blocks.getOrDecode(memory, successorPc, start.memoryLayout());
                 if (!successor.isTraceable()) {
                     break;
                 }
@@ -1035,15 +968,6 @@ public final class RiscVRootNode extends RootNode {
             long[] trimmedExpectedNextPcs = new long[Math.max(0, count - 1)];
             System.arraycopy(expectedNextPcs, 0, trimmedExpectedNextPcs, 0, trimmedExpectedNextPcs.length);
             return new TraceBuildResult(trimmedDecodedBlocks, trimmedExpectedNextPcs);
-        }
-
-        /// Returns the compiled trace without updating diagnostics counters.
-        private @Nullable TraceEntry findTrace(long pc, MemoryLayout memoryLayout) {
-            long[] currentKeys = keys;
-            @Nullable MemoryLayout[] currentLayouts = layouts;
-            @Nullable TraceEntry[] currentValues = values;
-            int slot = findSlot(pc, memoryLayout, currentKeys, currentLayouts, currentValues);
-            return currentValues[slot];
         }
 
         /// Returns true when the supplied PC is already present in the trace prefix.
@@ -1161,35 +1085,20 @@ public final class RiscVRootNode extends RootNode {
 
         /// Returns the cached block for a guest program counter, decoding it on a cache miss.
         private BlockEntry getOrDecode(Memory memory, long pc) {
-            return getOrDecode(memory, pc, memory.layout(), null);
+            return getOrDecode(memory, pc, memory.layout());
         }
 
         /// Returns the cached block for a guest program counter and memory layout, decoding it on a cache miss.
         private BlockEntry getOrDecode(Memory memory, long pc, MemoryLayout memoryLayout) {
-            return getOrDecode(memory, pc, memoryLayout, null);
-        }
-
-        /// Returns the cached block and records optional shared-cache diagnostics.
-        private BlockEntry getOrDecode(
-                Memory memory,
-                long pc,
-                MemoryLayout memoryLayout,
-                @Nullable PerformanceCounters performanceCounters) {
             long[] currentKeys = keys;
             @Nullable MemoryLayout[] currentLayouts = layouts;
             @Nullable BlockEntry[] currentValues = values;
             int slot = findSlot(pc, memoryLayout, currentKeys, currentLayouts, currentValues);
             BlockEntry block = currentValues[slot];
             if (block != null) {
-                if (performanceCounters != null) {
-                    performanceCounters.recordSharedBlockCacheLookup(true);
-                }
                 return block;
             }
 
-            if (performanceCounters != null) {
-                performanceCounters.recordSharedBlockCacheLookup(false);
-            }
             return decodeAndCache(memory, pc, memoryLayout);
         }
 
