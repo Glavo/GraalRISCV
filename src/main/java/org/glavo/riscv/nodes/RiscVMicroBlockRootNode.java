@@ -17,6 +17,7 @@ import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.RiscVOperation;
+import org.glavo.riscv.runtime.DataIndependent;
 import org.glavo.riscv.runtime.MachineState;
 import org.glavo.riscv.runtime.RiscVInstructionSemantics;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -313,8 +314,8 @@ final class RiscVMicroBlockNode extends Node {
                 finishInstruction(state, index, mode);
             }
             case RiscVMicroOpcode.ADDI -> binaryImmediate(state, registers, index, operand, mode, registers[rs1(operand)] + immediates[index]);
-            case RiscVMicroOpcode.SLTI -> binaryImmediate(state, registers, index, operand, mode, registers[rs1(operand)] < immediates[index] ? 1 : 0);
-            case RiscVMicroOpcode.SLTIU -> binaryImmediate(state, registers, index, operand, mode, Long.compareUnsigned(registers[rs1(operand)], immediates[index]) < 0 ? 1 : 0);
+            case RiscVMicroOpcode.SLTI -> binaryImmediate(state, registers, index, operand, mode, DataIndependent.signedLessThan(registers[rs1(operand)], immediates[index]));
+            case RiscVMicroOpcode.SLTIU -> binaryImmediate(state, registers, index, operand, mode, DataIndependent.unsignedLessThan(registers[rs1(operand)], immediates[index]));
             case RiscVMicroOpcode.XORI -> binaryImmediate(state, registers, index, operand, mode, registers[rs1(operand)] ^ immediates[index]);
             case RiscVMicroOpcode.ORI -> binaryImmediate(state, registers, index, operand, mode, registers[rs1(operand)] | immediates[index]);
             case RiscVMicroOpcode.ANDI -> binaryImmediate(state, registers, index, operand, mode, registers[rs1(operand)] & immediates[index]);
@@ -328,8 +329,8 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.ADD -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] + registers[rs2(operand)]);
             case RiscVMicroOpcode.SUB -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] - registers[rs2(operand)]);
             case RiscVMicroOpcode.SLL -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] << (registers[rs2(operand)] & 0x3f));
-            case RiscVMicroOpcode.SLT -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] < registers[rs2(operand)] ? 1 : 0);
-            case RiscVMicroOpcode.SLTU -> binaryRegister(state, registers, index, operand, mode, Long.compareUnsigned(registers[rs1(operand)], registers[rs2(operand)]) < 0 ? 1 : 0);
+            case RiscVMicroOpcode.SLT -> binaryRegister(state, registers, index, operand, mode, DataIndependent.signedLessThan(registers[rs1(operand)], registers[rs2(operand)]));
+            case RiscVMicroOpcode.SLTU -> binaryRegister(state, registers, index, operand, mode, DataIndependent.unsignedLessThan(registers[rs1(operand)], registers[rs2(operand)]));
             case RiscVMicroOpcode.XOR -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] ^ registers[rs2(operand)]);
             case RiscVMicroOpcode.SRL -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] >>> (registers[rs2(operand)] & 0x3f));
             case RiscVMicroOpcode.SRA -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] >> (registers[rs2(operand)] & 0x3f));
@@ -374,9 +375,9 @@ final class RiscVMicroBlockNode extends Node {
                 setClearControlStatusRegister(state, registers, index, operand, mode, rs1(operand), false);
             }
             case RiscVMicroOpcode.MUL -> binaryRegister(state, registers, index, operand, mode, registers[rs1(operand)] * registers[rs2(operand)]);
-            case RiscVMicroOpcode.MULH -> binaryRegister(state, registers, index, operand, mode, Math.multiplyHigh(registers[rs1(operand)], registers[rs2(operand)]));
-            case RiscVMicroOpcode.MULHSU -> binaryRegister(state, registers, index, operand, mode, multiplyHighSignedUnsigned(registers[rs1(operand)], registers[rs2(operand)]));
-            case RiscVMicroOpcode.MULHU -> binaryRegister(state, registers, index, operand, mode, Math.unsignedMultiplyHigh(registers[rs1(operand)], registers[rs2(operand)]));
+            case RiscVMicroOpcode.MULH -> binaryRegister(state, registers, index, operand, mode, DataIndependent.multiplyHighSigned(registers[rs1(operand)], registers[rs2(operand)]));
+            case RiscVMicroOpcode.MULHSU -> binaryRegister(state, registers, index, operand, mode, DataIndependent.multiplyHighSignedUnsigned(registers[rs1(operand)], registers[rs2(operand)]));
+            case RiscVMicroOpcode.MULHU -> binaryRegister(state, registers, index, operand, mode, DataIndependent.multiplyHighUnsigned(registers[rs1(operand)], registers[rs2(operand)]));
             case RiscVMicroOpcode.DIV -> binaryRegister(state, registers, index, operand, mode, divideSigned(registers[rs1(operand)], registers[rs2(operand)]));
             case RiscVMicroOpcode.DIVU -> binaryRegister(state, registers, index, operand, mode, divideUnsigned(registers[rs1(operand)], registers[rs2(operand)]));
             case RiscVMicroOpcode.REM -> binaryRegister(state, registers, index, operand, mode, remainderSigned(registers[rs1(operand)], registers[rs2(operand)]));
@@ -896,10 +897,14 @@ final class RiscVMicroBlockNode extends Node {
                 case XOR -> oldValue ^ source;
                 case AND -> oldValue & source;
                 case OR -> oldValue | source;
-                case MIN -> oldValue < source ? oldValue : source;
-                case MAX -> oldValue > source ? oldValue : source;
-                case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-                case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+                case MIN -> (int) DataIndependent.signedMinimum(oldValue, source);
+                case MAX -> (int) DataIndependent.signedMaximum(oldValue, source);
+                case MINU -> (int) DataIndependent.unsignedMinimum(
+                        Integer.toUnsignedLong(oldValue),
+                        Integer.toUnsignedLong(source));
+                case MAXU -> (int) DataIndependent.unsignedMaximum(
+                        Integer.toUnsignedLong(oldValue),
+                        Integer.toUnsignedLong(source));
             };
             access.writeInt(address, newValue, memoryLayout);
             writeRegister(registers, rd(operand), oldValue);
@@ -931,10 +936,10 @@ final class RiscVMicroBlockNode extends Node {
                 case XOR -> oldValue ^ source;
                 case AND -> oldValue & source;
                 case OR -> oldValue | source;
-                case MIN -> oldValue < source ? oldValue : source;
-                case MAX -> oldValue > source ? oldValue : source;
-                case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-                case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+                case MIN -> DataIndependent.signedMinimum(oldValue, source);
+                case MAX -> DataIndependent.signedMaximum(oldValue, source);
+                case MINU -> DataIndependent.unsignedMinimum(oldValue, source);
+                case MAXU -> DataIndependent.unsignedMaximum(oldValue, source);
             };
             access.writeLong(address, newValue, memoryLayout);
             writeRegister(registers, rd(operand), oldValue);
@@ -1022,11 +1027,6 @@ final class RiscVMicroBlockNode extends Node {
     /// Computes unsigned 32-bit remainder using RISC-V word division edge-case results.
     private static int remainderUnsignedWord(int dividend, int divisor) {
         return divisor == 0 ? dividend : Integer.remainderUnsigned(dividend, divisor);
-    }
-
-    /// Computes the high half of signed by unsigned 64-bit multiplication.
-    private static long multiplyHighSignedUnsigned(long signed, long unsigned) {
-        return Math.multiplyHigh(signed, unsigned) + (unsigned < 0 ? signed : 0);
     }
 
     /// Returns the packed floating-point format for a decoded instruction.

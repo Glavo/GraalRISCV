@@ -66,12 +66,28 @@ public final class RiscVInstructionSemanticsTest {
         assertEquals(-1L, executeRegisterOperation(RiscVOperation.MULH, -2, 3));
         assertEquals(-1L, executeRegisterOperation(RiscVOperation.MULHSU, -2, 3));
         assertEquals(1L, executeRegisterOperation(RiscVOperation.MULHU, -1, 2));
+        assertEquals(-1L, executeRegisterOperation(RiscVOperation.MULH, Long.MIN_VALUE, 2));
+        assertEquals(-1L, executeRegisterOperation(RiscVOperation.MULHSU, Long.MIN_VALUE, 2));
+        assertEquals(-2L, executeRegisterOperation(RiscVOperation.MULHU, -1, -1));
     }
 
     /// Verifies that `mulw` keeps the low word and sign-extends it to RV64.
     @Test
     public void wordMultiplicationSignExtendsLowWord() {
         assertEquals((long) Integer.MIN_VALUE, executeRegisterOperation(RiscVOperation.MULW, 0x4000_0000L, 2));
+    }
+
+    /// Verifies integer comparison instructions around signed and unsigned extremes.
+    @Test
+    public void comparisonOperationsUseArchitecturalSignedness() {
+        assertEquals(1, executeRegisterOperation(RiscVOperation.SLT, Long.MIN_VALUE, Long.MAX_VALUE));
+        assertEquals(0, executeRegisterOperation(RiscVOperation.SLT, Long.MAX_VALUE, Long.MIN_VALUE));
+        assertEquals(0, executeRegisterOperation(RiscVOperation.SLTU, Long.MIN_VALUE, Long.MAX_VALUE));
+        assertEquals(1, executeRegisterOperation(RiscVOperation.SLTU, Long.MAX_VALUE, Long.MIN_VALUE));
+        assertEquals(1, executeImmediateOperation(RiscVOperation.SLTI, Long.MIN_VALUE, 0, -1));
+        assertEquals(0, executeImmediateOperation(RiscVOperation.SLTI, Long.MAX_VALUE, 0, -1));
+        assertEquals(1, executeImmediateOperation(RiscVOperation.SLTIU, 1, 0, -1));
+        assertEquals(0, executeImmediateOperation(RiscVOperation.SLTIU, -1, 0, 1));
     }
 
     /// Verifies register shift operations mask counts and word shifts sign-extend their low-word result.
@@ -106,15 +122,25 @@ public final class RiscVInstructionSemanticsTest {
         assertEquals(~0x0cL, executeRegisterOperation(RiscVOperation.ORN, 0x03, 0x0c));
         assertEquals(~0xffL, executeRegisterOperation(RiscVOperation.XNOR, 0xf0, 0x0f));
         assertEquals(63, executeImmediateOperation(RiscVOperation.CLZ, 1, 0, 0));
+        assertEquals(64, executeImmediateOperation(RiscVOperation.CLZ, 0, 0, 0));
         assertEquals(4, executeImmediateOperation(RiscVOperation.CTZ, 0x10, 0, 0));
+        assertEquals(64, executeImmediateOperation(RiscVOperation.CTZ, 0, 0, 0));
         assertEquals(32, executeImmediateOperation(RiscVOperation.CPOP, 0xffff_ffffL, 0, 0));
+        assertEquals(0, executeImmediateOperation(RiscVOperation.CPOP, 0, 0, 0));
         assertEquals(31, executeImmediateOperation(RiscVOperation.CLZW, 1, 0, 0));
+        assertEquals(32, executeImmediateOperation(RiscVOperation.CLZW, 0, 0, 0));
         assertEquals(4, executeImmediateOperation(RiscVOperation.CTZW, 0x10, 0, 0));
+        assertEquals(32, executeImmediateOperation(RiscVOperation.CTZW, 0, 0, 0));
         assertEquals(32, executeImmediateOperation(RiscVOperation.CPOPW, 0xffff_ffffL, 0, 0));
+        assertEquals(0, executeImmediateOperation(RiscVOperation.CPOPW, 0, 0, 0));
         assertEquals(2, executeRegisterOperation(RiscVOperation.MAX, -1, 2));
+        assertEquals(Long.MAX_VALUE, executeRegisterOperation(RiscVOperation.MAX, Long.MIN_VALUE, Long.MAX_VALUE));
         assertEquals(-1L, executeRegisterOperation(RiscVOperation.MAXU, -1, 2));
+        assertEquals(Long.MIN_VALUE, executeRegisterOperation(RiscVOperation.MAXU, Long.MAX_VALUE, Long.MIN_VALUE));
         assertEquals(-1L, executeRegisterOperation(RiscVOperation.MIN, -1, 2));
+        assertEquals(Long.MIN_VALUE, executeRegisterOperation(RiscVOperation.MIN, Long.MIN_VALUE, Long.MAX_VALUE));
         assertEquals(2, executeRegisterOperation(RiscVOperation.MINU, -1, 2));
+        assertEquals(Long.MAX_VALUE, executeRegisterOperation(RiscVOperation.MINU, Long.MAX_VALUE, Long.MIN_VALUE));
         assertEquals(-128L, executeImmediateOperation(RiscVOperation.SEXT_B, 0x80, 0, 0));
         assertEquals(-32768L, executeImmediateOperation(RiscVOperation.SEXT_H, 0x8000, 0, 0));
         assertEquals(0xabcdL, executeImmediateOperation(RiscVOperation.ZEXT_H, 0xffff_ffff_ffff_abcdL, 0, 0));

@@ -36,22 +36,23 @@
 - Performance diagnostics have been kept out of the default hot paths; tracing and Truffle compilation diagnostics remain opt-in debug or task-level probes.
 - The current trace and micro-bytecode executor includes specialized block execution modes and dedicated floating-point micro-opcodes.
 
-### 6. RVA22U64 functional user-mode profile
+### 6. RVA22U64 complete user-mode profile
 
-- Functional RVA22U64 user-mode support is implemented as a compatible default superset without adding a profile-selection CLI; timing-certified `Zkt` behavior remains deliberately unclaimed.
-- A central `RiscVExtensions` capability description now feeds Linux `riscv_hwprobe` extension bits and cache-block sizes.
+- Complete RVA22U64 user-mode support is implemented as a compatible default superset without adding a profile-selection CLI; `Zkt` is reported for the simulator's data-independent guest-visible execution model.
+- A central `Rva22Profile` capability description now feeds Linux `riscv_hwprobe` extension bits, README wording, tests, and plan tracking, while `RiscVExtensions` retains Linux hwprobe bit constants.
 - RVA22U64 behavior-only requirements are covered by the current user-mode model: atomic aligned 32-bit instruction fetches on executable memory for `Ziccif`, LR/SC forward-progress modeling for `Ziccrse`, AMO arithmetic support for `Ziccamoa`, ordinary misaligned scalar load/store support for `Zicclsm`, 64-byte reservation-set compatibility for `Za64rs`, and 64-byte cache-block reporting for `Zic64b`.
 - `Zba`, `Zbb`, and `Zbs` integer bit-manipulation instructions are decoded and executed in the interpreter and through the micro-bytecode generic operation path.
+- `Zkt`-relevant integer comparisons, high-half multiplication, bit counts, byte combining, and min/max execution paths use data-independent helper operations in both interpreter and micro-bytecode execution.
 - `Zfhmin` half-precision data-transfer and conversion instructions are decoded and executed, including `FLH`, `FSH`, `FMV.X.H`, `FMV.H.X`, `FCVT.S.H`, `FCVT.H.S`, and the `D`-dependent `FCVT.D.H` / `FCVT.H.D` conversions.
 - `Zfa` additional floating-point instructions are decoded and executed for the implemented RV64 F/D profile, including floating-point immediate loads, IEEE 754-2019 min/max-number, round-to-integer, modular double-to-word conversion, and quiet comparisons.
 - `Zicbom` cache-block clean, flush, and invalidate decode as no-ops in the current cacheless model; `Zicboz` zeroes the containing 64-byte cache block through normal guest memory writes.
-- Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, `Zicntr`, `Zihpm`, `Zaamo`, and `Zalrsc` capabilities, plus 64-byte CBO block-size keys.
+- Linux `riscv_hwprobe` now reports the implemented `Zkt`, `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, `Zicntr`, `Zihpm`, `Zaamo`, and `Zalrsc` capabilities, plus 64-byte CBO block-size keys.
 - User hardware performance counter CSRs `hpmcounter3` through `hpmcounter31` are exposed as deterministic read-only zero counters, matching the minimal current `Zihpm` model without inventing host performance events.
 - Mandatory RVA22U64 `fence.tso` behavior is covered as a regular fence no-op distinct from `fence.i` instruction-fetch synchronization.
 - Linux `riscv_hwprobe` reports ordinary misaligned scalar accesses as software-emulated support while keeping misaligned vector accesses unsupported.
-- `hwprobe` regression coverage now asserts that functional RVA22U64 extension bits and compatible extras are reported while optional or not-yet-claimed extensions such as `V`, full `Zfh`, `Zkt`, `Zacas`, `Zicond`, and `Zawrs` are not reported.
+- `hwprobe` regression coverage now asserts that mandatory RVA22U64 extension bits, including `Zkt`, and compatible extras are reported while optional or not-yet-implemented extensions such as `V`, full `Zfh`, `Zacas`, `Zicond`, and `Zawrs` are not reported.
 - Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented profile behavior and compatible extras.
-- Repository-owned RVA22U64 assembly acceptance tests under `src/test/asm` now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zfa`, `Zicbom`, `Zicboz`, `Zicbop`, `Zihintntl`, and `Zihintpause` instructions from real assembler-generated ELFs.
+- Repository-owned RVA22U64 assembly acceptance tests under `src/test/asm` now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zkt`, `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zfa`, `Zicbom`, `Zicboz`, `Zicbop`, `Zihintntl`, and `Zihintpause` instructions from real assembler-generated ELFs.
 - RVA22U64 non-instruction acceptance now covers ordinary misaligned scalar load/store behavior, user counter CSR reads, and `fence.i` visibility for self-modifying code; decoded block, direct-call, and trace caches are keyed by an instruction-fetch generation refreshed by `fence.i`.
 - LR/SC reservation tracking now records the reserved access width, store-conditional success requires matching address and data size, atomic memory operations require natural alignment, and repository-owned RVA22U64 acceptance covers LR/SC success and failure cases.
 
@@ -77,11 +78,11 @@
 - Keep thread-style `clone` and futex behavior deterministic through Truffle `Env` guest threads.
 - Keep unsupported syscall diagnostics actionable with syscall number, guest PC, and argument registers.
 
-### 4. Maintain RVA22U64 functional user-mode readiness
+### 4. Maintain RVA22U64 complete user-mode readiness
 
-- Keep RVA22U64 functional coverage in sync when decoder, memory, atomic, CSR, cache-block, or `hwprobe` behavior changes.
-- Do not report optional RVA22U64 extensions such as `V`, full `Zfh`, `Zicond`, `Zacas`, or `Zawrs` until they are implemented and tested.
-- Do not claim timing-certified `Zkt` behavior in documentation or `hwprobe`; keep the target as functional user-mode support unless a later plan explicitly adds timing conformance work.
+- Keep RVA22U64 mandatory coverage in sync when decoder, memory, atomic, CSR, cache-block, timing-observable, or `hwprobe` behavior changes.
+- Do not report optional RVA22U64 extensions such as `V`, full `Zfh`, `Zkn`, `Zks`, `Zicond`, `Zacas`, or `Zawrs` until they are implemented and tested.
+- Preserve the `Zkt` audit boundary by keeping guest-visible data-dependent branches, table lookups, exceptions, counters, and syscall time out of mandatory data-independent instruction paths.
 - Preserve existing `Zifencei` support as a compatibility extension even though it is not a mandatory RVA22U64 user-profile extension.
 
 ### 5. Maintain build, docs, and performance probes

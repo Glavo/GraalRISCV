@@ -902,7 +902,7 @@ public abstract sealed class RiscVInstructionSemantics {
         /// Sets the destination when the source register is signed-less-than the immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setDecodedRegister(rd, state.decodedRegister(rs1) < immediate ? 1 : 0);
+            state.setDecodedRegister(rd, DataIndependent.signedLessThan(state.decodedRegister(rs1), immediate));
         }
 
     }
@@ -917,7 +917,7 @@ public abstract sealed class RiscVInstructionSemantics {
         /// Sets the destination when the source register is unsigned-less-than the immediate.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setDecodedRegister(rd, Long.compareUnsigned(state.decodedRegister(rs1), immediate) < 0 ? 1 : 0);
+            state.setDecodedRegister(rd, DataIndependent.unsignedLessThan(state.decodedRegister(rs1), immediate));
         }
 
     }
@@ -1127,7 +1127,7 @@ public abstract sealed class RiscVInstructionSemantics {
         /// Sets the destination when the first source register is signed-less-than the second.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setDecodedRegister(rd, state.decodedRegister(rs1) < state.decodedRegister(rs2) ? 1 : 0);
+            state.setDecodedRegister(rd, DataIndependent.signedLessThan(state.decodedRegister(rs1), state.decodedRegister(rs2)));
         }
 
     }
@@ -1142,7 +1142,7 @@ public abstract sealed class RiscVInstructionSemantics {
         /// Sets the destination when the first source register is unsigned-less-than the second.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
-            state.setDecodedRegister(rd, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0 ? 1 : 0);
+            state.setDecodedRegister(rd, DataIndependent.unsignedLessThan(state.decodedRegister(rs1), state.decodedRegister(rs2)));
         }
 
     }
@@ -1761,8 +1761,8 @@ public abstract sealed class RiscVInstructionSemantics {
     protected final void executeImmediateInteger(MachineState state, long nextPc) {
         switch (operation) {
             case ADDI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) + immediate);
-            case SLTI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) < immediate ? 1 : 0);
-            case SLTIU -> binaryImmediate(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), immediate) < 0 ? 1 : 0);
+            case SLTI -> binaryImmediate(state, nextPc, DataIndependent.signedLessThan(state.decodedRegister(rs1), immediate));
+            case SLTIU -> binaryImmediate(state, nextPc, DataIndependent.unsignedLessThan(state.decodedRegister(rs1), immediate));
             case XORI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) ^ immediate);
             case ORI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) | immediate);
             case ANDI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) & immediate);
@@ -1784,8 +1784,8 @@ public abstract sealed class RiscVInstructionSemantics {
             case ADD -> binaryRegister(state, nextPc, state.decodedRegister(rs1) + state.decodedRegister(rs2));
             case SUB -> binaryRegister(state, nextPc, state.decodedRegister(rs1) - state.decodedRegister(rs2));
             case SLL -> binaryRegister(state, nextPc, state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x3f));
-            case SLT -> binaryRegister(state, nextPc, state.decodedRegister(rs1) < state.decodedRegister(rs2) ? 1 : 0);
-            case SLTU -> binaryRegister(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0 ? 1 : 0);
+            case SLT -> binaryRegister(state, nextPc, DataIndependent.signedLessThan(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case SLTU -> binaryRegister(state, nextPc, DataIndependent.unsignedLessThan(state.decodedRegister(rs1), state.decodedRegister(rs2)));
             case XOR -> binaryRegister(state, nextPc, state.decodedRegister(rs1) ^ state.decodedRegister(rs2));
             case SRL -> binaryRegister(state, nextPc, state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x3f));
             case SRA -> binaryRegister(state, nextPc, state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x3f));
@@ -1805,9 +1805,9 @@ public abstract sealed class RiscVInstructionSemantics {
     protected final void executeMultiplyDivide(MachineState state, long nextPc) {
         switch (operation) {
             case MUL -> binaryRegister(state, nextPc, state.decodedRegister(rs1) * state.decodedRegister(rs2));
-            case MULH -> binaryRegister(state, nextPc, Math.multiplyHigh(state.decodedRegister(rs1), state.decodedRegister(rs2)));
-            case MULHSU -> binaryRegister(state, nextPc, multiplyHighSignedUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
-            case MULHU -> binaryRegister(state, nextPc, Math.unsignedMultiplyHigh(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MULH -> binaryRegister(state, nextPc, DataIndependent.multiplyHighSigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MULHSU -> binaryRegister(state, nextPc, DataIndependent.multiplyHighSignedUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MULHU -> binaryRegister(state, nextPc, DataIndependent.multiplyHighUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
             case DIV -> binaryRegister(state, nextPc, divideSigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
             case DIVU -> binaryRegister(state, nextPc, divideUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
             case REM -> binaryRegister(state, nextPc, remainderSigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
@@ -1836,24 +1836,20 @@ public abstract sealed class RiscVInstructionSemantics {
             case ANDN -> binaryRegister(state, nextPc, state.decodedRegister(rs1) & ~state.decodedRegister(rs2));
             case ORN -> binaryRegister(state, nextPc, state.decodedRegister(rs1) | ~state.decodedRegister(rs2));
             case XNOR -> binaryRegister(state, nextPc, ~(state.decodedRegister(rs1) ^ state.decodedRegister(rs2)));
-            case CLZ -> binaryRegister(state, nextPc, Long.numberOfLeadingZeros(state.decodedRegister(rs1)));
-            case CTZ -> binaryRegister(state, nextPc, Long.numberOfTrailingZeros(state.decodedRegister(rs1)));
-            case CPOP -> binaryRegister(state, nextPc, Long.bitCount(state.decodedRegister(rs1)));
-            case CLZW -> binaryRegister(state, nextPc, Integer.numberOfLeadingZeros((int) state.decodedRegister(rs1)));
-            case CTZW -> binaryRegister(state, nextPc, Integer.numberOfTrailingZeros((int) state.decodedRegister(rs1)));
-            case CPOPW -> binaryRegister(state, nextPc, Integer.bitCount((int) state.decodedRegister(rs1)));
-            case MAX -> binaryRegister(state, nextPc, Math.max(state.decodedRegister(rs1), state.decodedRegister(rs2)));
-            case MAXU -> binaryRegister(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) >= 0
-                    ? state.decodedRegister(rs1)
-                    : state.decodedRegister(rs2));
-            case MIN -> binaryRegister(state, nextPc, Math.min(state.decodedRegister(rs1), state.decodedRegister(rs2)));
-            case MINU -> binaryRegister(state, nextPc, Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) <= 0
-                    ? state.decodedRegister(rs1)
-                    : state.decodedRegister(rs2));
+            case CLZ -> binaryRegister(state, nextPc, DataIndependent.numberOfLeadingZeros(state.decodedRegister(rs1)));
+            case CTZ -> binaryRegister(state, nextPc, DataIndependent.numberOfTrailingZeros(state.decodedRegister(rs1)));
+            case CPOP -> binaryRegister(state, nextPc, DataIndependent.bitCount(state.decodedRegister(rs1)));
+            case CLZW -> binaryRegister(state, nextPc, DataIndependent.numberOfLeadingZerosWord((int) state.decodedRegister(rs1)));
+            case CTZW -> binaryRegister(state, nextPc, DataIndependent.numberOfTrailingZerosWord((int) state.decodedRegister(rs1)));
+            case CPOPW -> binaryRegister(state, nextPc, DataIndependent.bitCountWord((int) state.decodedRegister(rs1)));
+            case MAX -> binaryRegister(state, nextPc, DataIndependent.signedMaximum(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MAXU -> binaryRegister(state, nextPc, DataIndependent.unsignedMaximum(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MIN -> binaryRegister(state, nextPc, DataIndependent.signedMinimum(state.decodedRegister(rs1), state.decodedRegister(rs2)));
+            case MINU -> binaryRegister(state, nextPc, DataIndependent.unsignedMinimum(state.decodedRegister(rs1), state.decodedRegister(rs2)));
             case SEXT_B -> binaryRegister(state, nextPc, (byte) state.decodedRegister(rs1));
             case SEXT_H -> binaryRegister(state, nextPc, (short) state.decodedRegister(rs1));
             case ZEXT_H -> binaryRegister(state, nextPc, state.decodedRegister(rs1) & 0xffffL);
-            case ORC_B -> binaryRegister(state, nextPc, orCombineBytes(state.decodedRegister(rs1)));
+            case ORC_B -> binaryRegister(state, nextPc, DataIndependent.orCombineBytes(state.decodedRegister(rs1)));
             case REV8 -> binaryRegister(state, nextPc, Long.reverseBytes(state.decodedRegister(rs1)));
             case ROL -> binaryRegister(state, nextPc, Long.rotateLeft(state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
             case ROR -> binaryRegister(state, nextPc, Long.rotateRight(state.decodedRegister(rs1), (int) state.decodedRegister(rs2)));
@@ -2056,17 +2052,6 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Zero-extends the low 32 bits of a register value.
     private static long unsignedWord(long value) {
         return value & 0xffff_ffffL;
-    }
-
-    /// Implements the `orc.b` byte-wise nonzero propagation.
-    private static long orCombineBytes(long value) {
-        long result = 0;
-        for (int shift = 0; shift < Long.SIZE; shift += Byte.SIZE) {
-            if (((value >>> shift) & 0xffL) != 0) {
-                result |= 0xffL << shift;
-            }
-        }
-        return result;
     }
 
     /// Clears one bit selected by the low six bits of the index.
@@ -2309,10 +2294,14 @@ public abstract sealed class RiscVInstructionSemantics {
                 case XOR -> oldValue ^ source;
                 case AND -> oldValue & source;
                 case OR -> oldValue | source;
-                case MIN -> oldValue < source ? oldValue : source;
-                case MAX -> oldValue > source ? oldValue : source;
-                case MINU -> Integer.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-                case MAXU -> Integer.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+                case MIN -> (int) DataIndependent.signedMinimum(oldValue, source);
+                case MAX -> (int) DataIndependent.signedMaximum(oldValue, source);
+                case MINU -> (int) DataIndependent.unsignedMinimum(
+                        Integer.toUnsignedLong(oldValue),
+                        Integer.toUnsignedLong(source));
+                case MAXU -> (int) DataIndependent.unsignedMaximum(
+                        Integer.toUnsignedLong(oldValue),
+                        Integer.toUnsignedLong(source));
             };
             memory.writeInt(address, newValue);
             state.setDecodedRegister(rd, oldValue);
@@ -2336,10 +2325,10 @@ public abstract sealed class RiscVInstructionSemantics {
                 case XOR -> oldValue ^ source;
                 case AND -> oldValue & source;
                 case OR -> oldValue | source;
-                case MIN -> oldValue < source ? oldValue : source;
-                case MAX -> oldValue > source ? oldValue : source;
-                case MINU -> Long.compareUnsigned(oldValue, source) < 0 ? oldValue : source;
-                case MAXU -> Long.compareUnsigned(oldValue, source) > 0 ? oldValue : source;
+                case MIN -> DataIndependent.signedMinimum(oldValue, source);
+                case MAX -> DataIndependent.signedMaximum(oldValue, source);
+                case MINU -> DataIndependent.unsignedMinimum(oldValue, source);
+                case MAXU -> DataIndependent.unsignedMaximum(oldValue, source);
             };
             memory.writeLong(address, newValue);
             state.setDecodedRegister(rd, oldValue);
@@ -3439,6 +3428,15 @@ public abstract sealed class RiscVInstructionSemantics {
         return new ExactBinaryValue(value, 0);
     }
 
+    /// Converts an unsigned 64-bit integer to a positive exact integer value.
+    private static BigInteger unsignedLongToBigInteger(long value) {
+        byte[] bytes = new byte[Long.BYTES + 1];
+        for (int index = 0; index < Long.BYTES; index++) {
+            bytes[index + 1] = (byte) (value >>> ((Long.BYTES - 1 - index) * Byte.SIZE));
+        }
+        return new BigInteger(bytes);
+    }
+
     /// Returns the exact binary value represented by finite single-precision bits.
     private static ExactBinaryValue exactSingleValue(int bits) {
         int fraction = bits & 0x007f_ffff;
@@ -4220,18 +4218,6 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Computes RV64 unsigned 32-bit remainder.
     private static int remainderUnsignedWord(int dividend, int divisor) {
         return divisor == 0 ? dividend : Integer.remainderUnsigned(dividend, divisor);
-    }
-
-    /// Computes the high half of a signed-by-unsigned 64-bit product.
-    private static long multiplyHighSignedUnsigned(long signed, long unsigned) {
-        BigInteger product = BigInteger.valueOf(signed).multiply(unsignedLongToBigInteger(unsigned));
-        return product.shiftRight(Long.SIZE).longValue();
-    }
-
-    /// Converts a Java long to a non-negative unsigned BigInteger.
-    private static BigInteger unsignedLongToBigInteger(long value) {
-        BigInteger result = BigInteger.valueOf(value & Long.MAX_VALUE);
-        return value < 0 ? result.setBit(Long.SIZE - 1) : result;
     }
 
     /// The operation variants shared by AMO instructions.

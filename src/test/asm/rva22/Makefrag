@@ -2,4 +2,5 @@ rva22_sc_tests = \
 	rva22-zba-zbb-zbs-zfhmin-zfa \
 	rva22-zicbo-zihint \
 	rva22-memory-csr-fence \
-	rva22-lrsc
+	rva22-lrsc \
+	rva22-zkt

@@ -8,6 +8,7 @@ import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.constants.RiscVExtensions;
+import org.glavo.riscv.constants.Rva22Profile;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
@@ -4247,7 +4248,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     (int) RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE,
                     (int) RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE -> RiscVExtensions.CACHE_BLOCK_SIZE;
             case (int) RISCV_HWPROBE_KEY_BASE_BEHAVIOR -> RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
-            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> RiscVExtensions.HWPROBE_IMA_EXTENSIONS;
+            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> Rva22Profile.HWPROBE_REPORTED_EXTENSIONS;
             case (int) RISCV_HWPROBE_KEY_CPUPERF_0 -> RISCV_HWPROBE_MISALIGNED_EMULATED;
             case (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF -> RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED;
             case (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED;

@@ -43,6 +43,31 @@ public final class RiscVMicroBlockRva22Test {
         }
     }
 
+    /// Executes comparison and high-half multiplication instructions through the micro-operation path.
+    @Test
+    public void zktRelevantIntegerOperationsExecuteInMicroBlock() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    rType(0x33, 10, 2, 5, 6, 0),
+                    rType(0x33, 11, 3, 5, 6, 0),
+                    rType(0x33, 12, 1, 5, 6, 1),
+                    rType(0x33, 13, 2, 5, 6, 1),
+                    rType(0x33, 14, 3, 5, 6, 1),
+                    jal(0));
+            machine.state().setRegister(5, Long.MIN_VALUE);
+            machine.state().setRegister(6, 2);
+
+            executeMicroBlock(machine);
+
+            assertEquals(1, machine.state().register(10));
+            assertEquals(0, machine.state().register(11));
+            assertEquals(-1L, machine.state().register(12));
+            assertEquals(-1L, machine.state().register(13));
+            assertEquals(1, machine.state().register(14));
+        }
+    }
+
     /// Executes `cbo.zero` through the generic micro-operation path.
     @Test
     public void cacheBlockZeroExecutesInMicroBlock() {

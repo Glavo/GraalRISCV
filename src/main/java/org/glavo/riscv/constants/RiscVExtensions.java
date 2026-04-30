@@ -17,6 +17,9 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_IMA_C`.
     public static final long HWPROBE_IMA_C = 1 << 1;
 
+    /// Linux `RISCV_HWPROBE_IMA_V`.
+    public static final long HWPROBE_IMA_V = 1 << 2;
+
     /// Linux `RISCV_HWPROBE_EXT_ZBA`.
     public static final long HWPROBE_EXT_ZBA = 1 << 3;
 
@@ -29,17 +32,32 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_EXT_ZICBOZ`.
     public static final long HWPROBE_EXT_ZICBOZ = 1 << 6;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZKT`.
+    public static final long HWPROBE_EXT_ZKT = 1L << 16;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZFH`.
+    public static final long HWPROBE_EXT_ZFH = 1L << 27;
+
     /// Linux `RISCV_HWPROBE_EXT_ZFHMIN`.
     public static final long HWPROBE_EXT_ZFHMIN = 1 << 28;
-
-    /// Linux `RISCV_HWPROBE_EXT_ZFA`.
-    public static final long HWPROBE_EXT_ZFA = 1L << 32;
 
     /// Linux `RISCV_HWPROBE_EXT_ZIHINTNTL`.
     public static final long HWPROBE_EXT_ZIHINTNTL = 1L << 29;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZFA`.
+    public static final long HWPROBE_EXT_ZFA = 1L << 32;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZACAS`.
+    public static final long HWPROBE_EXT_ZACAS = 1L << 34;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZICOND`.
+    public static final long HWPROBE_EXT_ZICOND = 1L << 35;
+
     /// Linux `RISCV_HWPROBE_EXT_ZIHINTPAUSE`.
     public static final long HWPROBE_EXT_ZIHINTPAUSE = 1L << 36;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZAWRS`.
+    public static final long HWPROBE_EXT_ZAWRS = 1L << 48;
 
     /// Linux `RISCV_HWPROBE_EXT_ZICNTR`.
     public static final long HWPROBE_EXT_ZICNTR = 1L << 50;
@@ -59,32 +77,14 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_EXT_ZICBOP`.
     public static final long HWPROBE_EXT_ZICBOP = 1L << 60;
 
-    /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0` bits for implemented RVA22U64 functional requirements.
-    public static final long HWPROBE_RVA22U64_FUNCTIONAL_EXTENSIONS =
-            HWPROBE_IMA_FD
-                    | HWPROBE_IMA_C
-                    | HWPROBE_EXT_ZBA
-                    | HWPROBE_EXT_ZBB
-                    | HWPROBE_EXT_ZBS
-                    | HWPROBE_EXT_ZICBOZ
-                    | HWPROBE_EXT_ZFHMIN
-                    | HWPROBE_EXT_ZIHINTPAUSE
-                    | HWPROBE_EXT_ZICNTR
-                    | HWPROBE_EXT_ZIHPM
-                    | HWPROBE_EXT_ZICBOM
-                    | HWPROBE_EXT_ZAAMO
-                    | HWPROBE_EXT_ZALRSC
-                    | HWPROBE_EXT_ZICBOP;
+    /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0` bits for implemented mandatory RVA22U64 requirements.
+    public static final long HWPROBE_RVA22U64_MANDATORY_EXTENSIONS = Rva22Profile.HWPROBE_MANDATORY_EXTENSIONS;
 
     /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0` bits for compatible extensions beyond RVA22U64 mandates.
-    public static final long HWPROBE_COMPATIBILITY_EXTENSIONS =
-            HWPROBE_EXT_ZFA
-                    | HWPROBE_EXT_ZIHINTNTL;
+    public static final long HWPROBE_COMPATIBILITY_EXTENSIONS = Rva22Profile.HWPROBE_COMPATIBILITY_EXTENSIONS;
 
     /// The extension bits currently reported through Linux `RISCV_HWPROBE_KEY_IMA_EXT_0`.
-    public static final long HWPROBE_IMA_EXTENSIONS =
-            HWPROBE_RVA22U64_FUNCTIONAL_EXTENSIONS
-                    | HWPROBE_COMPATIBILITY_EXTENSIONS;
+    public static final long HWPROBE_IMA_EXTENSIONS = Rva22Profile.HWPROBE_REPORTED_EXTENSIONS;
 
     /// Prevents construction of this constants class.
     private RiscVExtensions() {

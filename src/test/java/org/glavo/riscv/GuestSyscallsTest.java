@@ -10,6 +10,7 @@ import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
 import com.oracle.truffle.api.TruffleFile;
 import org.graalvm.polyglot.io.FileSystem;
+import org.glavo.riscv.constants.Rva22Profile;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -742,24 +743,6 @@ public final class GuestSyscallsTest {
 
     /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0`.
     private static final long RISCV_HWPROBE_KEY_IMA_EXT_0 = 4;
-
-    /// Linux `RISCV_HWPROBE_IMA_V`.
-    private static final long RISCV_HWPROBE_IMA_V = 1 << 2;
-
-    /// Linux `RISCV_HWPROBE_EXT_ZKT`.
-    private static final long RISCV_HWPROBE_EXT_ZKT = 1L << 16;
-
-    /// Linux `RISCV_HWPROBE_EXT_ZFH`.
-    private static final long RISCV_HWPROBE_EXT_ZFH = 1L << 27;
-
-    /// Linux `RISCV_HWPROBE_EXT_ZACAS`.
-    private static final long RISCV_HWPROBE_EXT_ZACAS = 1L << 34;
-
-    /// Linux `RISCV_HWPROBE_EXT_ZICOND`.
-    private static final long RISCV_HWPROBE_EXT_ZICOND = 1L << 35;
-
-    /// Linux `RISCV_HWPROBE_EXT_ZAWRS`.
-    private static final long RISCV_HWPROBE_EXT_ZAWRS = 1L << 48;
 
     /// Linux `RISCV_HWPROBE_KEY_CPUPERF_0`.
     private static final long RISCV_HWPROBE_KEY_CPUPERF_0 = 5;
@@ -3195,25 +3178,25 @@ public final class GuestSyscallsTest {
             assertEquals(0, readHwprobeValue(memory, pairsAddress, 0));
             assertEquals(RISCV_HWPROBE_BASE_BEHAVIOR_IMA, readHwprobeValue(memory, pairsAddress, 1));
             long imaExtensions = readHwprobeValue(memory, pairsAddress, 2);
-            assertEquals(RiscVExtensions.HWPROBE_IMA_EXTENSIONS, imaExtensions);
+            assertEquals(Rva22Profile.HWPROBE_REPORTED_EXTENSIONS, imaExtensions);
             assertEquals(
-                    RiscVExtensions.HWPROBE_RVA22U64_FUNCTIONAL_EXTENSIONS,
-                    imaExtensions & RiscVExtensions.HWPROBE_RVA22U64_FUNCTIONAL_EXTENSIONS);
+                    Rva22Profile.HWPROBE_MANDATORY_EXTENSIONS,
+                    imaExtensions & Rva22Profile.HWPROBE_MANDATORY_EXTENSIONS);
             assertEquals(
-                    RiscVExtensions.HWPROBE_COMPATIBILITY_EXTENSIONS,
-                    imaExtensions & RiscVExtensions.HWPROBE_COMPATIBILITY_EXTENSIONS);
+                    Rva22Profile.HWPROBE_COMPATIBILITY_EXTENSIONS,
+                    imaExtensions & Rva22Profile.HWPROBE_COMPATIBILITY_EXTENSIONS);
+            assertEquals(RiscVExtensions.HWPROBE_EXT_ZKT, imaExtensions & RiscVExtensions.HWPROBE_EXT_ZKT);
             long expectedSplitAtomicAndCounterExtensions =
                     RiscVExtensions.HWPROBE_EXT_ZIHPM
                             | RiscVExtensions.HWPROBE_EXT_ZAAMO
                             | RiscVExtensions.HWPROBE_EXT_ZALRSC;
             assertEquals(expectedSplitAtomicAndCounterExtensions, imaExtensions & expectedSplitAtomicAndCounterExtensions);
             long unreportedOptionalExtensions =
-                    RISCV_HWPROBE_IMA_V
-                            | RISCV_HWPROBE_EXT_ZKT
-                            | RISCV_HWPROBE_EXT_ZFH
-                            | RISCV_HWPROBE_EXT_ZACAS
-                            | RISCV_HWPROBE_EXT_ZICOND
-                            | RISCV_HWPROBE_EXT_ZAWRS;
+                    RiscVExtensions.HWPROBE_IMA_V
+                            | RiscVExtensions.HWPROBE_EXT_ZFH
+                            | RiscVExtensions.HWPROBE_EXT_ZACAS
+                            | RiscVExtensions.HWPROBE_EXT_ZICOND
+                            | RiscVExtensions.HWPROBE_EXT_ZAWRS;
             assertEquals(0, imaExtensions & unreportedOptionalExtensions);
             assertEquals(RISCV_HWPROBE_MISALIGNED_EMULATED, readHwprobeValue(memory, pairsAddress, 3));
             assertEquals(Long.MAX_VALUE, readHwprobeValue(memory, pairsAddress, 4));
@@ -3248,7 +3231,7 @@ public final class GuestSyscallsTest {
             assertEquals(1, memory.readUnsignedByte(cpuSetAddress));
 
             memory.writeByte(cpuSetAddress, (byte) 1);
-            writeHwprobePair(memory, pairsAddress, 0, RISCV_HWPROBE_KEY_IMA_EXT_0, RISCV_HWPROBE_IMA_V);
+            writeHwprobePair(memory, pairsAddress, 0, RISCV_HWPROBE_KEY_IMA_EXT_0, RiscVExtensions.HWPROBE_IMA_V);
             setSyscall(state, SYS_RISCV_HWPROBE, pairsAddress, 1, Long.BYTES, cpuSetAddress, RISCV_HWPROBE_WHICH_CPUS, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));

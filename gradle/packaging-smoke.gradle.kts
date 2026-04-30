@@ -122,9 +122,9 @@ tasks.register("packageSmokeTest") {
 
 tasks.register("ciZigExampleCheck") {
     group = "verification"
-    description = "Runs CI example checks that require a Zig toolchain."
+    description = "Runs CI example and RVA22U64 acceptance checks that require a Zig toolchain."
 
-    dependsOn("checkHelloWorldExample")
+    dependsOn("checkHelloWorldExample", "testRva22Acceptance")
 }
 
 tasks.register("ciCheck") {

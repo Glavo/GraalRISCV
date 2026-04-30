@@ -197,6 +197,7 @@ tasks.register<RiscVTestsBuildTask>("buildRva22AcceptanceTests") {
         "zbb",
         "zbs",
         "zfhmin",
+        "zkt",
         "zfa",
     ))
 }

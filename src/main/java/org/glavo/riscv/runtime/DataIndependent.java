@@ -58,7 +58,29 @@ public final class DataIndependent {
 
     /// Computes the high half of signed-by-unsigned 64-bit multiplication.
     public static long multiplyHighSignedUnsigned(long signed, long unsigned) {
-        return Math.multiplyHigh(signed, unsigned) + (signed & (unsigned >> (Long.SIZE - 1)));
+        return multiplyHighUnsigned(signed, unsigned) - (unsigned & (signed >> (Long.SIZE - 1)));
+    }
+
+    /// Computes the high half of signed-by-signed 64-bit multiplication.
+    public static long multiplyHighSigned(long left, long right) {
+        return multiplyHighUnsigned(left, right)
+                - (right & (left >> (Long.SIZE - 1)))
+                - (left & (right >> (Long.SIZE - 1)));
+    }
+
+    /// Computes the high half of unsigned-by-unsigned 64-bit multiplication.
+    public static long multiplyHighUnsigned(long left, long right) {
+        long leftLow = left & 0xffff_ffffL;
+        long leftHigh = left >>> Integer.SIZE;
+        long rightLow = right & 0xffff_ffffL;
+        long rightHigh = right >>> Integer.SIZE;
+
+        long lowCarry = (leftLow * rightLow) >>> Integer.SIZE;
+        long firstMiddle = leftHigh * rightLow + lowCarry;
+        long firstMiddleLow = firstMiddle & 0xffff_ffffL;
+        long firstMiddleHigh = firstMiddle >>> Integer.SIZE;
+        long secondMiddle = firstMiddleLow + leftLow * rightHigh;
+        return leftHigh * rightHigh + firstMiddleHigh + (secondMiddle >>> Integer.SIZE);
     }
 
     /// Returns the number of one bits in a 64-bit word.
