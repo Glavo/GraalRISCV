@@ -302,6 +302,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `EACCES` as a raw negative syscall result.
     private static final long EACCES = -13;
 
+    /// Linux `EFAULT` as a raw negative syscall result.
+    private static final long EFAULT = -14;
+
     /// Linux `EPERM` as a raw negative syscall result.
     private static final long EPERM = -1;
 
@@ -316,6 +319,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `EAGAIN` as a raw negative syscall result.
     private static final long EAGAIN = -11;
+
+    /// Linux `EBUSY` as a raw negative syscall result.
+    private static final long EBUSY = -16;
 
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
@@ -976,6 +982,33 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `MEMBARRIER_CMD_QUERY`.
     private static final long MEMBARRIER_CMD_QUERY = 0;
+
+    /// The original Linux `struct rseq` byte size including padding.
+    private static final long RSEQ_ORIGINAL_SIZE = 32;
+
+    /// The Linux `struct rseq` alignment used for the original 32-byte layout.
+    private static final long RSEQ_ALIGNMENT = 32;
+
+    /// Linux `RSEQ_FLAG_UNREGISTER`.
+    private static final long RSEQ_FLAG_UNREGISTER = 1;
+
+    /// The byte offset of `cpu_id_start` inside Linux `struct rseq`.
+    private static final long RSEQ_CPU_ID_START_OFFSET = 0;
+
+    /// The byte offset of `cpu_id` inside Linux `struct rseq`.
+    private static final long RSEQ_CPU_ID_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `rseq_cs` inside Linux `struct rseq`.
+    private static final long RSEQ_CRITICAL_SECTION_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `flags` inside Linux `struct rseq`.
+    private static final long RSEQ_FLAGS_OFFSET = RSEQ_CRITICAL_SECTION_OFFSET + Long.BYTES;
+
+    /// The byte offset of `node_id` inside Linux `struct rseq`.
+    private static final long RSEQ_NODE_ID_OFFSET = RSEQ_FLAGS_OFFSET + Integer.BYTES;
+
+    /// The byte offset of `mm_cid` inside Linux `struct rseq`.
+    private static final long RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET = RSEQ_NODE_ID_OFFSET + Integer.BYTES;
 
     /// Linux `TIMER_ABSTIME`.
     private static final long TIMER_ABSTIME = 1;
@@ -1676,7 +1709,12 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
-            case SYS_RSEQ -> state.setRegister(10, rseq());
+            case SYS_RSEQ -> state.setRegister(10, rseq(
+                    state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_FACCESSAT2 -> state.setRegister(10, faccessat(
                     state.register(10),
                     state.register(11),
@@ -4837,9 +4875,82 @@ public final class GuestSyscalls implements AutoCloseable {
         return command == MEMBARRIER_CMD_QUERY ? 0 : EINVAL;
     }
 
-    /// Reports that Linux restartable sequences are unavailable to guest runtimes.
-    private static long rseq() {
-        return ENOSYS;
+    /// Handles Linux restartable sequence registration for the current guest thread.
+    private long rseq(MachineState state, long address, long length, long flags, long signature) {
+        long rseqLength = length & 0xffff_ffffL;
+        long rseqFlags = flags & 0xffff_ffffL;
+        long rseqSignature = signature & 0xffff_ffffL;
+        GuestThread thread = state.guestThread();
+        if ((rseqFlags & RSEQ_FLAG_UNREGISTER) != 0) {
+            return unregisterRseq(thread, address, rseqLength, rseqFlags, rseqSignature);
+        }
+
+        if (rseqFlags != 0) {
+            return EINVAL;
+        }
+
+        if (thread.hasRestartableSequence()) {
+            if (thread.restartableSequenceAddress() != address || thread.restartableSequenceLength() != rseqLength) {
+                return EINVAL;
+            }
+            if (thread.restartableSequenceSignature() != rseqSignature) {
+                return EPERM;
+            }
+            return EBUSY;
+        }
+
+        if (rseqLength < RSEQ_ORIGINAL_SIZE || !isAligned(address, RSEQ_ALIGNMENT)) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(address, rseqLength)) {
+            return EFAULT;
+        }
+
+        initializeRseqArea(address);
+        thread.setRestartableSequence(address, rseqLength, rseqSignature);
+        return 0;
+    }
+
+    /// Unregisters the current thread's restartable sequence area.
+    private long unregisterRseq(GuestThread thread, long address, long length, long flags, long signature) {
+        if ((flags & ~RSEQ_FLAG_UNREGISTER) != 0) {
+            return EINVAL;
+        }
+        if (!thread.hasRestartableSequence() || thread.restartableSequenceAddress() != address) {
+            return EINVAL;
+        }
+        if (thread.restartableSequenceLength() != length) {
+            return EINVAL;
+        }
+        if (thread.restartableSequenceSignature() != signature) {
+            return EPERM;
+        }
+        if (!memory.isBacked(address, length)) {
+            return EFAULT;
+        }
+
+        resetRseqArea(address);
+        thread.clearRestartableSequence();
+        return 0;
+    }
+
+    /// Initializes the guest-visible fields that Linux updates while rseq is registered.
+    private void initializeRseqArea(long address) {
+        memory.writeLong(address + RSEQ_CRITICAL_SECTION_OFFSET, 0);
+        memory.writeInt(address + RSEQ_CPU_ID_START_OFFSET, 0);
+        memory.writeInt(address + RSEQ_CPU_ID_OFFSET, 0);
+        memory.writeInt(address + RSEQ_FLAGS_OFFSET, 0);
+        memory.writeInt(address + RSEQ_NODE_ID_OFFSET, 0);
+        memory.writeInt(address + RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET, 0);
+    }
+
+    /// Resets the guest-visible fields that Linux invalidates during rseq unregistration.
+    private void resetRseqArea(long address) {
+        memory.writeLong(address + RSEQ_CRITICAL_SECTION_OFFSET, 0);
+        memory.writeInt(address + RSEQ_CPU_ID_START_OFFSET, -1);
+        memory.writeInt(address + RSEQ_CPU_ID_OFFSET, -1);
+        memory.writeInt(address + RSEQ_NODE_ID_OFFSET, 0);
+        memory.writeInt(address + RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET, 0);
     }
 
     /// Reads a null-terminated UTF-8 path string from guest memory.

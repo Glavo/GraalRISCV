@@ -54,6 +54,9 @@ public final class GuestSyscallsTest {
     /// Linux `EACCES` as a raw negative syscall result.
     private static final long EACCES = -13;
 
+    /// Linux `EFAULT` as a raw negative syscall result.
+    private static final long EFAULT = -14;
+
     /// Linux `EPERM` as a raw negative syscall result.
     private static final long EPERM = -1;
 
@@ -68,6 +71,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `EAGAIN` as a raw negative syscall result.
     private static final long EAGAIN = -11;
+
+    /// Linux `EBUSY` as a raw negative syscall result.
+    private static final long EBUSY = -16;
 
     /// Linux `ENODEV` as a raw negative syscall result.
     private static final long ENODEV = -19;
@@ -873,6 +879,30 @@ public final class GuestSyscallsTest {
 
     /// Linux `MEMBARRIER_CMD_QUERY`.
     private static final long MEMBARRIER_CMD_QUERY = 0;
+
+    /// The original Linux `struct rseq` byte size including padding.
+    private static final long RSEQ_ORIGINAL_SIZE = 32;
+
+    /// Linux `RSEQ_FLAG_UNREGISTER`.
+    private static final long RSEQ_FLAG_UNREGISTER = 1;
+
+    /// The byte offset of `cpu_id_start` inside Linux `struct rseq`.
+    private static final long RSEQ_CPU_ID_START_OFFSET = 0;
+
+    /// The byte offset of `cpu_id` inside Linux `struct rseq`.
+    private static final long RSEQ_CPU_ID_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `rseq_cs` inside Linux `struct rseq`.
+    private static final long RSEQ_CRITICAL_SECTION_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `flags` inside Linux `struct rseq`.
+    private static final long RSEQ_FLAGS_OFFSET = RSEQ_CRITICAL_SECTION_OFFSET + Long.BYTES;
+
+    /// The byte offset of `node_id` inside Linux `struct rseq`.
+    private static final long RSEQ_NODE_ID_OFFSET = RSEQ_FLAGS_OFFSET + Integer.BYTES;
+
+    /// The byte offset of `mm_cid` inside Linux `struct rseq`.
+    private static final long RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET = RSEQ_NODE_ID_OFFSET + Integer.BYTES;
 
     /// Linux `TIMER_ABSTIME`.
     private static final long TIMER_ABSTIME = 1;
@@ -3608,9 +3638,70 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
 
-            setSyscall(state, SYS_RSEQ, memory.baseAddress(), 32, 0, 0);
+        }
+    }
+
+    /// Verifies Linux restartable sequence registration and unregister validation.
+    @Test
+    public void rseqRegistersAndUnregistersThreadState() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long rseqAddress = memory.baseAddress();
+            long signature = 0x5305_3053L;
+
+            memory.writeLong(rseqAddress + RSEQ_CRITICAL_SECTION_OFFSET, 0x1234);
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE, 0, signature);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(ENOSYS, state.register(10));
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readInt(rseqAddress + RSEQ_CPU_ID_START_OFFSET));
+            assertEquals(0, memory.readInt(rseqAddress + RSEQ_CPU_ID_OFFSET));
+            assertEquals(0, memory.readLong(rseqAddress + RSEQ_CRITICAL_SECTION_OFFSET));
+            assertEquals(0, memory.readInt(rseqAddress + RSEQ_FLAGS_OFFSET));
+            assertEquals(0, memory.readInt(rseqAddress + RSEQ_NODE_ID_OFFSET));
+            assertEquals(0, memory.readInt(rseqAddress + RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE, 0, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBUSY, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE, 0, signature + 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress + RSEQ_ORIGINAL_SIZE, RSEQ_ORIGINAL_SIZE, 0, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE, RSEQ_FLAG_UNREGISTER, signature + 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE, RSEQ_FLAG_UNREGISTER, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(-1, memory.readInt(rseqAddress + RSEQ_CPU_ID_START_OFFSET));
+            assertEquals(-1, memory.readInt(rseqAddress + RSEQ_CPU_ID_OFFSET));
+            assertEquals(0, memory.readLong(rseqAddress + RSEQ_CRITICAL_SECTION_OFFSET));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE, RSEQ_FLAG_UNREGISTER, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress + Integer.BYTES, RSEQ_ORIGINAL_SIZE, 0, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE - 1, 0, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, rseqAddress, RSEQ_ORIGINAL_SIZE, 2, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RSEQ, memory.endAddress(), RSEQ_ORIGINAL_SIZE, 0, signature);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
         }
     }
 

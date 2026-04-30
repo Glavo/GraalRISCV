@@ -32,6 +32,18 @@ final class GuestThread {
     /// The guest alternate signal stack flags reported by `sigaltstack`.
     private long alternateSignalStackFlags = SIGNAL_STACK_DISABLED;
 
+    /// Whether this thread has a registered restartable sequence area.
+    private boolean restartableSequenceRegistered;
+
+    /// The guest `struct rseq` address registered by `rseq`.
+    private long restartableSequenceAddress;
+
+    /// The guest `struct rseq` length registered by `rseq`.
+    private long restartableSequenceLength;
+
+    /// The architecture restartable sequence signature registered by `rseq`.
+    private long restartableSequenceSignature;
+
     /// Creates a guest thread with the supplied Linux thread id.
     GuestThread(int id) {
         this.id = id;
@@ -95,5 +107,41 @@ final class GuestThread {
         alternateSignalStackPointer = pointer;
         alternateSignalStackSize = size;
         alternateSignalStackFlags = flags;
+    }
+
+    /// Returns true when this thread has a registered restartable sequence area.
+    boolean hasRestartableSequence() {
+        return restartableSequenceRegistered;
+    }
+
+    /// Returns the registered restartable sequence area address, or zero when unregistered.
+    long restartableSequenceAddress() {
+        return restartableSequenceAddress;
+    }
+
+    /// Returns the registered restartable sequence area length.
+    long restartableSequenceLength() {
+        return restartableSequenceLength;
+    }
+
+    /// Returns the registered restartable sequence signature.
+    long restartableSequenceSignature() {
+        return restartableSequenceSignature;
+    }
+
+    /// Updates this thread's restartable sequence registration.
+    void setRestartableSequence(long address, long length, long signature) {
+        restartableSequenceRegistered = true;
+        restartableSequenceAddress = address;
+        restartableSequenceLength = length;
+        restartableSequenceSignature = signature;
+    }
+
+    /// Clears this thread's restartable sequence registration.
+    void clearRestartableSequence() {
+        restartableSequenceRegistered = false;
+        restartableSequenceAddress = 0;
+        restartableSequenceLength = 0;
+        restartableSequenceSignature = 0;
     }
 }
