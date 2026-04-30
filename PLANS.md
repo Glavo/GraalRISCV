@@ -44,6 +44,8 @@
 - `Zfa` additional floating-point instructions are decoded and executed for the implemented RV64 F/D profile, including floating-point immediate loads, IEEE 754-2019 min/max-number, round-to-integer, modular double-to-word conversion, and quiet comparisons.
 - `Zicbom` cache-block clean, flush, and invalidate decode as no-ops in the current cacheless model; `Zicboz` zeroes the containing 64-byte cache block through normal guest memory writes.
 - Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, and existing `Zicntr` capabilities, plus 64-byte CBO block-size keys.
+- Linux `riscv_hwprobe` reports ordinary misaligned scalar accesses as software-emulated support while keeping misaligned vector accesses unsupported.
+- `hwprobe` regression coverage now asserts that optional or not-yet-claimed extensions such as `V`, full `Zfh`, `Zkt`, `Zacas`, `Zicond`, and `Zawrs` are not reported.
 - Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented first slice.
 - Repository-owned RVA22U64 assembly acceptance tests now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zfa`, `Zicbom`, `Zicboz`, `Zicbop`, `Zihintntl`, and `Zihintpause` instructions from real assembler-generated ELFs.
 - RVA22U64 non-instruction acceptance now covers ordinary misaligned scalar load/store behavior, user counter CSR reads, and `fence.i` visibility for self-modifying code; decoded block, direct-call, and trace caches are keyed by an instruction-fetch generation refreshed by `fence.i`.

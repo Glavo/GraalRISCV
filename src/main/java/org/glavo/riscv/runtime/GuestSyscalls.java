@@ -938,8 +938,8 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `RISCV_HWPROBE_KEY_CPUPERF_0`.
     private static final long RISCV_HWPROBE_KEY_CPUPERF_0 = 5;
 
-    /// Linux `RISCV_HWPROBE_MISALIGNED_UNSUPPORTED`.
-    private static final long RISCV_HWPROBE_MISALIGNED_UNSUPPORTED = 4;
+    /// Linux `RISCV_HWPROBE_MISALIGNED_EMULATED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_EMULATED = 1;
 
     /// Linux `RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE`.
     private static final long RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE = 6;
@@ -953,8 +953,14 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF`.
     private static final long RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF = 9;
 
+    /// Linux `RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED = 1;
+
     /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF`.
     private static final long RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF = 10;
+
+    /// Linux `RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED = 4;
 
     /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0`.
     private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0 = 11;
@@ -4247,9 +4253,9 @@ public final class GuestSyscalls implements AutoCloseable {
                     (int) RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE -> RiscVExtensions.CACHE_BLOCK_SIZE;
             case (int) RISCV_HWPROBE_KEY_BASE_BEHAVIOR -> RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
             case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> RiscVExtensions.HWPROBE_IMA_EXTENSIONS;
-            case (int) RISCV_HWPROBE_KEY_CPUPERF_0,
-                    (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF,
-                    (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_UNSUPPORTED;
+            case (int) RISCV_HWPROBE_KEY_CPUPERF_0 -> RISCV_HWPROBE_MISALIGNED_EMULATED;
+            case (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF -> RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED;
+            case (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED;
             case (int) RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS -> Long.MAX_VALUE;
             case (int) RISCV_HWPROBE_KEY_TIME_CSR_FREQ -> NANOSECONDS_PER_SECOND;
             default -> throw new AssertionError("validated RISC-V hardware probe key");

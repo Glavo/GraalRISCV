@@ -748,8 +748,26 @@ public final class GuestSyscallsTest {
     /// Linux `RISCV_HWPROBE_IMA_V`.
     private static final long RISCV_HWPROBE_IMA_V = 1 << 2;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZKT`.
+    private static final long RISCV_HWPROBE_EXT_ZKT = 1L << 16;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZFH`.
+    private static final long RISCV_HWPROBE_EXT_ZFH = 1L << 27;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZACAS`.
+    private static final long RISCV_HWPROBE_EXT_ZACAS = 1L << 34;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZICOND`.
+    private static final long RISCV_HWPROBE_EXT_ZICOND = 1L << 35;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZAWRS`.
+    private static final long RISCV_HWPROBE_EXT_ZAWRS = 1L << 48;
+
     /// Linux `RISCV_HWPROBE_KEY_CPUPERF_0`.
     private static final long RISCV_HWPROBE_KEY_CPUPERF_0 = 5;
+
+    /// Linux `RISCV_HWPROBE_MISALIGNED_EMULATED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_EMULATED = 1;
 
     /// Linux `RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE`.
     private static final long RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE = 6;
@@ -763,6 +781,9 @@ public final class GuestSyscallsTest {
     /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF`.
     private static final long RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF = 9;
 
+    /// Linux `RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED = 1;
+
     /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF`.
     private static final long RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF = 10;
 
@@ -772,8 +793,8 @@ public final class GuestSyscallsTest {
     /// Linux `RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE`.
     private static final long RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE = 15;
 
-    /// Linux `RISCV_HWPROBE_MISALIGNED_UNSUPPORTED`.
-    private static final long RISCV_HWPROBE_MISALIGNED_UNSUPPORTED = 4;
+    /// Linux `RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED`.
+    private static final long RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED = 4;
 
     /// Linux `PROT_NONE`.
     private static final long PROT_NONE = 0x0;
@@ -3175,12 +3196,21 @@ public final class GuestSyscallsTest {
             assertEquals(0, state.register(10));
             assertEquals(0, readHwprobeValue(memory, pairsAddress, 0));
             assertEquals(RISCV_HWPROBE_BASE_BEHAVIOR_IMA, readHwprobeValue(memory, pairsAddress, 1));
-            assertEquals(RiscVExtensions.HWPROBE_IMA_EXTENSIONS, readHwprobeValue(memory, pairsAddress, 2));
-            assertEquals(RISCV_HWPROBE_MISALIGNED_UNSUPPORTED, readHwprobeValue(memory, pairsAddress, 3));
+            long imaExtensions = readHwprobeValue(memory, pairsAddress, 2);
+            assertEquals(RiscVExtensions.HWPROBE_IMA_EXTENSIONS, imaExtensions);
+            long unreportedOptionalExtensions =
+                    RISCV_HWPROBE_IMA_V
+                            | RISCV_HWPROBE_EXT_ZKT
+                            | RISCV_HWPROBE_EXT_ZFH
+                            | RISCV_HWPROBE_EXT_ZACAS
+                            | RISCV_HWPROBE_EXT_ZICOND
+                            | RISCV_HWPROBE_EXT_ZAWRS;
+            assertEquals(0, imaExtensions & unreportedOptionalExtensions);
+            assertEquals(RISCV_HWPROBE_MISALIGNED_EMULATED, readHwprobeValue(memory, pairsAddress, 3));
             assertEquals(Long.MAX_VALUE, readHwprobeValue(memory, pairsAddress, 4));
             assertEquals(1_000_000_000L, readHwprobeValue(memory, pairsAddress, 5));
-            assertEquals(RISCV_HWPROBE_MISALIGNED_UNSUPPORTED, readHwprobeValue(memory, pairsAddress, 6));
-            assertEquals(RISCV_HWPROBE_MISALIGNED_UNSUPPORTED, readHwprobeValue(memory, pairsAddress, 7));
+            assertEquals(RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED, readHwprobeValue(memory, pairsAddress, 6));
+            assertEquals(RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED, readHwprobeValue(memory, pairsAddress, 7));
             assertEquals(RiscVExtensions.CACHE_BLOCK_SIZE, readHwprobeValue(memory, pairsAddress, 8));
             assertEquals(RiscVExtensions.CACHE_BLOCK_SIZE, readHwprobeValue(memory, pairsAddress, 9));
             assertEquals(RiscVExtensions.CACHE_BLOCK_SIZE, readHwprobeValue(memory, pairsAddress, 10));
