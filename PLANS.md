@@ -22,6 +22,9 @@
 - Add syscall and flag edge cases only when backed by direct tests or acceptance workloads.
 - Keep `--host-root` sandboxing based on TruffleFile and reject path escapes.
 - Keep thread-style `clone` and futex behavior deterministic through Truffle `Env` guest threads.
+- Continue expanding the `GuestProcess`/`GuestThread` split: thread ids, live-thread registry, clear-child-TID,
+  robust-list, and sigaltstack state now follow the process/thread boundary; future signal-mask, rseq, and clone flag
+  work should use the same boundary.
 - Keep unsupported syscall diagnostics actionable with syscall number, guest PC, and argument registers.
 
 ### 4. Maintain build, docs, and performance probes

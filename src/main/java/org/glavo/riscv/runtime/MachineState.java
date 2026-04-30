@@ -82,8 +82,8 @@ public final class MachineState {
     /// The syscall handler for guest environment calls.
     private final GuestSyscalls syscalls;
 
-    /// The Linux thread id represented by this guest state.
-    private final int threadId;
+    /// The Linux user-mode thread state paired with this architectural state.
+    private final GuestThread thread;
 
     /// The current guest program counter.
     private long pc;
@@ -96,9 +96,6 @@ public final class MachineState {
 
     /// The active LR/SC reservation address, or `ABSENT_ADDRESS` when none exists.
     private long reservationAddress = ElfImage.ABSENT_ADDRESS;
-
-    /// The guest clear-child-TID address used by thread exit wakeups, or zero when unset.
-    private long clearChildTidAddress;
 
     /// Creates a new architectural state container.
     public MachineState(
@@ -120,7 +117,15 @@ public final class MachineState {
             long fromhostAddress,
             GuestSyscalls syscalls,
             OutputStream traceStream) {
-        this(memory, maxInstructions, trace, tohostAddress, fromhostAddress, syscalls, asPrintStream(traceStream), 1);
+        this(
+                memory,
+                maxInstructions,
+                trace,
+                tohostAddress,
+                fromhostAddress,
+                syscalls,
+                asPrintStream(traceStream),
+                syscalls.initialThread());
     }
 
     /// Creates a new architectural state container with a prepared trace print stream.
@@ -132,7 +137,7 @@ public final class MachineState {
             long fromhostAddress,
             GuestSyscalls syscalls,
             PrintStream traceStream,
-            int threadId) {
+            GuestThread thread) {
         this.memory = memory;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
@@ -142,7 +147,7 @@ public final class MachineState {
         this.fromhostAddress = fromhostAddress;
         this.storeSideEffectsEnabled = tohostAddress != ElfImage.ABSENT_ADDRESS;
         this.syscalls = syscalls;
-        this.threadId = threadId;
+        this.thread = thread;
     }
 
     /// Returns the guest memory for this execution.
@@ -223,12 +228,17 @@ public final class MachineState {
 
     /// Returns the Linux thread id represented by this guest state.
     public int threadId() {
-        return threadId;
+        return thread.id();
+    }
+
+    /// Returns the Linux user-mode thread state paired with this architectural state.
+    GuestThread guestThread() {
+        return thread;
     }
 
     /// Creates the child architectural state produced by a Linux thread-style `clone`.
     MachineState forkForClone(
-            int childThreadId,
+            GuestThread childThread,
             long childPc,
             long stackAddress,
             long tlsAddress,
@@ -241,7 +251,7 @@ public final class MachineState {
                 fromhostAddress,
                 syscalls,
                 traceStream,
-                childThreadId);
+                childThread);
         System.arraycopy(registers, 0, child.registers, 0, registers.length);
         System.arraycopy(floatingPointRegisters, 0, child.floatingPointRegisters, 0, floatingPointRegisters.length);
         child.floatingPointControlStatus = floatingPointControlStatus;
@@ -257,12 +267,12 @@ public final class MachineState {
 
     /// Returns the guest clear-child-TID address for this thread.
     long clearChildTidAddress() {
-        return clearChildTidAddress;
+        return thread.clearChildTidAddress();
     }
 
     /// Updates the guest clear-child-TID address for this thread.
     void setClearChildTidAddress(long clearChildTidAddress) {
-        this.clearChildTidAddress = clearChildTidAddress;
+        thread.setClearChildTidAddress(clearChildTidAddress);
     }
 
     /// Reads a supported user-mode control and status register.

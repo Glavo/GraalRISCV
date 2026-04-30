@@ -1218,13 +1218,13 @@ public final class GuestSyscalls implements AutoCloseable {
     private static final long STATFS_NAME_MAX = 255;
 
     /// The fixed guest process id returned by process identity syscalls.
-    private static final long GUEST_PROCESS_ID = 1;
+    private static final long GUEST_PROCESS_ID = GuestProcess.PROCESS_ID;
 
     /// The fixed guest parent process id returned by `getppid`.
-    private static final long GUEST_PARENT_PROCESS_ID = 0;
+    private static final long GUEST_PARENT_PROCESS_ID = GuestProcess.PARENT_PROCESS_ID;
 
     /// The fixed guest process group id used by process-group syscalls.
-    private static final long GUEST_PROCESS_GROUP_ID = GUEST_PROCESS_ID;
+    private static final long GUEST_PROCESS_GROUP_ID = GuestProcess.PROCESS_GROUP_ID;
 
     /// The deterministic guest user id exposed by identity syscalls.
     private static final long GUEST_USER_ID = 1000;
@@ -1289,8 +1289,8 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The guest file descriptor table for host files opened by `openat`.
     private final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
 
-    /// The next synthetic guest thread id returned by accepted `clone` calls.
-    private long nextGuestThreadId = GUEST_PROCESS_ID + 1;
+    /// Process-level state shared by all guest threads.
+    private final GuestProcess process = new GuestProcess();
 
     /// Guards guest thread, futex, and process-exit state.
     private final Object threadLock = new Object();
@@ -1315,21 +1315,6 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Whether guest dispatch needs to poll process-wide thread and exit state between blocks.
     private volatile boolean processStatusPollingRequired;
-
-    /// The robust futex list head address supplied by `set_robust_list`.
-    private long robustListHeadAddress;
-
-    /// The robust futex list structure length supplied by `set_robust_list`.
-    private long robustListLength;
-
-    /// The guest alternate signal stack pointer registered by `sigaltstack`.
-    private long alternateSignalStackPointer;
-
-    /// The guest alternate signal stack size registered by `sigaltstack`.
-    private long alternateSignalStackSize;
-
-    /// The guest alternate signal stack flags reported by `sigaltstack`.
-    private long alternateSignalStackFlags = SS_DISABLE;
 
     /// The signal reported by `PR_GET_PDEATHSIG`, or zero when unset.
     private int parentDeathSignal;
@@ -1501,6 +1486,11 @@ public final class GuestSyscalls implements AutoCloseable {
         this.clockStartInstant = clock.instant();
     }
 
+    /// Returns the process-leader thread state used by the initial architectural state.
+    GuestThread initialThread() {
+        return process.initialThread();
+    }
+
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
     public void handle(MachineState state, long pc) {
         long callNumber = state.register(17);
@@ -1592,8 +1582,12 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(13),
                     state.register(14),
                     state.register(15)));
-            case SYS_SET_ROBUST_LIST -> state.setRegister(10, setRobustList(state.register(10), state.register(11)));
-            case SYS_GET_ROBUST_LIST -> state.setRegister(10, getRobustList(state.register(10), state.register(11), state.register(12)));
+            case SYS_SET_ROBUST_LIST -> state.setRegister(10, setRobustList(state, state.register(10), state.register(11)));
+            case SYS_GET_ROBUST_LIST -> state.setRegister(10, getRobustList(
+                    state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_NANOSLEEP -> state.setRegister(10, nanosleep(state.register(10), state.register(11)));
             case SYS_CLOCK_GETTIME -> state.setRegister(10, clockGettime(state.register(10), state.register(11)));
             case SYS_CLOCK_GETRES -> state.setRegister(10, clockGetres(state.register(10), state.register(11)));
@@ -1607,7 +1601,7 @@ public final class GuestSyscalls implements AutoCloseable {
             case SYS_KILL -> state.setRegister(10, kill(state.register(10), state.register(11)));
             case SYS_TKILL -> state.setRegister(10, tkill(state.register(10), state.register(11)));
             case SYS_TGKILL -> state.setRegister(10, tgkill(state.register(10), state.register(11), state.register(12)));
-            case SYS_SIGALTSTACK -> state.setRegister(10, sigaltstack(state.register(10), state.register(11)));
+            case SYS_SIGALTSTACK -> state.setRegister(10, sigaltstack(state, state.register(10), state.register(11)));
             case SYS_RT_SIGACTION -> state.setRegister(10, rtSigaction(
                     state.register(10),
                     state.register(11),
@@ -3495,6 +3489,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 liveThreadCount--;
             }
             guestThreads.remove(Thread.currentThread());
+            process.unregisterThread(state.guestThread());
             if (!processExitRequested && liveThreadCount == 0) {
                 processExitRequested = true;
                 processExitCode = exitCode;
@@ -3799,26 +3794,26 @@ public final class GuestSyscalls implements AutoCloseable {
             return EAGAIN;
         }
 
-        long threadId;
+        GuestThread childThread;
         synchronized (threadLock) {
             if (processExitRequested || threadFailure != null) {
                 return EAGAIN;
             }
-            threadId = nextGuestThreadId;
-            if (threadId <= GUEST_PROCESS_ID || threadId > Integer.MAX_VALUE) {
+            childThread = process.createChildThread();
+            if (childThread == null) {
                 return ENOMEM;
             }
-            nextGuestThreadId++;
         }
+        long threadId = childThread.id();
 
         MachineState child = state.forkForClone(
-                (int) threadId,
+                childThread,
                 pc + Integer.BYTES,
                 stackAddress,
                 tlsAddress,
                 (flags & CLONE_SETTLS) != 0);
         if ((flags & CLONE_CHILD_CLEARTID) != 0) {
-            child.setClearChildTidAddress(childTidAddress);
+            childThread.setClearChildTidAddress(childTidAddress);
         }
 
         TruffleLanguage.Env currentEnv = env;
@@ -3844,22 +3839,24 @@ public final class GuestSyscalls implements AutoCloseable {
             }
             liveThreadCount++;
             guestThreads.add(thread);
+            process.registerThread(childThread);
             processStatusPollingRequired = true;
         }
 
         try {
             thread.start();
         } catch (RuntimeException exception) {
-            unregisterUnstartedGuestThread(thread);
+            unregisterUnstartedGuestThread(thread, childThread);
             return EAGAIN;
         }
         return threadId;
     }
 
     /// Removes a child thread that failed before it could start running guest code.
-    private void unregisterUnstartedGuestThread(Thread thread) {
+    private void unregisterUnstartedGuestThread(Thread thread, GuestThread guestThread) {
         synchronized (threadLock) {
             guestThreads.remove(thread);
+            process.unregisterThread(guestThread);
             if (liveThreadCount > 0) {
                 liveThreadCount--;
             }
@@ -3867,28 +3864,28 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Accepts a single-threaded robust futex list registration.
-    private long setRobustList(long headAddress, long length) {
+    /// Accepts a robust futex list registration for the current guest thread.
+    private static long setRobustList(MachineState state, long headAddress, long length) {
         if (length < 0) {
             return EINVAL;
         }
-        robustListHeadAddress = headAddress;
-        robustListLength = length;
+        state.guestThread().setRobustList(headAddress, length);
         return 0;
     }
 
-    /// Reports the robust futex list registered for this single-process guest.
-    private long getRobustList(long processId, long headAddress, long lengthAddress) {
-        if (processId != 0 && !isKnownGuestThreadId(processId)) {
+    /// Reports the robust futex list registered for one guest thread.
+    private long getRobustList(MachineState state, long processId, long headAddress, long lengthAddress) {
+        @Nullable GuestThread thread = guestThread(state, processId);
+        if (thread == null) {
             return ESRCH;
         }
-        memory.writeLong(headAddress, robustListHeadAddress);
-        memory.writeLong(lengthAddress, robustListLength);
+        memory.writeLong(headAddress, thread.robustListHeadAddress());
+        memory.writeLong(lengthAddress, thread.robustListLength());
         return 0;
     }
 
-    /// Registers or reports the single-threaded alternate signal stack.
-    private long sigaltstack(long stackAddress, long oldStackAddress) {
+    /// Registers or reports the alternate signal stack for the current guest thread.
+    private long sigaltstack(MachineState state, long stackAddress, long oldStackAddress) {
         long newStackPointer = 0;
         long newStackSize = 0;
         long newStackFlags = 0;
@@ -3907,28 +3904,24 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         if (oldStackAddress != 0) {
-            writeSignalStack(oldStackAddress);
+            writeSignalStack(state.guestThread(), oldStackAddress);
         }
         if (stackAddress != 0) {
             if ((newStackFlags & SS_DISABLE) != 0) {
-                alternateSignalStackPointer = 0;
-                alternateSignalStackSize = 0;
-                alternateSignalStackFlags = SS_DISABLE;
+                state.guestThread().disableAlternateSignalStack();
             } else {
-                alternateSignalStackPointer = newStackPointer;
-                alternateSignalStackSize = newStackSize;
-                alternateSignalStackFlags = newStackFlags;
+                state.guestThread().setAlternateSignalStack(newStackPointer, newStackSize, newStackFlags);
             }
         }
         return 0;
     }
 
     /// Writes the current Linux RISC-V 64-bit `stack_t` alternate signal stack.
-    private void writeSignalStack(long stackAddress) {
-        memory.writeLong(stackAddress + SIGNAL_STACK_POINTER_OFFSET, alternateSignalStackPointer);
-        memory.writeInt(stackAddress + SIGNAL_STACK_FLAGS_OFFSET, (int) alternateSignalStackFlags);
+    private void writeSignalStack(GuestThread thread, long stackAddress) {
+        memory.writeLong(stackAddress + SIGNAL_STACK_POINTER_OFFSET, thread.alternateSignalStackPointer());
+        memory.writeInt(stackAddress + SIGNAL_STACK_FLAGS_OFFSET, (int) thread.alternateSignalStackFlags());
         memory.writeInt(stackAddress + SIGNAL_STACK_FLAGS_PADDING_OFFSET, 0);
-        memory.writeLong(stackAddress + SIGNAL_STACK_SIZE_OFFSET, alternateSignalStackSize);
+        memory.writeLong(stackAddress + SIGNAL_STACK_SIZE_OFFSET, thread.alternateSignalStackSize());
     }
 
     /// Sleeps for the requested Linux RISC-V 64-bit `struct timespec` duration.
@@ -4212,9 +4205,33 @@ public final class GuestSyscalls implements AutoCloseable {
         return signalNumber == 0 || (signalNumber >= MIN_SIGNAL_NUMBER && signalNumber <= MAX_SIGNAL_NUMBER);
     }
 
-    /// Returns true when a thread id belongs to the current process or a synthetic clone result.
+    /// Returns true when a thread id belongs to a live thread in the current guest process.
     private boolean isKnownGuestThreadId(long threadId) {
-        return threadId == GUEST_PROCESS_ID || (threadId > GUEST_PROCESS_ID && threadId < nextGuestThreadId);
+        return guestThread(threadId) != null;
+    }
+
+    /// Returns the requested guest thread, or the current thread when the request id is zero.
+    private @Nullable GuestThread guestThread(MachineState currentState, long threadId) {
+        if (threadId == 0) {
+            return currentState.guestThread();
+        }
+        return guestThread(threadId);
+    }
+
+    /// Returns the live guest thread with the supplied thread id, or null when none is known.
+    private @Nullable GuestThread guestThread(long threadId) {
+        if (threadId != (int) threadId) {
+            return null;
+        }
+
+        synchronized (threadLock) {
+            return guestThreadLocked((int) threadId);
+        }
+    }
+
+    /// Returns the live guest thread with the supplied thread id while `threadLock` is held.
+    private @Nullable GuestThread guestThreadLocked(int threadId) {
+        return process.thread(threadId);
     }
 
     /// Writes deterministic process CPU times and returns elapsed clock ticks.
