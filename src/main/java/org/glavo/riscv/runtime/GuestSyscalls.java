@@ -251,6 +251,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `munmap`.
     private static final int SYS_MUNMAP = 215;
 
+    /// The Linux RISC-V syscall number for `mremap`.
+    private static final int SYS_MREMAP = 216;
+
     /// The Linux RISC-V syscall number for `clone`.
     private static final int SYS_CLONE = 220;
 
@@ -764,6 +767,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `MADV_COLLAPSE`.
     private static final long MADV_COLLAPSE = 25;
+
+    /// Linux `MREMAP_MAYMOVE`.
+    private static final long MREMAP_MAYMOVE = 1;
+
+    /// Linux `MREMAP_FIXED`.
+    private static final long MREMAP_FIXED = 2;
+
+    /// Linux `mremap` flags accepted by this simulator.
+    private static final long SUPPORTED_MREMAP_FLAGS = MREMAP_MAYMOVE | MREMAP_FIXED;
 
     /// Linux `FUTEX_WAIT`.
     private static final long FUTEX_WAIT = 0;
@@ -1719,6 +1731,12 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(14)));
             case SYS_BRK -> state.setRegister(10, brk(state.register(10)));
             case SYS_MUNMAP -> state.setRegister(10, munmap(state.register(10), state.register(11)));
+            case SYS_MREMAP -> state.setRegister(10, mremap(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_MMAP -> state.setRegister(10, mmap(
                     state.register(10),
                     state.register(11),
@@ -4835,6 +4853,63 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Implements Linux `mremap` for tracked anonymous mappings.
+    private long mremap(long oldAddress, long oldSize, long newSize, long flags, long newAddress) {
+        if (!isPageAligned(oldAddress) || oldSize <= 0 || newSize <= 0 || (flags & ~SUPPORTED_MREMAP_FLAGS) != 0) {
+            return EINVAL;
+        }
+        boolean fixed = (flags & MREMAP_FIXED) != 0;
+        boolean mayMove = (flags & MREMAP_MAYMOVE) != 0;
+        if (fixed && !mayMove) {
+            return EINVAL;
+        }
+
+        long oldLength = alignUp(oldSize, pageSize);
+        long newLength = alignUp(newSize, pageSize);
+        if (oldLength <= 0 || newLength <= 0
+                || !isValidGuestRange(oldAddress, oldLength)
+                || (fixed && (!isPageAligned(newAddress) || !isValidGuestRange(newAddress, newLength)))) {
+            return ENOMEM;
+        }
+
+        @Nullable MemoryMapping mapping = memoryMappingCovering(oldAddress);
+        if (mapping == null || oldAddress != mapping.address() || oldLength != mapping.length()) {
+            return ENOMEM;
+        }
+        if (fixed && rangesOverlap(oldAddress, oldAddress + oldLength, newAddress, newAddress + newLength)) {
+            return EINVAL;
+        }
+        if (fixed) {
+            removeMemoryMappings(newAddress, newLength);
+        }
+
+        if (!fixed && newLength == oldLength) {
+            return oldAddress;
+        }
+        if (!fixed && newLength < oldLength) {
+            removeMemoryMappings(oldAddress + newLength, oldLength - newLength);
+            return oldAddress;
+        }
+
+        long growthLength = newLength - oldLength;
+        if (!fixed && isMmapRangeAvailable(oldAddress + oldLength, growthLength)) {
+            if (!ensureMemoryBacking(oldAddress + oldLength, growthLength, mapping.protection(), false)) {
+                return ENOMEM;
+            }
+            resizeMemoryMapping(mapping, newLength);
+            return oldAddress;
+        }
+        if (!mayMove) {
+            return ENOMEM;
+        }
+
+        long targetAddress = fixed ? newAddress : findMmapAddress(0, newLength, pageSize);
+        if (targetAddress == 0 || !isMmapRangeAvailable(targetAddress, newLength)) {
+            return ENOMEM;
+        }
+        return moveMemoryMapping(mapping, oldLength, targetAddress, newLength);
+    }
+
     /// Implements `mprotect` for tracked anonymous mappings and the initial memory window.
     private long mprotect(long address, long length, long protection) {
         if (!isPageAligned(address) || length < 0 || (protection & ~SUPPORTED_MMAP_PROTECTION_MASK) != 0) {
@@ -5512,6 +5587,43 @@ public final class GuestSyscalls implements AutoCloseable {
                 index++;
             }
         }
+    }
+
+    /// Resizes tracked metadata for a mapping that stayed at the same guest address.
+    private void resizeMemoryMapping(MemoryMapping mapping, long newLength) {
+        int index = memoryMappings.indexOf(mapping);
+        if (index < 0) {
+            throw new RiscVException("Failed to find guest memory mapping metadata for mremap.");
+        }
+        memoryMappings.set(index, new MemoryMapping(mapping.address(), newLength, mapping.protection()));
+    }
+
+    /// Moves tracked mapping data to a new guest address.
+    private long moveMemoryMapping(MemoryMapping mapping, long oldLength, long newAddress, long newLength) {
+        long oldAddress = mapping.address();
+        long protection = mapping.protection();
+        if (!ensureMemoryBacking(newAddress, newLength, Memory.PROTECTION_READ_WRITE_EXECUTE, false)) {
+            return ENOMEM;
+        }
+
+        try {
+            long copyLength = Math.min(oldLength, newLength);
+            if (mapping.isBacked() && copyLength > 0) {
+                byte[] bytes = memory.readBytes(oldAddress, copyLength);
+                memory.writeBytes(newAddress, bytes, 0, bytes.length);
+            }
+            if (!memory.protect(newAddress, newLength, protection)) {
+                memory.unmap(newAddress, newLength);
+                return ENOMEM;
+            }
+        } catch (RiscVException exception) {
+            memory.unmap(newAddress, newLength);
+            return ENOMEM;
+        }
+
+        addMemoryMapping(newAddress, newLength, protection);
+        removeMemoryMappings(oldAddress, oldLength);
+        return newAddress;
     }
 
     /// Ensures that the supplied range has native backing for non-`PROT_NONE` access.

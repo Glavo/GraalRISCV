@@ -23,7 +23,7 @@
 ### 4. Linux syscall compatibility foundation
 
 - File syscalls are sandboxed under `--mount` entries through `TruffleFile`, including root-mount defaults, subdirectory overlays, path normalization, and path-escape rejection. `--host-root` remains as a compatibility alias for `--mount /=<path>`.
-- ELF segments, the initial stack, auxv, `brk`, anonymous `mmap`, `munmap`, `mprotect`, and `madvise` are wired through the current paged-memory implementation for the accepted static workloads.
+- ELF segments, the initial stack, auxv, `brk`, anonymous `mmap`, `munmap`, `mremap`, `mprotect`, and `madvise` are wired through the current paged-memory implementation for the accepted static workloads.
 - `GuestProcess` and `GuestThread` state now exists for thread ids, clear-child-TID wakeups, robust futex lists, alternate signal stacks, restartable sequence registration, and per-thread signal masks.
 - Thread-style `clone`, futex wait/wake, deterministic process and signal setup syscalls, `epoll_pwait` signal-mask handling, and unsupported-syscall diagnostics with syscall number, guest PC, and argument registers are covered by tests.
 

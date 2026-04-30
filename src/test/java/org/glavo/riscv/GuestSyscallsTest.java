@@ -315,6 +315,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `munmap`.
     private static final long SYS_MUNMAP = 215;
 
+    /// The Linux RISC-V syscall number for `mremap`.
+    private static final long SYS_MREMAP = 216;
+
     /// The Linux RISC-V syscall number for `clone`.
     private static final long SYS_CLONE = 220;
 
@@ -800,6 +803,12 @@ public final class GuestSyscallsTest {
 
     /// Linux `MAP_NORESERVE`.
     private static final long MAP_NORESERVE = 0x4000;
+
+    /// Linux `MREMAP_MAYMOVE`.
+    private static final long MREMAP_MAYMOVE = 1;
+
+    /// Linux `MREMAP_FIXED`.
+    private static final long MREMAP_FIXED = 2;
 
     /// Linux `FUTEX_WAIT`.
     private static final long FUTEX_WAIT = 0;
@@ -4070,6 +4079,197 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that `mremap` shrinks and grows tracked anonymous mappings in place.
+    @Test
+    public void mremapShrinksAndGrowsAnonymousMappings() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 8 * PAGE_SIZE, null)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    2 * PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+            assertEquals(initialBreak, mappedAddress);
+            memory.writeLong(mappedAddress, 0x0102_0304_0506_0708L);
+            memory.writeLong(mappedAddress + PAGE_SIZE, 0x1122_3344_5566_7788L);
+
+            setSyscall(state, SYS_MREMAP, mappedAddress, 2 * PAGE_SIZE, PAGE_SIZE, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(mappedAddress, state.register(10));
+            assertEquals(0x0102_0304_0506_0708L, memory.readLong(mappedAddress));
+            assertThrows(RiscVException.class, () -> memory.readLong(mappedAddress + PAGE_SIZE));
+
+            setSyscall(state, SYS_MREMAP, mappedAddress, PAGE_SIZE, 2 * PAGE_SIZE, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(mappedAddress, state.register(10));
+            memory.writeLong(mappedAddress + PAGE_SIZE, 0x2211_4433_6655_8877L);
+            assertEquals(0x2211_4433_6655_8877L, memory.readLong(mappedAddress + PAGE_SIZE));
+        }
+    }
+
+    /// Verifies that `mremap` can move anonymous mappings when in-place growth is blocked.
+    @Test
+    public void mremapMovesAnonymousMappingWhenGrowthIsBlocked() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 8 * PAGE_SIZE, null)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+            memory.writeLong(mappedAddress, 0x1020_3040_5060_7080L);
+
+            long blockingAddress = mappedAddress + PAGE_SIZE;
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    blockingAddress,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(blockingAddress, state.register(10));
+
+            setSyscall(state, SYS_MREMAP, mappedAddress, PAGE_SIZE, 2 * PAGE_SIZE, MREMAP_MAYMOVE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long movedAddress = state.register(10);
+            assertEquals(blockingAddress + PAGE_SIZE, movedAddress);
+            assertEquals(0x1020_3040_5060_7080L, memory.readLong(movedAddress));
+            assertThrows(RiscVException.class, () -> memory.readLong(mappedAddress));
+
+            memory.writeLong(blockingAddress, 0x0101_0202_0303_0404L);
+            assertEquals(0x0101_0202_0303_0404L, memory.readLong(blockingAddress));
+        }
+    }
+
+    /// Verifies that `MREMAP_FIXED` moves an anonymous mapping to the requested address.
+    @Test
+    public void mremapMovesAnonymousMappingToFixedAddress() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 8 * PAGE_SIZE, null)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+            memory.writeLong(mappedAddress, 0x1122_3344_5566_7788L);
+
+            long targetAddress = mappedAddress + 3 * PAGE_SIZE;
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    targetAddress,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(targetAddress, state.register(10));
+            memory.writeLong(targetAddress, 0x0101_0202_0303_0404L);
+
+            setSyscall(
+                    state,
+                    SYS_MREMAP,
+                    mappedAddress,
+                    PAGE_SIZE,
+                    PAGE_SIZE,
+                    MREMAP_MAYMOVE | MREMAP_FIXED,
+                    targetAddress);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(targetAddress, state.register(10));
+            assertEquals(0x1122_3344_5566_7788L, memory.readLong(targetAddress));
+            assertThrows(RiscVException.class, () -> memory.readLong(mappedAddress));
+        }
+    }
+
+    /// Verifies validation for unsupported `mremap` requests.
+    @Test
+    public void mremapRejectsUnsupportedRequests() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+
+            setSyscall(state, SYS_MREMAP, mappedAddress + 1, PAGE_SIZE, PAGE_SIZE, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MREMAP, mappedAddress, PAGE_SIZE, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_MREMAP,
+                    mappedAddress,
+                    PAGE_SIZE,
+                    2 * PAGE_SIZE,
+                    MREMAP_FIXED,
+                    mappedAddress + 2 * PAGE_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies validation and collision behavior for unsupported `mmap` requests.
     @Test
     public void mmapRejectsUnsupportedRequests() {
@@ -4596,6 +4796,11 @@ public final class GuestSyscallsTest {
     /// Populates the syscall number and the first four argument registers.
     private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2, long a3) {
         setSyscall(state, callNumber, a0, a1, a2, a3, 0, 0);
+    }
+
+    /// Populates the syscall number and the first five argument registers.
+    private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2, long a3, long a4) {
+        setSyscall(state, callNumber, a0, a1, a2, a3, a4, 0);
     }
 
     /// Populates the syscall number and the first six argument registers.
