@@ -57,7 +57,19 @@
 - Keep thread-style `clone` and futex behavior deterministic through Truffle `Env` guest threads.
 - Keep unsupported syscall diagnostics actionable with syscall number, guest PC, and argument registers.
 
-### 4. Maintain build, docs, and performance probes
+### 4. Prepare RVA22U64 functional user-mode support
+
+- Implement RVA22U64 as a compatible default superset rather than adding a profile-selection CLI; keep existing RV64GC and RVA20U64 workloads running while new instructions are added.
+- Add a central extension/profile capability description so decoder coverage, Linux `riscv_hwprobe` reporting, documentation, and tests stay in sync.
+- Add functional support for the RVA22U64 user-visible instruction extensions, including `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zihintpause`, `Zihintntl`, `Zicbom`, `Zicbop`, and `Zicboz`.
+- Treat `Zicbom` and `Zicbop` as no-ops in the current cacheless model, but make `Zicboz` zero the configured 64-byte cache block and honor normal guest memory permissions.
+- Audit existing behavior against the non-instruction RVA22U64 requirements that matter in user mode, including misaligned access behavior, LR/SC reservation constraints, counter CSRs, self-modifying-code visibility, and `hwprobe` block-size reporting.
+- Do not report optional RVA22U64 extensions such as `V`, full `Zfh`, `Zicond`, `Zacas`, or `Zawrs` until they are implemented and tested.
+- Do not claim timing-certified `Zkt` behavior in documentation or `hwprobe`; keep the target as functional user-mode support unless a later plan explicitly adds timing conformance work.
+- Preserve existing `Zifencei` support as a compatibility extension even though it is not part of the RVA22U64 user profile.
+- Add focused decoder, interpreter, micro-bytecode, `hwprobe`, and assembly acceptance tests for the new extensions before updating README wording from RVA20U64/RV64GC to RVA22U64.
+
+### 5. Maintain build, docs, and performance probes
 
 - Keep Zig, Go, package smoke, CI aggregation, and README coverage in sync as examples change.
 - Keep paged-memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and current VMA split/merge behavior as the syscall layer is simplified.
