@@ -28,10 +28,12 @@
 ### 4. Maintain build, docs, and performance probes
 
 - Keep Zig and Go example tasks, CI aggregation tasks, and README coverage in sync as examples change.
-- Continue measuring the embedded hot trace executor, especially trace length, trigger thresholds, batched store fast paths, the small trace direct-call PIC, trace lookup hashing, and interaction with Graal compilation diagnostics.
-- Continue improving paged-memory slow paths, especially cross-page accesses, richer fault reporting, TLB lookup behavior, page-table lookup costs, and VMA protection checks.
+- Add low-overhead performance diagnostics before major tuning: `EXECUTE_OPERATION` counts by `RiscVOperation`, `MemoryAccess` local-cache and software-TLB hit rates, block-cache hit rates, trace-cache hit rates, trace side exits, and direct-call PIC hits.
+- Split hot generic floating-point operations into dedicated micro-opcodes after diagnostics confirm they matter for the workload. Prioritize `FMADD`, `FMSUB`, `FNMSUB`, `FNMADD`, `FADD`, `FSUB`, `FMUL`, `FDIV`, `FSQRT`, `FCVT_S_D`, `FCVT_D_S`, `FCVT_INT_FP`, and `FCVT_FP_INT`; keep correctness and floating-point flag behavior unchanged.
+- Continue improving paged-memory hot and slow paths, especially `MemoryAccess` local-cache checks, cross-page accesses, richer fault reporting, TLB lookup behavior, page-table lookup costs, and VMA protection checks.
+- Tune the existing trace executor instead of adding a separate branch-prediction subsystem: measure and adjust trace length, hot-successor thresholds, batched store fast paths, the trace direct-call PIC, trace lookup hashing, side-exit behavior, and interaction with Graal compilation diagnostics.
 - Keep paged memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and current VMA split/merge behavior as the syscall layer is simplified.
 - Keep CoreMark, Zig examples, Go examples, and the local Go demo as acceptance workloads for the paged-memory migration.
-- Profile the remaining generic complex floating-point arithmetic and conversion micro-op path before deciding whether to split it further.
 - Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.
+- Treat `@TruffleBoundary` on hot generic instruction execution, MethodHandle or lambda-based instruction dispatch, broad ELF predecode, and broad synchronization removal as experiment-only ideas unless diagnostics identify them as real bottlenecks.
 - Keep rejected performance experiments documented outside `PLANS.md`.
