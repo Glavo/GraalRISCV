@@ -9,6 +9,7 @@ import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 import org.glavo.AbstractRiscVZigCCTask
+import org.glavo.GoUtils
 import org.glavo.RiscVFreestandingZigCCTask
 import org.glavo.RiscVLinuxMuslStaticZigCCTask
 import org.glavo.ZigUtils
@@ -26,9 +27,18 @@ val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
 val zigExecutableFile = zigInstallDirectory.map {
     it.file("${ZigUtils.getZigArchiveBaseName()}/${ZigUtils.getZigExecutableName()}")
 }
+val goArchiveName = GoUtils.getGoArchiveName()
+val goArchiveFile = layout.buildDirectory.file("downloads/go/$goArchiveName")
+val goInstallDirectory = layout.buildDirectory.dir("tools/go/${GoUtils.getGoDistributionName()}")
+val goExecutableFile = goInstallDirectory.map {
+    it.file("go/bin/${GoUtils.getGoExecutableName()}")
+}
 val configuredZigExecutablePath = providers.gradleProperty("graalriscv.zigExecutable")
     .orElse(providers.gradleProperty("zigExecutable"))
     .orElse(providers.environmentVariable("ZIG_EXECUTABLE"))
+val configuredGoExecutablePath = providers.gradleProperty("graalriscv.goExecutable")
+    .orElse(providers.gradleProperty("goExecutable"))
+    .orElse(providers.environmentVariable("GO_EXECUTABLE"))
 val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
 val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
@@ -67,6 +77,57 @@ val downloadZig by tasks.registering(de.undercouch.gradle.tasks.download.Downloa
         if (archive.isFile && archive.length() == 0L) {
             delete(archive)
         }
+    }
+}
+
+val downloadGo by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
+    group = "build setup"
+    description = "Downloads Go ${GoUtils.GO_VERSION} for the current host platform."
+
+    src("https://go.dev/dl/${GoUtils.getGoArchiveName()}")
+    dest(goArchiveFile.get().asFile)
+    overwrite(false)
+    tempAndMove(true)
+    retries(3)
+    connectTimeout(30_000)
+    readTimeout(30_000)
+
+    doFirst {
+        val archive = goArchiveFile.get().asFile
+        if (archive.isFile && archive.length() == 0L) {
+            delete(archive)
+        }
+    }
+}
+
+val extractGo by tasks.registering {
+    group = "build setup"
+    description = "Extracts the downloaded Go toolchain."
+
+    dependsOn(downloadGo)
+    inputs.file(goArchiveFile)
+    outputs.file(goExecutableFile)
+
+    doLast {
+        val installDirectory = goInstallDirectory.get().asFile
+        delete(installDirectory)
+        val archive = goArchiveFile.get().asFile
+        GoUtils.extractGoArchive(archive, installDirectory)
+    }
+}
+
+tasks.register<Exec>("goToolchainVersion") {
+    group = "build setup"
+    description = "Prints the managed or configured Go toolchain version."
+
+    val configuredPath = configuredGoExecutablePath.orNull
+    if (configuredPath == null) {
+        dependsOn(extractGo)
+    }
+
+    doFirst {
+        val executable = configuredGoExecutablePath.orNull?.let { file(it) } ?: goExecutableFile.get().asFile
+        commandLine(executable.absolutePath, "version")
     }
 }
 

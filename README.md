@@ -170,6 +170,16 @@ ZIG_EXECUTABLE=/path/to/zig ./gradlew buildHelloWorldExample
 
 The namespaced `graalriscv.zigExecutable` Gradle property is also accepted.
 
+Gradle can also download and extract the configured Go toolchain:
+
+```text
+./gradlew extractGo
+./gradlew goToolchainVersion
+```
+
+To use an existing Go executable, pass `goExecutable`,
+`graalriscv.goExecutable`, or `GO_EXECUTABLE`.
+
 Run the static musl `printf` example:
 
 ```text
