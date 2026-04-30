@@ -21,6 +21,7 @@ import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.parser.DecodedInstruction;
@@ -389,6 +390,11 @@ public final class RiscVRootNode extends RootNode {
             blockArguments[1] = memory.newAccess();
         }
 
+        /// Refreshes memory generation-sensitive caches before dispatching another guest block.
+        private void refreshMemoryAccess() {
+            ((MemoryAccess) blockArguments[1]).refreshGeneration();
+        }
+
         /// Returns the next guest program counter to dispatch.
         private long pc() {
             return pc;
@@ -459,6 +465,7 @@ public final class RiscVRootNode extends RootNode {
             GuestLoopState loopState = (GuestLoopState) frame.getArguments()[0];
             MachineState state = loopState.state();
             loopState.syscalls().checkProcessStatus();
+            loopState.refreshMemoryAccess();
             long pc = dispatch.execute(loopState, state);
             loopState.setPc(pc);
             return true;
@@ -512,27 +519,23 @@ public final class RiscVRootNode extends RootNode {
             long pc = loopState.pc();
             MemoryLayout memoryLayout = loopState.memoryLayout();
             if (state.canRetireBlock()) {
+                @Nullable CachedTraceCallNode cachedTrace = cachedTrace(pc, memoryLayout);
+                if (cachedTrace != null) {
+                    cachedTrace.call(loopState.blockArguments());
+                    return state.pc();
+                }
+
                 TraceEntry trace = traces.get(pc, memoryLayout);
                 if (trace != null) {
-                    return executeTraceCachedOrMiss(loopState, state, trace);
+                    return executeTraceMiss(loopState, state, trace);
                 }
             }
             return executeBlockCachedOrMiss(loopState, state, pc);
         }
 
-        /// Executes a cached direct trace call, or falls back to an indirect trace call.
-        private long executeTraceCachedOrMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
-            @Nullable CachedTraceCallNode cachedTrace = cachedTrace(trace.startPc(), trace.memoryLayout());
-            if (cachedTrace != null) {
-                cachedTrace.call(loopState.blockArguments());
-                return state.pc();
-            }
-            return executeTraceMiss(loopState, state, trace);
-        }
-
         /// Handles a direct trace-call cache miss for the supplied trace.
         private long executeTraceMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
-            if (CompilerDirectives.inInterpreter()) {
+            if (CompilerDirectives.inInterpreter() && cachedTrace3 == null) {
                 CachedTraceCallNode cachedTrace = installCachedTrace(trace);
                 if (cachedTrace != null) {
                     cachedTrace.call(loopState.blockArguments());
@@ -1021,11 +1024,10 @@ public final class RiscVRootNode extends RootNode {
 
         /// Hashes a guest program counter and memory layout for open addressing.
         private static int hash(long value, MemoryLayout memoryLayout) {
-            long hash = value ^ (value >>> 32);
-            hash ^= memoryLayout.pageSize();
-            hash ^= hash >>> 16;
-            hash *= 0x9e37_79b9_7f4a_7c15L;
-            hash ^= hash >>> 32;
+            long hash = value >>> 1;
+            hash ^= value >>> 9;
+            hash ^= value >>> 17;
+            hash ^= memoryLayout.pageShift();
             return (int) hash;
         }
     }
@@ -1171,11 +1173,10 @@ public final class RiscVRootNode extends RootNode {
 
         /// Hashes a guest program counter and memory layout for open addressing.
         private static int hash(long value, MemoryLayout memoryLayout) {
-            long hash = value ^ (value >>> 32);
-            hash ^= memoryLayout.pageSize();
-            hash ^= hash >>> 16;
-            hash *= 0x9e37_79b9_7f4a_7c15L;
-            hash ^= hash >>> 32;
+            long hash = value >>> 1;
+            hash ^= value >>> 9;
+            hash ^= value >>> 17;
+            hash ^= memoryLayout.pageShift();
             return (int) hash;
         }
     }
