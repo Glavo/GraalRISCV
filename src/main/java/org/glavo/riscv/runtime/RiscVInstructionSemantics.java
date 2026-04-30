@@ -10,6 +10,7 @@ import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.parser.DecodedInstruction;
 import org.glavo.riscv.parser.RiscVOperation;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Unmodifiable;
 
 import java.math.BigInteger;
 
@@ -96,6 +97,78 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Use the dynamic rounding mode from `frm`.
     private static final int ROUND_DYNAMIC = 7;
+
+    /// The raw single-precision constants loaded by `fli.s`.
+    private static final int @Unmodifiable [] FLI_SINGLE_BITS = {
+            0xbf80_0000,
+            0x0080_0000,
+            0x3780_0000,
+            0x3800_0000,
+            0x3b80_0000,
+            0x3c00_0000,
+            0x3d80_0000,
+            0x3e00_0000,
+            0x3e80_0000,
+            0x3ea0_0000,
+            0x3ec0_0000,
+            0x3ee0_0000,
+            0x3f00_0000,
+            0x3f20_0000,
+            0x3f40_0000,
+            0x3f60_0000,
+            0x3f80_0000,
+            0x3fa0_0000,
+            0x3fc0_0000,
+            0x3fe0_0000,
+            0x4000_0000,
+            0x4020_0000,
+            0x4040_0000,
+            0x4080_0000,
+            0x4100_0000,
+            0x4180_0000,
+            0x4300_0000,
+            0x4380_0000,
+            0x4700_0000,
+            0x4780_0000,
+            0x7f80_0000,
+            CANONICAL_SINGLE_NAN
+    };
+
+    /// The raw double-precision constants loaded by `fli.d`.
+    private static final long @Unmodifiable [] FLI_DOUBLE_BITS = {
+            0xbff0_0000_0000_0000L,
+            0x0010_0000_0000_0000L,
+            0x3ef0_0000_0000_0000L,
+            0x3f00_0000_0000_0000L,
+            0x3f70_0000_0000_0000L,
+            0x3f80_0000_0000_0000L,
+            0x3fb0_0000_0000_0000L,
+            0x3fc0_0000_0000_0000L,
+            0x3fd0_0000_0000_0000L,
+            0x3fd4_0000_0000_0000L,
+            0x3fd8_0000_0000_0000L,
+            0x3fdc_0000_0000_0000L,
+            0x3fe0_0000_0000_0000L,
+            0x3fe4_0000_0000_0000L,
+            0x3fe8_0000_0000_0000L,
+            0x3fec_0000_0000_0000L,
+            0x3ff0_0000_0000_0000L,
+            0x3ff4_0000_0000_0000L,
+            0x3ff8_0000_0000_0000L,
+            0x3ffc_0000_0000_0000L,
+            0x4000_0000_0000_0000L,
+            0x4004_0000_0000_0000L,
+            0x4008_0000_0000_0000L,
+            0x4010_0000_0000_0000L,
+            0x4020_0000_0000_0000L,
+            0x4030_0000_0000_0000L,
+            0x4060_0000_0000_0000L,
+            0x4070_0000_0000_0000L,
+            0x40e0_0000_0000_0000L,
+            0x40f0_0000_0000_0000L,
+            0x7ff0_0000_0000_0000L,
+            CANONICAL_DOUBLE_NAN
+    };
 
     /// Reusable execution context used by the custom micro-bytecode generic operation path.
     private static final ThreadLocal<ReusableInstructionSemantics> MICRO_EXECUTOR =
@@ -236,8 +309,9 @@ public abstract sealed class RiscVInstructionSemantics {
                     CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO ->
                     new Rva22InstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
-                    FMIN, FMAX, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H, FCVT_H_S, FCVT_H_D,
-                    FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT, FMV_X_FP, FMV_FP_X ->
+                    FMIN, FMAX, FMINM, FMAXM, FLI, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H,
+                    FCVT_H_S, FCVT_H_D, FROUND, FROUNDNX, FCVTMOD_W_D, FEQ, FLT, FLE, FLTQ, FLEQ,
+                    FCLASS, FCVT_INT_FP, FCVT_FP_INT, FMV_X_FP, FMV_FP_X ->
                     new FloatingPointInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
                     AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
@@ -458,8 +532,9 @@ public abstract sealed class RiscVInstructionSemantics {
                         BCLR, BCLRI, BEXT, BEXTI, BINV, BINVI, BSET, BSETI,
                         CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO -> executeRva22(state, memory, nextPc);
                 case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
-                        FMIN, FMAX, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H, FCVT_H_S, FCVT_H_D,
-                        FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT, FMV_X_FP, FMV_FP_X ->
+                        FMIN, FMAX, FMINM, FMAXM, FLI, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H,
+                        FCVT_H_S, FCVT_H_D, FROUND, FROUNDNX, FCVTMOD_W_D, FEQ, FLT, FLE, FLTQ, FLEQ,
+                        FCLASS, FCVT_INT_FP, FCVT_FP_INT, FMV_X_FP, FMV_FP_X ->
                         executeFloatingPointOperation(state, nextPc);
                 case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
                         AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
@@ -1814,6 +1889,12 @@ public abstract sealed class RiscVInstructionSemantics {
             case FSGNJX -> floatingPointSignInjection(state, nextPc, SignInjectionKind.XOR);
             case FMIN -> floatingPointMinimumMaximum(state, nextPc, true);
             case FMAX -> floatingPointMinimumMaximum(state, nextPc, false);
+            case FMINM -> floatingPointMinimumMaximumNumber(state, nextPc, true);
+            case FMAXM -> floatingPointMinimumMaximumNumber(state, nextPc, false);
+            case FLI -> {
+                loadFloatingPointImmediate(state);
+                state.setPc(nextPc);
+            }
             case FCVT_S_D -> {
                 convertDoubleToSingle(state);
                 state.setPc(nextPc);
@@ -1838,9 +1919,23 @@ public abstract sealed class RiscVInstructionSemantics {
                 convertDoubleToHalf(state);
                 state.setPc(nextPc);
             }
+            case FROUND -> {
+                roundFloatingPointToIntegral(state, false);
+                state.setPc(nextPc);
+            }
+            case FROUNDNX -> {
+                roundFloatingPointToIntegral(state, true);
+                state.setPc(nextPc);
+            }
+            case FCVTMOD_W_D -> {
+                convertDoubleToModularWord(state);
+                state.setPc(nextPc);
+            }
             case FEQ -> floatingPointCompare(state, nextPc, CompareKind.EQUAL);
             case FLT -> floatingPointCompare(state, nextPc, CompareKind.LESS_THAN);
             case FLE -> floatingPointCompare(state, nextPc, CompareKind.LESS_THAN_OR_EQUAL);
+            case FLTQ -> floatingPointCompare(state, nextPc, CompareKind.QUIET_LESS_THAN);
+            case FLEQ -> floatingPointCompare(state, nextPc, CompareKind.QUIET_LESS_THAN_OR_EQUAL);
             case FCLASS -> {
                 state.setDecodedRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
                         ? classifySingle(readSingleBits(state, rs1))
@@ -2456,6 +2551,29 @@ public abstract sealed class RiscVInstructionSemantics {
         state.setPc(nextPc);
     }
 
+    /// Executes an IEEE 754-2019 floating-point minimum or maximum operation.
+    private void floatingPointMinimumMaximumNumber(MachineState state, long nextPc, boolean minimum) {
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            writeSingleBits(state, rd, minimum
+                    ? minimumNumberSingleBits(state, readSingleBits(state, rs1), readSingleBits(state, rs2))
+                    : maximumNumberSingleBits(state, readSingleBits(state, rs1), readSingleBits(state, rs2)));
+        } else {
+            writeDoubleBits(state, rd, minimum
+                    ? minimumNumberDoubleBits(state, state.decodedFloatingPointRegister(rs1), state.decodedFloatingPointRegister(rs2))
+                    : maximumNumberDoubleBits(state, state.decodedFloatingPointRegister(rs1), state.decodedFloatingPointRegister(rs2)));
+        }
+        state.setPc(nextPc);
+    }
+
+    /// Loads a Zfa floating-point immediate constant.
+    private void loadFloatingPointImmediate(MachineState state) {
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            writeSingleBits(state, rd, FLI_SINGLE_BITS[rs1]);
+        } else {
+            writeDoubleBits(state, rd, FLI_DOUBLE_BITS[rs1]);
+        }
+    }
+
     /// Executes a floating-point comparison operation.
     private void floatingPointCompare(MachineState state, long nextPc, CompareKind kind) {
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
@@ -2464,7 +2582,9 @@ public abstract sealed class RiscVInstructionSemantics {
             float left = Float.intBitsToFloat(leftBits);
             float right = Float.intBitsToFloat(rightBits);
             if (Float.isNaN(left) || Float.isNaN(right)) {
-                if (kind != CompareKind.EQUAL || isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+                if (shouldRaiseInvalidForNaNCompare(kind)
+                        || isSignalingSingleNaN(leftBits)
+                        || isSignalingSingleNaN(rightBits)) {
                     state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
                 }
                 state.setDecodedRegister(rd, 0);
@@ -2477,7 +2597,9 @@ public abstract sealed class RiscVInstructionSemantics {
             double left = Double.longBitsToDouble(leftBits);
             double right = Double.longBitsToDouble(rightBits);
             if (Double.isNaN(left) || Double.isNaN(right)) {
-                if (kind != CompareKind.EQUAL || isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+                if (shouldRaiseInvalidForNaNCompare(kind)
+                        || isSignalingDoubleNaN(leftBits)
+                        || isSignalingDoubleNaN(rightBits)) {
                     state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
                 }
                 state.setDecodedRegister(rd, 0);
@@ -2506,6 +2628,18 @@ public abstract sealed class RiscVInstructionSemantics {
             case 3 -> state.setDecodedRegister(rd, convertToUnsignedInteger(state, value, roundingMode, 0x1.0p64));
             default -> throw unexpectedConversionSelector();
         }
+    }
+
+    /// Converts a double-precision value to a modular signed 32-bit integer result.
+    private void convertDoubleToModularWord(MachineState state) {
+        double value = readDouble(state, rs1);
+        convertToSignedInteger(state, value, ROUND_TOWARD_ZERO, Integer.MIN_VALUE, 0x1.0p31);
+        if (Double.isNaN(value) || Double.isInfinite(value)) {
+            state.setDecodedRegister(rd, 0);
+            return;
+        }
+        double rounded = roundToInteger(value, ROUND_TOWARD_ZERO);
+        state.setDecodedRegister(rd, exactBinaryIntegerValue(Double.doubleToRawLongBits(rounded)).intValue());
     }
 
 
@@ -2594,6 +2728,51 @@ public abstract sealed class RiscVInstructionSemantics {
         int roundingMode = effectiveRoundingMode(state);
         long bits = state.decodedFloatingPointRegister(rs1);
         writeHalfBits(state, rd, convertDoubleBitsToHalfBits(state, bits, roundingMode));
+    }
+
+
+    /// Rounds a floating-point value to an integral floating-point value without updating `pc`.
+    private void roundFloatingPointToIntegral(MachineState state, boolean exact) {
+        int roundingMode = effectiveRoundingMode(state);
+        if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
+            int bits = readSingleBits(state, rs1);
+            if (isSignalingSingleNaN(bits)) {
+                state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            }
+            float value = Float.intBitsToFloat(bits);
+            if (Float.isNaN(value)) {
+                writeSingleBits(state, rd, CANONICAL_SINGLE_NAN);
+                return;
+            }
+            if (value == 0.0f || Float.isInfinite(value)) {
+                writeSingleBits(state, rd, bits);
+                return;
+            }
+            float rounded = (float) roundToInteger(value, roundingMode);
+            if (exact && rounded != value) {
+                state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+            }
+            writeSingleBits(state, rd, Float.floatToRawIntBits(rounded));
+        } else {
+            long bits = state.decodedFloatingPointRegister(rs1);
+            if (isSignalingDoubleNaN(bits)) {
+                state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+            }
+            double value = Double.longBitsToDouble(bits);
+            if (Double.isNaN(value)) {
+                writeDoubleBits(state, rd, CANONICAL_DOUBLE_NAN);
+                return;
+            }
+            if (value == 0.0d || Double.isInfinite(value)) {
+                writeDoubleBits(state, rd, bits);
+                return;
+            }
+            double rounded = roundToInteger(value, roundingMode);
+            if (exact && rounded != value) {
+                state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+            }
+            writeDoubleBits(state, rd, Double.doubleToRawLongBits(rounded));
+        }
     }
 
 
@@ -3297,6 +3476,15 @@ public abstract sealed class RiscVInstructionSemantics {
         return bits < 0 ? new ExactBinaryValue(significand.negate(), exponent) : new ExactBinaryValue(significand, exponent);
     }
 
+    /// Returns the exact integer value represented by finite integral double-precision bits.
+    private static BigInteger exactBinaryIntegerValue(long bits) {
+        ExactBinaryValue value = exactDoubleValue(bits);
+        if (value.exponent() >= 0) {
+            return value.significand().shiftLeft(value.exponent());
+        }
+        return value.significand().shiftRight(-value.exponent());
+    }
+
     /// Adds two exact binary values.
     private static ExactBinaryValue addBinaryValues(ExactBinaryValue left, ExactBinaryValue right) {
         int exponent = Math.min(left.exponent(), right.exponent());
@@ -3660,6 +3848,38 @@ public abstract sealed class RiscVInstructionSemantics {
         return left >= right ? leftBits : rightBits;
     }
 
+    /// Computes RISC-V Zfa single-precision IEEE 754-2019 minimum bits.
+    private static int minimumNumberSingleBits(MachineState state, int leftBits, int rightBits) {
+        if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        float left = Float.intBitsToFloat(leftBits);
+        float right = Float.intBitsToFloat(rightBits);
+        if (Float.isNaN(left) || Float.isNaN(right)) {
+            return CANONICAL_SINGLE_NAN;
+        }
+        if (left == 0.0f && right == 0.0f) {
+            return (leftBits < 0 || rightBits < 0) ? 0x8000_0000 : 0;
+        }
+        return left <= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V Zfa single-precision IEEE 754-2019 maximum bits.
+    private static int maximumNumberSingleBits(MachineState state, int leftBits, int rightBits) {
+        if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        float left = Float.intBitsToFloat(leftBits);
+        float right = Float.intBitsToFloat(rightBits);
+        if (Float.isNaN(left) || Float.isNaN(right)) {
+            return CANONICAL_SINGLE_NAN;
+        }
+        if (left == 0.0f && right == 0.0f) {
+            return (leftBits >= 0 || rightBits >= 0) ? 0 : 0x8000_0000;
+        }
+        return left >= right ? leftBits : rightBits;
+    }
+
     /// Computes RISC-V double-precision minimum bits.
     private static long minimumDoubleBits(MachineState state, long leftBits, long rightBits) {
         if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
@@ -3704,12 +3924,52 @@ public abstract sealed class RiscVInstructionSemantics {
         return left >= right ? leftBits : rightBits;
     }
 
+    /// Computes RISC-V Zfa double-precision IEEE 754-2019 minimum bits.
+    private static long minimumNumberDoubleBits(MachineState state, long leftBits, long rightBits) {
+        if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        if (Double.isNaN(left) || Double.isNaN(right)) {
+            return CANONICAL_DOUBLE_NAN;
+        }
+        if (left == 0.0d && right == 0.0d) {
+            return (leftBits < 0 || rightBits < 0) ? Long.MIN_VALUE : 0;
+        }
+        return left <= right ? leftBits : rightBits;
+    }
+
+    /// Computes RISC-V Zfa double-precision IEEE 754-2019 maximum bits.
+    private static long maximumNumberDoubleBits(MachineState state, long leftBits, long rightBits) {
+        if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        if (Double.isNaN(left) || Double.isNaN(right)) {
+            return CANONICAL_DOUBLE_NAN;
+        }
+        if (left == 0.0d && right == 0.0d) {
+            return (leftBits >= 0 || rightBits >= 0) ? 0 : Long.MIN_VALUE;
+        }
+        return left >= right ? leftBits : rightBits;
+    }
+
     /// Compares two finite-or-infinite floating-point values.
     private static boolean compareFloatingPoint(double left, double right, CompareKind kind) {
         return switch (kind) {
             case EQUAL -> left == right;
-            case LESS_THAN -> left < right;
-            case LESS_THAN_OR_EQUAL -> left <= right;
+            case LESS_THAN, QUIET_LESS_THAN -> left < right;
+            case LESS_THAN_OR_EQUAL, QUIET_LESS_THAN_OR_EQUAL -> left <= right;
+        };
+    }
+
+    /// Returns true when a NaN comparison should raise invalid for quiet NaNs.
+    private static boolean shouldRaiseInvalidForNaNCompare(CompareKind kind) {
+        return switch (kind) {
+            case LESS_THAN, LESS_THAN_OR_EQUAL -> true;
+            case EQUAL, QUIET_LESS_THAN, QUIET_LESS_THAN_OR_EQUAL -> false;
         };
     }
 
@@ -3997,6 +4257,10 @@ public abstract sealed class RiscVInstructionSemantics {
         /// Less-than comparison.
         LESS_THAN,
         /// Less-than-or-equal comparison.
-        LESS_THAN_OR_EQUAL
+        LESS_THAN_OR_EQUAL,
+        /// Quiet less-than comparison.
+        QUIET_LESS_THAN,
+        /// Quiet less-than-or-equal comparison.
+        QUIET_LESS_THAN_OR_EQUAL
     }
 }

@@ -340,6 +340,71 @@ public final class FloatingPointOperationTest {
         }
     }
 
+    /// Verifies Zfa floating-point immediates, round-to-integer, and modular conversion.
+    @Test
+    public void additionalFloatingPointImmediateRoundAndModularConvertExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fliS(1, 16),
+                    fliD(2, 20),
+                    froundS(3, 4, 1),
+                    froundnxD(5, 6, 3),
+                    fcvtmodWD(RESULT_REGISTER, 7),
+                    csrrs(SECOND_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeSingleBits(machine.state(), 4, Float.floatToRawIntBits(-1.75f));
+            writeDouble(machine.state(), 6, 1.25d);
+            writeDouble(machine.state(), 7, 0x1.0000_0001p32d);
+
+            runDecodedProgram(machine);
+
+            assertEquals(boxedSingle(Float.floatToRawIntBits(1.0f)), machine.state().floatingPointRegister(1));
+            assertEquals(Double.doubleToRawLongBits(2.0d), machine.state().floatingPointRegister(2));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(-1.0f)), machine.state().floatingPointRegister(3));
+            assertEquals(Double.doubleToRawLongBits(2.0d), machine.state().floatingPointRegister(5));
+            assertEquals(1, machine.state().register(RESULT_REGISTER));
+            assertEquals(0x11, machine.state().register(SECOND_RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies Zfa minimum/maximum-number and quiet comparison NaN behavior.
+    @Test
+    public void additionalFloatingPointNanNumberAndQuietCompareEdgesExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fminmS(3, 1, 2),
+                    fmaxmD(4, 5, 6),
+                    csrrs(SECOND_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    csrrwi(0, FFLAGS_CSR, 0),
+                    fleqD(RESULT_REGISTER, 7, 8),
+                    csrrs(THIRD_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    csrrwi(0, FFLAGS_CSR, 0),
+                    fltD(FOURTH_RESULT_REGISTER, 7, 8),
+                    csrrs(FIFTH_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeSingleBits(machine.state(), 1, CANONICAL_SINGLE_NAN);
+            writeSingleBits(machine.state(), 2, Float.floatToRawIntBits(2.0f));
+            writeDoubleBits(machine.state(), 5, 0x7ff0_0000_0000_0001L);
+            writeDouble(machine.state(), 6, -1.0d);
+            writeDoubleBits(machine.state(), 7, CANONICAL_DOUBLE_NAN);
+            writeDouble(machine.state(), 8, 1.0d);
+
+            runDecodedProgram(machine);
+
+            assertEquals(boxedSingle(CANONICAL_SINGLE_NAN), machine.state().floatingPointRegister(3));
+            assertEquals(CANONICAL_DOUBLE_NAN, machine.state().floatingPointRegister(4));
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+            assertEquals(0x10, machine.state().register(SECOND_RESULT_REGISTER));
+            assertEquals(0, machine.state().register(THIRD_RESULT_REGISTER));
+            assertEquals(0, machine.state().register(FOURTH_RESULT_REGISTER));
+            assertEquals(0x10, machine.state().register(FIFTH_RESULT_REGISTER));
+        }
+    }
+
     /// Verifies integer to floating-point conversions honor explicit rounding modes.
     @Test
     public void integerToFloatingPointConversionRoundingModesAndFlagsExecute() {
@@ -740,6 +805,11 @@ public final class FloatingPointOperationTest {
         return opFp(0x14, rd, 0, rs1, rs2);
     }
 
+    /// Encodes `fminm.s`.
+    private static int fminmS(int rd, int rs1, int rs2) {
+        return opFp(0x14, rd, 2, rs1, rs2);
+    }
+
     /// Encodes `fmax.s`.
     private static int fmaxS(int rd, int rs1, int rs2) {
         return opFp(0x14, rd, 1, rs1, rs2);
@@ -755,6 +825,11 @@ public final class FloatingPointOperationTest {
         return opFp(0x15, rd, 1, rs1, rs2);
     }
 
+    /// Encodes `fmaxm.d`.
+    private static int fmaxmD(int rd, int rs1, int rs2) {
+        return opFp(0x15, rd, 3, rs1, rs2);
+    }
+
     /// Encodes `fsgnjx.s`.
     private static int fsgnjxS(int rd, int rs1, int rs2) {
         return opFp(0x10, rd, 2, rs1, rs2);
@@ -765,14 +840,34 @@ public final class FloatingPointOperationTest {
         return opFp(0x51, rd, 2, rs1, rs2);
     }
 
+    /// Encodes `fli.s`.
+    private static int fliS(int rd, int index) {
+        return opFp(0x78, rd, 0, index, 1);
+    }
+
+    /// Encodes `fli.d`.
+    private static int fliD(int rd, int index) {
+        return opFp(0x79, rd, 0, index, 1);
+    }
+
     /// Encodes `flt.d`.
     private static int fltD(int rd, int rs1, int rs2) {
         return opFp(0x51, rd, 1, rs1, rs2);
     }
 
+    /// Encodes `fltq.d`.
+    private static int fltqD(int rd, int rs1, int rs2) {
+        return opFp(0x51, rd, 5, rs1, rs2);
+    }
+
     /// Encodes `fle.d`.
     private static int fleD(int rd, int rs1, int rs2) {
         return opFp(0x51, rd, 0, rs1, rs2);
+    }
+
+    /// Encodes `fleq.d`.
+    private static int fleqD(int rd, int rs1, int rs2) {
+        return opFp(0x51, rd, 4, rs1, rs2);
     }
 
     /// Encodes `fclass.s`.
@@ -840,6 +935,11 @@ public final class FloatingPointOperationTest {
         return opFp(0x61, rd, 7, rs1, 0);
     }
 
+    /// Encodes `fcvtmod.w.d`.
+    private static int fcvtmodWD(int rd, int rs1) {
+        return opFp(0x61, rd, 1, rs1, 8);
+    }
+
     /// Encodes `fcvt.wu.d`.
     private static int fcvtWUD(int rd, int rs1) {
         return opFp(0x61, rd, 0, rs1, 1);
@@ -893,6 +993,16 @@ public final class FloatingPointOperationTest {
     /// Encodes `fcvt.s.d` with an explicit rounding mode.
     private static int fcvtSD(int rd, int rs1, int roundingMode) {
         return opFp(0x20, rd, roundingMode, rs1, 1);
+    }
+
+    /// Encodes `fround.s`.
+    private static int froundS(int rd, int rs1, int roundingMode) {
+        return opFp(0x20, rd, roundingMode, rs1, 4);
+    }
+
+    /// Encodes `froundnx.d`.
+    private static int froundnxD(int rd, int rs1, int roundingMode) {
+        return opFp(0x21, rd, roundingMode, rs1, 5);
     }
 
     /// Encodes `fmadd.d`.

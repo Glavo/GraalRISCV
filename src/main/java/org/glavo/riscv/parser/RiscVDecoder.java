@@ -248,6 +248,8 @@ public final class RiscVDecoder {
                 RiscVOperation operation = switch (funct3(raw)) {
                     case 0 -> RiscVOperation.FMIN;
                     case 1 -> RiscVOperation.FMAX;
+                    case 2 -> RiscVOperation.FMINM;
+                    case 3 -> RiscVOperation.FMAXM;
                     default -> throw illegalException(address, raw);
                 };
                 yield instruction(
@@ -264,6 +266,8 @@ public final class RiscVDecoder {
                 RiscVOperation operation = switch (rs2(raw)) {
                     case 1 -> RiscVOperation.FCVT_S_D;
                     case 2 -> RiscVOperation.FCVT_S_H;
+                    case 4 -> RiscVOperation.FROUND;
+                    case 5 -> RiscVOperation.FROUNDNX;
                     default -> throw illegalException(address, raw);
                 };
                 yield roundedFloatingPointInstruction(address, raw, operation, 0, roundingMode);
@@ -272,6 +276,8 @@ public final class RiscVDecoder {
                 RiscVOperation operation = switch (rs2(raw)) {
                     case 0 -> RiscVOperation.FCVT_D_S;
                     case 2 -> RiscVOperation.FCVT_D_H;
+                    case 4 -> RiscVOperation.FROUND;
+                    case 5 -> RiscVOperation.FROUNDNX;
                     default -> throw illegalException(address, raw);
                 };
                 yield roundedFloatingPointInstruction(address, raw, operation, 1, roundingMode);
@@ -289,6 +295,8 @@ public final class RiscVDecoder {
                     case 0 -> RiscVOperation.FLE;
                     case 1 -> RiscVOperation.FLT;
                     case 2 -> RiscVOperation.FEQ;
+                    case 4 -> RiscVOperation.FLEQ;
+                    case 5 -> RiscVOperation.FLTQ;
                     default -> throw illegalException(address, raw);
                 };
                 yield instruction(
@@ -302,6 +310,9 @@ public final class RiscVDecoder {
                         false);
             }
             case 0x60, 0x61 -> {
+                if (funct7 == 0x61 && rs2(raw) == 8 && roundingMode == 1) {
+                    yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVTMOD_W_D, 1, roundingMode);
+                }
                 requireConversionSelector(address, raw, rs2(raw));
                 yield roundedFloatingPointInstruction(
                         address,
@@ -344,6 +355,17 @@ public final class RiscVDecoder {
                         false);
             }
             case 0x78, 0x79, 0x7a -> {
+                if (funct3(raw) == 0 && rs2(raw) == 1) {
+                    yield instruction(
+                            address,
+                            raw,
+                            RiscVOperation.FLI,
+                            rd(raw),
+                            rs1(raw),
+                            0,
+                            floatingPointImmediate(requireFloatingPointFormat(address, raw, format)),
+                            false);
+                }
                 if (funct3(raw) != 0 || rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }

@@ -92,6 +92,12 @@ public enum RiscVOperation {
     FMIN,
     /// Floating-point maximum.
     FMAX,
+    /// Floating-point IEEE 754-2019 minimum.
+    FMINM,
+    /// Floating-point IEEE 754-2019 maximum.
+    FMAXM,
+    /// Floating-point load immediate.
+    FLI,
     /// Convert double-precision value to single-precision value.
     FCVT_S_D,
     /// Convert half-precision value to single-precision value.
@@ -104,12 +110,22 @@ public enum RiscVOperation {
     FCVT_H_S,
     /// Convert double-precision value to half-precision value.
     FCVT_H_D,
+    /// Round a floating-point value to an integral floating-point value without inexact flags.
+    FROUND,
+    /// Round a floating-point value to an integral floating-point value with inexact flags.
+    FROUNDNX,
+    /// Convert double-precision value to a signed 32-bit modular integer.
+    FCVTMOD_W_D,
     /// Floating-point equal comparison.
     FEQ,
     /// Floating-point less-than comparison.
     FLT,
     /// Floating-point less-than-or-equal comparison.
     FLE,
+    /// Floating-point quiet less-than comparison.
+    FLTQ,
+    /// Floating-point quiet less-than-or-equal comparison.
+    FLEQ,
     /// Floating-point classify.
     FCLASS,
     /// Convert floating-point value to integer register value.
