@@ -416,6 +416,19 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.FLE -> floatingPointCompare(state, registers, index, operand, mode, CompareKind.LESS_THAN_OR_EQUAL);
             case RiscVMicroOpcode.FMIN -> floatingPointMinimumMaximum(state, index, operand, mode, true);
             case RiscVMicroOpcode.FMAX -> floatingPointMinimumMaximum(state, index, operand, mode, false);
+            case RiscVMicroOpcode.FMADD -> floatingPointFusedMultiplyAdd(state, index, operand, mode, false, false);
+            case RiscVMicroOpcode.FMSUB -> floatingPointFusedMultiplyAdd(state, index, operand, mode, false, true);
+            case RiscVMicroOpcode.FNMSUB -> floatingPointFusedMultiplyAdd(state, index, operand, mode, true, false);
+            case RiscVMicroOpcode.FNMADD -> floatingPointFusedMultiplyAdd(state, index, operand, mode, true, true);
+            case RiscVMicroOpcode.FADD -> floatingPointArithmetic(state, index, operand, mode, '+');
+            case RiscVMicroOpcode.FSUB -> floatingPointArithmetic(state, index, operand, mode, '-');
+            case RiscVMicroOpcode.FMUL -> floatingPointArithmetic(state, index, operand, mode, '*');
+            case RiscVMicroOpcode.FDIV -> floatingPointArithmetic(state, index, operand, mode, '/');
+            case RiscVMicroOpcode.FSQRT -> floatingPointSquareRoot(state, index, operand, mode);
+            case RiscVMicroOpcode.FCVT_S_D -> convertDoubleToSingle(state, index, operand, mode);
+            case RiscVMicroOpcode.FCVT_D_S -> convertSingleToDouble(state, index, operand, mode);
+            case RiscVMicroOpcode.FCVT_INT_FP -> convertFloatingPointToInteger(state, index, operand, mode);
+            case RiscVMicroOpcode.FCVT_FP_INT -> convertIntegerToFloatingPoint(state, index, operand, mode);
             case RiscVMicroOpcode.LR_W -> lrWord(state, memory, access, registers, index, operand, mode);
             case RiscVMicroOpcode.LR_D -> lrDouble(state, memory, access, registers, index, operand, mode);
             case RiscVMicroOpcode.SC_W -> scWord(state, memory, access, registers, index, operand, mode);
@@ -662,6 +675,101 @@ final class RiscVMicroBlockNode extends Node {
                     ? minimumDoubleBits(state, left, right)
                     : maximumDoubleBits(state, left, right));
         }
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a fused floating-point multiply-add instruction.
+    private void floatingPointFusedMultiplyAdd(
+            MachineState state,
+            int index,
+            int operand,
+            byte mode,
+            boolean negateProduct,
+            boolean subtractAddend) {
+        beginInstruction(state, index, mode);
+        RiscVInstructionSemantics.executeMicroFusedMultiplyAdd(
+                state,
+                rd(operand),
+                rs1(operand),
+                rs2(operand),
+                immediates[index],
+                negateProduct,
+                subtractAddend);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a binary floating-point arithmetic instruction.
+    private void floatingPointArithmetic(
+            MachineState state,
+            int index,
+            int operand,
+            byte mode,
+            char operator) {
+        beginInstruction(state, index, mode);
+        RiscVInstructionSemantics.executeMicroFloatingPointArithmetic(
+                state,
+                rd(operand),
+                rs1(operand),
+                rs2(operand),
+                immediates[index],
+                operator);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a floating-point square-root instruction.
+    private void floatingPointSquareRoot(MachineState state, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        RiscVInstructionSemantics.executeMicroFloatingPointSquareRoot(
+                state,
+                rd(operand),
+                rs1(operand),
+                immediates[index]);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes `fcvt.s.d`.
+    private void convertDoubleToSingle(MachineState state, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        RiscVInstructionSemantics.executeMicroConvertDoubleToSingle(
+                state,
+                rd(operand),
+                rs1(operand),
+                immediates[index]);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes `fcvt.d.s`.
+    private void convertSingleToDouble(MachineState state, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        RiscVInstructionSemantics.executeMicroConvertSingleToDouble(
+                state,
+                rd(operand),
+                rs1(operand),
+                immediates[index]);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes a floating-point to integer conversion instruction.
+    private void convertFloatingPointToInteger(MachineState state, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        RiscVInstructionSemantics.executeMicroConvertFloatingPointToInteger(
+                state,
+                rd(operand),
+                rs1(operand),
+                rs2(operand),
+                immediates[index]);
+        finishInstruction(state, index, mode);
+    }
+
+    /// Executes an integer to floating-point conversion instruction.
+    private void convertIntegerToFloatingPoint(MachineState state, int index, int operand, byte mode) {
+        beginInstruction(state, index, mode);
+        RiscVInstructionSemantics.executeMicroConvertIntegerToFloatingPoint(
+                state,
+                rd(operand),
+                rs1(operand),
+                rs2(operand),
+                immediates[index]);
         finishInstruction(state, index, mode);
     }
 

@@ -256,6 +256,93 @@ public abstract sealed class RiscVInstructionSemantics {
         executor.execute(state);
     }
 
+    /// Executes a decoded fused floating-point operation without updating `pc` or retiring the instruction.
+    public static void executeMicroFusedMultiplyAdd(
+            MachineState state,
+            int rd,
+            int rs1,
+            int rs2,
+            long immediate,
+            boolean negateProduct,
+            boolean subtractAddend) {
+        RiscVInstructionSemantics executor = resetMicroOperands(rd, rs1, rs2, immediate);
+        executor.executeFusedMultiplyAdd(state, negateProduct, subtractAddend);
+    }
+
+    /// Executes a decoded binary floating-point arithmetic operation without updating `pc` or retiring the instruction.
+    public static void executeMicroFloatingPointArithmetic(
+            MachineState state,
+            int rd,
+            int rs1,
+            int rs2,
+            long immediate,
+            char operator) {
+        RiscVInstructionSemantics executor = resetMicroOperands(rd, rs1, rs2, immediate);
+        executor.executeFloatingPointArithmetic(state, operator);
+    }
+
+    /// Executes a decoded floating-point square-root operation without updating `pc` or retiring the instruction.
+    public static void executeMicroFloatingPointSquareRoot(
+            MachineState state,
+            int rd,
+            int rs1,
+            long immediate) {
+        RiscVInstructionSemantics executor = resetMicroOperands(rd, rs1, 0, immediate);
+        executor.executeFloatingPointSquareRoot(state);
+    }
+
+    /// Executes a decoded `fcvt.s.d` operation without updating `pc` or retiring the instruction.
+    public static void executeMicroConvertDoubleToSingle(
+            MachineState state,
+            int rd,
+            int rs1,
+            long immediate) {
+        RiscVInstructionSemantics executor = resetMicroOperands(rd, rs1, 0, immediate);
+        executor.convertDoubleToSingle(state);
+    }
+
+    /// Executes a decoded `fcvt.d.s` operation without updating `pc` or retiring the instruction.
+    public static void executeMicroConvertSingleToDouble(
+            MachineState state,
+            int rd,
+            int rs1,
+            long immediate) {
+        RiscVInstructionSemantics executor = resetMicroOperands(rd, rs1, 0, immediate);
+        executor.convertSingleToDouble(state);
+    }
+
+    /// Executes a decoded floating-point to integer conversion without updating `pc` or retiring the instruction.
+    public static void executeMicroConvertFloatingPointToInteger(
+            MachineState state,
+            int rd,
+            int rs1,
+            int rs2,
+            long immediate) {
+        RiscVInstructionSemantics executor = resetMicroOperands(rd, rs1, rs2, immediate);
+        executor.executeConvertFloatingPointToInteger(state);
+    }
+
+    /// Executes a decoded integer to floating-point conversion without updating `pc` or retiring the instruction.
+    public static void executeMicroConvertIntegerToFloatingPoint(
+            MachineState state,
+            int rd,
+            int rs1,
+            int rs2,
+            long immediate) {
+        RiscVInstructionSemantics executor = resetMicroOperands(rd, rs1, rs2, immediate);
+        executor.executeConvertIntegerToFloatingPoint(state);
+    }
+
+    /// Resets the reusable micro-operation helper with decoded register and immediate operands.
+    private static ReusableInstructionSemantics resetMicroOperands(int rd, int rs1, int rs2, long immediate) {
+        ReusableInstructionSemantics executor = MICRO_EXECUTOR.get();
+        executor.rd = rd;
+        executor.rs1 = rs1;
+        executor.rs2 = rs2;
+        executor.immediate = immediate;
+        return executor;
+    }
+
     /// Returns the instruction length in bytes.
     public int length() {
         return length;
@@ -1616,22 +1703,11 @@ public abstract sealed class RiscVInstructionSemantics {
             case FMIN -> floatingPointMinimumMaximum(state, nextPc, true);
             case FMAX -> floatingPointMinimumMaximum(state, nextPc, false);
             case FCVT_S_D -> {
-                int roundingMode = effectiveRoundingMode(state);
-                long bits = state.decodedFloatingPointRegister(rs1);
-                if (isSignalingDoubleNaN(bits)) {
-                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
-                }
-                double value = Double.longBitsToDouble(bits);
-                writeSingleBits(state, rd, canonicalizeSingleBits(roundSingleResult(state, value, (float) value, roundingMode)));
+                convertDoubleToSingle(state);
                 state.setPc(nextPc);
             }
             case FCVT_D_S -> {
-                checkEffectiveRoundingMode(state);
-                int bits = readSingleBits(state, rs1);
-                if (isSignalingSingleNaN(bits)) {
-                    state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
-                }
-                writeDoubleBits(state, rd, canonicalizeDoubleBits(Float.intBitsToFloat(bits)));
+                convertSingleToDouble(state);
                 state.setPc(nextPc);
             }
             case FEQ -> floatingPointCompare(state, nextPc, CompareKind.EQUAL);
@@ -1978,6 +2054,12 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes an F or D fused multiply-add operation.
     private void fusedMultiplyAdd(MachineState state, long nextPc, boolean negateProduct, boolean subtractAddend) {
+        executeFusedMultiplyAdd(state, negateProduct, subtractAddend);
+        state.setPc(nextPc);
+    }
+
+    /// Executes an F or D fused multiply-add operation without updating `pc`.
+    private void executeFusedMultiplyAdd(MachineState state, boolean negateProduct, boolean subtractAddend) {
         int roundingMode = effectiveRoundingMode(state);
         int rs3 = thirdFloatingPointSource();
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
@@ -2029,11 +2111,16 @@ public abstract sealed class RiscVInstructionSemantics {
             }
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
-        state.setPc(nextPc);
     }
 
     /// Executes a basic binary floating-point arithmetic operation.
     private void floatingPointArithmetic(MachineState state, long nextPc, char operator) {
+        executeFloatingPointArithmetic(state, operator);
+        state.setPc(nextPc);
+    }
+
+    /// Executes a basic binary floating-point arithmetic operation without updating `pc`.
+    private void executeFloatingPointArithmetic(MachineState state, char operator) {
         int roundingMode = effectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int leftBits = readSingleBits(state, rs1);
@@ -2096,11 +2183,16 @@ public abstract sealed class RiscVInstructionSemantics {
             }
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
-        state.setPc(nextPc);
     }
 
     /// Executes a floating-point square-root operation.
     private void floatingPointSquareRoot(MachineState state, long nextPc) {
+        executeFloatingPointSquareRoot(state);
+        state.setPc(nextPc);
+    }
+
+    /// Executes a floating-point square-root operation without updating `pc`.
+    private void executeFloatingPointSquareRoot(MachineState state) {
         int roundingMode = effectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int bits = readSingleBits(state, rs1);
@@ -2131,7 +2223,6 @@ public abstract sealed class RiscVInstructionSemantics {
                     : nearest;
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
-        state.setPc(nextPc);
     }
 
     /// Executes a floating-point sign-injection operation.
@@ -2207,6 +2298,12 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Converts a floating-point value to an integer register.
     private void convertFloatingPointToInteger(MachineState state, long nextPc) {
+        executeConvertFloatingPointToInteger(state);
+        state.setPc(nextPc);
+    }
+
+    /// Converts a floating-point value to an integer register without updating `pc`.
+    private void executeConvertFloatingPointToInteger(MachineState state) {
         int roundingMode = effectiveRoundingMode(state);
         double value = floatingPointFormat() == SINGLE_FLOAT_FORMAT ? readSingle(state, rs1) : readDouble(state, rs1);
         switch (rs2) {
@@ -2216,12 +2313,17 @@ public abstract sealed class RiscVInstructionSemantics {
             case 3 -> state.setDecodedRegister(rd, convertToUnsignedInteger(state, value, roundingMode, 0x1.0p64));
             default -> throw unexpectedConversionSelector();
         }
-        state.setPc(nextPc);
     }
 
 
     /// Converts an integer register value to a floating-point register.
     private void convertIntegerToFloatingPoint(MachineState state, long nextPc) {
+        executeConvertIntegerToFloatingPoint(state);
+        state.setPc(nextPc);
+    }
+
+    /// Converts an integer register value to a floating-point register without updating `pc`.
+    private void executeConvertIntegerToFloatingPoint(MachineState state) {
         int roundingMode = effectiveRoundingMode(state);
         long value = state.decodedRegister(rs1);
         ExactBinaryValue exact = switch (rs2) {
@@ -2238,7 +2340,29 @@ public abstract sealed class RiscVInstructionSemantics {
             double result = roundDoubleResult(state, exact, exact.significand().doubleValue(), roundingMode);
             writeDoubleBits(state, rd, canonicalizeDoubleBits(result));
         }
-        state.setPc(nextPc);
+    }
+
+
+    /// Converts a double-precision value to a single-precision value without updating `pc`.
+    private void convertDoubleToSingle(MachineState state) {
+        int roundingMode = effectiveRoundingMode(state);
+        long bits = state.decodedFloatingPointRegister(rs1);
+        if (isSignalingDoubleNaN(bits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        double value = Double.longBitsToDouble(bits);
+        writeSingleBits(state, rd, canonicalizeSingleBits(roundSingleResult(state, value, (float) value, roundingMode)));
+    }
+
+
+    /// Converts a single-precision value to a double-precision value without updating `pc`.
+    private void convertSingleToDouble(MachineState state) {
+        checkEffectiveRoundingMode(state);
+        int bits = readSingleBits(state, rs1);
+        if (isSignalingSingleNaN(bits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        writeDoubleBits(state, rd, canonicalizeDoubleBits(Float.intBitsToFloat(bits)));
     }
 
 

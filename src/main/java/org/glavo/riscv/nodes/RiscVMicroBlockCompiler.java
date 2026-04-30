@@ -52,7 +52,7 @@ final class RiscVMicroBlockCompiler {
             DecodedInstruction instruction = instructions[index];
             operations[index] = instruction.operation();
             opcodes[index] = opcode(operations[index]);
-            requiresPreciseFastState |= requiresPreciseFastState(opcodes[index]);
+            requiresPreciseFastState |= requiresPreciseFastState(opcodes[index], instruction.immediate());
             operands[index] = RiscVMicroBlockNode.packRegisters(instruction.rd(), instruction.rs1(), instruction.rs2());
             raws[index] = instruction.raw();
             addresses[index] = instruction.address();
@@ -171,6 +171,19 @@ final class RiscVMicroBlockCompiler {
             case FLE -> RiscVMicroOpcode.FLE;
             case FMIN -> RiscVMicroOpcode.FMIN;
             case FMAX -> RiscVMicroOpcode.FMAX;
+            case FMADD -> RiscVMicroOpcode.FMADD;
+            case FMSUB -> RiscVMicroOpcode.FMSUB;
+            case FNMSUB -> RiscVMicroOpcode.FNMSUB;
+            case FNMADD -> RiscVMicroOpcode.FNMADD;
+            case FADD -> RiscVMicroOpcode.FADD;
+            case FSUB -> RiscVMicroOpcode.FSUB;
+            case FMUL -> RiscVMicroOpcode.FMUL;
+            case FDIV -> RiscVMicroOpcode.FDIV;
+            case FSQRT -> RiscVMicroOpcode.FSQRT;
+            case FCVT_S_D -> RiscVMicroOpcode.FCVT_S_D;
+            case FCVT_D_S -> RiscVMicroOpcode.FCVT_D_S;
+            case FCVT_INT_FP -> RiscVMicroOpcode.FCVT_INT_FP;
+            case FCVT_FP_INT -> RiscVMicroOpcode.FCVT_FP_INT;
             case LR_W -> RiscVMicroOpcode.LR_W;
             case LR_D -> RiscVMicroOpcode.LR_D;
             case SC_W -> RiscVMicroOpcode.SC_W;
@@ -198,7 +211,7 @@ final class RiscVMicroBlockCompiler {
     }
 
     /// Returns true when an opcode needs exact per-instruction fast-path state updates.
-    private static boolean requiresPreciseFastState(byte opcode) {
+    private static boolean requiresPreciseFastState(byte opcode, long immediate) {
         return switch (opcode) {
             case RiscVMicroOpcode.EXECUTE_OPERATION,
                     RiscVMicroOpcode.ECALL,
@@ -209,6 +222,19 @@ final class RiscVMicroBlockCompiler {
                     RiscVMicroOpcode.CSRRWI,
                     RiscVMicroOpcode.CSRRSI,
                     RiscVMicroOpcode.CSRRCI -> true;
+            case RiscVMicroOpcode.FMADD,
+                    RiscVMicroOpcode.FMSUB,
+                    RiscVMicroOpcode.FNMSUB,
+                    RiscVMicroOpcode.FNMADD,
+                    RiscVMicroOpcode.FADD,
+                    RiscVMicroOpcode.FSUB,
+                    RiscVMicroOpcode.FMUL,
+                    RiscVMicroOpcode.FDIV,
+                    RiscVMicroOpcode.FSQRT,
+                    RiscVMicroOpcode.FCVT_S_D,
+                    RiscVMicroOpcode.FCVT_D_S,
+                    RiscVMicroOpcode.FCVT_INT_FP,
+                    RiscVMicroOpcode.FCVT_FP_INT -> (immediate & 0x7) == 0x7;
             default -> false;
         };
     }

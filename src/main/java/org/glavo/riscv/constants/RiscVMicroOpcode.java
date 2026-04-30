@@ -335,6 +335,45 @@ public final class RiscVMicroOpcode {
     /// Executes `fmax.s` or `fmax.d`.
     public static final byte FMAX = 108;
 
+    /// Executes `fmadd.s` or `fmadd.d`.
+    public static final byte FMADD = 109;
+
+    /// Executes `fmsub.s` or `fmsub.d`.
+    public static final byte FMSUB = 110;
+
+    /// Executes `fnmsub.s` or `fnmsub.d`.
+    public static final byte FNMSUB = 111;
+
+    /// Executes `fnmadd.s` or `fnmadd.d`.
+    public static final byte FNMADD = 112;
+
+    /// Executes `fadd.s` or `fadd.d`.
+    public static final byte FADD = 113;
+
+    /// Executes `fsub.s` or `fsub.d`.
+    public static final byte FSUB = 114;
+
+    /// Executes `fmul.s` or `fmul.d`.
+    public static final byte FMUL = 115;
+
+    /// Executes `fdiv.s` or `fdiv.d`.
+    public static final byte FDIV = 116;
+
+    /// Executes `fsqrt.s` or `fsqrt.d`.
+    public static final byte FSQRT = 117;
+
+    /// Executes `fcvt.s.d`.
+    public static final byte FCVT_S_D = 118;
+
+    /// Executes `fcvt.d.s`.
+    public static final byte FCVT_D_S = 119;
+
+    /// Executes floating-point to integer conversion instructions.
+    public static final byte FCVT_INT_FP = 120;
+
+    /// Executes integer to floating-point conversion instructions.
+    public static final byte FCVT_FP_INT = 121;
+
     /// Prevents construction of this constants class.
     private RiscVMicroOpcode() {
     }
