@@ -202,10 +202,6 @@ Build and run the downloaded CoreMark example:
 ./gradlew testCoreMarkExample
 ```
 
-This downloads the fixed EEMBC CoreMark source zip, extracts the selected
-source files under `build/downloads/coremark`, and cross-compiles them as a
-static `riscv64-linux-musl` executable with Zig CC.
-
 Run every built-in C example check:
 
 ```text
