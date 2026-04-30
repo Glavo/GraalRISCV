@@ -2,14 +2,7 @@
 
 
 GraalRISCV is a pure Java 64-bit RISC-V user-mode emulator built with GraalVM’s Truffle framework.
-It can be used to run 64-bit RISC-V ELF executables on the JVM.
-
-The project is currently under development. It implements the complete
-RVA22U64 user-mode profile for statically linked 64-bit little-endian RISC-V
-ELF programs, including `Zkt` within the simulator's data-independent
-guest-visible execution model, plus compatible extensions such as `Zifencei`,
-`Zfa`, and `Zihintntl`. It can already run freestanding examples, static musl C
-programs, static Go programs, and CoreMark.
+It implements the RVA22U64 user-mode profile.
 
 ## Requirements
 

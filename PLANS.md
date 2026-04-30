@@ -32,6 +32,7 @@
 ### 5. Build, documentation, and performance groundwork
 
 - Zig, Go, SQLite, package smoke, CI aggregation, README, and native-image tasks are in place for the current example and packaging workflows.
+- README introductory wording is kept concise and states the implemented RVA22U64 user-mode profile without duplicating detailed workload or extension notes from later sections.
 - Gradle can download pinned `riscv-tests` and `riscv-test-env` source archives, build RV64GC `p` ISA test ELFs with Zig CC on Windows without invoking Make, and run the built ELFs against the simulator.
 - Performance diagnostics have been kept out of the default hot paths; tracing and Truffle compilation diagnostics remain opt-in debug or task-level probes.
 - The current trace and micro-bytecode executor includes specialized block execution modes and dedicated floating-point micro-opcodes.
