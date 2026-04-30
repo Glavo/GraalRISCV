@@ -24,8 +24,17 @@ public final class RiscVMicroBlockFloatingPointTest {
     /// The guest address used for micro-block execution tests.
     private static final long TEST_PC = Memory.DEFAULT_BASE_ADDRESS;
 
+    /// The `fflags` CSR address.
+    private static final int FFLAGS_CSR = 0x001;
+
     /// The `frm` CSR address.
     private static final int FRM_CSR = 0x002;
+
+    /// The canonical single-precision quiet NaN bit pattern.
+    private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
+
+    /// The canonical double-precision quiet NaN bit pattern.
+    private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
 
     /// Executes dedicated fixed-rounding floating-point micro-opcodes in batched mode.
     @Test
@@ -51,6 +60,44 @@ public final class RiscVMicroBlockFloatingPointTest {
             assertEquals(Double.doubleToRawLongBits(4.0d), machine.state().floatingPointRegister(6));
             assertEquals(4, machine.state().register(7));
             assertEquals(Double.doubleToRawLongBits(4.0d), machine.state().floatingPointRegister(8));
+        }
+    }
+
+    /// Verifies NaN edge behavior for dedicated floating-point micro-opcodes.
+    @Test
+    public void nanEdgeFloatingPointOpcodesExecuteInMicroBlock() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fminS(3, 1, 2),
+                    fmaxD(4, 5, 6),
+                    feqD(10, 7, 8),
+                    csrrs(11, FFLAGS_CSR, 0),
+                    csrrwi(0, FFLAGS_CSR, 0),
+                    fminD(9, 12, 13),
+                    fltD(12, 7, 8),
+                    fclassD(13, 12),
+                    csrrs(14, FFLAGS_CSR, 0),
+                    jal(0));
+            machine.state().setFloatingPointRegister(1, boxedSingle(CANONICAL_SINGLE_NAN));
+            machine.state().setFloatingPointRegister(2, boxedSingle(Float.floatToRawIntBits(2.0f)));
+            machine.state().setFloatingPointRegister(5, CANONICAL_DOUBLE_NAN);
+            machine.state().setFloatingPointRegister(6, Double.doubleToRawLongBits(-1.0d));
+            machine.state().setFloatingPointRegister(7, CANONICAL_DOUBLE_NAN);
+            machine.state().setFloatingPointRegister(8, Double.doubleToRawLongBits(1.0d));
+            machine.state().setFloatingPointRegister(12, 0x7ff0_0000_0000_0001L);
+            machine.state().setFloatingPointRegister(13, Double.doubleToRawLongBits(3.0d));
+
+            executeMicroBlock(machine);
+
+            assertEquals(boxedSingle(Float.floatToRawIntBits(2.0f)), machine.state().floatingPointRegister(3));
+            assertEquals(Double.doubleToRawLongBits(-1.0d), machine.state().floatingPointRegister(4));
+            assertEquals(0, machine.state().register(10));
+            assertEquals(0, machine.state().register(11));
+            assertEquals(Double.doubleToRawLongBits(3.0d), machine.state().floatingPointRegister(9));
+            assertEquals(0, machine.state().register(12));
+            assertEquals(1 << 8, machine.state().register(13));
+            assertEquals(0x10, machine.state().register(14));
         }
     }
 
@@ -100,6 +147,36 @@ public final class RiscVMicroBlockFloatingPointTest {
         return opFp(0x2d, rd, 0, rs1, 0);
     }
 
+    /// Encodes `fmin.s`.
+    private static int fminS(int rd, int rs1, int rs2) {
+        return opFp(0x14, rd, 0, rs1, rs2);
+    }
+
+    /// Encodes `fmin.d`.
+    private static int fminD(int rd, int rs1, int rs2) {
+        return opFp(0x15, rd, 0, rs1, rs2);
+    }
+
+    /// Encodes `fmax.d`.
+    private static int fmaxD(int rd, int rs1, int rs2) {
+        return opFp(0x15, rd, 1, rs1, rs2);
+    }
+
+    /// Encodes `feq.d`.
+    private static int feqD(int rd, int rs1, int rs2) {
+        return opFp(0x51, rd, 2, rs1, rs2);
+    }
+
+    /// Encodes `flt.d`.
+    private static int fltD(int rd, int rs1, int rs2) {
+        return opFp(0x51, rd, 1, rs1, rs2);
+    }
+
+    /// Encodes `fclass.d`.
+    private static int fclassD(int rd, int rs1) {
+        return opFp(0x71, rd, 1, rs1, 0);
+    }
+
     /// Encodes `fcvt.s.d`.
     private static int fcvtSD(int rd, int rs1) {
         return opFp(0x20, rd, 0, rs1, 1);
@@ -118,6 +195,16 @@ public final class RiscVMicroBlockFloatingPointTest {
     /// Encodes `fcvt.d.l`.
     private static int fcvtDL(int rd, int rs1) {
         return opFp(0x69, rd, 0, rs1, 2);
+    }
+
+    /// Encodes a CSR read-set instruction.
+    private static int csrrs(int rd, int csr, int rs1) {
+        return (csr << 20) | (rs1 << 15) | (2 << 12) | (rd << 7) | 0x73;
+    }
+
+    /// Encodes a CSR immediate write instruction.
+    private static int csrrwi(int rd, int csr, int immediate) {
+        return (csr << 20) | (immediate << 15) | (5 << 12) | (rd << 7) | 0x73;
     }
 
     /// Encodes an OP-FP instruction.

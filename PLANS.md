@@ -6,6 +6,7 @@
 
 - The simulator now targets the complete RVA20U64 user-mode profile and keeps RV64I, M, A, F, D, C, Zicsr, and Zifencei coverage in decoder, execution, CSR, atomic, and floating-point tests.
 - Floating-point execution covers fixed and dynamic rounding, exception flags, NaN boxing, canonical NaN behavior, fused multiply-add invalid-flag handling, and dedicated floating-point micro-opcode execution tests.
+- RV64GC edge coverage now includes signed division overflow, division-by-zero results, register shift masks, word result sign extension, quiet and signaling NaN comparisons, `fmin` / `fmax` NaN selection, NaN class bits, and invalid conversion saturation.
 
 ### 2. Linux user-mode execution scope
 
@@ -34,32 +35,27 @@
 
 ## Remaining Work
 
-### 1. Tighten RV64GC edge behavior
-
-- Keep RV64I, M, A, F, D, C, Zicsr, and Zifencei coverage stable while tightening edge semantics.
-- Continue focused floating-point exception-flag and NaN conformance work as new decoder or execution edge cases are identified.
-
-### 2. Broaden static Linux workload support
+### 1. Broaden static Linux workload support
 
 - Expand ELF, auxv, stack, `mmap`, and static-runtime behavior only when direct tests or acceptance workloads require it.
 - Preserve freestanding examples and existing static musl, static Go, and CoreMark coverage while broadening toward larger libc and language-runtime programs.
 - Keep the simulator user-mode only; do not implement privileged mode, guest page tables, interrupts, devices, or Linux kernel boot.
 
-### 3. Continue the memory and mapping cleanup
+### 2. Continue the memory and mapping cleanup
 
 - Continue moving ELF segments, stack, `brk`, anonymous `mmap`, `munmap`, `mprotect`, and `madvise` behavior toward one VMA and page-table implementation, reducing remaining syscall-side mapping duplication.
 - Extend lazy page commit, committed-page limits, configurable base page size, HugeTLB pool handling, and VMA split/merge coverage with broader Linux edge-case tests.
 - Preserve the `Unsafe` base-object plus byte-offset page backing shape so future native or file-mapped allocators can be added without reintroducing a long-term `MemorySegment` backend.
 - Continue improving paged-memory hot and slow paths, especially `MemoryAccess` local-cache checks, cross-page accesses, richer fault reporting, TLB lookup behavior, page-table lookup costs, and VMA protection checks.
 
-### 4. Expand syscall and thread compatibility
+### 3. Expand syscall and thread compatibility
 
 - Add syscall and flag edge cases only when backed by direct tests or acceptance workloads.
 - Continue expanding the `GuestProcess` / `GuestThread` split for signal delivery state and additional clone flag semantics.
 - Keep thread-style `clone` and futex behavior deterministic through Truffle `Env` guest threads.
 - Keep unsupported syscall diagnostics actionable with syscall number, guest PC, and argument registers.
 
-### 5. Maintain build, docs, and performance probes
+### 4. Maintain build, docs, and performance probes
 
 - Keep Zig, Go, package smoke, CI aggregation, and README coverage in sync as examples change.
 - Keep paged-memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and current VMA split/merge behavior as the syscall layer is simplified.

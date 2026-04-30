@@ -74,6 +74,20 @@ public final class RiscVInstructionSemanticsTest {
         assertEquals((long) Integer.MIN_VALUE, executeRegisterOperation(RiscVOperation.MULW, 0x4000_0000L, 2));
     }
 
+    /// Verifies register shift operations mask counts and word shifts sign-extend their low-word result.
+    @Test
+    public void registerShiftsMaskCountsAndWordResultsSignExtend() {
+        assertEquals(1, executeRegisterOperation(RiscVOperation.SLL, 1, 64));
+        assertEquals(2, executeRegisterOperation(RiscVOperation.SLL, 1, 65));
+        assertEquals(1, executeRegisterOperation(RiscVOperation.SRL, 1, 64));
+        assertEquals(-1L, executeRegisterOperation(RiscVOperation.SRA, -1, 64));
+
+        assertEquals(1, executeRegisterOperation(RiscVOperation.SLLW, 1, 32));
+        assertEquals((long) Integer.MIN_VALUE, executeRegisterOperation(RiscVOperation.SLLW, 1, 31));
+        assertEquals(1, executeRegisterOperation(RiscVOperation.SRLW, 0x8000_0000L, 31));
+        assertEquals(-1L, executeRegisterOperation(RiscVOperation.SRAW, 0xffff_ffffL, 63));
+    }
+
     /// Executes one register-register instruction and returns its destination register value.
     private static long executeRegisterOperation(RiscVOperation operation, long leftValue, long rightValue) {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {

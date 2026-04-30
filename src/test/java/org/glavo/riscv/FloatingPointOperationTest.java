@@ -48,6 +48,9 @@ public final class FloatingPointOperationTest {
     /// The fifth integer result register used by operation tests.
     private static final int FIFTH_RESULT_REGISTER = 14;
 
+    /// The sixth integer result register used by operation tests.
+    private static final int SIXTH_RESULT_REGISTER = 15;
+
     /// The first integer source register used by conversion tests.
     private static final int LEFT_INTEGER_REGISTER = 5;
 
@@ -368,6 +371,75 @@ public final class FloatingPointOperationTest {
         }
     }
 
+    /// Verifies NaN selection, quiet comparison flags, and classify results for floating-point edge cases.
+    @Test
+    public void nanMinimumMaximumCompareAndClassifyEdgesFollowRv64gcRules() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fminS(9, 1, 2),
+                    fmaxD(10, 3, 4),
+                    feqD(RESULT_REGISTER, 5, 6),
+                    csrrs(SECOND_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    csrrwi(0, FFLAGS_CSR, 0),
+                    fminD(11, 7, 8),
+                    fltD(THIRD_RESULT_REGISTER, 5, 6),
+                    fclassD(FOURTH_RESULT_REGISTER, 7),
+                    fclassD(FIFTH_RESULT_REGISTER, 5),
+                    csrrs(SIXTH_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeSingleBits(machine.state(), 1, CANONICAL_SINGLE_NAN);
+            writeSingleBits(machine.state(), 2, Float.floatToRawIntBits(2.0f));
+            writeDoubleBits(machine.state(), 3, CANONICAL_DOUBLE_NAN);
+            writeDouble(machine.state(), 4, -1.0d);
+            writeDoubleBits(machine.state(), 5, CANONICAL_DOUBLE_NAN);
+            writeDouble(machine.state(), 6, 1.0d);
+            writeDoubleBits(machine.state(), 7, 0x7ff0_0000_0000_0001L);
+            writeDouble(machine.state(), 8, 3.0d);
+
+            runDecodedProgram(machine);
+
+            assertEquals(boxedSingle(Float.floatToRawIntBits(2.0f)), machine.state().floatingPointRegister(9));
+            assertEquals(Double.doubleToRawLongBits(-1.0d), machine.state().floatingPointRegister(10));
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+            assertEquals(0, machine.state().register(SECOND_RESULT_REGISTER));
+            assertEquals(Double.doubleToRawLongBits(3.0d), machine.state().floatingPointRegister(11));
+            assertEquals(0, machine.state().register(THIRD_RESULT_REGISTER));
+            assertEquals(1 << 8, machine.state().register(FOURTH_RESULT_REGISTER));
+            assertEquals(1 << 9, machine.state().register(FIFTH_RESULT_REGISTER));
+            assertEquals(0x10, machine.state().register(SIXTH_RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies saturation results for invalid floating-point to integer conversion edges.
+    @Test
+    public void floatingPointToIntegerConversionSaturatesInvalidEdges() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fcvtWD(RESULT_REGISTER, 1),
+                    fcvtWUD(SECOND_RESULT_REGISTER, 2),
+                    fcvtLD(THIRD_RESULT_REGISTER, 3),
+                    fcvtLUD(FOURTH_RESULT_REGISTER, 4),
+                    csrrs(FIFTH_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            writeDoubleBits(machine.state(), 1, CANONICAL_DOUBLE_NAN);
+            writeDouble(machine.state(), 2, 0x1.0p32d);
+            writeDouble(machine.state(), 3, Double.NEGATIVE_INFINITY);
+            writeDoubleBits(machine.state(), 4, CANONICAL_DOUBLE_NAN);
+
+            runDecodedProgram(machine);
+
+            assertEquals(Integer.MAX_VALUE, machine.state().register(RESULT_REGISTER));
+            assertEquals(-1L, machine.state().register(SECOND_RESULT_REGISTER));
+            assertEquals(Long.MIN_VALUE, machine.state().register(THIRD_RESULT_REGISTER));
+            assertEquals(-1L, machine.state().register(FOURTH_RESULT_REGISTER));
+            assertEquals(0x10, machine.state().register(FIFTH_RESULT_REGISTER));
+        }
+    }
+
     /// Verifies that dynamic rounding uses the current `frm` value for conversion instructions.
     @Test
     public void dynamicRoundingModeControlsFloatingPointToIntegerConversion() {
@@ -580,6 +652,16 @@ public final class FloatingPointOperationTest {
         return opFp(0x14, rd, 1, rs1, rs2);
     }
 
+    /// Encodes `fmin.d`.
+    private static int fminD(int rd, int rs1, int rs2) {
+        return opFp(0x15, rd, 0, rs1, rs2);
+    }
+
+    /// Encodes `fmax.d`.
+    private static int fmaxD(int rd, int rs1, int rs2) {
+        return opFp(0x15, rd, 1, rs1, rs2);
+    }
+
     /// Encodes `fsgnjx.s`.
     private static int fsgnjxS(int rd, int rs1, int rs2) {
         return opFp(0x10, rd, 2, rs1, rs2);
@@ -643,6 +725,11 @@ public final class FloatingPointOperationTest {
     /// Encodes `fcvt.l.d`.
     private static int fcvtLD(int rd, int rs1) {
         return opFp(0x61, rd, 0, rs1, 2);
+    }
+
+    /// Encodes `fcvt.lu.d`.
+    private static int fcvtLUD(int rd, int rs1) {
+        return opFp(0x61, rd, 0, rs1, 3);
     }
 
     /// Encodes `fcvt.w.d`.
