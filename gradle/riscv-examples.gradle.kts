@@ -967,8 +967,9 @@ val coreMarkSourcePaths = listOf(
     "core_state.c",
     "core_util.c",
     "coremark.h",
-    "simple/core_portme.c",
-    "simple/core_portme.h"
+    "posix/core_portme.c",
+    "posix/core_portme.h",
+    "posix/core_portme_posix_overrides.h"
 )
 val coreMarkSourceFiles = coreMarkSourcePaths.associateWith { sourcePath ->
     coreMarkSourceDirectory.map { directory -> directory.file(sourcePath) }
@@ -1040,7 +1041,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildCoreMarkExample") {
         coreMarkSourceFiles.getValue("core_matrix.c"),
         coreMarkSourceFiles.getValue("core_state.c"),
         coreMarkSourceFiles.getValue("core_util.c"),
-        coreMarkSourceFiles.getValue("simple/core_portme.c")
+        coreMarkSourceFiles.getValue("posix/core_portme.c")
     )
     outputFile.set(coreMarkExampleElf)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
@@ -1051,10 +1052,11 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildCoreMarkExample") {
             "-g0",
             "-no-pie",
             "-DPERFORMANCE_RUN=1",
+            "-DSEED_METHOD=SEED_VOLATILE",
             "-DITERATIONS=6000",
-            "-DFLAGS_STR=\"-O2 -static -DPERFORMANCE_RUN=1 -DITERATIONS=6000\"",
+            "-DFLAGS_STR=\\\"-O2 -static -DPERFORMANCE_RUN=1 -DSEED_METHOD=SEED_VOLATILE -DITERATIONS=6000\\\"",
             "-I${coreMarkSourceDirectory.get().asFile.absolutePath}",
-            "-I${coreMarkSourceDirectory.get().dir("simple").asFile.absolutePath}"
+            "-I${coreMarkSourceDirectory.get().dir("posix").asFile.absolutePath}"
         )
     )
 }
