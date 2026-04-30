@@ -49,11 +49,20 @@ final class RiscVMicroBlockNode extends Node {
     /// The packed format value for single-precision floating-point operations.
     private static final int SINGLE_FLOAT_FORMAT = 0;
 
+    /// The packed format value for half-precision floating-point operations.
+    private static final int HALF_FLOAT_FORMAT = 2;
+
     /// The mask for a NaN-boxed single-precision value in an RV64 floating-point register.
     private static final long SINGLE_NAN_BOX_MASK = 0xffff_ffff_0000_0000L;
 
+    /// The mask for a NaN-boxed half-precision value in an RV64 floating-point register.
+    private static final long HALF_NAN_BOX_MASK = 0xffff_ffff_ffff_0000L;
+
     /// The canonical single-precision quiet NaN bit pattern.
     private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
+
+    /// The canonical half-precision quiet NaN bit pattern.
+    private static final int CANONICAL_HALF_NAN = 0x7e00;
 
     /// The canonical double-precision quiet NaN bit pattern.
     private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
@@ -589,9 +598,11 @@ final class RiscVMicroBlockNode extends Node {
     /// Executes a floating-point classify instruction.
     private void floatingPointClassify(MachineState state, long[] registers, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
-        long result = floatingPointFormat(index) == SINGLE_FLOAT_FORMAT
-                ? classifySingle(readSingleBits(state, rs1(operand)))
-                : classifyDouble(state.decodedFloatingPointRegister(rs1(operand)));
+        long result = switch (floatingPointFormat(index)) {
+            case HALF_FLOAT_FORMAT -> classifyHalf(readHalfBits(state, rs1(operand)));
+            case SINGLE_FLOAT_FORMAT -> classifySingle(readSingleBits(state, rs1(operand)));
+            default -> classifyDouble(state.decodedFloatingPointRegister(rs1(operand)));
+        };
         writeRegister(registers, rd(operand), result);
         finishInstruction(state, index, mode);
     }
@@ -599,9 +610,11 @@ final class RiscVMicroBlockNode extends Node {
     /// Executes a raw floating-point-to-integer register move instruction.
     private void moveFloatingPointToInteger(MachineState state, long[] registers, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
-        long value = floatingPointFormat(index) == SINGLE_FLOAT_FORMAT
-                ? (int) state.decodedFloatingPointRegister(rs1(operand))
-                : state.decodedFloatingPointRegister(rs1(operand));
+        long value = switch (floatingPointFormat(index)) {
+            case HALF_FLOAT_FORMAT -> (short) state.decodedFloatingPointRegister(rs1(operand));
+            case SINGLE_FLOAT_FORMAT -> (int) state.decodedFloatingPointRegister(rs1(operand));
+            default -> state.decodedFloatingPointRegister(rs1(operand));
+        };
         writeRegister(registers, rd(operand), value);
         finishInstruction(state, index, mode);
     }
@@ -609,10 +622,10 @@ final class RiscVMicroBlockNode extends Node {
     /// Executes a raw integer-to-floating-point register move instruction.
     private void moveIntegerToFloatingPoint(MachineState state, long[] registers, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
-        if (floatingPointFormat(index) == SINGLE_FLOAT_FORMAT) {
-            writeSingleBits(state, rd(operand), (int) registers[rs1(operand)]);
-        } else {
-            state.setDecodedFloatingPointRegister(rd(operand), registers[rs1(operand)]);
+        switch (floatingPointFormat(index)) {
+            case HALF_FLOAT_FORMAT -> writeHalfBits(state, rd(operand), (int) registers[rs1(operand)]);
+            case SINGLE_FLOAT_FORMAT -> writeSingleBits(state, rd(operand), (int) registers[rs1(operand)]);
+            default -> state.setDecodedFloatingPointRegister(rd(operand), registers[rs1(operand)]);
         }
         finishInstruction(state, index, mode);
     }
@@ -1006,15 +1019,46 @@ final class RiscVMicroBlockNode extends Node {
         return (int) ((immediates[index] >>> FLOATING_POINT_FORMAT_SHIFT) & 0x3);
     }
 
+    /// Reads a half-precision register as raw bits, applying NaN-boxing rules.
+    private static int readHalfBits(MachineState state, int register) {
+        long value = state.decodedFloatingPointRegister(register);
+        return (value & HALF_NAN_BOX_MASK) == HALF_NAN_BOX_MASK ? (int) value & 0xffff : CANONICAL_HALF_NAN;
+    }
+
     /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
     private static int readSingleBits(MachineState state, int register) {
         long value = state.decodedFloatingPointRegister(register);
         return (value & SINGLE_NAN_BOX_MASK) == SINGLE_NAN_BOX_MASK ? (int) value : CANONICAL_SINGLE_NAN;
     }
 
+    /// Writes raw half-precision bits to a NaN-boxed floating-point register.
+    private static void writeHalfBits(MachineState state, int register, int bits) {
+        state.setDecodedFloatingPointRegister(register, HALF_NAN_BOX_MASK | (bits & 0xffffL));
+    }
+
     /// Writes raw single-precision bits to a NaN-boxed floating-point register.
     private static void writeSingleBits(MachineState state, int register, int bits) {
         state.setDecodedFloatingPointRegister(register, SINGLE_NAN_BOX_MASK | (bits & 0xffff_ffffL));
+    }
+
+    /// Classifies raw half-precision bits.
+    private static int classifyHalf(int bits) {
+        int exponent = bits & 0x7c00;
+        int fraction = bits & 0x03ff;
+        boolean negative = (bits & 0x8000) != 0;
+        if (exponent == 0x7c00) {
+            if (fraction == 0) {
+                return negative ? 1 : 1 << 7;
+            }
+            return (fraction & 0x0200) == 0 ? 1 << 8 : 1 << 9;
+        }
+        if (exponent == 0) {
+            if (fraction == 0) {
+                return negative ? 1 << 3 : 1 << 4;
+            }
+            return negative ? 1 << 2 : 1 << 5;
+        }
+        return negative ? 1 << 1 : 1 << 6;
     }
 
     /// Classifies raw single-precision bits.

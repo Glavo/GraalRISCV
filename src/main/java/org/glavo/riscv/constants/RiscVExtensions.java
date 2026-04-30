@@ -29,6 +29,9 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_EXT_ZICBOZ`.
     public static final long HWPROBE_EXT_ZICBOZ = 1 << 6;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZFHMIN`.
+    public static final long HWPROBE_EXT_ZFHMIN = 1 << 28;
+
     /// Linux `RISCV_HWPROBE_EXT_ZIHINTNTL`.
     public static final long HWPROBE_EXT_ZIHINTNTL = 1L << 29;
 
@@ -52,6 +55,7 @@ public final class RiscVExtensions {
                     | HWPROBE_EXT_ZBB
                     | HWPROBE_EXT_ZBS
                     | HWPROBE_EXT_ZICBOZ
+                    | HWPROBE_EXT_ZFHMIN
                     | HWPROBE_EXT_ZIHINTNTL
                     | HWPROBE_EXT_ZIHINTPAUSE
                     | HWPROBE_EXT_ZICNTR

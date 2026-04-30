@@ -140,6 +140,7 @@ public final class RiscVDecoder {
     /// Decodes floating-point load instructions.
     private static DecodedInstruction decodeFloatingPointLoad(long address, int raw) {
         RiscVOperation operation = switch (funct3(raw)) {
+            case 1 -> RiscVOperation.FLH;
             case 2 -> RiscVOperation.FLW;
             case 3 -> RiscVOperation.FLD;
             default -> throw illegalException(address, raw);
@@ -162,6 +163,7 @@ public final class RiscVDecoder {
     /// Decodes floating-point store instructions.
     private static DecodedInstruction decodeFloatingPointStore(long address, int raw) {
         RiscVOperation operation = switch (funct3(raw)) {
+            case 1 -> RiscVOperation.FSH;
             case 2 -> RiscVOperation.FSW;
             case 3 -> RiscVOperation.FSD;
             default -> throw illegalException(address, raw);
@@ -187,18 +189,43 @@ public final class RiscVDecoder {
     /// Decodes floating-point arithmetic, conversion, move, compare, and classify instructions.
     private static DecodedInstruction decodeFloatingPointOperation(long address, int raw) {
         int funct7 = (raw >>> 25) & 0x7f;
-        int format = requireFloatingPointFormat(address, raw, funct7 & 0x1);
+        int format = funct7 & 0x3;
         int roundingMode = funct3(raw);
         return switch (funct7) {
-            case 0x00, 0x01 -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FADD, format, roundingMode);
-            case 0x04, 0x05 -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FSUB, format, roundingMode);
-            case 0x08, 0x09 -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FMUL, format, roundingMode);
-            case 0x0c, 0x0d -> roundedFloatingPointInstruction(address, raw, RiscVOperation.FDIV, format, roundingMode);
+            case 0x00, 0x01 -> roundedFloatingPointInstruction(
+                    address,
+                    raw,
+                    RiscVOperation.FADD,
+                    requireFloatingPointFormat(address, raw, format),
+                    roundingMode);
+            case 0x04, 0x05 -> roundedFloatingPointInstruction(
+                    address,
+                    raw,
+                    RiscVOperation.FSUB,
+                    requireFloatingPointFormat(address, raw, format),
+                    roundingMode);
+            case 0x08, 0x09 -> roundedFloatingPointInstruction(
+                    address,
+                    raw,
+                    RiscVOperation.FMUL,
+                    requireFloatingPointFormat(address, raw, format),
+                    roundingMode);
+            case 0x0c, 0x0d -> roundedFloatingPointInstruction(
+                    address,
+                    raw,
+                    RiscVOperation.FDIV,
+                    requireFloatingPointFormat(address, raw, format),
+                    roundingMode);
             case 0x2c, 0x2d -> {
                 if (rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }
-                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FSQRT, format, roundingMode);
+                yield roundedFloatingPointInstruction(
+                        address,
+                        raw,
+                        RiscVOperation.FSQRT,
+                        requireFloatingPointFormat(address, raw, format),
+                        roundingMode);
             }
             case 0x10, 0x11 -> {
                 RiscVOperation operation = switch (funct3(raw)) {
@@ -207,7 +234,15 @@ public final class RiscVDecoder {
                     case 2 -> RiscVOperation.FSGNJX;
                     default -> throw illegalException(address, raw);
                 };
-                yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
+                yield instruction(
+                        address,
+                        raw,
+                        operation,
+                        rd(raw),
+                        rs1(raw),
+                        rs2(raw),
+                        floatingPointImmediate(requireFloatingPointFormat(address, raw, format)),
+                        false);
             }
             case 0x14, 0x15 -> {
                 RiscVOperation operation = switch (funct3(raw)) {
@@ -215,19 +250,39 @@ public final class RiscVDecoder {
                     case 1 -> RiscVOperation.FMAX;
                     default -> throw illegalException(address, raw);
                 };
-                yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
+                yield instruction(
+                        address,
+                        raw,
+                        operation,
+                        rd(raw),
+                        rs1(raw),
+                        rs2(raw),
+                        floatingPointImmediate(requireFloatingPointFormat(address, raw, format)),
+                        false);
             }
             case 0x20 -> {
-                if (rs2(raw) != 1) {
-                    throw illegalException(address, raw);
-                }
-                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_S_D, 0, roundingMode);
+                RiscVOperation operation = switch (rs2(raw)) {
+                    case 1 -> RiscVOperation.FCVT_S_D;
+                    case 2 -> RiscVOperation.FCVT_S_H;
+                    default -> throw illegalException(address, raw);
+                };
+                yield roundedFloatingPointInstruction(address, raw, operation, 0, roundingMode);
             }
             case 0x21 -> {
-                if (rs2(raw) != 0) {
-                    throw illegalException(address, raw);
-                }
-                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_D_S, 1, roundingMode);
+                RiscVOperation operation = switch (rs2(raw)) {
+                    case 0 -> RiscVOperation.FCVT_D_S;
+                    case 2 -> RiscVOperation.FCVT_D_H;
+                    default -> throw illegalException(address, raw);
+                };
+                yield roundedFloatingPointInstruction(address, raw, operation, 1, roundingMode);
+            }
+            case 0x22 -> {
+                RiscVOperation operation = switch (rs2(raw)) {
+                    case 0 -> RiscVOperation.FCVT_H_S;
+                    case 1 -> RiscVOperation.FCVT_H_D;
+                    default -> throw illegalException(address, raw);
+                };
+                yield roundedFloatingPointInstruction(address, raw, operation, 2, roundingMode);
             }
             case 0x50, 0x51 -> {
                 RiscVOperation operation = switch (funct3(raw)) {
@@ -236,32 +291,71 @@ public final class RiscVDecoder {
                     case 2 -> RiscVOperation.FEQ;
                     default -> throw illegalException(address, raw);
                 };
-                yield instruction(address, raw, operation, rd(raw), rs1(raw), rs2(raw), floatingPointImmediate(format), false);
+                yield instruction(
+                        address,
+                        raw,
+                        operation,
+                        rd(raw),
+                        rs1(raw),
+                        rs2(raw),
+                        floatingPointImmediate(requireFloatingPointFormat(address, raw, format)),
+                        false);
             }
             case 0x60, 0x61 -> {
                 requireConversionSelector(address, raw, rs2(raw));
-                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_INT_FP, format, roundingMode);
+                yield roundedFloatingPointInstruction(
+                        address,
+                        raw,
+                        RiscVOperation.FCVT_INT_FP,
+                        requireFloatingPointFormat(address, raw, format),
+                        roundingMode);
             }
             case 0x68, 0x69 -> {
                 requireConversionSelector(address, raw, rs2(raw));
-                yield roundedFloatingPointInstruction(address, raw, RiscVOperation.FCVT_FP_INT, format, roundingMode);
+                yield roundedFloatingPointInstruction(
+                        address,
+                        raw,
+                        RiscVOperation.FCVT_FP_INT,
+                        requireFloatingPointFormat(address, raw, format),
+                        roundingMode);
             }
-            case 0x70, 0x71 -> {
+            case 0x70, 0x71, 0x72 -> {
                 if (rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }
                 RiscVOperation operation = switch (funct3(raw)) {
                     case 0 -> RiscVOperation.FMV_X_FP;
-                    case 1 -> RiscVOperation.FCLASS;
+                    case 1 -> {
+                        if (format == 2) {
+                            throw illegalException(address, raw);
+                        }
+                        yield RiscVOperation.FCLASS;
+                    }
                     default -> throw illegalException(address, raw);
                 };
-                yield instruction(address, raw, operation, rd(raw), rs1(raw), 0, floatingPointImmediate(format), false);
+                yield instruction(
+                        address,
+                        raw,
+                        operation,
+                        rd(raw),
+                        rs1(raw),
+                        0,
+                        floatingPointImmediate(requireStorageFloatingPointFormat(address, raw, format)),
+                        false);
             }
-            case 0x78, 0x79 -> {
+            case 0x78, 0x79, 0x7a -> {
                 if (funct3(raw) != 0 || rs2(raw) != 0) {
                     throw illegalException(address, raw);
                 }
-                yield instruction(address, raw, RiscVOperation.FMV_FP_X, rd(raw), rs1(raw), 0, floatingPointImmediate(format), false);
+                yield instruction(
+                        address,
+                        raw,
+                        RiscVOperation.FMV_FP_X,
+                        rd(raw),
+                        rs1(raw),
+                        0,
+                        floatingPointImmediate(requireStorageFloatingPointFormat(address, raw, format)),
+                        false);
             }
             default -> throw illegalException(address, raw);
         };
@@ -804,6 +898,14 @@ public final class RiscVDecoder {
     /// Validates an F or D floating-point format field.
     private static int requireFloatingPointFormat(long address, int raw, int format) {
         if (format == 0 || format == 1) {
+            return format;
+        }
+        throw illegalException(address, raw);
+    }
+
+    /// Validates an F, D, or H floating-point storage format field.
+    private static int requireStorageFloatingPointFormat(long address, int raw, int format) {
+        if (format == 0 || format == 1 || format == 2) {
             return format;
         }
         throw illegalException(address, raw);

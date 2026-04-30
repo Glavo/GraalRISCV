@@ -70,6 +70,23 @@ public final class FloatingPointMemoryInstructionTest {
         }
     }
 
+    /// Verifies that 16-bit floating-point loads NaN-box values and stores the low halfword.
+    @Test
+    public void halfLoadNaNBoxesAndStoreWritesLowBits() {
+        try (TestMachine machine = TestMachine.create()) {
+            int value = 0x3c00;
+            machine.memory().writeShort(DATA_ADDRESS, (short) value);
+            loadInstructions(machine.memory(), flh(10, ADDRESS_REGISTER, 0), fsh(ADDRESS_REGISTER, 10, Short.BYTES), ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(ADDRESS_REGISTER, DATA_ADDRESS);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0xffff_ffff_ffff_3c00L, machine.state().floatingPointRegister(10));
+            assertEquals(value, machine.memory().readUnsignedShort(DATA_ADDRESS + Short.BYTES));
+        }
+    }
+
     /// Verifies compressed floating-point memory instructions that use compressed base registers.
     @Test
     public void compressedDoubleLoadStoreUsesCompressedBaseOffsets() {
@@ -150,6 +167,11 @@ public final class FloatingPointMemoryInstructionTest {
         memory.load(TEST_PC, code, 0, code.length);
     }
 
+    /// Encodes `flh`.
+    private static int flh(int rd, int rs1, int immediate) {
+        return ElfTestImages.iType(0x07, rd, 1, rs1, immediate);
+    }
+
     /// Encodes `flw`.
     private static int flw(int rd, int rs1, int immediate) {
         return ElfTestImages.iType(0x07, rd, 2, rs1, immediate);
@@ -163,6 +185,11 @@ public final class FloatingPointMemoryInstructionTest {
     /// Encodes `fsw`.
     private static int fsw(int rs1, int rs2, int immediate) {
         return floatingPointStore(2, rs1, rs2, immediate);
+    }
+
+    /// Encodes `fsh`.
+    private static int fsh(int rs1, int rs2, int immediate) {
+        return floatingPointStore(1, rs1, rs2, immediate);
     }
 
     /// Encodes `fsd`.

@@ -12,7 +12,7 @@
 
 - The implementation remains user-mode only; privileged mode, guest page tables, interrupts, devices, and Linux kernel boot have not been added.
 - A narrow `riscv-test-env` bootstrap compatibility shim supports the machine CSRs and `mret` needed to enter its `p` tests without implementing full privileged mode.
-- Static ELF execution now covers the bundled freestanding examples, static musl C examples, static Go hello-world example, and CoreMark.
+- Static ELF execution now covers the bundled freestanding examples, static musl C examples, static Go hello-world and showcase examples, SQLite showcase, and CoreMark.
 - The default memory layout is Linux-like and sparse: base address `0`, a large virtual address window, and `memorySize` as a guest virtual address window size rather than an eager host-memory allocation size.
 
 ### 3. Paged virtual memory foundation
@@ -30,7 +30,7 @@
 
 ### 5. Build, documentation, and performance groundwork
 
-- Zig, Go, package smoke, CI aggregation, README, and native-image tasks are in place for the current example and packaging workflows.
+- Zig, Go, SQLite, package smoke, CI aggregation, README, and native-image tasks are in place for the current example and packaging workflows.
 - Gradle can download pinned `riscv-tests` and `riscv-test-env` source archives, build RV64GC `p` ISA test ELFs with Zig CC on Windows without invoking Make, and run the built ELFs against the simulator.
 - Performance diagnostics have been kept out of the default hot paths; tracing and Truffle compilation diagnostics remain opt-in debug or task-level probes.
 - The current trace and micro-bytecode executor includes specialized block execution modes and dedicated floating-point micro-opcodes.
@@ -40,16 +40,17 @@
 - RVA22U64 is being implemented as a compatible default superset without adding a profile-selection CLI.
 - A central `RiscVExtensions` capability description now feeds Linux `riscv_hwprobe` extension bits and cache-block sizes.
 - `Zba`, `Zbb`, and `Zbs` integer bit-manipulation instructions are decoded and executed in the interpreter and through the micro-bytecode generic operation path.
+- `Zfhmin` half-precision data-transfer and conversion instructions are decoded and executed, including `FLH`, `FSH`, `FMV.X.H`, `FMV.H.X`, `FCVT.S.H`, `FCVT.H.S`, and the `D`-dependent `FCVT.D.H` / `FCVT.H.D` conversions.
 - `Zicbom` cache-block clean, flush, and invalidate decode as no-ops in the current cacheless model; `Zicboz` zeroes the containing 64-byte cache block through normal guest memory writes.
-- Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, and existing `Zicntr` capabilities, plus 64-byte CBO block-size keys.
-- Focused interpreter, decoder, micro-bytecode, hint, CBO, and `hwprobe` tests cover the implemented first slice.
+- Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, and existing `Zicntr` capabilities, plus 64-byte CBO block-size keys.
+- Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented first slice.
 
 ## Remaining Work
 
 ### 1. Broaden static Linux workload support
 
 - Expand ELF, auxv, stack, `mmap`, and static-runtime behavior only when direct tests or acceptance workloads require it.
-- Preserve freestanding examples and existing static musl, static Go, and CoreMark coverage while broadening toward larger libc and language-runtime programs.
+- Preserve freestanding examples and existing static musl, static Go, SQLite, and CoreMark coverage while broadening toward larger libc and language-runtime programs.
 - Keep the simulator user-mode only; do not implement privileged mode, guest page tables, interrupts, devices, or Linux kernel boot.
 
 ### 2. Continue the memory and mapping cleanup
@@ -68,7 +69,7 @@
 
 ### 4. Prepare RVA22U64 functional user-mode support
 
-- Complete the remaining RVA22U64 user-visible instruction extensions, especially `Zfa` and `Zfhmin`.
+- Complete the remaining RVA22U64 user-visible instruction extensions, especially `Zfa`.
 - Audit existing behavior against the non-instruction RVA22U64 requirements that matter in user mode, including misaligned access behavior, LR/SC reservation constraints, counter CSRs, self-modifying-code visibility, and `hwprobe` block-size reporting.
 - Do not report optional RVA22U64 extensions such as `V`, full `Zfh`, `Zicond`, `Zacas`, or `Zawrs` until they are implemented and tested.
 - Do not claim timing-certified `Zkt` behavior in documentation or `hwprobe`; keep the target as functional user-mode support unless a later plan explicitly adds timing conformance work.
@@ -79,7 +80,7 @@
 
 - Keep Zig, Go, package smoke, CI aggregation, and README coverage in sync as examples change.
 - Keep paged-memory tests covering lazy commit, committed-page limits, configurable page size, HugeTLB pool accounting, and current VMA split/merge behavior as the syscall layer is simplified.
-- Keep freestanding, static musl, static Go, CoreMark, and `riscv-tests` as acceptance workloads for the paged-memory migration and RV64GC behavior.
+- Keep freestanding, static musl, static Go, SQLite, CoreMark, and `riscv-tests` as acceptance workloads for the paged-memory migration and RV64GC behavior.
 - Tune the existing trace executor instead of adding a separate branch-prediction subsystem: measure and adjust trace length, hot-successor thresholds, batched store fast paths, the trace direct-call PIC, trace lookup hashing, side-exit behavior, and interaction with Graal compilation diagnostics.
 - Evaluate deeper register staging for the custom micro-bytecode executor beyond the current local register-array access.
 - Treat `@TruffleBoundary` on hot generic instruction execution, MethodHandle or lambda-based instruction dispatch, broad ELF predecode, and broad synchronization removal as experiment-only ideas unless diagnostics identify them as real bottlenecks.

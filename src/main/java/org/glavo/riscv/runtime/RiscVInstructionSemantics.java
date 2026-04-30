@@ -28,11 +28,29 @@ public abstract sealed class RiscVInstructionSemantics {
     /// The packed format value for double-precision floating-point operations.
     private static final int DOUBLE_FLOAT_FORMAT = 1;
 
+    /// The packed format value for half-precision floating-point operations.
+    private static final int HALF_FLOAT_FORMAT = 2;
+
     /// The mask for a NaN-boxed single-precision value in an RV64 floating-point register.
     private static final long SINGLE_NAN_BOX_MASK = 0xffff_ffff_0000_0000L;
 
+    /// The mask for a NaN-boxed half-precision value in an RV64 floating-point register.
+    private static final long HALF_NAN_BOX_MASK = 0xffff_ffff_ffff_0000L;
+
     /// The canonical single-precision quiet NaN bit pattern.
     private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
+
+    /// The canonical half-precision quiet NaN bit pattern.
+    private static final int CANONICAL_HALF_NAN = 0x7e00;
+
+    /// The positive infinity half-precision bit pattern without a sign bit.
+    private static final int HALF_POSITIVE_INFINITY = 0x7c00;
+
+    /// The largest positive finite half-precision bit pattern.
+    private static final int HALF_MAX_FINITE = 0x7bff;
+
+    /// The smallest positive normal half-precision bit pattern.
+    private static final int HALF_MIN_NORMAL = 0x0400;
 
     /// The canonical double-precision quiet NaN bit pattern.
     private static final long CANONICAL_DOUBLE_NAN = 0x7ff8_0000_0000_0000L;
@@ -171,13 +189,13 @@ public abstract sealed class RiscVInstructionSemantics {
             case LBU -> new LbuInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LHU -> new LhuInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LWU -> new LwuInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case FLW, FLD ->
+            case FLH, FLW, FLD ->
                     new FloatingPointLoadInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case SB -> new SbInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case SH -> new ShInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case SW -> new SwInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case SD -> new SdInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
-            case FSW, FSD ->
+            case FSH, FSW, FSD ->
                     new FloatingPointStoreInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case ADDI -> new AddiInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case XORI -> new XoriInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
@@ -218,8 +236,8 @@ public abstract sealed class RiscVInstructionSemantics {
                     CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO ->
                     new Rva22InstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
-                    FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
-                    FMV_X_FP, FMV_FP_X ->
+                    FMIN, FMAX, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H, FCVT_H_S, FCVT_H_D,
+                    FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT, FMV_X_FP, FMV_FP_X ->
                     new FloatingPointInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
                     AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
@@ -425,9 +443,9 @@ public abstract sealed class RiscVInstructionSemantics {
                 case NOP, FENCE, FENCE_I, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU,
                         CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, ECALL, EBREAK, MRET -> executeControl(state, nextPc);
                 case LB, LH, LW, LD, LBU, LHU, LWU -> executeLoad(state, memory, nextPc);
-                case FLW, FLD -> executeFloatingPointLoad(state, memory, nextPc);
+                case FLH, FLW, FLD -> executeFloatingPointLoad(state, memory, nextPc);
                 case SB, SH, SW, SD -> executeStore(state, memory, nextPc);
-                case FSW, FSD -> executeFloatingPointStore(state, memory, nextPc);
+                case FSH, FSW, FSD -> executeFloatingPointStore(state, memory, nextPc);
                 case ADDI, SLTI, SLTIU, XORI, ORI, ANDI, SLLI, SRLI, SRAI, ADDIW, SLLIW, SRLIW, SRAIW ->
                         executeImmediateInteger(state, nextPc);
                 case ADD, SUB, SLL, SLT, SLTU, XOR, SRL, SRA, OR, AND, ADDW, SUBW, SLLW, SRLW, SRAW ->
@@ -440,8 +458,9 @@ public abstract sealed class RiscVInstructionSemantics {
                         BCLR, BCLRI, BEXT, BEXTI, BINV, BINVI, BSET, BSETI,
                         CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO -> executeRva22(state, memory, nextPc);
                 case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
-                        FMIN, FMAX, FCVT_S_D, FCVT_D_S, FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT,
-                        FMV_X_FP, FMV_FP_X -> executeFloatingPointOperation(state, nextPc);
+                        FMIN, FMAX, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H, FCVT_H_S, FCVT_H_D,
+                        FEQ, FLT, FLE, FCLASS, FCVT_INT_FP, FCVT_FP_INT, FMV_X_FP, FMV_FP_X ->
+                        executeFloatingPointOperation(state, nextPc);
                 case LR_W, LR_D, SC_W, SC_D, AMOSWAP_W, AMOADD_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
                         AMOMAX_W, AMOMINU_W, AMOMAXU_W, AMOSWAP_D, AMOADD_D, AMOXOR_D, AMOAND_D, AMOOR_D,
                         AMOMIN_D, AMOMAX_D, AMOMINU_D, AMOMAXU_D -> executeAtomic(state, memory, nextPc);
@@ -1628,6 +1647,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes floating-point load operations.
     protected final void executeFloatingPointLoad(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
+            case FLH -> loadFloatHalf(state, memory, nextPc);
             case FLW -> loadFloatWord(state, memory, nextPc);
             case FLD -> loadFloatDouble(state, memory, nextPc);
             default -> throw unexpectedOperationGroup("floating-point load");
@@ -1650,6 +1670,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes floating-point store operations.
     protected final void executeFloatingPointStore(MachineState state, Memory memory, long nextPc) {
         switch (operation) {
+            case FSH -> storeFloatHalf(state, memory, nextPc);
             case FSW -> storeFloatWord(state, memory, nextPc);
             case FSD -> storeFloatDouble(state, memory, nextPc);
             default -> throw unexpectedOperationGroup("floating-point store");
@@ -1797,8 +1818,24 @@ public abstract sealed class RiscVInstructionSemantics {
                 convertDoubleToSingle(state);
                 state.setPc(nextPc);
             }
+            case FCVT_S_H -> {
+                convertHalfToSingle(state);
+                state.setPc(nextPc);
+            }
             case FCVT_D_S -> {
                 convertSingleToDouble(state);
+                state.setPc(nextPc);
+            }
+            case FCVT_D_H -> {
+                convertHalfToDouble(state);
+                state.setPc(nextPc);
+            }
+            case FCVT_H_S -> {
+                convertSingleToHalf(state);
+                state.setPc(nextPc);
+            }
+            case FCVT_H_D -> {
+                convertDoubleToHalf(state);
                 state.setPc(nextPc);
             }
             case FEQ -> floatingPointCompare(state, nextPc, CompareKind.EQUAL);
@@ -1813,16 +1850,18 @@ public abstract sealed class RiscVInstructionSemantics {
             case FCVT_INT_FP -> convertFloatingPointToInteger(state, nextPc);
             case FCVT_FP_INT -> convertIntegerToFloatingPoint(state, nextPc);
             case FMV_X_FP -> {
-                state.setDecodedRegister(rd, floatingPointFormat() == SINGLE_FLOAT_FORMAT
-                        ? (int) state.decodedFloatingPointRegister(rs1)
-                        : state.decodedFloatingPointRegister(rs1));
+                state.setDecodedRegister(rd, switch (floatingPointFormat()) {
+                    case HALF_FLOAT_FORMAT -> (short) state.decodedFloatingPointRegister(rs1);
+                    case SINGLE_FLOAT_FORMAT -> (int) state.decodedFloatingPointRegister(rs1);
+                    default -> state.decodedFloatingPointRegister(rs1);
+                });
                 state.setPc(nextPc);
             }
             case FMV_FP_X -> {
-                if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
-                    writeSingleBits(state, rd, (int) state.decodedRegister(rs1));
-                } else {
-                    writeDoubleBits(state, rd, state.decodedRegister(rs1));
+                switch (floatingPointFormat()) {
+                    case HALF_FLOAT_FORMAT -> writeHalfBits(state, rd, (int) state.decodedRegister(rs1));
+                    case SINGLE_FLOAT_FORMAT -> writeSingleBits(state, rd, (int) state.decodedRegister(rs1));
+                    default -> writeDoubleBits(state, rd, state.decodedRegister(rs1));
                 }
                 state.setPc(nextPc);
             }
@@ -2004,6 +2043,12 @@ public abstract sealed class RiscVInstructionSemantics {
         state.setPc(nextPc);
     }
 
+    /// Loads a 16-bit floating-point value and NaN-boxes it in a 64-bit FP register.
+    private void loadFloatHalf(MachineState state, Memory memory, long nextPc) {
+        writeHalfBits(state, rd, memory.readUnsignedShort(state.decodedRegister(rs1) + immediate));
+        state.setPc(nextPc);
+    }
+
     /// Loads a 32-bit floating-point value and NaN-boxes it in a 64-bit FP register.
     private void loadFloatWord(MachineState state, Memory memory, long nextPc) {
         state.setDecodedFloatingPointRegister(rd, 0xffff_ffff_0000_0000L | memory.readUnsignedInt(state.decodedRegister(rs1) + immediate));
@@ -2051,6 +2096,16 @@ public abstract sealed class RiscVInstructionSemantics {
         long address = state.decodedRegister(rs1) + immediate;
         memory.writeLong(address, state.decodedRegister(rs2));
         afterStore(state, address, Long.BYTES);
+        state.clearReservation();
+        state.setPc(nextPc);
+    }
+
+
+    /// Stores the low 16 bits of a floating-point register.
+    private void storeFloatHalf(MachineState state, Memory memory, long nextPc) {
+        long address = state.decodedRegister(rs1) + immediate;
+        memory.writeShort(address, (short) state.decodedFloatingPointRegister(rs2));
+        afterStore(state, address, Short.BYTES);
         state.clearReservation();
         state.setPc(nextPc);
     }
@@ -2493,6 +2548,17 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
 
+    /// Converts a half-precision value to a single-precision value without updating `pc`.
+    private void convertHalfToSingle(MachineState state) {
+        checkEffectiveRoundingMode(state);
+        int bits = readHalfBits(state, rs1);
+        if (isSignalingHalfNaN(bits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        writeSingleBits(state, rd, canonicalizeSingleBits(Float.float16ToFloat((short) bits)));
+    }
+
+
     /// Converts a single-precision value to a double-precision value without updating `pc`.
     private void convertSingleToDouble(MachineState state) {
         checkEffectiveRoundingMode(state);
@@ -2501,6 +2567,33 @@ public abstract sealed class RiscVInstructionSemantics {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
         writeDoubleBits(state, rd, canonicalizeDoubleBits(Float.intBitsToFloat(bits)));
+    }
+
+
+    /// Converts a half-precision value to a double-precision value without updating `pc`.
+    private void convertHalfToDouble(MachineState state) {
+        checkEffectiveRoundingMode(state);
+        int bits = readHalfBits(state, rs1);
+        if (isSignalingHalfNaN(bits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        writeDoubleBits(state, rd, canonicalizeDoubleBits(Float.float16ToFloat((short) bits)));
+    }
+
+
+    /// Converts a single-precision value to a half-precision value without updating `pc`.
+    private void convertSingleToHalf(MachineState state) {
+        int roundingMode = effectiveRoundingMode(state);
+        int bits = readSingleBits(state, rs1);
+        writeHalfBits(state, rd, convertSingleBitsToHalfBits(state, bits, roundingMode));
+    }
+
+
+    /// Converts a double-precision value to a half-precision value without updating `pc`.
+    private void convertDoubleToHalf(MachineState state) {
+        int roundingMode = effectiveRoundingMode(state);
+        long bits = state.decodedFloatingPointRegister(rs1);
+        writeHalfBits(state, rd, convertDoubleBitsToHalfBits(state, bits, roundingMode));
     }
 
 
@@ -3164,6 +3257,30 @@ public abstract sealed class RiscVInstructionSemantics {
         return bits < 0 ? new ExactBinaryValue(significand.negate(), exponent) : new ExactBinaryValue(significand, exponent);
     }
 
+    /// Returns the exact binary value represented by finite half-precision bits.
+    private static ExactBinaryValue exactHalfValue(int bits) {
+        int fraction = bits & 0x03ff;
+        int exponentBits = (bits >>> 10) & 0x1f;
+        if (exponentBits == 0x1f) {
+            throw new AssertionError("Half-precision infinities and NaNs do not have finite exact values");
+        }
+        BigInteger significand;
+        int exponent;
+        if (exponentBits == 0) {
+            significand = BigInteger.valueOf(fraction);
+            exponent = -24;
+        } else {
+            significand = BigInteger.valueOf((1 << 10) | fraction);
+            exponent = exponentBits - 25;
+        }
+        return (bits & 0x8000) != 0 ? new ExactBinaryValue(significand.negate(), exponent) : new ExactBinaryValue(significand, exponent);
+    }
+
+    /// Returns the half-precision RNE overflow threshold value.
+    private static ExactBinaryValue halfOverflowThresholdValue() {
+        return new ExactBinaryValue(BigInteger.valueOf(4095), 4);
+    }
+
     /// Returns the exact binary value represented by finite double-precision bits.
     private static ExactBinaryValue exactDoubleValue(long bits) {
         long fraction = bits & 0x000f_ffff_ffff_ffffL;
@@ -3213,6 +3330,16 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Compares the magnitudes of two exact binary values.
     private static int compareBinaryMagnitudes(ExactBinaryValue left, ExactBinaryValue right) {
         return compareBinaryValues(left.abs(), right.abs());
+    }
+
+    /// Compares the distances from an exact value to neighboring exact binary values.
+    private static int compareBinaryDistances(
+            ExactBinaryValue exact,
+            ExactBinaryValue lower,
+            ExactBinaryValue upper) {
+        ExactBinaryValue lowerDistance = subtractBinaryValues(exact, lower);
+        ExactBinaryValue upperDistance = subtractBinaryValues(upper, exact);
+        return compareBinaryMagnitudes(lowerDistance, upperDistance);
     }
 
     /// Compares a square root of an exact binary value with a non-negative exact binary candidate.
@@ -3294,6 +3421,12 @@ public abstract sealed class RiscVInstructionSemantics {
         }
     }
 
+    /// Reads a half-precision register as raw bits, applying NaN-boxing rules.
+    private static int readHalfBits(MachineState state, int register) {
+        long value = state.decodedFloatingPointRegister(register);
+        return (value & HALF_NAN_BOX_MASK) == HALF_NAN_BOX_MASK ? (int) value & 0xffff : CANONICAL_HALF_NAN;
+    }
+
     /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
     private static int readSingleBits(MachineState state, int register) {
         long value = state.decodedFloatingPointRegister(register);
@@ -3308,6 +3441,11 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Reads a double-precision register as a Java double.
     private static double readDouble(MachineState state, int register) {
         return Double.longBitsToDouble(state.decodedFloatingPointRegister(register));
+    }
+
+    /// Writes raw half-precision bits to a NaN-boxed floating-point register.
+    private static void writeHalfBits(MachineState state, int register, int bits) {
+        state.setDecodedFloatingPointRegister(register, HALF_NAN_BOX_MASK | (bits & 0xffffL));
     }
 
     /// Writes raw single-precision bits to a NaN-boxed floating-point register.
@@ -3328,6 +3466,154 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Canonicalizes a double-precision NaN result.
     private static long canonicalizeDoubleBits(double value) {
         return Double.isNaN(value) ? CANONICAL_DOUBLE_NAN : Double.doubleToRawLongBits(value);
+    }
+
+    /// Converts raw single-precision bits to raw half-precision bits.
+    private static int convertSingleBitsToHalfBits(MachineState state, int bits, int roundingMode) {
+        int sign = (bits >>> 16) & 0x8000;
+        int magnitude = bits & 0x7fff_ffff;
+        if (isSignalingSingleNaN(bits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        if ((magnitude & 0x7f80_0000) == 0x7f80_0000) {
+            return sign | ((magnitude & 0x007f_ffff) == 0 ? HALF_POSITIVE_INFINITY : CANONICAL_HALF_NAN);
+        }
+        if (magnitude == 0) {
+            return sign;
+        }
+        return roundHalfExactBinaryResult(state, exactSingleValue(bits), sign, roundingMode);
+    }
+
+    /// Converts raw double-precision bits to raw half-precision bits.
+    private static int convertDoubleBitsToHalfBits(MachineState state, long bits, int roundingMode) {
+        int sign = (int) ((bits >>> 48) & 0x8000);
+        long magnitude = bits & 0x7fff_ffff_ffff_ffffL;
+        if (isSignalingDoubleNaN(bits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        if ((magnitude & 0x7ff0_0000_0000_0000L) == 0x7ff0_0000_0000_0000L) {
+            return sign | ((magnitude & 0x000f_ffff_ffff_ffffL) == 0 ? HALF_POSITIVE_INFINITY : CANONICAL_HALF_NAN);
+        }
+        if (magnitude == 0) {
+            return sign;
+        }
+        return roundHalfExactBinaryResult(state, exactDoubleValue(bits), sign, roundingMode);
+    }
+
+    /// Rounds a finite exact binary value to half precision and records arithmetic flags.
+    private static int roundHalfExactBinaryResult(
+            MachineState state,
+            ExactBinaryValue exact,
+            int zeroSign,
+            int roundingMode) {
+        int exactSign = exact.signum();
+        if (exactSign == 0) {
+            return zeroSign;
+        }
+
+        boolean negative = exactSign < 0;
+        int sign = negative ? 0x8000 : 0;
+        ExactBinaryValue magnitude = exact.abs();
+        int roundedMagnitude;
+        boolean overflow = false;
+        if (compareBinaryValues(magnitude, exactHalfValue(HALF_MAX_FINITE)) > 0) {
+            int overflowComparison = compareBinaryValues(magnitude, halfOverflowThresholdValue());
+            roundedMagnitude = roundHalfOverflow(negative, roundingMode, overflowComparison);
+            overflow = overflowComparison >= 0 || roundedMagnitude == HALF_POSITIVE_INFINITY;
+        } else {
+            int lower = lowerHalfMagnitude(magnitude);
+            int comparison = compareBinaryValues(magnitude, exactHalfValue(lower));
+            if (comparison == 0) {
+                return sign | lower;
+            }
+            int upper = nextUpPositiveHalf(lower);
+            roundedMagnitude = roundHalfInexact(negative, magnitude, lower, upper, roundingMode);
+            overflow = roundedMagnitude == HALF_POSITIVE_INFINITY;
+        }
+
+        int result = sign | roundedMagnitude;
+        updateHalfExactArithmeticFlags(state, result, overflow);
+        return result;
+    }
+
+    /// Rounds an inexact finite value between two positive half-precision magnitudes.
+    private static int roundHalfInexact(
+            boolean negative,
+            ExactBinaryValue magnitude,
+            int lower,
+            int upper,
+            int roundingMode) {
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN -> roundHalfNearestEven(magnitude, lower, upper);
+            case ROUND_TOWARD_ZERO -> lower;
+            case ROUND_DOWN -> negative ? upper : lower;
+            case ROUND_UP -> negative ? lower : upper;
+            case ROUND_NEAREST_MAX_MAGNITUDE -> roundHalfNearestMaxMagnitude(magnitude, lower, upper);
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Rounds a half-precision overflow edge according to the requested rounding mode.
+    private static int roundHalfOverflow(boolean negative, int roundingMode, int overflowComparison) {
+        return switch (roundingMode) {
+            case ROUND_NEAREST_EVEN, ROUND_NEAREST_MAX_MAGNITUDE ->
+                    overflowComparison >= 0 ? HALF_POSITIVE_INFINITY : HALF_MAX_FINITE;
+            case ROUND_TOWARD_ZERO -> HALF_MAX_FINITE;
+            case ROUND_DOWN -> negative ? HALF_POSITIVE_INFINITY : HALF_MAX_FINITE;
+            case ROUND_UP -> negative ? HALF_MAX_FINITE : HALF_POSITIVE_INFINITY;
+            default -> throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
+        };
+    }
+
+    /// Applies RNE tie handling for a half-precision result.
+    private static int roundHalfNearestEven(ExactBinaryValue magnitude, int lower, int upper) {
+        int comparison = compareBinaryDistances(magnitude, exactHalfValue(lower), exactHalfValue(upper));
+        if (comparison < 0) {
+            return lower;
+        }
+        if (comparison > 0) {
+            return upper;
+        }
+        return (lower & 1) == 0 ? lower : upper;
+    }
+
+    /// Applies RMM tie handling for a half-precision result.
+    private static int roundHalfNearestMaxMagnitude(ExactBinaryValue magnitude, int lower, int upper) {
+        int comparison = compareBinaryDistances(magnitude, exactHalfValue(lower), exactHalfValue(upper));
+        return comparison < 0 ? lower : upper;
+    }
+
+    /// Returns the greatest positive finite half-precision magnitude no larger than the exact value.
+    private static int lowerHalfMagnitude(ExactBinaryValue magnitude) {
+        int lower = 0;
+        int upper = HALF_MAX_FINITE;
+        while (lower < upper) {
+            int middle = (lower + upper + 1) >>> 1;
+            if (compareBinaryValues(exactHalfValue(middle), magnitude) <= 0) {
+                lower = middle;
+            } else {
+                upper = middle - 1;
+            }
+        }
+        return lower;
+    }
+
+    /// Returns the next larger positive half-precision magnitude.
+    private static int nextUpPositiveHalf(int bits) {
+        return bits >= HALF_POSITIVE_INFINITY ? HALF_POSITIVE_INFINITY : bits + 1;
+    }
+
+    /// Records half-precision flags for an inexact finite source value.
+    private static void updateHalfExactArithmeticFlags(MachineState state, int roundedBits, boolean overflow) {
+        if (overflow || (roundedBits & 0x7fff) == HALF_POSITIVE_INFINITY) {
+            state.addFloatingPointFlags(FLOATING_POINT_OVERFLOW | FLOATING_POINT_INEXACT);
+            return;
+        }
+        state.addFloatingPointFlags(FLOATING_POINT_INEXACT);
+        int magnitude = roundedBits & 0x7fff;
+        if (magnitude == 0 || magnitude < HALF_MIN_NORMAL) {
+            state.addFloatingPointFlags(FLOATING_POINT_UNDERFLOW);
+        }
     }
 
     /// Computes RISC-V single-precision minimum bits.
@@ -3472,6 +3758,13 @@ public abstract sealed class RiscVInstructionSemantics {
         return (bits & 0x7f80_0000) == 0x7f80_0000
                 && (bits & 0x007f_ffff) != 0
                 && (bits & 0x0040_0000) == 0;
+    }
+
+    /// Returns true for a signaling half-precision NaN bit pattern.
+    private static boolean isSignalingHalfNaN(int bits) {
+        return (bits & 0x7c00) == 0x7c00
+                && (bits & 0x03ff) != 0
+                && (bits & 0x0200) == 0;
     }
 
     /// Returns true for a signaling double-precision NaN bit pattern.

@@ -185,6 +185,68 @@ tasks.register<JavaExec>("runGoHelloWorldExample") {
     }
 }
 
+// Static Go showcase example.
+val goShowcaseExampleDirectory = layout.projectDirectory.dir("examples/go/go-showcase")
+val goShowcaseExampleElf = layout.buildDirectory.file("examples/go/go-showcase/showcase")
+
+tasks.register<RiscVGoBuildTask>("buildGoShowcaseExample") {
+    group = "verification"
+    description = "Builds examples/go/go-showcase as a static linux/riscv64 Go workload."
+
+    configureGoExecutable()
+    moduleDirectory.set(goShowcaseExampleDirectory)
+    outputFile.set(goShowcaseExampleElf)
+    buildCacheDirectory.set(layout.buildDirectory.dir("go-build-cache"))
+    moduleCacheDirectory.set(layout.buildDirectory.dir("go-module-cache"))
+}
+
+tasks.register<JavaExec>("testGoShowcaseExample") {
+    group = "verification"
+    description = "Builds and verifies the static linux/riscv64 Go showcase workload."
+
+    dependsOn("classes", "buildGoShowcaseExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(goShowcaseExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (!actualOutput.endsWith("go-showcase-ok\n")) {
+            throw GradleException("Unexpected Go showcase output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Go showcase example wrote to stderr: $actualError")
+        }
+    }
+}
+
+tasks.register<JavaExec>("runGoShowcaseExample") {
+    group = "verification"
+    description = "Runs the static linux/riscv64 Go showcase workload with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildGoShowcaseExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(goShowcaseExampleElf.get().asFile.absolutePath))
+    }
+}
+
 // Freestanding Hello World example.
 val helloWorldExampleElf = layout.buildDirectory.file("examples/freestanding/hello.elf")
 
@@ -1053,6 +1115,175 @@ tasks.register<JavaExec>("testLinuxStaticProcessSignalsExample") {
     }
 }
 
+// Downloaded static Linux SQLite showcase example.
+val sqliteVersion = "3520000"
+val sqliteArchiveRoot = "sqlite-autoconf-$sqliteVersion"
+val sqliteArchiveFile = layout.buildDirectory.file("downloads/sqlite/sqlite-autoconf-$sqliteVersion.tar.gz")
+val sqliteSourceDirectory = layout.buildDirectory.dir("downloads/sqlite/$sqliteVersion")
+val sqliteExampleElf = layout.buildDirectory.file("examples/linux-static/sqlite-showcase.elf")
+val sqliteRoot = layout.buildDirectory.dir("tmp/linux-static-sqlite-root")
+val sqliteSourcePaths = listOf(
+    "sqlite3.c",
+    "sqlite3.h"
+)
+val sqliteSourceFiles = sqliteSourcePaths.associateWith { sourcePath ->
+    sqliteSourceDirectory.map { directory -> directory.file(sourcePath) }
+}
+
+val downloadSQLiteArchive by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
+    group = "build setup"
+    description = "Downloads SQLite amalgamation source package version $sqliteVersion."
+
+    src("https://www.sqlite.org/2026/sqlite-autoconf-$sqliteVersion.tar.gz")
+    dest(sqliteArchiveFile.get().asFile)
+    overwrite(false)
+    tempAndMove(true)
+    retries(3)
+    connectTimeout(30_000)
+    readTimeout(30_000)
+
+    doFirst {
+        val archive = sqliteArchiveFile.get().asFile
+        val parent = archive.parentFile
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            throw GradleException("Failed to create SQLite archive directory: $parent")
+        }
+        if (archive.isFile && archive.length() == 0L) {
+            delete(archive)
+        }
+    }
+}
+
+tasks.register("extractSQLiteSources") {
+    group = "build setup"
+    description = "Extracts the selected SQLite amalgamation sources used by the SQLite showcase example."
+
+    dependsOn(downloadSQLiteArchive)
+    inputs.file(sqliteArchiveFile)
+    outputs.files(sqliteSourceFiles.values)
+
+    doLast {
+        copy {
+            from(tarTree(resources.gzip(sqliteArchiveFile.get().asFile))) {
+                sqliteSourcePaths.forEach { sourcePath ->
+                    include("$sqliteArchiveRoot/$sourcePath")
+                }
+                eachFile {
+                    relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray())
+                }
+                includeEmptyDirs = false
+            }
+            into(sqliteSourceDirectory)
+        }
+        val missingFiles = sqliteSourceFiles.values
+            .map { it.get().asFile }
+            .filterNot { it.isFile }
+        if (missingFiles.isNotEmpty()) {
+            throw GradleException("SQLite archive did not contain expected files: ${missingFiles.joinToString()}")
+        }
+    }
+}
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildSQLiteShowcaseExample") {
+    group = "verification"
+    description = "Downloads SQLite and builds a static riscv64-linux-musl file-database showcase executable."
+
+    dependsOn("extractSQLiteSources")
+    configureZigExecutable()
+    sourceFiles.from(
+        layout.projectDirectory.file("examples/linux-static/SQLiteDemo.c"),
+        sqliteSourceFiles.getValue("sqlite3.c")
+    )
+    outputFile.set(sqliteExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        listOf(
+            "-O2",
+            "-g0",
+            "-no-pie",
+            "-DSQLITE_THREADSAFE=0",
+            "-DSQLITE_OMIT_LOAD_EXTENSION",
+            "-DSQLITE_TEMP_STORE=3",
+            "-DSQLITE_DEFAULT_MEMSTATUS=0",
+            "-I${sqliteSourceDirectory.get().asFile.absolutePath}"
+        )
+    )
+}
+
+tasks.register<JavaExec>("testSQLiteShowcaseExample") {
+    group = "verification"
+    description = "Runs the downloaded SQLite showcase example and verifies the database workload output."
+
+    dependsOn("classes", "buildSQLiteShowcaseExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = sqliteRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create SQLite showcase root mount: $root")
+        }
+
+        setArgs(listOf("--mount", "/=${root.absolutePath}", sqliteExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val expectedOutput = """
+            sqlite-version=3.52.0
+            rows=64
+            value-sum=89440
+            fizz=21:29799
+            recursive=16:1496
+            sqlite-showcase-ok
+        """.trimIndent() + "\n"
+        if (actualOutput != expectedOutput) {
+            throw GradleException("Unexpected SQLite showcase output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("SQLite showcase example wrote to stderr: $actualError")
+        }
+
+        val databaseFile = sqliteRoot.get().file("showcase.db").asFile
+        if (!databaseFile.isFile || databaseFile.length() == 0L) {
+            throw GradleException("SQLite showcase did not create a non-empty database file: $databaseFile")
+        }
+    }
+}
+
+tasks.register<JavaExec>("runSQLiteShowcaseExample") {
+    group = "verification"
+    description = "Runs the downloaded SQLite showcase example with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildSQLiteShowcaseExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        val root = sqliteRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create SQLite showcase root mount: $root")
+        }
+
+        setArgs(listOf("--mount", "/=${root.absolutePath}", sqliteExampleElf.get().asFile.absolutePath))
+    }
+}
+
 // Downloaded static Linux CoreMark example.
 val coreMarkRevision = "1f483d5b8316753a742cbf5590caf5bd0a4e4777"
 val coreMarkArchiveRoot = "coremark-$coreMarkRevision"
@@ -1208,6 +1439,18 @@ tasks.register<JavaExec>("testCoreMarkExample") {
             throw GradleException("CoreMark example wrote to stderr: $actualError")
         }
     }
+}
+
+tasks.register("checkShowcaseExamples") {
+    group = "verification"
+    description = "Runs the larger demonstration workloads suitable for showcase use."
+
+    dependsOn(
+        "testGoShowcaseExample",
+        "testHotLoopExample",
+        "testSQLiteShowcaseExample",
+        "testCoreMarkExample"
+    )
 }
 
 // Example aggregate checks.

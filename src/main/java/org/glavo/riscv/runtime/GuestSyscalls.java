@@ -547,6 +547,21 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `F_SETFL`.
     private static final long F_SETFL = 4;
 
+    /// Linux `F_GETLK`.
+    private static final long F_GETLK = 5;
+
+    /// Linux `F_SETLK`.
+    private static final long F_SETLK = 6;
+
+    /// Linux `F_SETLKW`.
+    private static final long F_SETLKW = 7;
+
+    /// Linux `F_UNLCK`.
+    private static final short F_UNLCK = 2;
+
+    /// The byte offset of `l_type` inside Linux RISC-V 64-bit `struct flock`.
+    private static final int FLOCK_TYPE_OFFSET = 0;
+
     /// The maximum guest path length accepted by `openat`, including the terminator.
     private static final int PATH_MAX = 4096;
 
@@ -3538,6 +3553,13 @@ public final class GuestSyscalls implements AutoCloseable {
             return statusFlagsFor(fileDescriptor);
         }
         if (command == F_SETFL) {
+            return 0;
+        }
+        if (command == F_GETLK) {
+            memory.writeShort(argument + FLOCK_TYPE_OFFSET, F_UNLCK);
+            return 0;
+        }
+        if (command == F_SETLK || command == F_SETLKW) {
             return 0;
         }
         return EINVAL;

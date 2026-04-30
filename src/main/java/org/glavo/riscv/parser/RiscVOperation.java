@@ -44,6 +44,8 @@ public enum RiscVOperation {
     LHU,
     /// Load unsigned word.
     LWU,
+    /// Load 16-bit floating-point value.
+    FLH,
     /// Load 32-bit floating-point value.
     FLW,
     /// Load 64-bit floating-point value.
@@ -56,6 +58,8 @@ public enum RiscVOperation {
     SW,
     /// Store doubleword.
     SD,
+    /// Store 16-bit floating-point value.
+    FSH,
     /// Store 32-bit floating-point value.
     FSW,
     /// Store 64-bit floating-point value.
@@ -90,8 +94,16 @@ public enum RiscVOperation {
     FMAX,
     /// Convert double-precision value to single-precision value.
     FCVT_S_D,
+    /// Convert half-precision value to single-precision value.
+    FCVT_S_H,
     /// Convert single-precision value to double-precision value.
     FCVT_D_S,
+    /// Convert half-precision value to double-precision value.
+    FCVT_D_H,
+    /// Convert single-precision value to half-precision value.
+    FCVT_H_S,
+    /// Convert double-precision value to half-precision value.
+    FCVT_H_D,
     /// Floating-point equal comparison.
     FEQ,
     /// Floating-point less-than comparison.

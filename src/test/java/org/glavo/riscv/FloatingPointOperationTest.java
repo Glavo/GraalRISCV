@@ -69,6 +69,9 @@ public final class FloatingPointOperationTest {
     /// The canonical single-precision quiet NaN bit pattern.
     private static final int CANONICAL_SINGLE_NAN = 0x7fc0_0000;
 
+    /// The canonical half-precision quiet NaN bit pattern.
+    private static final int CANONICAL_HALF_NAN = 0x7e00;
+
     /// The Linux syscall register.
     private static final int SYSCALL_REGISTER = 17;
 
@@ -269,6 +272,71 @@ public final class FloatingPointOperationTest {
             assertEquals(-3, machine.state().register(SECOND_RESULT_REGISTER));
             assertEquals(Double.doubleToRawLongBits(-3.0d), machine.state().floatingPointRegister(3));
             assertEquals(boxedSingle(Float.floatToRawIntBits(42.0f)), machine.state().floatingPointRegister(4));
+        }
+    }
+
+    /// Verifies Zfhmin half-precision moves and floating-point conversions.
+    @Test
+    public void minimalHalfPrecisionMovesAndConversionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fmvHX(1, LEFT_INTEGER_REGISTER),
+                    fmvXH(RESULT_REGISTER, 1),
+                    fcvtSH(2, 1),
+                    fcvtHS(3, 2),
+                    fcvtDH(4, 1),
+                    fcvtHD(5, 4),
+                    fmvXH(SECOND_RESULT_REGISTER, 3),
+                    fmvXH(THIRD_RESULT_REGISTER, 5),
+                    fcvtHS(6, 7, 2),
+                    fcvtHS(8, 9, 3),
+                    fmvXH(FOURTH_RESULT_REGISTER, 6),
+                    fmvXH(FIFTH_RESULT_REGISTER, 8),
+                    csrrs(SIXTH_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(LEFT_INTEGER_REGISTER, 0xffff_ffff_ffff_bc00L);
+            writeSingleBits(machine.state(), 7, Float.floatToRawIntBits(1.0f + 0x1.0p-11f));
+            writeSingleBits(machine.state(), 9, Float.floatToRawIntBits(1.0f + 0x1.0p-11f));
+
+            runDecodedProgram(machine);
+
+            assertEquals(boxedHalf(0xbc00), machine.state().floatingPointRegister(1));
+            assertEquals(0xffff_ffff_ffff_bc00L, machine.state().register(RESULT_REGISTER));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(-1.0f)), machine.state().floatingPointRegister(2));
+            assertEquals(boxedHalf(0xbc00), machine.state().floatingPointRegister(3));
+            assertEquals(Double.doubleToRawLongBits(-1.0d), machine.state().floatingPointRegister(4));
+            assertEquals(boxedHalf(0xbc00), machine.state().floatingPointRegister(5));
+            assertEquals(0xffff_ffff_ffff_bc00L, machine.state().register(SECOND_RESULT_REGISTER));
+            assertEquals(0xffff_ffff_ffff_bc00L, machine.state().register(THIRD_RESULT_REGISTER));
+            assertEquals(0x3c00, machine.state().register(FOURTH_RESULT_REGISTER));
+            assertEquals(0x3c01, machine.state().register(FIFTH_RESULT_REGISTER));
+            assertEquals(0x01, machine.state().register(SIXTH_RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies half-precision NaN boxing and canonical NaN conversion behavior.
+    @Test
+    public void halfPrecisionNanBoxingAndCanonicalNanEdgesExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fcvtSH(1, LEFT_FLOAT_REGISTER),
+                    fcvtHD(2, RIGHT_FLOAT_REGISTER),
+                    fmvXH(RESULT_REGISTER, 2),
+                    csrrs(SECOND_RESULT_REGISTER, FFLAGS_CSR, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setFloatingPointRegister(LEFT_FLOAT_REGISTER, 0x1234);
+            writeDoubleBits(machine.state(), RIGHT_FLOAT_REGISTER, 0x7ff0_0000_0000_0001L);
+
+            runDecodedProgram(machine);
+
+            assertEquals(boxedSingle(CANONICAL_SINGLE_NAN), machine.state().floatingPointRegister(1));
+            assertEquals(boxedHalf(CANONICAL_HALF_NAN), machine.state().floatingPointRegister(2));
+            assertEquals(0x7e00, machine.state().register(RESULT_REGISTER));
+            assertEquals(0x10, machine.state().register(SECOND_RESULT_REGISTER));
         }
     }
 
@@ -597,6 +665,11 @@ public final class FloatingPointOperationTest {
         return 0xffff_ffff_0000_0000L | (bits & 0xffff_ffffL);
     }
 
+    /// Returns an RV64 NaN-boxed half-precision bit pattern.
+    private static long boxedHalf(int bits) {
+        return 0xffff_ffff_ffff_0000L | (bits & 0xffffL);
+    }
+
     /// Encodes `fadd.d`.
     private static int faddD(int rd, int rs1, int rs2) {
         return opFp(0x01, rd, 0, rs1, rs2);
@@ -712,6 +785,11 @@ public final class FloatingPointOperationTest {
         return opFp(0x71, rd, 1, rs1, 0);
     }
 
+    /// Encodes `fmv.x.h`.
+    private static int fmvXH(int rd, int rs1) {
+        return opFp(0x72, rd, 0, rs1, 0);
+    }
+
     /// Encodes `fmv.x.w`.
     private static int fmvXW(int rd, int rs1) {
         return opFp(0x70, rd, 0, rs1, 0);
@@ -777,9 +855,39 @@ public final class FloatingPointOperationTest {
         return opFp(0x21, rd, 0, rs1, 0);
     }
 
+    /// Encodes `fcvt.s.h`.
+    private static int fcvtSH(int rd, int rs1) {
+        return opFp(0x20, rd, 0, rs1, 2);
+    }
+
+    /// Encodes `fcvt.d.h`.
+    private static int fcvtDH(int rd, int rs1) {
+        return opFp(0x21, rd, 0, rs1, 2);
+    }
+
+    /// Encodes `fcvt.h.s`.
+    private static int fcvtHS(int rd, int rs1) {
+        return fcvtHS(rd, rs1, 0);
+    }
+
+    /// Encodes `fcvt.h.s` with an explicit rounding mode.
+    private static int fcvtHS(int rd, int rs1, int roundingMode) {
+        return opFp(0x22, rd, roundingMode, rs1, 0);
+    }
+
+    /// Encodes `fcvt.h.d`.
+    private static int fcvtHD(int rd, int rs1) {
+        return opFp(0x22, rd, 0, rs1, 1);
+    }
+
     /// Encodes `fcvt.s.d`.
     private static int fcvtSD(int rd, int rs1) {
         return opFp(0x20, rd, 0, rs1, 1);
+    }
+
+    /// Encodes `fmv.h.x`.
+    private static int fmvHX(int rd, int rs1) {
+        return opFp(0x7a, rd, 0, rs1, 0);
     }
 
     /// Encodes `fcvt.s.d` with an explicit rounding mode.

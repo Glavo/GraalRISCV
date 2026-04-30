@@ -131,6 +131,30 @@ public final class RiscVMicroBlockFloatingPointTest {
         }
     }
 
+    /// Verifies Zfhmin half-precision moves and conversions in micro-block execution.
+    @Test
+    public void minimalHalfPrecisionOperationsExecuteInMicroBlock() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    fmvHX(1, 10),
+                    fmvXH(11, 1),
+                    fcvtSH(2, 1),
+                    fcvtHS(3, 2),
+                    fmvXH(12, 3),
+                    jal(0));
+            machine.state().setRegister(10, 0x3c00);
+
+            executeMicroBlock(machine);
+
+            assertEquals(boxedHalf(0x3c00), machine.state().floatingPointRegister(1));
+            assertEquals(0x3c00, machine.state().register(11));
+            assertEquals(boxedSingle(Float.floatToRawIntBits(1.0f)), machine.state().floatingPointRegister(2));
+            assertEquals(boxedHalf(0x3c00), machine.state().floatingPointRegister(3));
+            assertEquals(0x3c00, machine.state().register(12));
+        }
+    }
+
     /// Executes one decoded block through the micro-bytecode node.
     private static void executeMicroBlock(TestMachine machine) {
         RiscVMicroBlockNode block = RiscVMicroBlockCompiler.compileNode(
@@ -197,9 +221,29 @@ public final class RiscVMicroBlockFloatingPointTest {
         return opFp(0x70, rd, 0, rs1, 0);
     }
 
+    /// Encodes `fmv.x.h`.
+    private static int fmvXH(int rd, int rs1) {
+        return opFp(0x72, rd, 0, rs1, 0);
+    }
+
+    /// Encodes `fmv.h.x`.
+    private static int fmvHX(int rd, int rs1) {
+        return opFp(0x7a, rd, 0, rs1, 0);
+    }
+
     /// Encodes `fcvt.s.d`.
     private static int fcvtSD(int rd, int rs1) {
         return opFp(0x20, rd, 0, rs1, 1);
+    }
+
+    /// Encodes `fcvt.s.h`.
+    private static int fcvtSH(int rd, int rs1) {
+        return opFp(0x20, rd, 0, rs1, 2);
+    }
+
+    /// Encodes `fcvt.h.s`.
+    private static int fcvtHS(int rd, int rs1) {
+        return opFp(0x22, rd, 0, rs1, 0);
     }
 
     /// Encodes `fcvt.d.s`.
@@ -244,6 +288,11 @@ public final class RiscVMicroBlockFloatingPointTest {
     /// Returns an RV64 NaN-boxed single-precision bit pattern.
     private static long boxedSingle(int bits) {
         return 0xffff_ffff_0000_0000L | (bits & 0xffff_ffffL);
+    }
+
+    /// Returns an RV64 NaN-boxed half-precision bit pattern.
+    private static long boxedHalf(int bits) {
+        return 0xffff_ffff_ffff_0000L | (bits & 0xffffL);
     }
 
     /// Owns a micro-block test machine and its closeable resources.
