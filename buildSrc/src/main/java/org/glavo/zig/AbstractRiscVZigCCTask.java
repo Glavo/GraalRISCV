@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.glavo;
+package org.glavo.zig;
 
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;

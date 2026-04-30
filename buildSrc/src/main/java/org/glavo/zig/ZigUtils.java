@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.glavo;
+package org.glavo.zig;
 
 import kala.compress.archivers.ArchiveEntry;
 import kala.compress.archivers.tar.TarArchiveEntry;
@@ -23,7 +23,7 @@ import kala.compress.archivers.zip.ZipArchiveInputStream;
 import kala.compress.utils.IOUtils;
 import org.gradle.api.GradleException;
 import org.jetbrains.annotations.NotNullByDefault;
-import org.jetbrains.annotations.Nullable;
+import org.tukaani.xz.XZInputStream;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -33,119 +33,120 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.zip.GZIPInputStream;
 
-/// Utility methods for locating and naming Go toolchain artifacts.
+/// Utility methods for locating and naming Zig toolchain artifacts.
 @NotNullByDefault
-public final class GoUtils {
+public final class ZigUtils {
 
-    /// The Go toolchain version used by this build.
-    public static final String GO_VERSION = "1.25.9";
+    /// The Zig compiler version used by this build.
+    public static final String ZIG_VERSION = "0.16.0";
 
     /// Prevents instantiation.
-    private GoUtils() {
+    private ZigUtils() {
     }
 
     /// Returns {@code true} when the current host OS is Windows.
-    ///
-    /// @return whether the current host is Windows
     public static boolean isWindowsHost() {
         return System.getProperty("os.name").toLowerCase().contains("win");
     }
 
-    /// Detects the Go OS identifier for the current host.
+    /// Detects the Zig OS identifier for the current host.
     ///
-    /// @return the Go OS string, e.g. {@code "windows"}, {@code "linux"}, {@code "darwin"}
+    /// @return the Zig OS string, e.g. {@code "windows"}, {@code "linux"}, {@code "macos"}
     /// @throws GradleException if the host OS is not supported
-    public static String detectGoHostOs() {
+    public static String detectZigHostOs() {
         String osName = System.getProperty("os.name").toLowerCase();
         if (osName.contains("win")) {
             return "windows";
         } else if (osName.contains("mac") || osName.contains("darwin")) {
-            return "darwin";
+            return "macos";
         } else if (osName.contains("linux")) {
             return "linux";
         } else if (osName.contains("freebsd")) {
             return "freebsd";
+        } else if (osName.contains("openbsd")) {
+            return "openbsd";
+        } else if (osName.contains("netbsd")) {
+            return "netbsd";
         } else {
-            throw new GradleException("Unsupported Go host OS: " + System.getProperty("os.name"));
+            throw new GradleException("Unsupported Zig host OS: " + System.getProperty("os.name"));
         }
     }
 
-    /// Detects the Go architecture identifier for the current host.
+    /// Detects the Zig architecture identifier for the current host.
     ///
-    /// @return the Go architecture string, e.g. {@code "amd64"}, {@code "arm64"}
+    /// @return the Zig architecture string, e.g. {@code "x86_64"}, {@code "aarch64"}
     /// @throws GradleException if the host architecture is not supported
-    public static String detectGoHostArch() {
+    public static String detectZigHostArch() {
         String arch = System.getProperty("os.arch").toLowerCase();
         return switch (arch) {
-            case "amd64", "x86_64" -> "amd64";
-            case "aarch64", "arm64" -> "arm64";
-            case "x86", "i386", "i686" -> "386";
+            case "amd64", "x86_64" -> "x86_64";
+            case "aarch64", "arm64" -> "aarch64";
+            case "x86", "i386", "i686" -> "x86";
             case "riscv64" -> "riscv64";
-            case "loongarch64" -> "loong64";
+            case "loongarch64" -> "loongarch64";
             case "s390x" -> "s390x";
-            case "ppc64le" -> "ppc64le";
-            default -> throw new GradleException("Unsupported Go host architecture: " + System.getProperty("os.arch"));
+            case "ppc64le" -> "powerpc64le";
+            default -> throw new GradleException("Unsupported Zig host architecture: " + System.getProperty("os.arch"));
         };
     }
 
-    /// Returns the Go distribution name without the archive extension.
+    /// Returns the archive base name for the Zig distribution, e.g. {@code "zig-x86_64-linux-0.16.0"}.
     ///
-    /// @return the Go distribution name
-    public static String getGoDistributionName() {
-        return "go" + GO_VERSION + "." + detectGoHostOs() + "-" + detectGoHostArch();
+    /// @return the archive base name without file extension
+    public static String getZigArchiveBaseName() {
+        return "zig-" + detectZigHostArch() + "-" + detectZigHostOs() + "-" + ZIG_VERSION;
     }
 
-    /// Returns the Go archive file name for the current host.
+    /// Returns the archive file name for the Zig distribution, including extension.
     ///
-    /// @return the archive file name
-    public static String getGoArchiveName() {
-        return getGoDistributionName() + (isWindowsHost() ? ".zip" : ".tar.gz");
+    /// @return the archive file name, e.g. {@code "zig-x86_64-linux-0.16.0.tar.xz"}
+    public static String getZigArchiveName() {
+        String ext = isWindowsHost() ? "zip" : "tar.xz";
+        return getZigArchiveBaseName() + "." + ext;
     }
 
-    /// Returns the name of the Go executable file for the current host OS.
+    /// Returns the name of the Zig executable file for the current host OS.
     ///
-    /// @return {@code "go.exe"} on Windows, {@code "go"} elsewhere
-    public static String getGoExecutableName() {
-        return isWindowsHost() ? "go.exe" : "go";
+    /// @return {@code "zig.exe"} on Windows, {@code "zig"} elsewhere
+    public static String getZigExecutableName() {
+        return isWindowsHost() ? "zig.exe" : "zig";
     }
 
-    /// Returns the Go executable path inside an extracted Go installation.
+    /// Returns the Zig executable path inside an extracted Zig installation.
     ///
-    /// @param installDirectory the directory that contains the extracted {@code go} archive root
-    /// @return the expected Go executable file
-    public static File getGoExecutableFile(File installDirectory) {
+    /// @param installDirectory the directory that contains the extracted Zig archive root
+    /// @return the expected Zig executable file
+    public static File getZigExecutableFile(File installDirectory) {
         return installDirectory.toPath()
-                .resolve("go")
-                .resolve("bin")
-                .resolve(getGoExecutableName())
+                .resolve(getZigArchiveBaseName())
+                .resolve(getZigExecutableName())
                 .toFile();
     }
 
-    /// Extracts the current host Go archive into the given destination directory.
+    /// Extracts the current host Zig archive into the given destination directory.
     ///
-    /// @param archiveFile the downloaded Go archive
+    /// @param archiveFile the downloaded Zig archive
     /// @param destinationDirectory the target directory for extracted files
-    /// @throws GradleException if the archive cannot be extracted or the Go executable is missing
-    public static void extractGoArchive(File archiveFile, File destinationDirectory) {
+    /// @throws GradleException if the archive cannot be extracted or the Zig executable is missing
+    public static void extractZigArchive(File archiveFile, File destinationDirectory) {
         try {
             Files.createDirectories(destinationDirectory.toPath());
             if (isWindowsHost()) {
                 extractZipArchive(archiveFile.toPath(), destinationDirectory.toPath());
             } else {
-                extractTarGzArchive(archiveFile.toPath(), destinationDirectory.toPath());
+                extractTarXzArchive(archiveFile.toPath(), destinationDirectory.toPath());
             }
 
-            File executable = getGoExecutableFile(destinationDirectory);
+            File executable = getZigExecutableFile(destinationDirectory);
             if (!executable.isFile()) {
-                throw new GradleException("Extracted Go executable was not found: " + executable);
+                throw new GradleException("Extracted Zig executable was not found: " + executable);
             }
             if (!isWindowsHost() && !executable.setExecutable(true, false)) {
-                throw new GradleException("Failed to mark Go executable as executable: " + executable);
+                throw new GradleException("Failed to mark Zig executable as executable: " + executable);
             }
         } catch (IOException e) {
-            throw new GradleException("Failed to extract Go archive: " + archiveFile, e);
+            throw new GradleException("Failed to extract Zig archive: " + archiveFile, e);
         }
     }
 
@@ -168,15 +169,15 @@ public final class GoUtils {
         }
     }
 
-    /// Extracts a TAR.GZ archive with Kala Compress.
+    /// Extracts a TAR.XZ archive with Kala Compress.
     ///
-    /// @param archiveFile the TAR.GZ archive path
+    /// @param archiveFile the TAR.XZ archive path
     /// @param destinationDirectory the destination directory
     /// @throws IOException if archive I/O fails
-    private static void extractTarGzArchive(Path archiveFile, Path destinationDirectory) throws IOException {
+    private static void extractTarXzArchive(Path archiveFile, Path destinationDirectory) throws IOException {
         try (InputStream fileInput = new BufferedInputStream(Files.newInputStream(archiveFile));
-             GZIPInputStream gzipInput = new GZIPInputStream(fileInput);
-             TarArchiveInputStream archiveInput = new TarArchiveInputStream(gzipInput)) {
+             XZInputStream xzInput = new XZInputStream(fileInput);
+             TarArchiveInputStream archiveInput = new TarArchiveInputStream(xzInput)) {
             TarArchiveEntry entry;
             while ((entry = archiveInput.getNextEntry()) != null) {
                 if (!archiveInput.canReadEntryData(entry)) {
@@ -215,7 +216,7 @@ public final class GoUtils {
             throw new IOException("Unsupported ZIP symbolic link entry: " + entryName);
         }
 
-        @Nullable Path parent = target.getParent();
+        Path parent = target.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
@@ -232,18 +233,16 @@ public final class GoUtils {
     /// @throws IOException if the symlink escapes the destination or cannot be created
     private static void extractSymbolicLink(Path destinationDirectory, Path linkPath, String linkTarget)
             throws IOException {
-        @Nullable Path linkParent = linkPath.getParent();
-        if (linkParent == null) {
-            throw new IOException("Archive symbolic link has no parent directory: " + linkPath);
-        }
-
-        Path target = linkParent.resolve(linkTarget).normalize();
+        Path target = linkPath.getParent().resolve(linkTarget).normalize();
         Path normalizedDestination = destinationDirectory.toAbsolutePath().normalize();
         if (!target.startsWith(normalizedDestination)) {
             throw new IOException("Archive symbolic link escapes destination: " + linkTarget);
         }
 
-        Files.createDirectories(linkParent);
+        Path parent = linkPath.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
         Files.deleteIfExists(linkPath);
         Files.createSymbolicLink(linkPath, Path.of(linkTarget));
     }

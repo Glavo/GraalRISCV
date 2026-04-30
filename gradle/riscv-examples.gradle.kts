@@ -8,11 +8,11 @@ import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
-import org.glavo.AbstractRiscVZigCCTask
-import org.glavo.GoUtils
-import org.glavo.RiscVFreestandingZigCCTask
-import org.glavo.RiscVLinuxMuslStaticZigCCTask
-import org.glavo.ZigUtils
+import org.glavo.go.GoUtils
+import org.glavo.zig.AbstractRiscVZigCCTask
+import org.glavo.zig.RiscVFreestandingZigCCTask
+import org.glavo.zig.RiscVLinuxMuslStaticZigCCTask
+import org.glavo.zig.ZigUtils
 
 val applicationExtension = extensions.getByType<JavaApplication>()
 val sourceSets = extensions.getByType<SourceSetContainer>()

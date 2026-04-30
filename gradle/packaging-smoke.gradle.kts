@@ -5,7 +5,7 @@ import org.gradle.jvm.tasks.Jar
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.jvm.toolchain.JavaToolchainService
 import org.glavo.RiscVSmokeElfTask
-import org.glavo.ZigUtils
+import org.glavo.zig.ZigUtils
 
 val applicationExtension = extensions.getByType<JavaApplication>()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
