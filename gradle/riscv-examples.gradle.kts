@@ -19,28 +19,6 @@ val javaToolchains = extensions.getByType<JavaToolchainService>()
 val mainClassName = applicationExtension.mainClass.get()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
-val helloWorldExampleElf = layout.buildDirectory.file("examples/freestanding/hello.elf")
-val hotLoopExampleElf = layout.buildDirectory.file("examples/freestanding/hot-loop.elf")
-val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-static/printf-hello.elf")
-val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-static/argv-echo.elf")
-val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
-val linuxStaticDirectoryListExampleElf = layout.buildDirectory.file("examples/linux-static/directory-list.elf")
-val linuxStaticFileMutationExampleElf = layout.buildDirectory.file("examples/linux-static/file-mutation.elf")
-val linuxStaticWorkingDirectoryExampleElf = layout.buildDirectory.file("examples/linux-static/working-directory.elf")
-val linuxStaticFilesystemStatusExampleElf = layout.buildDirectory.file("examples/linux-static/filesystem-status.elf")
-val linuxStaticStatxMetadataExampleElf = layout.buildDirectory.file("examples/linux-static/statx-metadata.elf")
-val linuxStaticPositionedIoExampleElf = layout.buildDirectory.file("examples/linux-static/positioned-io.elf")
-val linuxStaticEventPollingExampleElf = layout.buildDirectory.file("examples/linux-static/event-polling.elf")
-val linuxStaticThreadJoinExampleElf = layout.buildDirectory.file("examples/linux-static/thread-join.elf")
-val linuxStaticRuntimeServicesExampleElf = layout.buildDirectory.file("examples/linux-static/runtime-services.elf")
-val linuxStaticProcessSignalsExampleElf = layout.buildDirectory.file("examples/linux-static/process-signals.elf")
-val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file- io-root")
-val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
-val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
-val linuxStaticWorkingDirectoryRoot = layout.buildDirectory.dir("tmp/linux-static-working-directory-root")
-val linuxStaticFilesystemStatusRoot = layout.buildDirectory.dir("tmp/linux-static-filesystem-status-root")
-val linuxStaticStatxMetadataRoot = layout.buildDirectory.dir("tmp/linux-static-statx-metadata-root")
-val linuxStaticPositionedIoRoot = layout.buildDirectory.dir("tmp/linux-static-positioned-io-root")
 val zigArchiveName = ZigUtils.getZigArchiveName()
 val zigArchiveFile = layout.buildDirectory.file("downloads/zig/$zigArchiveName")
 val zigInstallDirectory = layout.buildDirectory.dir("tools/zig")
@@ -107,6 +85,9 @@ val extractZig by tasks.registering {
     }
 }
 
+// Freestanding Hello World example.
+val helloWorldExampleElf = layout.buildDirectory.file("examples/freestanding/hello.elf")
+
 tasks.register<RiscVFreestandingZigCCTask>("buildHelloWorldExample") {
     group = "verification"
     description = "Builds examples/freestanding/HelloWorld.c for RISC-V with Zig CC."
@@ -117,111 +98,6 @@ tasks.register<RiscVFreestandingZigCCTask>("buildHelloWorldExample") {
     outputFile.set(helloWorldExampleElf)
     localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
-}
-
-tasks.register<RiscVFreestandingZigCCTask>("buildHotLoopExample") {
-    group = "verification"
-    description = "Builds examples/freestanding/HotLoop.c for RISC-V with Zig CC."
-
-    configureZigExecutable()
-    sourceFile.set(layout.projectDirectory.file("examples/freestanding/HotLoop.c"))
-    linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
-    outputFile.set(hotLoopExampleElf)
-    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
-    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
-    additionalCompilerArguments.set(listOf("-O2", "-g0", "-DHOT_LOOP_ITERATIONS=1000000UL"))
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticPrintfExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/PrintfHelloWorld.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("PrintfHelloWorld.c", linuxStaticPrintfExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticArgvExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/ArgvEcho.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("ArgvEcho.c", linuxStaticArgvExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileIoExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/FileIo.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("FileIo.c", linuxStaticFileIoExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticDirectoryListExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/DirectoryList.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("DirectoryList.c", linuxStaticDirectoryListExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileMutationExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/FileMutation.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("FileMutation.c", linuxStaticFileMutationExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticWorkingDirectoryExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/WorkingDirectory.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("WorkingDirectory.c", linuxStaticWorkingDirectoryExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFilesystemStatusExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/FilesystemStatus.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("FilesystemStatus.c", linuxStaticFilesystemStatusExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticStatxMetadataExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/StatxMetadata.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("StatxMetadata.c", linuxStaticStatxMetadataExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticPositionedIoExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/PositionedIo.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("PositionedIo.c", linuxStaticPositionedIoExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticEventPollingExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/EventPolling.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("EventPolling.c", linuxStaticEventPollingExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticThreadJoinExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/ThreadJoin.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("ThreadJoin.c", linuxStaticThreadJoinExampleElf)
-    additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie", "-pthread"))
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticRuntimeServicesExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/RuntimeServices.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("RuntimeServices.c", linuxStaticRuntimeServicesExampleElf)
-}
-
-tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticProcessSignalsExample") {
-    group = "verification"
-    description = "Builds examples/linux-static/ProcessSignals.c as a static riscv64-linux-musl executable."
-
-    configureLinuxStaticExample("ProcessSignals.c", linuxStaticProcessSignalsExampleElf)
 }
 
 tasks.register<JavaExec>("testHelloWorldExample") {
@@ -257,538 +133,91 @@ tasks.register<JavaExec>("testHelloWorldExample") {
     }
 }
 
-tasks.register<JavaExec>("testLinuxStaticPrintfExample") {
+tasks.register<JavaExec>("runHelloWorldExample") {
     group = "verification"
-    description = "Compiles a static musl printf Hello World and verifies the GraalRISCV CLI output."
+    description = "Runs the compiled Hello World RISC-V example with the GraalRISCV CLI."
 
-    dependsOn("classes", "buildLinuxStaticPrintfExample")
+    dependsOn("classes", "buildHelloWorldExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
     mainClass = mainClassName
     jvmArgs(applicationDefaultJvmArgs)
 
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
+    doFirst {
+        args(helloWorldExampleElf.get().asFile.absolutePath)
+    }
+}
+
+tasks.register<Exec>("runHelloWorldInstalledExample") {
+    group = "verification"
+    description = "Runs the Hello World example through the installDist launch script."
+
+    dependsOn("installDist", "buildHelloWorldExample")
 
     doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(linuxStaticPrintfExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "Hello World!\n") {
-            throw GradleException("Unexpected static printf output: ${actualOutput.trim()}")
+        val scriptName = if (isWindowsHost) {
+            "graalriscv.bat"
+        } else {
+            "graalriscv"
         }
+        val script = layout.buildDirectory.file("install/graalriscv/bin/$scriptName").get().asFile
+        val elf = helloWorldExampleElf.get().asFile
 
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static printf Hello World wrote to stderr: $actualError")
+        if (isWindowsHost) {
+            commandLine("cmd", "/c", script.absolutePath, elf.absolutePath)
+        } else {
+            commandLine(script.absolutePath, elf.absolutePath)
         }
     }
 }
 
-tasks.register<JavaExec>("testLinuxStaticArgvExample") {
+tasks.register<Exec>("runHelloWorldShadowJarExample") {
     group = "verification"
-    description = "Compiles a static musl argv example and verifies the GraalRISCV CLI output."
+    description = "Runs the Hello World example through the packaged Shadow JAR."
 
-    dependsOn("classes", "buildLinuxStaticArgvExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
+    dependsOn("shadowJar", "buildHelloWorldExample")
+    inputs.file(shadowJarFile)
 
     doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(linuxStaticArgvExampleElf.get().asFile.absolutePath, "alpha", "--beta"))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        val expectedOutput = "argc=3\nargv1=alpha\nargv2=--beta\n"
-        if (actualOutput != expectedOutput) {
-            throw GradleException("Unexpected static argv output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static argv example wrote to stderr: $actualError")
-        }
+        commandLine(
+            listOf(javaLauncher.get().executablePath.asFile.absolutePath) +
+                    applicationDefaultJvmArgs +
+                    listOf(
+                        "-jar",
+                        shadowJarFile.get().asFile.absolutePath,
+                        helloWorldExampleElf.get().asFile.absolutePath
+                    )
+        )
     }
 }
 
-tasks.register<JavaExec>("testLinuxStaticFileIoExample") {
+tasks.register("buildZigHelloWorldExample") {
     group = "verification"
-    description = "Compiles a static musl file I/O example and verifies sandboxed host-root output."
+    description = "Alias for buildHelloWorldExample."
 
-    dependsOn("classes", "buildLinuxStaticFileIoExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-
-        val root = linuxStaticFileIoRoot.get().asFile
-        delete(root)
-        if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
-        }
-
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileIoExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "file-data\n") {
-            throw GradleException("Unexpected static file I/O output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static file I/O example wrote to stderr: $actualError")
-        }
-
-        val outputFile = linuxStaticFileIoRoot.get().file("output.txt").asFile
-        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
-        if (fileOutput != "file-data\n") {
-            throw GradleException("Unexpected static file I/O host output: ${fileOutput.trim()}")
-        }
-    }
+    dependsOn("buildHelloWorldExample")
 }
 
-tasks.register<JavaExec>("testLinuxStaticDirectoryListExample") {
+tasks.register("testZigHelloWorldExample") {
     group = "verification"
-    description = "Compiles a static musl directory listing example and verifies getdents64-backed output."
+    description = "Alias for testHelloWorldExample."
 
-    dependsOn("classes", "buildLinuxStaticDirectoryListExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-
-        val root = linuxStaticDirectoryListRoot.get().asFile
-        delete(root)
-        val entries = root.resolve("entries")
-        if (!entries.mkdirs()) {
-            throw GradleException("Failed to create example directory: $entries")
-        }
-        entries.resolve("alpha.txt").writeText("alpha\n", StandardCharsets.UTF_8)
-        if (!entries.resolve("nested").mkdirs()) {
-            throw GradleException("Failed to create nested example directory.")
-        }
-
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticDirectoryListExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        val expectedOutput = "alpha.txt:file\nnested:dir\n"
-        if (actualOutput != expectedOutput) {
-            throw GradleException("Unexpected static directory listing output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static directory listing example wrote to stderr: $actualError")
-        }
-    }
+    dependsOn("testHelloWorldExample")
 }
 
-tasks.register<JavaExec>("testLinuxStaticFileMutationExample") {
+// Freestanding hot-loop example.
+val hotLoopExampleElf = layout.buildDirectory.file("examples/freestanding/hot-loop.elf")
+
+tasks.register<RiscVFreestandingZigCCTask>("buildHotLoopExample") {
     group = "verification"
-    description = "Compiles a static musl file mutation example and verifies sandboxed host-root changes."
-
-    dependsOn("classes", "buildLinuxStaticFileMutationExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-
-        val root = linuxStaticFileMutationRoot.get().asFile
-        delete(root)
-        if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
-        }
-
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileMutationExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "mutations-ok\n") {
-            throw GradleException("Unexpected static file mutation output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static file mutation example wrote to stderr: $actualError")
-        }
-
-        val workDirectory = linuxStaticFileMutationRoot.get().file("work").asFile
-        if (workDirectory.exists()) {
-            throw GradleException("Static file mutation example left work directory behind: $workDirectory")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticWorkingDirectoryExample") {
-    group = "verification"
-    description = "Compiles a static musl working-directory example and verifies chdir/fchdir behavior."
-
-    dependsOn("classes", "buildLinuxStaticWorkingDirectoryExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-
-        val root = linuxStaticWorkingDirectoryRoot.get().asFile
-        delete(root)
-        if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
-        }
-
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticWorkingDirectoryExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "cwd-ok\n") {
-            throw GradleException("Unexpected static working-directory output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static working-directory example wrote to stderr: $actualError")
-        }
-
-        val outputFile = linuxStaticWorkingDirectoryRoot.get().file("work/message.txt").asFile
-        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
-        if (fileOutput != "cwd-data\n") {
-            throw GradleException("Unexpected static working-directory host output: ${fileOutput.trim()}")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticFilesystemStatusExample") {
-    group = "verification"
-    description = "Compiles a static musl statvfs example and verifies statfs/fstatfs behavior."
-
-    dependsOn("classes", "buildLinuxStaticFilesystemStatusExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-
-        val root = linuxStaticFilesystemStatusRoot.get().asFile
-        delete(root)
-        if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
-        }
-
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFilesystemStatusExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "statvfs-ok\n") {
-            throw GradleException("Unexpected static filesystem status output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static filesystem status example wrote to stderr: $actualError")
-        }
-
-        val outputFile = linuxStaticFilesystemStatusRoot.get().file("status.txt").asFile
-        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
-        if (fileOutput != "status\n") {
-            throw GradleException("Unexpected static filesystem status host output: ${fileOutput.trim()}")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticStatxMetadataExample") {
-    group = "verification"
-    description = "Compiles a static musl statx example and verifies sandboxed metadata output."
-
-    dependsOn("classes", "buildLinuxStaticStatxMetadataExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-
-        val root = linuxStaticStatxMetadataRoot.get().asFile
-        delete(root)
-        if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
-        }
-
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticStatxMetadataExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "statx-ok\n") {
-            throw GradleException("Unexpected static statx output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static statx example wrote to stderr: $actualError")
-        }
-
-        val outputFile = linuxStaticStatxMetadataRoot.get().file("statx.txt").asFile
-        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
-        if (fileOutput != "statx-data\n") {
-            throw GradleException("Unexpected static statx host output: ${fileOutput.trim()}")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticPositionedIoExample") {
-    group = "verification"
-    description = "Compiles a static musl positioned I/O example and verifies pread/pwrite behavior."
-
-    dependsOn("classes", "buildLinuxStaticPositionedIoExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-
-        val root = linuxStaticPositionedIoRoot.get().asFile
-        delete(root)
-        if (!root.mkdirs()) {
-            throw GradleException("Failed to create example host root: $root")
-        }
-
-        setArgs(listOf("--host-root", root.absolutePath, linuxStaticPositionedIoExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "positioned-io-ok\n") {
-            throw GradleException("Unexpected static positioned I/O output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static positioned I/O example wrote to stderr: $actualError")
-        }
-
-        val outputFile = linuxStaticPositionedIoRoot.get().file("positioned.txt").asFile
-        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
-        if (fileOutput != "0123AB6789") {
-            throw GradleException("Unexpected static positioned I/O host output: ${fileOutput.trim()}")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticEventPollingExample") {
-    group = "verification"
-    description = "Compiles a static musl eventfd/epoll example and verifies readiness polling."
-
-    dependsOn("classes", "buildLinuxStaticEventPollingExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(linuxStaticEventPollingExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "event-polling-ok\n") {
-            throw GradleException("Unexpected static event polling output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static event polling example wrote to stderr: $actualError")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticThreadJoinExample") {
-    group = "verification"
-    description = "Compiles a static musl pthread example and verifies clone/futex-backed joins."
-
-    dependsOn("classes", "buildLinuxStaticThreadJoinExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(linuxStaticThreadJoinExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "thread-join-ok\n") {
-            throw GradleException("Unexpected static pthread output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static pthread example wrote to stderr: $actualError")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticRuntimeServicesExample") {
-    group = "verification"
-    description = "Compiles a static musl runtime-services example and verifies memory, time, random, and resource syscalls."
-
-    dependsOn("classes", "buildLinuxStaticRuntimeServicesExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(linuxStaticRuntimeServicesExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "runtime-services-ok\n") {
-            throw GradleException("Unexpected static runtime services output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static runtime services example wrote to stderr: $actualError")
-        }
-    }
-}
-
-tasks.register<JavaExec>("testLinuxStaticProcessSignalsExample") {
-    group = "verification"
-    description = "Compiles a static musl process and signal setup example and verifies process, signal, and prctl syscalls."
-
-    dependsOn("classes", "buildLinuxStaticProcessSignalsExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(linuxStaticProcessSignalsExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput != "process-signals-ok\n") {
-            throw GradleException("Unexpected static process signals output: ${actualOutput.trim()}")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Static process signals example wrote to stderr: $actualError")
-        }
-    }
-}
-
-tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
-    group = "verification"
-    description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
-
-    dependsOn("classes", "buildLinuxStaticPrintfExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    doFirst {
-        setArgs(listOf(linuxStaticPrintfExampleElf.get().asFile.absolutePath))
-    }
+    description = "Builds examples/freestanding/HotLoop.c for RISC-V with Zig CC."
+
+    configureZigExecutable()
+    sourceFile.set(layout.projectDirectory.file("examples/freestanding/HotLoop.c"))
+    linkerScript.set(layout.projectDirectory.file("examples/freestanding/linker.ld"))
+    outputFile.set(hotLoopExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(listOf("-O2", "-g0", "-DHOT_LOOP_ITERATIONS=1000000UL"))
 }
 
 tasks.register<JavaExec>("testHotLoopExample") {
@@ -852,76 +281,679 @@ tasks.register<JavaExec>("runHotLoopCompilationTrace") {
     }
 }
 
-tasks.register("buildZigHelloWorldExample") {
-    group = "verification"
-    description = "Alias for buildHelloWorldExample."
+// Static Linux printf example.
+val linuxStaticPrintfExampleElf = layout.buildDirectory.file("examples/linux-static/printf-hello.elf")
 
-    dependsOn("buildHelloWorldExample")
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticPrintfExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/PrintfHelloWorld.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("PrintfHelloWorld.c", linuxStaticPrintfExampleElf)
 }
 
-tasks.register("testZigHelloWorldExample") {
+tasks.register<JavaExec>("testLinuxStaticPrintfExample") {
     group = "verification"
-    description = "Alias for testHelloWorldExample."
+    description = "Compiles a static musl printf Hello World and verifies the GraalRISCV CLI output."
 
-    dependsOn("testHelloWorldExample")
+    dependsOn("classes", "buildLinuxStaticPrintfExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticPrintfExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "Hello World!\n") {
+            throw GradleException("Unexpected static printf output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static printf Hello World wrote to stderr: $actualError")
+        }
+    }
 }
 
-tasks.register<JavaExec>("runHelloWorldExample") {
+tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
-    description = "Runs the compiled Hello World RISC-V example with the GraalRISCV CLI."
+    description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
 
-    dependsOn("classes", "buildHelloWorldExample")
+    dependsOn("classes", "buildLinuxStaticPrintfExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
     mainClass = mainClassName
     jvmArgs(applicationDefaultJvmArgs)
 
     doFirst {
-        args(helloWorldExampleElf.get().asFile.absolutePath)
+        setArgs(listOf(linuxStaticPrintfExampleElf.get().asFile.absolutePath))
     }
 }
 
-tasks.register<Exec>("runHelloWorldInstalledExample") {
-    group = "verification"
-    description = "Runs the Hello World example through the installDist launch script."
+// Static Linux argv example.
+val linuxStaticArgvExampleElf = layout.buildDirectory.file("examples/linux-static/argv-echo.elf")
 
-    dependsOn("installDist", "buildHelloWorldExample")
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticArgvExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/ArgvEcho.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("ArgvEcho.c", linuxStaticArgvExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticArgvExample") {
+    group = "verification"
+    description = "Compiles a static musl argv example and verifies the GraalRISCV CLI output."
+
+    dependsOn("classes", "buildLinuxStaticArgvExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
 
     doFirst {
-        val scriptName = if (isWindowsHost) {
-            "graalriscv.bat"
-        } else {
-            "graalriscv"
-        }
-        val script = layout.buildDirectory.file("install/graalriscv/bin/$scriptName").get().asFile
-        val elf = helloWorldExampleElf.get().asFile
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticArgvExampleElf.get().asFile.absolutePath, "alpha", "--beta"))
+    }
 
-        if (isWindowsHost) {
-            commandLine("cmd", "/c", script.absolutePath, elf.absolutePath)
-        } else {
-            commandLine(script.absolutePath, elf.absolutePath)
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val expectedOutput = "argc=3\nargv1=alpha\nargv2=--beta\n"
+        if (actualOutput != expectedOutput) {
+            throw GradleException("Unexpected static argv output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static argv example wrote to stderr: $actualError")
         }
     }
 }
 
-tasks.register<Exec>("runHelloWorldShadowJarExample") {
-    group = "verification"
-    description = "Runs the Hello World example through the packaged Shadow JAR."
+// Static Linux file I/O example.
+val linuxStaticFileIoExampleElf = layout.buildDirectory.file("examples/linux-static/file-io.elf")
+val linuxStaticFileIoRoot = layout.buildDirectory.dir("tmp/linux-static-file-io-root")
 
-    dependsOn("shadowJar", "buildHelloWorldExample")
-    inputs.file(shadowJarFile)
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileIoExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/FileIo.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("FileIo.c", linuxStaticFileIoExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticFileIoExample") {
+    group = "verification"
+    description = "Compiles a static musl file I/O example and verifies sandboxed host-root output."
+
+    dependsOn("classes", "buildLinuxStaticFileIoExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
 
     doFirst {
-        commandLine(
-            listOf(javaLauncher.get().executablePath.asFile.absolutePath) +
-                    applicationDefaultJvmArgs +
-                    listOf(
-                        "-jar",
-                        shadowJarFile.get().asFile.absolutePath,
-                        helloWorldExampleElf.get().asFile.absolutePath
-                    )
-        )
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticFileIoRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileIoExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "file-data\n") {
+            throw GradleException("Unexpected static file I/O output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static file I/O example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticFileIoRoot.get().file("output.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "file-data\n") {
+            throw GradleException("Unexpected static file I/O host output: ${fileOutput.trim()}")
+        }
     }
 }
+
+// Static Linux directory listing example.
+val linuxStaticDirectoryListExampleElf = layout.buildDirectory.file("examples/linux-static/directory-list.elf")
+val linuxStaticDirectoryListRoot = layout.buildDirectory.dir("tmp/linux-static-directory-list-root")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticDirectoryListExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/DirectoryList.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("DirectoryList.c", linuxStaticDirectoryListExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticDirectoryListExample") {
+    group = "verification"
+    description = "Compiles a static musl directory listing example and verifies getdents64-backed output."
+
+    dependsOn("classes", "buildLinuxStaticDirectoryListExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticDirectoryListRoot.get().asFile
+        delete(root)
+        val entries = root.resolve("entries")
+        if (!entries.mkdirs()) {
+            throw GradleException("Failed to create example directory: $entries")
+        }
+        entries.resolve("alpha.txt").writeText("alpha\n", StandardCharsets.UTF_8)
+        if (!entries.resolve("nested").mkdirs()) {
+            throw GradleException("Failed to create nested example directory.")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticDirectoryListExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val expectedOutput = "alpha.txt:file\nnested:dir\n"
+        if (actualOutput != expectedOutput) {
+            throw GradleException("Unexpected static directory listing output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static directory listing example wrote to stderr: $actualError")
+        }
+    }
+}
+
+// Static Linux file mutation example.
+val linuxStaticFileMutationExampleElf = layout.buildDirectory.file("examples/linux-static/file-mutation.elf")
+val linuxStaticFileMutationRoot = layout.buildDirectory.dir("tmp/linux-static-file-mutation-root")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFileMutationExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/FileMutation.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("FileMutation.c", linuxStaticFileMutationExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticFileMutationExample") {
+    group = "verification"
+    description = "Compiles a static musl file mutation example and verifies sandboxed host-root changes."
+
+    dependsOn("classes", "buildLinuxStaticFileMutationExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticFileMutationRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFileMutationExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "mutations-ok\n") {
+            throw GradleException("Unexpected static file mutation output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static file mutation example wrote to stderr: $actualError")
+        }
+
+        val workDirectory = linuxStaticFileMutationRoot.get().file("work").asFile
+        if (workDirectory.exists()) {
+            throw GradleException("Static file mutation example left work directory behind: $workDirectory")
+        }
+    }
+}
+
+// Static Linux working-directory example.
+val linuxStaticWorkingDirectoryExampleElf = layout.buildDirectory.file("examples/linux-static/working-directory.elf")
+val linuxStaticWorkingDirectoryRoot = layout.buildDirectory.dir("tmp/linux-static-working-directory-root")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticWorkingDirectoryExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/WorkingDirectory.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("WorkingDirectory.c", linuxStaticWorkingDirectoryExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticWorkingDirectoryExample") {
+    group = "verification"
+    description = "Compiles a static musl working-directory example and verifies chdir/fchdir behavior."
+
+    dependsOn("classes", "buildLinuxStaticWorkingDirectoryExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticWorkingDirectoryRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticWorkingDirectoryExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "cwd-ok\n") {
+            throw GradleException("Unexpected static working-directory output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static working-directory example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticWorkingDirectoryRoot.get().file("work/message.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "cwd-data\n") {
+            throw GradleException("Unexpected static working-directory host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
+// Static Linux filesystem-status example.
+val linuxStaticFilesystemStatusExampleElf = layout.buildDirectory.file("examples/linux-static/filesystem-status.elf")
+val linuxStaticFilesystemStatusRoot = layout.buildDirectory.dir("tmp/linux-static-filesystem-status-root")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFilesystemStatusExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/FilesystemStatus.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("FilesystemStatus.c", linuxStaticFilesystemStatusExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticFilesystemStatusExample") {
+    group = "verification"
+    description = "Compiles a static musl statvfs example and verifies statfs/fstatfs behavior."
+
+    dependsOn("classes", "buildLinuxStaticFilesystemStatusExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticFilesystemStatusRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticFilesystemStatusExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "statvfs-ok\n") {
+            throw GradleException("Unexpected static filesystem status output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static filesystem status example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticFilesystemStatusRoot.get().file("status.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "status\n") {
+            throw GradleException("Unexpected static filesystem status host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
+// Static Linux statx metadata example.
+val linuxStaticStatxMetadataExampleElf = layout.buildDirectory.file("examples/linux-static/statx-metadata.elf")
+val linuxStaticStatxMetadataRoot = layout.buildDirectory.dir("tmp/linux-static-statx-metadata-root")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticStatxMetadataExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/StatxMetadata.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("StatxMetadata.c", linuxStaticStatxMetadataExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticStatxMetadataExample") {
+    group = "verification"
+    description = "Compiles a static musl statx example and verifies sandboxed metadata output."
+
+    dependsOn("classes", "buildLinuxStaticStatxMetadataExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticStatxMetadataRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticStatxMetadataExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "statx-ok\n") {
+            throw GradleException("Unexpected static statx output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static statx example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticStatxMetadataRoot.get().file("statx.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "statx-data\n") {
+            throw GradleException("Unexpected static statx host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
+// Static Linux positioned I/O example.
+val linuxStaticPositionedIoExampleElf = layout.buildDirectory.file("examples/linux-static/positioned-io.elf")
+val linuxStaticPositionedIoRoot = layout.buildDirectory.dir("tmp/linux-static-positioned-io-root")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticPositionedIoExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/PositionedIo.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("PositionedIo.c", linuxStaticPositionedIoExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticPositionedIoExample") {
+    group = "verification"
+    description = "Compiles a static musl positioned I/O example and verifies pread/pwrite behavior."
+
+    dependsOn("classes", "buildLinuxStaticPositionedIoExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+
+        val root = linuxStaticPositionedIoRoot.get().asFile
+        delete(root)
+        if (!root.mkdirs()) {
+            throw GradleException("Failed to create example host root: $root")
+        }
+
+        setArgs(listOf("--host-root", root.absolutePath, linuxStaticPositionedIoExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "positioned-io-ok\n") {
+            throw GradleException("Unexpected static positioned I/O output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static positioned I/O example wrote to stderr: $actualError")
+        }
+
+        val outputFile = linuxStaticPositionedIoRoot.get().file("positioned.txt").asFile
+        val fileOutput = outputFile.readText(StandardCharsets.UTF_8)
+        if (fileOutput != "0123AB6789") {
+            throw GradleException("Unexpected static positioned I/O host output: ${fileOutput.trim()}")
+        }
+    }
+}
+
+// Static Linux event polling example.
+val linuxStaticEventPollingExampleElf = layout.buildDirectory.file("examples/linux-static/event-polling.elf")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticEventPollingExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/EventPolling.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("EventPolling.c", linuxStaticEventPollingExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticEventPollingExample") {
+    group = "verification"
+    description = "Compiles a static musl eventfd/epoll example and verifies readiness polling."
+
+    dependsOn("classes", "buildLinuxStaticEventPollingExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticEventPollingExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "event-polling-ok\n") {
+            throw GradleException("Unexpected static event polling output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static event polling example wrote to stderr: $actualError")
+        }
+    }
+}
+
+// Static Linux thread join example.
+val linuxStaticThreadJoinExampleElf = layout.buildDirectory.file("examples/linux-static/thread-join.elf")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticThreadJoinExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/ThreadJoin.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("ThreadJoin.c", linuxStaticThreadJoinExampleElf)
+    additionalCompilerArguments.set(listOf("-O0", "-g0", "-no-pie", "-pthread"))
+}
+
+tasks.register<JavaExec>("testLinuxStaticThreadJoinExample") {
+    group = "verification"
+    description = "Compiles a static musl pthread example and verifies clone/futex-backed joins."
+
+    dependsOn("classes", "buildLinuxStaticThreadJoinExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticThreadJoinExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "thread-join-ok\n") {
+            throw GradleException("Unexpected static pthread output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static pthread example wrote to stderr: $actualError")
+        }
+    }
+}
+
+// Static Linux runtime services example.
+val linuxStaticRuntimeServicesExampleElf = layout.buildDirectory.file("examples/linux-static/runtime-services.elf")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticRuntimeServicesExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/RuntimeServices.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("RuntimeServices.c", linuxStaticRuntimeServicesExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticRuntimeServicesExample") {
+    group = "verification"
+    description = "Compiles a static musl runtime-services example and verifies memory, time, random, and resource syscalls."
+
+    dependsOn("classes", "buildLinuxStaticRuntimeServicesExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticRuntimeServicesExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "runtime-services-ok\n") {
+            throw GradleException("Unexpected static runtime services output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static runtime services example wrote to stderr: $actualError")
+        }
+    }
+}
+
+// Static Linux process signals example.
+val linuxStaticProcessSignalsExampleElf = layout.buildDirectory.file("examples/linux-static/process-signals.elf")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticProcessSignalsExample") {
+    group = "verification"
+    description = "Builds examples/linux-static/ProcessSignals.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("ProcessSignals.c", linuxStaticProcessSignalsExampleElf)
+}
+
+tasks.register<JavaExec>("testLinuxStaticProcessSignalsExample") {
+    group = "verification"
+    description = "Compiles a static musl process and signal setup example and verifies process, signal, and prctl syscalls."
+
+    dependsOn("classes", "buildLinuxStaticProcessSignalsExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(linuxStaticProcessSignalsExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != "process-signals-ok\n") {
+            throw GradleException("Unexpected static process signals output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Static process signals example wrote to stderr: $actualError")
+        }
+    }
+}
+
+// Example aggregate checks.
 
 tasks.register("checkHelloWorldExample") {
     group = "verification"
