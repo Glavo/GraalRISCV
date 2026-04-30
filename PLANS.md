@@ -45,6 +45,7 @@
 - `Zicbom` cache-block clean, flush, and invalidate decode as no-ops in the current cacheless model; `Zicboz` zeroes the containing 64-byte cache block through normal guest memory writes.
 - Linux `riscv_hwprobe` now reports the implemented `Zba`, `Zbb`, `Zbs`, `Zfa`, `Zfhmin`, `Zicboz`, `Zicbom`, `Zicbop`, `Zihintntl`, `Zihintpause`, and existing `Zicntr` capabilities, plus 64-byte CBO block-size keys.
 - Focused interpreter, decoder, micro-bytecode, floating-point, hint, CBO, and `hwprobe` tests cover the implemented first slice.
+- Repository-owned RVA22U64 assembly acceptance tests now build with the pinned `riscv-tests` environment and run through the simulator, covering representative `Zba`, `Zbb`, `Zbs`, `Zfhmin`, and `Zfa` instructions from real assembler-generated ELFs.
 
 ## Remaining Work
 
@@ -75,7 +76,7 @@
 - Do not report optional RVA22U64 extensions such as `V`, full `Zfh`, `Zicond`, `Zacas`, or `Zawrs` until they are implemented and tested.
 - Do not claim timing-certified `Zkt` behavior in documentation or `hwprobe`; keep the target as functional user-mode support unless a later plan explicitly adds timing conformance work.
 - Preserve existing `Zifencei` support as a compatibility extension even though it is not a mandatory RVA22U64 user-profile extension.
-- Add assembly acceptance tests for the new extensions before updating README wording from RVA20U64/RV64GC to RVA22U64.
+- Update README wording from RVA20U64/RV64GC to RVA22U64 only after the remaining profile audit work is complete.
 
 ### 5. Maintain build, docs, and performance probes
 

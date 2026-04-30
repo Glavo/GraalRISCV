@@ -27,9 +27,14 @@ val riscVTestEnvArchiveFile =
     layout.buildDirectory.file("downloads/riscv-test-env/riscv-test-env-$riscVTestEnvRevision.zip")
 val riscVTestEnvSourceDirectory = layout.buildDirectory.dir("downloads/riscv-test-env/$riscVTestEnvRevision")
 val riscVTestsElfDirectory = layout.buildDirectory.dir("riscv-tests/rv64gc-p")
+val rva22AcceptanceSourceInputDirectory = layout.projectDirectory.dir("src/riscv-acceptance/rva22")
+val rva22AcceptanceGeneratedSourceDirectory = layout.buildDirectory.dir("generated/rva22-acceptance")
+val rva22AcceptanceElfDirectory = layout.buildDirectory.dir("riscv-tests/rva22-acceptance")
 val riscVTestsMaxInstructions = providers.gradleProperty("graalriscv.riscvTestsMaxInstructions")
     .orElse("10000000")
 val riscVTestsFilter = providers.gradleProperty("graalriscv.riscvTestsFilter")
+    .orElse(".*")
+val rva22AcceptanceFilter = providers.gradleProperty("graalriscv.rva22AcceptanceFilter")
     .orElse(".*")
 val riscVTestsRequiredPaths = listOf(
     "configure.ac",
@@ -154,6 +159,48 @@ tasks.register<RiscVTestsBuildTask>("buildRiscVTests") {
     globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
 }
 
+tasks.register<Sync>("prepareRva22AcceptanceSources") {
+    group = "build setup"
+    description = "Prepares repository-owned RVA22U64 acceptance sources for the riscv-tests builder."
+
+    dependsOn("extractRiscVTestsSources")
+    from(rva22AcceptanceSourceInputDirectory) {
+        into("isa/rva22")
+    }
+    from(riscVTestsSourceDirectory.map { it.dir("isa/macros/scalar") }) {
+        into("isa/macros/scalar")
+    }
+    into(rva22AcceptanceGeneratedSourceDirectory)
+}
+
+tasks.register<RiscVTestsBuildTask>("buildRva22AcceptanceTests") {
+    group = "verification"
+    description = "Builds repository-owned RVA22U64 acceptance ELFs without Make."
+
+    dependsOn("prepareRva22AcceptanceSources", "extractRiscVTestEnvSources")
+    configureZigExecutable()
+    sourceDirectory.set(rva22AcceptanceGeneratedSourceDirectory)
+    environmentDirectory.set(riscVTestEnvSourceDirectory.map { it.dir("p") })
+    outputDirectory.set(rva22AcceptanceElfDirectory)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    suites.set(listOf("rva22"))
+    enabledTargetFeatures.set(listOf(
+        "m",
+        "a",
+        "f",
+        "d",
+        "c",
+        "zicsr",
+        "zifencei",
+        "zba",
+        "zbb",
+        "zbs",
+        "zfhmin",
+        "zfa",
+    ))
+}
+
 tasks.register<RiscVTestsRunTask>("testRiscVTests") {
     group = "verification"
     description = "Builds and runs the RV64GC p-mode riscv-tests ISA ELFs with the GraalRISCV CLI."
@@ -165,4 +212,17 @@ tasks.register<RiscVTestsRunTask>("testRiscVTests") {
     jvmArguments.set(applicationDefaultJvmArgs)
     maxInstructions.set(riscVTestsMaxInstructions)
     filter.set(riscVTestsFilter)
+}
+
+tasks.register<RiscVTestsRunTask>("testRva22Acceptance") {
+    group = "verification"
+    description = "Builds and runs repository-owned RVA22U64 acceptance ELFs with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildRva22AcceptanceTests")
+    elfDirectory.set(rva22AcceptanceElfDirectory)
+    classpath.from(sourceSets.named("main").get().runtimeClasspath)
+    mainClass.set(mainClassName)
+    jvmArguments.set(applicationDefaultJvmArgs)
+    maxInstructions.set(riscVTestsMaxInstructions)
+    filter.set(rva22AcceptanceFilter)
 }
