@@ -308,6 +308,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `mprotect`.
     private static final int SYS_MPROTECT = 226;
 
+    /// The Linux RISC-V syscall number for `mincore`.
+    private static final int SYS_MINCORE = 232;
+
     /// The Linux RISC-V syscall number for `madvise`.
     private static final int SYS_MADVISE = 233;
 
@@ -2273,6 +2276,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(14),
                     state.register(15)));
             case SYS_MPROTECT -> state.setRegister(10, mprotect(state.register(10), state.register(11), state.register(12)));
+            case SYS_MINCORE -> state.setRegister(10, mincore(state.register(10), state.register(11), state.register(12)));
             case SYS_MADVISE -> state.setRegister(10, madvise(state.register(10), state.register(11), state.register(12)));
             case SYS_RISCV_HWPROBE -> state.setRegister(10, riscvHwprobe(
                     state.register(10),
@@ -7153,6 +7157,39 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Reports mapped guest pages as resident for Linux `mincore` probes.
+    private long mincore(long address, long length, long vectorAddress) {
+        if (!isPageAligned(address) || length < 0) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        long alignedLength = alignUp(length, pageSize);
+        if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
+            return ENOMEM;
+        }
+        if (!isMappedRange(address, alignedLength)) {
+            return ENOMEM;
+        }
+
+        long pageCount = alignedLength / pageSize;
+        if (pageCount > Integer.MAX_VALUE) {
+            throw new RiscVException("Guest mincore vector is too large: " + pageCount);
+        }
+        if (!memory.isBacked(vectorAddress, pageCount)) {
+            return EFAULT;
+        }
+
+        byte[] vector = new byte[(int) pageCount];
+        for (int index = 0; index < vector.length; index++) {
+            vector[index] = 1;
+        }
+        memory.writeBytes(vectorAddress, vector, 0, vector.length);
+        return 0;
+    }
+
     /// Implements Linux `madvise` hints that static runtimes commonly emit.
     private long madvise(long address, long length, long advice) {
         if (!isPageAligned(address) || length < 0 || !isSupportedMemoryAdvice(advice)) {
@@ -7537,6 +7574,12 @@ public final class GuestSyscalls implements AutoCloseable {
         /// `/proc/self/maps`.
         MAPS,
 
+        /// `/proc/self/mountinfo`.
+        MOUNTINFO,
+
+        /// `/proc/self/mounts`.
+        MOUNTS,
+
         /// `/proc/self/stat`.
         PROCESS_STAT,
 
@@ -7565,6 +7608,9 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if ((PROC_MOUNT_PATH + "/meminfo").equals(path)) {
             return VirtualNode.file(path, ProcFile.MEMINFO);
+        }
+        if ((PROC_MOUNT_PATH + "/mounts").equals(path)) {
+            return VirtualNode.symbolicLink(path, "self/mounts");
         }
         if ((PROC_MOUNT_PATH + "/stat").equals(path)) {
             return VirtualNode.file(path, ProcFile.STAT);
@@ -7605,6 +7651,12 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((processPrefix + "/maps").equals(path)) {
             return VirtualNode.file(path, ProcFile.MAPS);
         }
+        if ((processPrefix + "/mountinfo").equals(path)) {
+            return VirtualNode.file(path, ProcFile.MOUNTINFO);
+        }
+        if ((processPrefix + "/mounts").equals(path)) {
+            return VirtualNode.file(path, ProcFile.MOUNTS);
+        }
         if ((processPrefix + "/root").equals(path)) {
             return VirtualNode.symbolicLink(path, "/");
         }
@@ -7625,6 +7677,7 @@ public final class GuestSyscalls implements AutoCloseable {
             addProcChild(children, PROC_MOUNT_PATH + "/" + process.id());
             addProcChild(children, PROC_MOUNT_PATH + "/cpuinfo");
             addProcChild(children, PROC_MOUNT_PATH + "/meminfo");
+            addProcChild(children, PROC_MOUNT_PATH + "/mounts");
             addProcChild(children, PROC_MOUNT_PATH + "/self");
             addProcChild(children, PROC_MOUNT_PATH + "/stat");
             addProcChild(children, PROC_MOUNT_PATH + "/uptime");
@@ -7641,6 +7694,8 @@ public final class GuestSyscalls implements AutoCloseable {
             addProcChild(children, processPrefix + "/exe");
             addProcChild(children, processPrefix + "/fd");
             addProcChild(children, processPrefix + "/maps");
+            addProcChild(children, processPrefix + "/mountinfo");
+            addProcChild(children, processPrefix + "/mounts");
             addProcChild(children, processPrefix + "/root");
             addProcChild(children, processPrefix + "/stat");
             addProcChild(children, processPrefix + "/status");
@@ -7709,6 +7764,8 @@ public final class GuestSyscalls implements AutoCloseable {
             case ENVIRON -> procEnvironmentBytes.clone();
             case MAPS -> asciiBytes(procMaps());
             case MEMINFO -> asciiBytes(procMeminfo());
+            case MOUNTINFO -> asciiBytes(procMountinfo());
+            case MOUNTS -> asciiBytes(procMounts());
             case PROCESS_STAT -> asciiBytes(procProcessStat());
             case STAT -> asciiBytes(procStat());
             case STATUS -> asciiBytes(procStatus());
@@ -7839,6 +7896,16 @@ public final class GuestSyscalls implements AutoCloseable {
                     .append(" 00000000 00:00 0\n");
         }
         return builder.toString();
+    }
+
+    /// Returns `/proc/self/mountinfo` content for the synthetic guest root mount.
+    private static String procMountinfo() {
+        return "1 0 0:1 / / rw,relatime - graalriscv graalriscv rw\n";
+    }
+
+    /// Returns `/proc/self/mounts` content for the synthetic guest root mount.
+    private static String procMounts() {
+        return "graalriscv / graalriscv rw,relatime 0 0\n";
     }
 
     /// Returns `/proc/self/stat` content.

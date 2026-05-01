@@ -363,6 +363,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `mprotect`.
     private static final long SYS_MPROTECT = 226;
 
+    /// The Linux RISC-V syscall number for `mincore`.
+    private static final long SYS_MINCORE = 232;
+
     /// The Linux RISC-V syscall number for `madvise`.
     private static final long SYS_MADVISE = 233;
 
@@ -4209,6 +4212,38 @@ public final class GuestSyscallsTest {
             assertEquals(environment.length, state.register(10));
             assertArrayEquals(environment, memory.readBytes(bufferAddress, environment.length));
 
+            writeGuestString(memory, pathAddress, "/proc/self/mountinfo");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int mountinfoFileDescriptor = (int) state.register(10);
+            assertEquals(5, mountinfoFileDescriptor);
+
+            byte[] mountinfo = "1 0 0:1 / / rw,relatime - graalriscv graalriscv rw\n".getBytes(StandardCharsets.UTF_8);
+            setSyscall(state, SYS_READ, mountinfoFileDescriptor, bufferAddress, mountinfo.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(mountinfo.length, state.register(10));
+            assertArrayEquals(mountinfo, memory.readBytes(bufferAddress, mountinfo.length));
+
+            setSyscall(state, SYS_CLOSE, mountinfoFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/proc/mounts");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int mountsFileDescriptor = (int) state.register(10);
+            assertEquals(5, mountsFileDescriptor);
+
+            byte[] mounts = "graalriscv / graalriscv rw,relatime 0 0\n".getBytes(StandardCharsets.UTF_8);
+            setSyscall(state, SYS_READ, mountsFileDescriptor, bufferAddress, mounts.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(mounts.length, state.register(10));
+            assertArrayEquals(mounts, memory.readBytes(bufferAddress, mounts.length));
+
+            setSyscall(state, SYS_CLOSE, mountsFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
             writeGuestString(memory, pathAddress, "/proc/self");
             setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
             state.syscalls().handle(state, TEST_PC);
@@ -4270,7 +4305,8 @@ public final class GuestSyscallsTest {
             nextEntry = assertDirectoryEntry(memory, nextEntry, "1", DIRECTORY_ENTRY_DIRECTORY, 3);
             nextEntry = assertDirectoryEntry(memory, nextEntry, "cpuinfo", DIRECTORY_ENTRY_REGULAR_FILE, 4);
             nextEntry = assertDirectoryEntry(memory, nextEntry, "meminfo", DIRECTORY_ENTRY_REGULAR_FILE, 5);
-            assertDirectoryEntry(memory, nextEntry, "self", DIRECTORY_ENTRY_SYMBOLIC_LINK, 6);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "mounts", DIRECTORY_ENTRY_SYMBOLIC_LINK, 6);
+            assertDirectoryEntry(memory, nextEntry, "self", DIRECTORY_ENTRY_SYMBOLIC_LINK, 7);
         }
     }
 
@@ -5426,6 +5462,46 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_MADVISE, mappedAddress, PAGE_SIZE, MADV_REMOVE);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies that `mincore` reports mapped pages as resident.
+    @Test
+    public void mincoreReportsMappedPagesResident() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    2L * PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+            long vectorAddress = memory.baseAddress() + 128;
+
+            setSyscall(state, SYS_MINCORE, mappedAddress, PAGE_SIZE + 1, vectorAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertArrayEquals(new byte[]{1, 1}, memory.readBytes(vectorAddress, 2));
+
+            setSyscall(state, SYS_MINCORE, mappedAddress + 1, PAGE_SIZE, vectorAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MINCORE, mappedAddress, PAGE_SIZE, memory.endAddress());
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
         }
     }
 

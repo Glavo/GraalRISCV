@@ -152,6 +152,20 @@ registerUbuntuBaseSmokeTest(
 )
 
 registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseGrep",
+    "Runs /usr/bin/grep from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/grep", "Ubuntu", "/etc/issue"),
+    "Ubuntu 26.04 LTS \\n \\l\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseReadlink",
+    "Runs /usr/bin/readlink from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/readlink", "-f", "/usr/bin/bash"),
+    "/usr/bin/bash\n"
+)
+
+registerUbuntuBaseSmokeTest(
     "testUbuntuBaseId",
     "Runs /usr/bin/id from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/id", "-u"),
@@ -170,4 +184,12 @@ registerUbuntuBaseSmokeTest(
     "Runs /usr/bin/du from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/du", "-s", "/usr/bin/bash"),
     "1288\t/usr/bin/bash\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseDf",
+    "Runs /usr/bin/df from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/df", "-P", "-k", "/"),
+    "Filesystem     1024-blocks  Used Available Capacity Mounted on\n" +
+            "graalriscv         4194304     0   4194304       0% /\n"
 )
