@@ -368,6 +368,150 @@ public final class VectorInstructionTest {
         }
     }
 
+    /// Verifies integer reduction operations.
+    @Test
+    public void vectorReductionInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            long accumulator = TEST_PC + 512;
+            for (int index = 0; index < 4; index++) {
+                machine.memory().writeShort(input + (long) index * Short.BYTES, (short) (index + 1));
+            }
+            machine.memory().writeShort(accumulator, (short) 10);
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(16, 1)),
+                    vle(16, 1, 6),
+                    vle(16, 2, 7),
+                    vredsumVs(3, 1, 2),
+                    vredmaxuVs(4, 1, 2),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 4);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(7, accumulator);
+
+            runDecodedProgram(machine);
+
+            assertEquals(20, machine.state().vectorUnit().readElement(3, 0));
+            assertEquals(10, machine.state().vectorUnit().readElement(4, 0));
+        }
+    }
+
+    /// Verifies vector add-with-carry and carry-mask generation.
+    @Test
+    public void vectorCarryInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long left = TEST_PC + 256;
+            long right = TEST_PC + 512;
+            int[] leftValues = {0xff, 0, 5, 8};
+            int[] rightValues = {1, 1, 250, 255};
+            for (int index = 0; index < leftValues.length; index++) {
+                machine.memory().writeByte(left + index, (byte) leftValues[index]);
+                machine.memory().writeByte(right + index, (byte) rightValues[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vle(8, 1, 6),
+                    vle(8, 2, 7),
+                    vmadcVvm(3, 1, 2),
+                    vadcVvm(4, 1, 2),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, leftValues.length);
+            machine.state().setRegister(6, left);
+            machine.state().setRegister(7, right);
+            machine.state().vectorUnit().writeElement(0, 0, 0b0101);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0b1101, machine.state().vectorUnit().readElement(3, 0));
+            assertVectorBytes(machine.state(), 4, 1, 1, 0, 7);
+        }
+    }
+
+    /// Verifies gather, slide, and compress operations.
+    @Test
+    public void vectorGatherSlideAndCompressInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            int[] values = {10, 20, 30, 40, 50, 60, 70, 80};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeByte(input + index, (byte) values[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vle(8, 1, 6),
+                    vrgatherVi(2, 1, 2),
+                    vslideupVi(3, 1, 2),
+                    vslidedownVi(4, 1, 3),
+                    vslide1upVx(5, 1, 11),
+                    vslide1downVx(6, 1, 12),
+                    vcompressVm(7, 1, 0),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(11, 99);
+            machine.state().setRegister(12, 77);
+            machine.state().vectorUnit().writeElement(0, 0, 0b1010_1001);
+
+            runDecodedProgram(machine);
+
+            assertVectorBytes(machine.state(), 2, 30, 30, 30, 30, 30, 30, 30, 30);
+            assertVectorBytes(machine.state(), 3, 0, 0, 10, 20, 30, 40, 50, 60);
+            assertVectorBytes(machine.state(), 4, 40, 50, 60, 70, 80, 0, 0, 0);
+            assertVectorBytes(machine.state(), 5, 99, 10, 20, 30, 40, 50, 60, 70);
+            assertVectorBytes(machine.state(), 6, 20, 30, 40, 50, 60, 70, 80, 77);
+            assertVectorBytes(machine.state(), 7, 10, 40, 60, 80);
+        }
+    }
+
+    /// Verifies basic vector floating-point arithmetic and comparison operations.
+    @Test
+    public void vectorFloatingPointInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long left = TEST_PC + 256;
+            long right = TEST_PC + 512;
+            float[] leftValues = {1.0f, 2.0f, 3.0f, 4.0f};
+            float[] rightValues = {4.0f, 3.0f, 2.0f, 1.0f};
+            for (int index = 0; index < leftValues.length; index++) {
+                machine.memory().writeInt(left + (long) index * Integer.BYTES, Float.floatToRawIntBits(leftValues[index]));
+                machine.memory().writeInt(right + (long) index * Integer.BYTES, Float.floatToRawIntBits(rightValues[index]));
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(32, 1)),
+                    vle(32, 1, 6),
+                    vle(32, 2, 7),
+                    vfaddVv(3, 1, 2),
+                    vfmulVf(4, 1, 11),
+                    vmfltVv(5, 1, 2),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, leftValues.length);
+            machine.state().setRegister(6, left);
+            machine.state().setRegister(7, right);
+            machine.state().setFloatingPointRegister(11, Float.floatToRawIntBits(2.0f));
+
+            runDecodedProgram(machine);
+
+            assertVectorElements(machine.state(), 3,
+                    Float.floatToRawIntBits(5.0f),
+                    Float.floatToRawIntBits(5.0f),
+                    Float.floatToRawIntBits(5.0f),
+                    Float.floatToRawIntBits(5.0f));
+            assertVectorElements(machine.state(), 4,
+                    Float.floatToRawIntBits(2.0f),
+                    Float.floatToRawIntBits(4.0f),
+                    Float.floatToRawIntBits(6.0f),
+                    Float.floatToRawIntBits(8.0f));
+            assertEquals(0b0011, machine.state().vectorUnit().readElement(5, 0));
+        }
+    }
+
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
     private static void prepareExit(MachineState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
@@ -583,6 +727,71 @@ public final class VectorInstructionTest {
     /// Encodes `vrem.vx`.
     private static int vremVx(int vd, int vs2, int rs1) {
         return vectorInteger(0x23, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vredsum.vs`.
+    private static int vredsumVs(int vd, int vs2, int vs1) {
+        return vectorInteger(0x00, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vredmaxu.vs`.
+    private static int vredmaxuVs(int vd, int vs2, int vs1) {
+        return vectorInteger(0x06, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vmadc.vvm`.
+    private static int vmadcVvm(int vd, int vs2, int vs1) {
+        return vectorInteger(0x11, false, vd, vs1, vs2, 0);
+    }
+
+    /// Encodes `vadc.vvm`.
+    private static int vadcVvm(int vd, int vs2, int vs1) {
+        return vectorInteger(0x10, false, vd, vs1, vs2, 0);
+    }
+
+    /// Encodes `vrgather.vi`.
+    private static int vrgatherVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x0c, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vslideup.vi`.
+    private static int vslideupVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x0e, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vslidedown.vi`.
+    private static int vslidedownVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x0f, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vslide1up.vx`.
+    private static int vslide1upVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x0e, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vslide1down.vx`.
+    private static int vslide1downVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x0f, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vcompress.vm`.
+    private static int vcompressVm(int vd, int vs2, int vs1) {
+        return vectorInteger(0x17, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vfadd.vv`.
+    private static int vfaddVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x00, true, vd, vs1, vs2, 1);
+    }
+
+    /// Encodes `vfmul.vf`.
+    private static int vfmulVf(int vd, int vs2, int rs1) {
+        return vectorInteger(0x24, true, vd, rs1, vs2, 5);
+    }
+
+    /// Encodes `vmflt.vv`.
+    private static int vmfltVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x1b, true, vd, vs1, vs2, 1);
     }
 
     /// Encodes a vector integer instruction.

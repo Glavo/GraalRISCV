@@ -717,7 +717,7 @@ public final class RiscVDecoder {
             throw illegalException(address, raw);
         }
 
-        if (funct3 == 0 || funct3 == 2 || funct3 == 3 || funct3 == 4 || funct3 == 6) {
+        if (funct3 >= 0 && funct3 <= 6) {
             return instruction(address, raw, RiscVOperation.VECTOR_INTEGER, rd(raw), rs1(raw), rs2(raw), raw, false);
         }
         throw illegalException(address, raw);

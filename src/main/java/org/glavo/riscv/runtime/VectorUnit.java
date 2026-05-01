@@ -36,6 +36,9 @@ public final class VectorUnit {
     /// The OP-V funct3 value for vector-vector integer operations.
     private static final int OPIVV = 0;
 
+    /// The OP-V funct3 value for vector-vector floating-point operations.
+    private static final int OPFVV = 1;
+
     /// The OP-V funct3 value for vector-immediate integer operations.
     private static final int OPIVI = 3;
 
@@ -44,6 +47,9 @@ public final class VectorUnit {
 
     /// The OP-V funct3 value for vector-scalar integer operations.
     private static final int OPIVX = 4;
+
+    /// The OP-V funct3 value for vector-scalar floating-point operations.
+    private static final int OPFVF = 5;
 
     /// The OP-V funct3 value for vector-scalar mask operations.
     private static final int OPMVX = 6;
@@ -260,10 +266,34 @@ public final class VectorUnit {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         int vs1 = rs1;
+        if (funct3 == OPFVV || funct3 == OPFVF) {
+            executeFloatingPoint(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
+        if (isReduction(funct3, funct6)) {
+            executeReduction(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
         boolean compare = isIntegerCompare(funct6);
         boolean maskLogical = isMaskLogical(funct3, funct6);
         if (maskLogical) {
             executeMaskLogical(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
+        if (isCarryBorrow(funct6)) {
+            executeCarryBorrow(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
+        if (isGather(funct3, funct6)) {
+            executeGather(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
+        if (isSlide(funct3, funct6)) {
+            executeSlide(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
+        if (isCompress(funct3, funct6)) {
+            executeCompress(raw, vd, vs1, vs2, nextPc, state);
             return;
         }
         if (!compare) {
@@ -573,6 +603,296 @@ public final class VectorUnit {
         };
     }
 
+    /// Executes a vector floating-point operation for SEW 32 or 64.
+    private void executeFloatingPoint(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        int funct3 = (raw >>> 12) & 0x7;
+        int funct6 = (raw >>> 26) & 0x3f;
+        if (sewBits() != Float.SIZE && sewBits() != Double.SIZE) {
+            throw new RiscVException("Vector floating-point operations require SEW 32 or 64");
+        }
+        boolean compare = isFloatingPointCompare(funct6);
+        if (!compare) {
+            requireRegisterGroup(vd);
+        }
+        requireRegisterGroup(vs2);
+        if (funct3 == OPFVV) {
+            requireRegisterGroup(vs1);
+        }
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                long left = readElement(vs2, element);
+                long right = funct3 == OPFVV ? readElement(vs1, element) : state.decodedFloatingPointRegister(vs1);
+                if (compare) {
+                    writeMaskBit(vd, element, executeFloatingPointCompare(funct6, left, right));
+                } else {
+                    writeElement(vd, element, executeFloatingPointOperation(funct6, left, right));
+                }
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes one vector floating-point operation.
+    private long executeFloatingPointOperation(int funct6, long leftBits, long rightBits) {
+        return sewBits() == Float.SIZE
+                ? executeSingleFloatingPointOperation(funct6, (int) leftBits, (int) rightBits) & 0xffff_ffffL
+                : executeDoubleFloatingPointOperation(funct6, leftBits, rightBits);
+    }
+
+    /// Executes one single-precision vector floating-point operation.
+    private int executeSingleFloatingPointOperation(int funct6, int leftBits, int rightBits) {
+        float left = Float.intBitsToFloat(leftBits);
+        float right = Float.intBitsToFloat(rightBits);
+        return switch (funct6) {
+            case 0x00 -> Float.floatToRawIntBits(left + right);
+            case 0x02 -> Float.floatToRawIntBits(left - right);
+            case 0x04 -> Float.floatToRawIntBits(Math.min(left, right));
+            case 0x06 -> Float.floatToRawIntBits(Math.max(left, right));
+            case 0x08 -> signInjectSingle(leftBits, rightBits, false, false);
+            case 0x09 -> signInjectSingle(leftBits, rightBits, true, false);
+            case 0x0a -> signInjectSingle(leftBits, rightBits, false, true);
+            case 0x20 -> Float.floatToRawIntBits(left / right);
+            case 0x24 -> Float.floatToRawIntBits(left * right);
+            default -> throw new RiscVException("Unsupported vector floating-point operation funct6: 0x"
+                    + Integer.toUnsignedString(funct6, 16));
+        };
+    }
+
+    /// Executes one double-precision vector floating-point operation.
+    private long executeDoubleFloatingPointOperation(int funct6, long leftBits, long rightBits) {
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        return switch (funct6) {
+            case 0x00 -> Double.doubleToRawLongBits(left + right);
+            case 0x02 -> Double.doubleToRawLongBits(left - right);
+            case 0x04 -> Double.doubleToRawLongBits(Math.min(left, right));
+            case 0x06 -> Double.doubleToRawLongBits(Math.max(left, right));
+            case 0x08 -> signInjectDouble(leftBits, rightBits, false, false);
+            case 0x09 -> signInjectDouble(leftBits, rightBits, true, false);
+            case 0x0a -> signInjectDouble(leftBits, rightBits, false, true);
+            case 0x20 -> Double.doubleToRawLongBits(left / right);
+            case 0x24 -> Double.doubleToRawLongBits(left * right);
+            default -> throw new RiscVException("Unsupported vector floating-point operation funct6: 0x"
+                    + Integer.toUnsignedString(funct6, 16));
+        };
+    }
+
+    /// Executes one vector floating-point comparison.
+    private boolean executeFloatingPointCompare(int funct6, long leftBits, long rightBits) {
+        if (sewBits() == Float.SIZE) {
+            float left = Float.intBitsToFloat((int) leftBits);
+            float right = Float.intBitsToFloat((int) rightBits);
+            return switch (funct6) {
+                case 0x18 -> left == right;
+                case 0x19 -> left <= right;
+                case 0x1b -> left < right;
+                case 0x1c -> left != right;
+                case 0x1d -> left > right;
+                case 0x1f -> left >= right;
+                default -> throw new RiscVException("Unsupported vector floating-point compare funct6: 0x"
+                        + Integer.toUnsignedString(funct6, 16));
+            };
+        }
+        double left = Double.longBitsToDouble(leftBits);
+        double right = Double.longBitsToDouble(rightBits);
+        return switch (funct6) {
+            case 0x18 -> left == right;
+            case 0x19 -> left <= right;
+            case 0x1b -> left < right;
+            case 0x1c -> left != right;
+            case 0x1d -> left > right;
+            case 0x1f -> left >= right;
+            default -> throw new RiscVException("Unsupported vector floating-point compare funct6: 0x"
+                    + Integer.toUnsignedString(funct6, 16));
+        };
+    }
+
+    /// Applies single-precision sign injection.
+    private static int signInjectSingle(int left, int right, boolean invert, boolean xor) {
+        int sign = xor ? left ^ right : right;
+        if (invert) {
+            sign ^= 0x8000_0000;
+        }
+        return left & 0x7fff_ffff | sign & 0x8000_0000;
+    }
+
+    /// Applies double-precision sign injection.
+    private static long signInjectDouble(long left, long right, boolean invert, boolean xor) {
+        long sign = xor ? left ^ right : right;
+        if (invert) {
+            sign ^= Long.MIN_VALUE;
+        }
+        return left & Long.MAX_VALUE | sign & Long.MIN_VALUE;
+    }
+
+    /// Executes an integer reduction operation.
+    private void executeReduction(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        requireRegisterGroup(vd);
+        requireRegisterGroup(vs1);
+        requireRegisterGroup(vs2);
+        int funct6 = (raw >>> 26) & 0x3f;
+        long result = readElement(vs1, 0);
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                result = executeReductionOperation(funct6, result, readElement(vs2, element));
+            }
+        }
+        writeElement(vd, 0, result);
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes one reduction step.
+    private long executeReductionOperation(int funct6, long accumulator, long value) {
+        long mask = elementMask();
+        long left = accumulator & mask;
+        long right = value & mask;
+        return switch (funct6) {
+            case 0x00 -> (left + right) & mask;
+            case 0x01 -> left & right;
+            case 0x02 -> left | right;
+            case 0x03 -> left ^ right;
+            case 0x04 -> Long.compareUnsigned(left, right) <= 0 ? left : right;
+            case 0x05 -> signedElement(left) <= signedElement(right) ? left : right;
+            case 0x06 -> Long.compareUnsigned(left, right) >= 0 ? left : right;
+            case 0x07 -> signedElement(left) >= signedElement(right) ? left : right;
+            default -> throw new RiscVException("Unsupported vector reduction funct6: 0x"
+                    + Integer.toUnsignedString(funct6, 16));
+        };
+    }
+
+    /// Executes an add-with-carry or subtract-with-borrow operation.
+    private void executeCarryBorrow(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        int funct3 = (raw >>> 12) & 0x7;
+        int funct6 = (raw >>> 26) & 0x3f;
+        boolean unmasked = ((raw >>> 25) & 0x1) != 0;
+        boolean subtract = funct6 == 0x12 || funct6 == 0x13;
+        boolean maskResult = funct6 == 0x11 || funct6 == 0x13;
+        if ((funct3 == OPIVI && subtract) || (funct3 != OPIVV && funct3 != OPIVX && funct3 != OPIVI)) {
+            throw unsupportedVectorIntegerFormat(funct6, funct3);
+        }
+        if (!maskResult && (unmasked || vd == 0)) {
+            throw new RiscVException("Unsupported vector carry/borrow instruction encoding");
+        }
+        if (!maskResult) {
+            requireRegisterGroup(vd);
+        }
+        requireRegisterGroup(vs2);
+        if (funct3 == OPIVV) {
+            requireRegisterGroup(vs1);
+        }
+
+        long mask = elementMask();
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            long left = readElement(vs2, element) & mask;
+            long right = switch (funct3) {
+                case OPIVV -> readElement(vs1, element) & mask;
+                case OPIVX -> state.decodedRegister(vs1) & mask;
+                case OPIVI -> signExtend(vs1, 5) & mask;
+                default -> throw new AssertionError("Unexpected carry/borrow format: " + funct3);
+            };
+            long carry = unmasked ? 0 : maskBit(element) ? 1 : 0;
+            if (maskResult) {
+                boolean bit = subtract ? borrowOut(left, right, carry) : carryOut(left, right, carry);
+                writeMaskBit(vd, element, bit);
+            } else {
+                long value = subtract ? left - right - carry : left + right + carry;
+                writeElement(vd, element, value & mask);
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes a vector register gather operation.
+    private void executeGather(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        requireRegisterGroup(vd);
+        requireRegisterGroup(vs2);
+        int funct3 = (raw >>> 12) & 0x7;
+        if (funct3 == OPIVV) {
+            requireRegisterGroup(vs1);
+        } else if (funct3 != OPIVX && funct3 != OPIVI) {
+            throw unsupportedVectorIntegerFormat((raw >>> 26) & 0x3f, funct3);
+        }
+        long maximumLength = maximumVectorLength();
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                long index = switch (funct3) {
+                    case OPIVV -> readElement(vs1, element);
+                    case OPIVX -> state.decodedRegister(vs1);
+                    case OPIVI -> vs1 & 0x1fL;
+                    default -> throw new AssertionError("Unexpected gather format: " + funct3);
+                };
+                writeElement(vd, element, Long.compareUnsigned(index, maximumLength) < 0 ? readElement(vs2, index) : 0);
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes a vector slide operation.
+    private void executeSlide(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        requireRegisterGroup(vd);
+        requireRegisterGroup(vs2);
+        int funct3 = (raw >>> 12) & 0x7;
+        int funct6 = (raw >>> 26) & 0x3f;
+        boolean slideDown = funct6 == 0x0f;
+        boolean slideOne = funct3 == OPMVX;
+        if (funct3 != OPIVX && funct3 != OPIVI && funct3 != OPMVX) {
+            throw unsupportedVectorIntegerFormat(funct6, funct3);
+        }
+        long offset = slideOne ? 1 : funct3 == OPIVI ? vs1 & 0x1fL : state.decodedRegister(vs1);
+        long scalar = slideOne ? state.decodedRegister(vs1) & elementMask() : 0;
+        long start = vectorStart;
+        long length = vectorLength;
+        long maximumLength = maximumVectorLength();
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                if (slideDown) {
+                    long source = element + offset;
+                    long value = slideOne && element + 1 == length
+                            ? scalar
+                            : source < maximumLength ? readElement(vs2, source) : 0;
+                    writeElement(vd, element, value);
+                } else if (slideOne && element == 0) {
+                    writeElement(vd, element, scalar);
+                } else if (Long.compareUnsigned(element, offset) >= 0) {
+                    writeElement(vd, element, readElement(vs2, element - offset));
+                }
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes `vcompress.vm`.
+    private void executeCompress(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        if (((raw >>> 25) & 0x1) == 0 || vectorStart != 0) {
+            throw new RiscVException("Unsupported vector compress instruction encoding");
+        }
+        requireRegisterGroup(vd);
+        requireRegisterGroup(vs2);
+        long output = 0;
+        long length = vectorLength;
+        for (long element = 0; element < length; element++) {
+            if (readMaskBit(vs1, element)) {
+                writeElement(vd, output, readElement(vs2, element));
+                output++;
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
     /// Executes a vector merge or move operation.
     private long executeMerge(int raw, long element, long left, long right) {
         boolean unmasked = ((raw >>> 25) & 0x1) != 0;
@@ -668,9 +988,27 @@ public final class VectorUnit {
         return signedElement(left) * right >> bits & elementMask();
     }
 
+    /// Returns whether an unsigned element addition carries out.
+    private boolean carryOut(long left, long right, long carry) {
+        int bits = sewBits();
+        if (bits == Long.SIZE) {
+            long partial = left + right;
+            return Long.compareUnsigned(partial, left) < 0 || carry == 1 && partial == -1L;
+        }
+        return left + right + carry > elementMask();
+    }
+
+    /// Returns whether an unsigned element subtraction borrows out.
+    private boolean borrowOut(long left, long right, long borrow) {
+        int bits = sewBits();
+        if (bits == Long.SIZE) {
+            return borrow == 0 ? Long.compareUnsigned(left, right) < 0 : Long.compareUnsigned(left, right) <= 0;
+        }
+        return left < right + borrow;
+    }
+
     /// Executes a vector mask logical operation.
     private void executeMaskLogical(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
-        requireSupportedIntegerFormat((raw >>> 26) & 0x3f, (raw >>> 12) & 0x7, raw);
         long start = vectorStart;
         long length = vectorLength;
         int funct6 = (raw >>> 26) & 0x3f;
@@ -699,17 +1037,17 @@ public final class VectorUnit {
     private static void requireSupportedIntegerFormat(int funct6, int funct3, int raw) {
         switch (funct6) {
             case 0x00, 0x09, 0x0a, 0x0b, 0x18, 0x19, 0x1c, 0x1d -> {
-                if (funct3 != OPIVV && funct3 != OPIVX && funct3 != OPIVI && funct3 != OPMVV) {
+                if (funct3 != OPIVV && funct3 != OPIVX && funct3 != OPIVI) {
                     throw unsupportedVectorIntegerFormat(funct6, funct3);
                 }
             }
             case 0x02, 0x04, 0x05, 0x06, 0x07, 0x1a, 0x1b -> {
-                if (funct3 != OPIVV && funct3 != OPIVX && funct3 != OPMVV) {
+                if (funct3 != OPIVV && funct3 != OPIVX) {
                     throw unsupportedVectorIntegerFormat(funct6, funct3);
                 }
             }
             case 0x03, 0x1e, 0x1f -> {
-                if (funct3 != OPIVX && funct3 != OPIVI && funct3 != OPMVV) {
+                if (funct3 != OPIVX && funct3 != OPIVI) {
                     throw unsupportedVectorIntegerFormat(funct6, funct3);
                 }
             }
@@ -749,9 +1087,39 @@ public final class VectorUnit {
         return funct6 >= 0x18 && funct6 <= 0x1f;
     }
 
+    /// Returns whether the floating-point operation writes a mask compare result.
+    private static boolean isFloatingPointCompare(int funct6) {
+        return funct6 == 0x18 || funct6 == 0x19 || funct6 == 0x1b || funct6 == 0x1c || funct6 == 0x1d || funct6 == 0x1f;
+    }
+
+    /// Returns whether the operation is an integer reduction instruction.
+    private static boolean isReduction(int funct3, int funct6) {
+        return funct3 == OPMVV && funct6 >= 0x00 && funct6 <= 0x07;
+    }
+
     /// Returns whether the operation is a mask logical instruction.
     private static boolean isMaskLogical(int funct3, int funct6) {
         return funct3 == OPMVV && funct6 >= 0x18 && funct6 <= 0x1f;
+    }
+
+    /// Returns whether the operation is an add-with-carry or subtract-with-borrow instruction.
+    private static boolean isCarryBorrow(int funct6) {
+        return funct6 >= 0x10 && funct6 <= 0x13;
+    }
+
+    /// Returns whether the operation is a gather instruction.
+    private static boolean isGather(int funct3, int funct6) {
+        return funct6 == 0x0c && (funct3 == OPIVV || funct3 == OPIVX || funct3 == OPIVI);
+    }
+
+    /// Returns whether the operation is a slide instruction.
+    private static boolean isSlide(int funct3, int funct6) {
+        return (funct6 == 0x0e || funct6 == 0x0f) && (funct3 == OPIVX || funct3 == OPIVI || funct3 == OPMVX);
+    }
+
+    /// Returns whether the operation is `vcompress.vm`.
+    private static boolean isCompress(int funct3, int funct6) {
+        return funct3 == OPMVV && funct6 == 0x17;
     }
 
     /// Returns a bit mask for the active SEW.

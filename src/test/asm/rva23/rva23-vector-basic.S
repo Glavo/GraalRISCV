@@ -7,12 +7,18 @@
 .equ VSETVLI_T2_A0_E32_M1, ((VTYPE_E32_M1_TA_MA << 20) | (10 << 15) | (7 << 12) | (7 << 7) | 0x57)
 .equ VLE8_V1_T0, ((1 << 25) | (0 << 12) | (5 << 15) | (1 << 7) | 0x07)
 .equ VLE32_V1_T0, ((1 << 25) | (6 << 12) | (5 << 15) | (1 << 7) | 0x07)
+.equ VLE32_V2_T1, ((1 << 25) | (6 << 12) | (6 << 15) | (2 << 7) | 0x07)
+.equ VLE32_V4_T1, ((1 << 25) | (6 << 12) | (6 << 15) | (4 << 7) | 0x07)
 .equ VADD_VI_V2_V1_5, ((1 << 25) | (1 << 20) | (5 << 15) | (3 << 12) | (2 << 7) | 0x57)
 .equ VMSLTU_VX_V2_V1_A1, ((0x1a << 26) | (1 << 25) | (1 << 20) | (11 << 15) | (4 << 12) | (2 << 7) | 0x57)
 .equ VMSGT_VI_V3_V1_0, ((0x1f << 26) | (1 << 25) | (1 << 20) | (0 << 15) | (3 << 12) | (3 << 7) | 0x57)
 .equ VMAND_MM_V4_V2_V3, ((0x19 << 26) | (1 << 25) | (2 << 20) | (3 << 15) | (2 << 12) | (4 << 7) | 0x57)
+.equ VFADD_VV_V3_V1_V2, ((1 << 25) | (1 << 20) | (2 << 15) | (1 << 12) | (3 << 7) | 0x57)
+.equ VREDSUM_VS_V5_V1_V4, ((1 << 25) | (1 << 20) | (4 << 15) | (2 << 12) | (5 << 7) | 0x57)
 .equ VSE8_V4_T1, ((1 << 25) | (0 << 12) | (6 << 15) | (4 << 7) | 0x27)
 .equ VSE32_V2_T1, ((1 << 25) | (6 << 12) | (6 << 15) | (2 << 7) | 0x27)
+.equ VSE32_V3_T2, ((1 << 25) | (6 << 12) | (7 << 15) | (3 << 7) | 0x27)
+.equ VSE32_V5_T2, ((1 << 25) | (6 << 12) | (7 << 15) | (5 << 7) | 0x27)
 
 RVTEST_RV64U
 RVTEST_CODE_BEGIN
@@ -71,6 +77,46 @@ RVTEST_CODE_BEGIN
   2: \
   )
 
+  TEST_CASE( 5, a0, 0x0000000000000000, \
+    la t0, vector_float_left; \
+    la t1, vector_float_right; \
+    li a0, 4; \
+    .word VSETVLI_T2_A0_E32_M1; \
+    la t2, vector_float_output; \
+    .word VLE32_V1_T0; \
+    .word VLE32_V2_T1; \
+    .word VFADD_VV_V3_V1_V2; \
+    .word VSE32_V3_T2; \
+    lw t3, 0(t2); \
+    li t4, 0x40a00000; \
+    bne t3, t4, 1f; \
+    li a0, 0; \
+    j 2f; \
+  1: \
+    li a0, 1; \
+  2: \
+  )
+
+  TEST_CASE( 6, a0, 0x0000000000000000, \
+    la t0, vector_reduce_input; \
+    la t1, vector_reduce_accumulator; \
+    li a0, 4; \
+    .word VSETVLI_T2_A0_E32_M1; \
+    la t2, vector_reduce_output; \
+    .word VLE32_V1_T0; \
+    .word VLE32_V4_T1; \
+    .word VREDSUM_VS_V5_V1_V4; \
+    .word VSE32_V5_T2; \
+    lw t3, 0(t2); \
+    li t4, 20; \
+    bne t3, t4, 1f; \
+    li a0, 0; \
+    j 2f; \
+  1: \
+    li a0, 1; \
+  2: \
+  )
+
   TEST_PASSFAIL
 
 RVTEST_CODE_END
@@ -85,6 +131,18 @@ vector_input_bytes:
   .byte 1, 2, 3, 4, 0x80, 0xf0, 0x7f, 0xff
 vector_output_bytes:
   .byte 0, 0, 0, 0, 0, 0, 0, 0
+vector_float_left:
+  .word 0x3f800000, 0x40000000, 0x40400000, 0x40800000
+vector_float_right:
+  .word 0x40800000, 0x40400000, 0x40000000, 0x3f800000
+vector_float_output:
+  .word 0, 0, 0, 0
+vector_reduce_input:
+  .word 1, 2, 3, 4
+vector_reduce_accumulator:
+  .word 10, 0, 0, 0
+vector_reduce_output:
+  .word 0, 0, 0, 0
 
 RVTEST_DATA_BEGIN
 
