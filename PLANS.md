@@ -16,6 +16,7 @@
 - The memory, `--mount` filesystem namespace, customizable `GuestFileSystem` virtual mounts, read-only tar mounts, built-in `/proc` and Linux-like `/dev` with tty, null, zero, and deterministic random devices, configurable guest user credentials, Ubuntu Base image preparation, process/thread state, process-style `clone`/`wait4`, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 - Ubuntu Base shell startup compatibility covers the currently required identity, process-group, and readiness syscalls, including `setfsuid`, `setfsgid`, `pselect6`, and `setpgid`.
 - Interactive tty handling now exposes a sane guest `termios`, keeps guest-driven `TCSETS` state stable, routes standard-input reads through the shared terminal device only when host tty control is active, and maps `TCSETS` to Windows console input mode for real host consoles.
+- The CLI includes `--root` as a guest root identity shortcut for `--user root --uid 0 --gid 0 --groups 0`.
 
 ## Remaining Work
 

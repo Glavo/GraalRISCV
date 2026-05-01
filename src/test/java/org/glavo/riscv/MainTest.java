@@ -103,6 +103,12 @@ public final class MainTest {
     /// The Linux RISC-V syscall number for `getuid`.
     private static final int SYS_GETUID = 174;
 
+    /// The Linux RISC-V syscall number for `getgid`.
+    private static final int SYS_GETGID = 176;
+
+    /// The Linux RISC-V syscall number for `getgroups`.
+    private static final int SYS_GETGROUPS = 158;
+
     /// A temporary directory for generated ELF files.
     @TempDir
     private Path tempDirectory;
@@ -212,6 +218,29 @@ public final class MainTest {
                         "--groups", "42,43",
                         "--home", "/users/alice",
                         "--shell", "/bin/bash",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that `--root` configures the guest root identity shorthand.
+    @Test
+    public void rootOptionConfiguresRootIdentity() throws Exception {
+        Path elfPath = tempDirectory.resolve("check-root.elf");
+        Files.write(elfPath, ElfTestImages.executable(checkRootIdentityCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--root",
                         elfPath.toString()
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -1265,6 +1294,49 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         patchInstruction(code, mismatchBranchPosition, bne(10, 5, failurePosition - mismatchBranchPosition));
+        return Arrays.copyOf(code.array(), code.position());
+    }
+
+    /// Builds a program that exits successfully only under the guest root uid, gid, and group list.
+    private static byte[] checkRootIdentityCode() {
+        int groupsOffset = 128;
+        ByteBuffer code = ByteBuffer.allocate(groupsOffset + Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_GETUID));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int uidMismatchBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_GETGID));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int gidMismatchBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        putLoadAddress(code, 11, groupsOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_GETGROUPS));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, 1));
+        int groupCountMismatchBranchPosition = reserveInstruction(code);
+
+        putLoadAddress(code, 5, groupsOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        int groupIdMismatchBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int failurePosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, uidMismatchBranchPosition, bne(10, 0, failurePosition - uidMismatchBranchPosition));
+        patchInstruction(code, gidMismatchBranchPosition, bne(10, 0, failurePosition - gidMismatchBranchPosition));
+        patchInstruction(
+                code,
+                groupCountMismatchBranchPosition,
+                bne(10, 5, failurePosition - groupCountMismatchBranchPosition));
+        patchInstruction(code, groupIdMismatchBranchPosition, bne(6, 0, failurePosition - groupIdMismatchBranchPosition));
         return Arrays.copyOf(code.array(), code.position());
     }
 

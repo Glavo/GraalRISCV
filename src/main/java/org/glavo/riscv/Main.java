@@ -45,6 +45,7 @@ public final class Main {
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
+              --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
               --user <name>              Guest login name. Default is user.
               --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
               --gid <id>                 Guest real, effective, and saved gid. Default is 1000.
@@ -242,6 +243,13 @@ public final class Main {
             }
             if (parseOptions && "--use-host-tty".equals(argument)) {
                 useHostTty = true;
+                continue;
+            }
+            if (parseOptions && "--root".equals(argument)) {
+                guestUserName = "root";
+                guestUid = "0";
+                guestGid = "0";
+                guestGroups = "0";
                 continue;
             }
             if (parseOptions && "--user".equals(argument)) {
