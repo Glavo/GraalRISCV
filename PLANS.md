@@ -12,7 +12,7 @@
 - RVA22U64 and RVA23U64 user-mode profile support is implemented, centrally reported, and covered by focused tests.
 - RVV 1.0, mandatory RVA23U64 vector additions, `Zkt`/`Zvkt`, and optional standard `Zvbc` are implemented; the CRC example exercises `Zvbc`.
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
-- Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, file-backed `MAP_PRIVATE`, tar symlink lookup, and Ubuntu Base `/usr/bin/true` plus `/usr/bin/bash` smoke tests.
+- Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, `PR_GET_AUXV`, file-backed `MAP_PRIVATE`, tar symlink/hard-link lookup, and Ubuntu Base `/usr/bin/true`, `/usr/bin/bash`, and `/usr/bin/ls` smoke tests.
 - The memory, `--mount` filesystem sandboxing, read-only tar mounts, Ubuntu Base image preparation, process/thread state, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 
 ## Remaining Work

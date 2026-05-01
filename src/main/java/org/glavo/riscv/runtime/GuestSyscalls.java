@@ -137,6 +137,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `pwrite64`.
     private static final int SYS_PWRITE64 = 68;
 
+    /// The Linux RISC-V syscall number for `ppoll`.
+    private static final int SYS_PPOLL = 73;
+
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final int SYS_READLINKAT = 78;
 
@@ -563,6 +566,33 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte offset of `data` inside Linux RISC-V 64-bit `struct epoll_event`.
     private static final int EPOLL_EVENT_DATA_OFFSET = Long.BYTES;
+
+    /// Linux `POLLIN`.
+    private static final int POLLIN = 0x001;
+
+    /// Linux `POLLOUT`.
+    private static final int POLLOUT = 0x004;
+
+    /// Linux `POLLERR`.
+    private static final int POLLERR = 0x008;
+
+    /// Linux `POLLHUP`.
+    private static final int POLLHUP = 0x010;
+
+    /// Linux `POLLNVAL`.
+    private static final int POLLNVAL = 0x020;
+
+    /// The byte size of Linux RISC-V 64-bit `struct pollfd`.
+    private static final int POLL_FD_SIZE = 8;
+
+    /// The byte offset of `fd` inside Linux RISC-V 64-bit `struct pollfd`.
+    private static final int POLL_FD_FILE_DESCRIPTOR_OFFSET = 0;
+
+    /// The byte offset of `events` inside Linux RISC-V 64-bit `struct pollfd`.
+    private static final int POLL_FD_EVENTS_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `revents` inside Linux RISC-V 64-bit `struct pollfd`.
+    private static final int POLL_FD_REVENTS_OFFSET = Integer.BYTES + Short.BYTES;
 
     /// Linux flags accepted by `pipe2`.
     private static final long SUPPORTED_PIPE2_FLAGS = O_NONBLOCK | O_CLOEXEC;
@@ -1081,6 +1111,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The `tv_nsec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
     private static final int TIMESPEC_NANOSECONDS_OFFSET = Long.BYTES;
 
+    /// The byte size of Linux RISC-V 64-bit `struct timespec`.
+    private static final int TIMESPEC_SIZE = Long.BYTES * 2;
+
     /// The number of nanoseconds in one second.
     private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
 
@@ -1140,6 +1173,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `PR_GET_TAGGED_ADDR_CTRL`.
     private static final long PR_GET_TAGGED_ADDR_CTRL = 56;
+
+    /// Linux `PR_GET_AUXV`.
+    private static final long PR_GET_AUXV = 0x4155_5856L;
 
     /// Linux `PR_TAGGED_ADDR_ENABLE`.
     private static final long PR_TAGGED_ADDR_ENABLE = 1;
@@ -1393,6 +1429,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The guest-visible current working directory in absolute Linux path syntax.
     private String guestWorkingDirectory = "/";
 
+    /// The serialized Linux auxiliary vector returned by `PR_GET_AUXV`.
+    private byte @Unmodifiable [] auxiliaryVectorBytes = encodeAuxiliaryVector(new long[]{0, 0});
+
     /// The lowest program break accepted by the `brk` syscall.
     private final long initialProgramBreak;
 
@@ -1638,6 +1677,52 @@ public final class GuestSyscalls implements AutoCloseable {
         this.timeSource = timeSource;
     }
 
+    /// Captures the auxiliary vector from the initialized Linux stack for later `PR_GET_AUXV` calls.
+    public void recordInitialAuxiliaryVector(long stackPointer) {
+        long address = stackPointer;
+        if (!memory.isBacked(address, Long.BYTES)) {
+            throw new RiscVException("Initial Linux stack is not backed at argc");
+        }
+
+        long argumentCount = memory.readLong(address);
+        if (argumentCount < 0 || argumentCount > 65536) {
+            throw new RiscVException("Initial Linux stack contains invalid argc: " + argumentCount);
+        }
+        address += Long.BYTES + (argumentCount + 1L) * Long.BYTES;
+
+        for (int index = 0; index < 65536; index++) {
+            if (!memory.isBacked(address, Long.BYTES)) {
+                throw new RiscVException("Initial Linux stack has an unterminated environment vector");
+            }
+            long environmentPointer = memory.readLong(address);
+            address += Long.BYTES;
+            if (environmentPointer == 0) {
+                break;
+            }
+            if (index == 65535) {
+                throw new RiscVException("Initial Linux stack environment vector is too long");
+            }
+        }
+
+        ArrayList<Long> words = new ArrayList<>();
+        for (int index = 0; index < 256; index++) {
+            if (!memory.isBacked(address, 2L * Long.BYTES)) {
+                throw new RiscVException("Initial Linux stack has an unterminated auxiliary vector");
+            }
+            long type = memory.readLong(address);
+            long value = memory.readLong(address + Long.BYTES);
+            words.add(type);
+            words.add(value);
+            address += 2L * Long.BYTES;
+            if (type == 0) {
+                auxiliaryVectorBytes = encodeAuxiliaryVector(words);
+                return;
+            }
+        }
+
+        throw new RiscVException("Initial Linux stack auxiliary vector is too long");
+    }
+
     /// Reads a regular file from the configured guest filesystem mounts.
     public static byte @Unmodifiable [] readMountedFile(
             TruffleLanguage.Env env,
@@ -1754,6 +1839,13 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_PPOLL -> state.setRegister(10, ppoll(
+                    state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_READLINKAT -> state.setRegister(10, readlinkat(
                     state.register(10),
                     state.register(11),
@@ -2113,6 +2205,76 @@ public final class GuestSyscalls implements AutoCloseable {
                 count++;
             }
             return count;
+        } finally {
+            if (signalMaskAddress != 0) {
+                thread.setSignalMask(savedSignalMask);
+            }
+        }
+    }
+
+    /// Reports descriptor readiness through Linux `ppoll` without blocking the host thread.
+    private long ppoll(
+            MachineState state,
+            long fileDescriptorsAddress,
+            long fileDescriptorCount,
+            long timeoutAddress,
+            long signalMaskAddress,
+            long signalSetSize) {
+        if (fileDescriptorCount < 0 || fileDescriptorCount > Integer.MAX_VALUE) {
+            return EINVAL;
+        }
+        if (signalMaskAddress != 0 && signalSetSize != KERNEL_SIGSET_SIZE) {
+            return EINVAL;
+        }
+
+        long fileDescriptorsSize = fileDescriptorCount * POLL_FD_SIZE;
+        if (fileDescriptorCount > 0 && !memory.isBacked(fileDescriptorsAddress, fileDescriptorsSize)) {
+            return EFAULT;
+        }
+        if (timeoutAddress != 0) {
+            if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
+                return EFAULT;
+            }
+            long seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
+            long nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            if (seconds < 0 || nanoseconds < 0 || nanoseconds >= NANOSECONDS_PER_SECOND) {
+                return EINVAL;
+            }
+        }
+        if (signalMaskAddress != 0 && !memory.isBacked(signalMaskAddress, KERNEL_SIGSET_SIZE)) {
+            return EFAULT;
+        }
+
+        GuestThread thread = state.guestThread();
+        long savedSignalMask = thread.signalMask();
+        if (signalMaskAddress != 0) {
+            thread.setSignalMask(memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK);
+        }
+        try {
+            int readyCount = 0;
+            for (long index = 0; index < fileDescriptorCount; index++) {
+                long pollFileDescriptorAddress = fileDescriptorsAddress + index * POLL_FD_SIZE;
+                int fileDescriptor = memory.readInt(pollFileDescriptorAddress + POLL_FD_FILE_DESCRIPTOR_OFFSET);
+                int requestedEvents = memory.readUnsignedShort(pollFileDescriptorAddress + POLL_FD_EVENTS_OFFSET);
+
+                int reportedEvents;
+                if (fileDescriptor < 0) {
+                    reportedEvents = 0;
+                } else if (!isOpenFileDescriptor(fileDescriptor)) {
+                    reportedEvents = POLLNVAL;
+                } else {
+                    int readyEvents = readyEventsFor(fileDescriptor);
+                    reportedEvents = (readyEvents & requestedEvents) | (readyEvents & (POLLERR | POLLHUP));
+                }
+
+                memory.writeShort(
+                        pollFileDescriptorAddress + POLL_FD_REVENTS_OFFSET,
+                        (short) reportedEvents);
+                if (reportedEvents != 0) {
+                    readyCount++;
+                }
+            }
+            return readyCount;
         } finally {
             if (signalMaskAddress != 0) {
                 thread.setSignalMask(savedSignalMask);
@@ -5032,6 +5194,9 @@ public final class GuestSyscalls implements AutoCloseable {
         if (option == PR_GET_TAGGED_ADDR_CTRL) {
             return getTaggedAddressControl(state, argument2, argument3, argument4, argument5);
         }
+        if (option == PR_GET_AUXV) {
+            return getAuxiliaryVector(argument2, argument3, argument4, argument5);
+        }
         if (option == PR_SET_VMA) {
             return setVirtualMemoryAreaName(argument2, argument3, argument4, argument5);
         }
@@ -5094,6 +5259,22 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         memory.writeBytes(address, processName, 0, processName.length);
         return 0;
+    }
+
+    /// Copies the initial Linux auxiliary vector for `PR_GET_AUXV`.
+    private long getAuxiliaryVector(long address, long byteCount, long argument4, long argument5) {
+        if (argument4 != 0 || argument5 != 0) {
+            return EINVAL;
+        }
+        if (Long.compareUnsigned(byteCount, auxiliaryVectorBytes.length) < 0) {
+            return auxiliaryVectorBytes.length;
+        }
+        if (!memory.isBacked(address, auxiliaryVectorBytes.length)) {
+            return EFAULT;
+        }
+
+        memory.writeBytes(address, auxiliaryVectorBytes, 0, auxiliaryVectorBytes.length);
+        return auxiliaryVectorBytes.length;
     }
 
     /// Stores the timer slack value exposed by `PR_GET_TIMERSLACK`.
@@ -5983,6 +6164,31 @@ public final class GuestSyscalls implements AutoCloseable {
                 return output.toByteArray();
             }
             output.write(buffer, 0, count);
+        }
+    }
+
+    /// Encodes Linux auxiliary-vector words as little-endian guest bytes.
+    private static byte @Unmodifiable [] encodeAuxiliaryVector(long @Unmodifiable [] words) {
+        byte[] bytes = new byte[words.length * Long.BYTES];
+        for (int index = 0; index < words.length; index++) {
+            writeLittleEndianLong(bytes, index * Long.BYTES, words[index]);
+        }
+        return bytes;
+    }
+
+    /// Encodes Linux auxiliary-vector words as little-endian guest bytes.
+    private static byte @Unmodifiable [] encodeAuxiliaryVector(ArrayList<Long> words) {
+        byte[] bytes = new byte[words.size() * Long.BYTES];
+        for (int index = 0; index < words.size(); index++) {
+            writeLittleEndianLong(bytes, index * Long.BYTES, words.get(index));
+        }
+        return bytes;
+    }
+
+    /// Writes one little-endian 64-bit value into a host byte array.
+    private static void writeLittleEndianLong(byte[] bytes, int offset, long value) {
+        for (int index = 0; index < Long.BYTES; index++) {
+            bytes[offset + index] = (byte) (value >>> (index * Byte.SIZE));
         }
     }
 
@@ -6987,6 +7193,7 @@ public final class GuestSyscalls implements AutoCloseable {
         /// Reads a tar archive into an in-memory filesystem tree.
         static TarFileSystem read(TruffleFile archive) throws IOException {
             TarFileSystem fileSystem = new TarFileSystem();
+            ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();
             try (InputStream input = archive.newInputStream();
                  TarArchiveInputStream tarInput = new TarArchiveInputStream(input)) {
                 TarArchiveEntry entry;
@@ -7002,10 +7209,20 @@ public final class GuestSyscalls implements AutoCloseable {
                     } else if (entry.isSymbolicLink()) {
                         @Nullable String target = entry.getLinkName();
                         fileSystem.addSymbolicLink(relativePath, target == null ? "" : target, mode);
+                    } else if (entry.isLink()) {
+                        @Nullable String target = entry.getLinkName();
+                        String targetPath = normalizeTarEntryName(target == null ? "" : target);
+                        if (!targetPath.isEmpty()) {
+                            hardLinks.add(new PendingTarHardLink(relativePath, targetPath, mode));
+                        }
                     } else if (entry.isFile()) {
                         fileSystem.addFile(relativePath, readEntryData(tarInput, entry), mode);
                     }
                 }
+            }
+
+            for (PendingTarHardLink hardLink : hardLinks) {
+                fileSystem.addHardLink(hardLink.path(), hardLink.targetPath(), hardLink.mode());
             }
             return fileSystem;
         }
@@ -7082,6 +7299,18 @@ public final class GuestSyscalls implements AutoCloseable {
             parent.children().put(leafName(path), TarNode.symbolicLink(leafName(path), path, parent, target, mode));
         }
 
+        /// Adds a hard-link entry by sharing the already-read regular-file payload.
+        private void addHardLink(String path, String targetPath, int mode) {
+            @Nullable TarNode target = node(targetPath);
+            if (target == null || !target.isFile()) {
+                return;
+            }
+
+            int permissions = mode == 0 ? target.permissions() : mode;
+            TarNode parent = ensureParentDirectory(path);
+            parent.children().put(leafName(path), TarNode.file(leafName(path), path, parent, target.data(), permissions));
+        }
+
         /// Ensures that all parent directories for a relative path exist.
         private TarNode ensureParentDirectory(String path) {
             int separator = path.lastIndexOf('/');
@@ -7115,6 +7344,15 @@ public final class GuestSyscalls implements AutoCloseable {
             int separator = path.lastIndexOf('/');
             return separator < 0 ? path : path.substring(separator + 1);
         }
+    }
+
+    /// Stores a tar hard link that must be resolved after the archive has been read.
+    ///
+    /// @param path the archive-relative path where the hard link is exposed
+    /// @param targetPath the archive-relative path of the hard-link target
+    /// @param mode the permission bits from the hard-link tar entry
+    @NotNullByDefault
+    private record PendingTarHardLink(String path, String targetPath, int mode) {
     }
 
     /// Stores one in-memory tar filesystem node.
@@ -7240,6 +7478,11 @@ public final class GuestSyscalls implements AutoCloseable {
         /// Returns true when this node is a symbolic link.
         boolean isSymbolicLink() {
             return directoryEntryType == DIRECTORY_ENTRY_SYMBOLIC_LINK;
+        }
+
+        /// Returns the Linux permission bits for this node.
+        int permissions() {
+            return permissions;
         }
 
         /// Returns the byte size exposed through metadata syscalls.

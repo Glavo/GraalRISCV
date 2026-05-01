@@ -136,3 +136,10 @@ registerUbuntuBaseSmokeTest(
     listOf("--guest-program", "/usr/bin/bash", "-c", "echo bash-ok"),
     "bash-ok\n"
 )
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseLs",
+    "Runs /usr/bin/ls from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/ls", "-1", "/usr/bin/bash"),
+    "/usr/bin/bash\n"
+)

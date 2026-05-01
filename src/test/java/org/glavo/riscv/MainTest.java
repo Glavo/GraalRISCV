@@ -257,6 +257,29 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that `--guest-program` follows a tar symbolic link to a tar hard-link executable.
+    @Test
+    public void guestProgramOptionLoadsSymbolicLinkToTarHardLink() throws Exception {
+        Path archive = tempDirectory.resolve("guest-program-hardlink.tar");
+        writeTarGuestProgramHardLinkFixture(archive);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "/=" + archive,
+                        "--guest-program", "/usr/bin/hello"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Verifies that tar mounts follow symbolic links during normal guest path lookup.
     @Test
     public void mountOptionFollowsTarSymbolicLinks() throws Exception {
@@ -264,6 +287,31 @@ public final class MainTest {
         Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
         Path archive = tempDirectory.resolve("mounted-symlink.tar");
         writeTarSymlinkFixture(archive);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "/data=" + archive,
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that tar mounts expose hard-link entries as regular files.
+    @Test
+    public void mountOptionExposesTarHardLinks() throws Exception {
+        Path elfPath = tempDirectory.resolve("mount-tar-hardlink-read.elf");
+        Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
+        Path archive = tempDirectory.resolve("mounted-hardlink.tar");
+        writeTarHardLinkFixture(archive);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
@@ -924,6 +972,42 @@ public final class MainTest {
             link.setSize(0);
             tarOutput.putArchiveEntry(link);
             tarOutput.closeArchiveEntry();
+            tarOutput.finish();
+        }
+    }
+
+    /// Writes a tar archive containing a regular file and a hard link to it.
+    private static void writeTarHardLinkFixture(Path archive) throws Exception {
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, "actual.txt", "mounted-data".getBytes(StandardCharsets.UTF_8));
+            TarArchiveEntry link = new TarArchiveEntry("message.txt", TarConstants.LF_LINK);
+            link.setLinkName("actual.txt");
+            link.setSize(0);
+            tarOutput.putArchiveEntry(link);
+            tarOutput.closeArchiveEntry();
+            tarOutput.finish();
+        }
+    }
+
+    /// Writes a tar archive where the guest executable is a symbolic link to a hard link.
+    private static void writeTarGuestProgramHardLinkFixture(Path archive) throws Exception {
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, "usr/bin/coreutils", ElfTestImages.executable(helloWorldCode()));
+
+            TarArchiveEntry hardLink = new TarArchiveEntry("usr/lib/cargo/bin/coreutils/hello", TarConstants.LF_LINK);
+            hardLink.setLinkName("usr/bin/coreutils");
+            hardLink.setSize(0);
+            tarOutput.putArchiveEntry(hardLink);
+            tarOutput.closeArchiveEntry();
+
+            TarArchiveEntry symbolicLink = new TarArchiveEntry("usr/bin/hello", TarConstants.LF_SYMLINK);
+            symbolicLink.setLinkName("../lib/cargo/bin/coreutils/hello");
+            symbolicLink.setSize(0);
+            tarOutput.putArchiveEntry(symbolicLink);
+            tarOutput.closeArchiveEntry();
+
             tarOutput.finish();
         }
     }

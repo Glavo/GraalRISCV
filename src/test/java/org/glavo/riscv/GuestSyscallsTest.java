@@ -205,6 +205,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `pwrite64`.
     private static final long SYS_PWRITE64 = 68;
 
+    /// The Linux RISC-V syscall number for `ppoll`.
+    private static final long SYS_PPOLL = 73;
+
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final long SYS_READLINKAT = 78;
 
@@ -688,6 +691,24 @@ public final class GuestSyscallsTest {
     /// Linux `EPOLLOUT`.
     private static final int EPOLLOUT = 0x004;
 
+    /// Linux `POLLIN`.
+    private static final int POLLIN = 0x001;
+
+    /// Linux `POLLOUT`.
+    private static final int POLLOUT = 0x004;
+
+    /// Linux `POLLNVAL`.
+    private static final int POLLNVAL = 0x020;
+
+    /// The byte size of Linux RISC-V 64-bit `struct pollfd`.
+    private static final int POLL_FD_SIZE = 8;
+
+    /// The byte offset of `events` inside Linux RISC-V 64-bit `struct pollfd`.
+    private static final int POLL_FD_EVENTS_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `revents` inside Linux RISC-V 64-bit `struct pollfd`.
+    private static final int POLL_FD_REVENTS_OFFSET = Integer.BYTES + Short.BYTES;
+
     /// The byte size of Linux RISC-V 64-bit `struct epoll_event`.
     private static final int EPOLL_EVENT_SIZE = 16;
 
@@ -1010,6 +1031,9 @@ public final class GuestSyscallsTest {
     /// Linux `PR_GET_TAGGED_ADDR_CTRL`.
     private static final long PR_GET_TAGGED_ADDR_CTRL = 56;
 
+    /// Linux `PR_GET_AUXV`.
+    private static final long PR_GET_AUXV = 0x4155_5856L;
+
     /// Linux `PR_TAGGED_ADDR_ENABLE`.
     private static final long PR_TAGGED_ADDR_ENABLE = 1;
 
@@ -1024,6 +1048,12 @@ public final class GuestSyscallsTest {
 
     /// Linux `PR_SET_VMA_ANON_NAME`.
     private static final long PR_SET_VMA_ANON_NAME = 0;
+
+    /// Linux auxv terminator type.
+    private static final long AT_NULL = 0;
+
+    /// Linux auxv page-size type.
+    private static final long AT_PAGESZ = 6;
 
     /// Verifies that stdin EOF is reported as a zero-byte read.
     @Test
@@ -2272,6 +2302,45 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, 99, eventAddress);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies deterministic `ppoll` readiness for standard, invalid, and ignored descriptors.
+    @Test
+    public void ppollReportsDescriptorReadiness() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pollFileDescriptorsAddress = memory.baseAddress() + 64;
+            long timeoutAddress = memory.baseAddress() + 128;
+
+            memory.writeLong(timeoutAddress, 0);
+            memory.writeLong(timeoutAddress + Long.BYTES, 0);
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 0, 1, POLLOUT);
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 1, 0, POLLIN);
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 2, 99, POLLIN);
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 3, -1, POLLIN);
+
+            setSyscall(state, SYS_PPOLL, pollFileDescriptorsAddress, 4, timeoutAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(3, state.register(10));
+            assertEquals(POLLOUT, pollRevents(memory, pollFileDescriptorsAddress, 0));
+            assertEquals(POLLIN, pollRevents(memory, pollFileDescriptorsAddress, 1));
+            assertEquals(POLLNVAL, pollRevents(memory, pollFileDescriptorsAddress, 2));
+            assertEquals(0, pollRevents(memory, pollFileDescriptorsAddress, 3));
+
+            memory.writeLong(timeoutAddress + Long.BYTES, 1_000_000_000L);
+            setSyscall(state, SYS_PPOLL, pollFileDescriptorsAddress, 1, timeoutAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PPOLL, pollFileDescriptorsAddress, 1, 0, memory.baseAddress(), KERNEL_SIGSET_SIZE - 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PPOLL, 0, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
         }
     }
 
@@ -3657,6 +3726,42 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `PR_GET_AUXV` copies the captured initial Linux auxiliary vector.
+    @Test
+    public void prctlReturnsInitialAuxiliaryVector() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long stackPointer = memory.baseAddress() + 64;
+            long bufferAddress = memory.baseAddress() + 256;
+
+            memory.writeLong(stackPointer, 1);
+            memory.writeLong(stackPointer + Long.BYTES, memory.baseAddress() + 512);
+            memory.writeLong(stackPointer + 2L * Long.BYTES, 0);
+            memory.writeLong(stackPointer + 3L * Long.BYTES, 0);
+            memory.writeLong(stackPointer + 4L * Long.BYTES, AT_PAGESZ);
+            memory.writeLong(stackPointer + 5L * Long.BYTES, 4096);
+            memory.writeLong(stackPointer + 6L * Long.BYTES, AT_NULL);
+            memory.writeLong(stackPointer + 7L * Long.BYTES, 0);
+            state.syscalls().recordInitialAuxiliaryVector(stackPointer);
+
+            setSyscall(state, SYS_PRCTL, PR_GET_AUXV, bufferAddress, 512, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4L * Long.BYTES, state.register(10));
+            assertEquals(AT_PAGESZ, memory.readLong(bufferAddress));
+            assertEquals(4096, memory.readLong(bufferAddress + Long.BYTES));
+            assertEquals(AT_NULL, memory.readLong(bufferAddress + 2L * Long.BYTES));
+            assertEquals(0, memory.readLong(bufferAddress + 3L * Long.BYTES));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_AUXV, 0, Long.BYTES, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4L * Long.BYTES, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_AUXV, 0, 512, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+        }
+    }
+
     /// Verifies `prctl` state tracked by the single-process simulator.
     @Test
     public void prctlTracksSingleProcessState() {
@@ -4982,6 +5087,25 @@ public final class GuestSyscallsTest {
     private static void writeEpollEvent(Memory memory, long eventAddress, int events, long data) {
         memory.writeInt(eventAddress + EPOLL_EVENT_EVENTS_OFFSET, events);
         writeLongUnaligned(memory, eventAddress + EPOLL_EVENT_DATA_OFFSET, data);
+    }
+
+    /// Writes one Linux `struct pollfd` entry.
+    private static void writePollFileDescriptor(
+            Memory memory,
+            long pollFileDescriptorsAddress,
+            int index,
+            int fileDescriptor,
+            int events) {
+        long address = pollFileDescriptorsAddress + (long) index * POLL_FD_SIZE;
+        memory.writeInt(address, fileDescriptor);
+        memory.writeShort(address + POLL_FD_EVENTS_OFFSET, (short) events);
+        memory.writeShort(address + POLL_FD_REVENTS_OFFSET, (short) -1);
+    }
+
+    /// Reads the `revents` field from one Linux `struct pollfd` entry.
+    private static int pollRevents(Memory memory, long pollFileDescriptorsAddress, int index) {
+        return memory.readUnsignedShort(
+                pollFileDescriptorsAddress + (long) index * POLL_FD_SIZE + POLL_FD_REVENTS_OFFSET);
     }
 
     /// Reads the `data` field from a packed Linux generic `struct epoll_event`.
