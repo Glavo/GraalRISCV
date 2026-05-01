@@ -5,19 +5,21 @@ package org.glavo.riscv.parser;
 
 import net.fornwall.jelf.ElfException;
 import net.fornwall.jelf.ElfFile;
-import net.fornwall.jelf.ElfSectionHeader;
 import net.fornwall.jelf.ElfSegment;
 import net.fornwall.jelf.ElfSymbol;
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 
 /// Parses and validates the ELF subset accepted by the bare-metal simulator.
 @NotNullByDefault
 public final class ElfLoader {
+    /// ELF object type for position-independent executables and shared objects.
+    private static final int ET_DYN = 3;
+
     /// Prevents construction of this utility class.
     private ElfLoader() {
     }
@@ -35,9 +37,17 @@ public final class ElfLoader {
             int programHeaderCount = Short.toUnsignedInt(elfFile.e_phnum);
             long programHeaderTableSize = (long) programHeaderEntrySize * programHeaderCount;
             boolean entryPointIsExecutable = false;
+            @Nullable String interpreterPath = null;
             for (int index = 0; index < programHeaderCount; index++) {
                 ElfSegment segment = elfFile.getProgramHeader(index);
                 validateProgramHeader(segment);
+                if (segment.p_type == ElfSegment.PT_INTERP) {
+                    if (interpreterPath != null) {
+                        throw new RiscVException("ELF image contains more than one PT_INTERP segment");
+                    }
+                    interpreterPath = interpreterPath(bytes, segment);
+                    continue;
+                }
                 if (segment.p_type != ElfSegment.PT_LOAD) {
                     continue;
                 }
@@ -68,7 +78,13 @@ public final class ElfLoader {
 
                 byte[] contents = new byte[(int) segment.p_filesz];
                 System.arraycopy(bytes, (int) segment.p_offset, contents, 0, (int) segment.p_filesz);
-                loadSegments.add(new ElfImage.LoadSegment(segment.p_vaddr, contents, segment.p_memsz));
+                loadSegments.add(new ElfImage.LoadSegment(
+                        segment.p_vaddr,
+                        segment.p_offset,
+                        contents,
+                        segment.p_memsz,
+                        segment.p_flags,
+                        segment.p_align));
             }
             if (!entryPointIsExecutable) {
                 throw new RiscVException("ELF entry point is not inside an executable PT_LOAD segment: 0x"
@@ -76,7 +92,9 @@ public final class ElfLoader {
             }
 
             return new ElfImage(
+                    elfFile.e_type,
                     elfFile.e_entry,
+                    interpreterPath,
                     loadSegments,
                     symbolAddress(elfFile, "tohost"),
                     symbolAddress(elfFile, "fromhost"),
@@ -88,16 +106,33 @@ public final class ElfLoader {
         }
     }
 
-    /// Rejects program header metadata that requires dynamic linking support.
+    /// Validates program header metadata that does not directly map guest memory.
     private static void validateProgramHeader(ElfSegment segment) {
-        switch (segment.p_type) {
-            case ElfSegment.PT_INTERP -> throw new RiscVException(
-                    "Dynamic ELF interpreter segments are not supported: PT_INTERP");
-            case ElfSegment.PT_DYNAMIC -> throw new RiscVException(
-                    "Dynamic ELF segments are not supported: PT_DYNAMIC");
-            default -> {
+        if (segment.p_type == ElfSegment.PT_INTERP || segment.p_type == ElfSegment.PT_DYNAMIC) {
+            if (segment.p_offset < 0 || segment.p_filesz < 0 || segment.p_filesz > Integer.MAX_VALUE) {
+                throw new RiscVException("Invalid dynamic ELF segment range");
             }
         }
+    }
+
+    /// Extracts a null-terminated dynamic interpreter path from a `PT_INTERP` segment.
+    private static String interpreterPath(byte[] bytes, ElfSegment segment) {
+        requireRange(bytes, segment.p_offset, segment.p_filesz, "interpreter path");
+        if (segment.p_filesz <= 1) {
+            throw new RiscVException("ELF interpreter path is empty");
+        }
+
+        int offset = (int) segment.p_offset;
+        int size = (int) segment.p_filesz;
+        if (bytes[offset + size - 1] != 0) {
+            throw new RiscVException("ELF interpreter path is not null-terminated");
+        }
+
+        String path = new String(bytes, offset, size - 1, StandardCharsets.UTF_8);
+        if (!path.startsWith("/")) {
+            throw new RiscVException("ELF interpreter path must be absolute: " + path);
+        }
+        return path;
     }
 
     /// Validates one `PT_LOAD` segment before its bytes are copied out of the ELF file.
@@ -158,7 +193,7 @@ public final class ElfLoader {
         if (elfFile.ei_data != ElfFile.DATA_LSB) {
             throw new RiscVException("Only little-endian ELF files are supported");
         }
-        if (elfFile.e_type != ElfFile.ET_EXEC) {
+        if (elfFile.e_type != ElfFile.ET_EXEC && elfFile.e_type != ET_DYN) {
             throw new RiscVException("Unsupported ELF type: " + elfFile.e_type);
         }
         if (Short.toUnsignedInt(elfFile.e_machine) != ElfFile.ARCH_RISCV) {
@@ -166,7 +201,7 @@ public final class ElfLoader {
         }
     }
 
-    /// Rejects relocation and dynamic metadata that the bare-metal MVP does not process.
+    /// Validates section header metadata ranges when an ELF section table is present.
     private static void validateSections(ElfFile elfFile, byte[] bytes) {
         int sectionCount = Short.toUnsignedInt(elfFile.e_shnum);
         if (sectionCount == 0) {
@@ -180,17 +215,6 @@ public final class ElfLoader {
 
         long sectionTableSize = (long) sectionHeaderSize * sectionCount;
         requireRange(bytes, elfFile.e_shoff, sectionTableSize, "section header table");
-
-        ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        for (int index = 0; index < sectionCount; index++) {
-            int sectionHeaderOffset = (int) (elfFile.e_shoff + ((long) index * sectionHeaderSize));
-            int type = buffer.getInt(sectionHeaderOffset + 4);
-            if (type == ElfSectionHeader.SHT_REL
-                    || type == ElfSectionHeader.SHT_RELA
-                    || type == ElfSectionHeader.SHT_DYNAMIC) {
-                throw new RiscVException("Relocatable or dynamic ELF inputs are not supported");
-            }
-        }
     }
 
     /// Returns a symbol's guest address, or `ABSENT_ADDRESS` when no such symbol exists.

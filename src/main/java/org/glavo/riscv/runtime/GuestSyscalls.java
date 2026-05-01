@@ -353,6 +353,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `ERANGE` as a raw negative syscall result.
     private static final long ERANGE = -34;
 
+    /// Linux `ELOOP` as a raw negative syscall result.
+    private static final long ELOOP = -40;
+
     /// Linux `ENAMETOOLONG` as a raw negative syscall result.
     private static final long ENAMETOOLONG = -36;
 
@@ -575,6 +578,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The maximum guest path length accepted by `openat`, including the terminator.
     private static final int PATH_MAX = 4096;
+
+    /// The maximum number of symbolic links followed while resolving one guest path.
+    private static final int SYMBOLIC_LINK_LIMIT = 40;
 
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
@@ -1611,6 +1617,50 @@ public final class GuestSyscalls implements AutoCloseable {
         this.timeSource = timeSource;
     }
 
+    /// Reads a regular file from the configured guest filesystem mounts.
+    public static byte @Unmodifiable [] readMountedFile(
+            TruffleLanguage.Env env,
+            String @Unmodifiable [] filesystemMountSpecs,
+            String guestPath) {
+        @Nullable String absoluteGuestPath = normalizeAbsoluteGuestPath(guestPath);
+        if (absoluteGuestPath == null) {
+            throw new RiscVException("Guest executable path must use absolute Linux syntax: " + guestPath);
+        }
+
+        FilesystemMount[] mounts = resolveFilesystemMounts(env, filesystemMountSpecs);
+        @Nullable FilesystemMount mount = mountForGuestPath(mounts, absoluteGuestPath);
+        if (mount instanceof TarMount) {
+            @Nullable TarPath tarPath = resolveTarPath(mounts, absoluteGuestPath, true);
+            if (tarPath == null || tarPath.node() == null) {
+                throw new RiscVException("Guest file does not exist: " + absoluteGuestPath);
+            }
+            if (!tarPath.node().isFile()) {
+                throw new RiscVException("Guest path is not a regular file: " + absoluteGuestPath);
+            }
+            return tarPath.node().data().clone();
+        }
+        if (mount instanceof HostMount hostMount) {
+            @Nullable TruffleFile hostFile = resolveHostFile(absoluteGuestPath, hostMount);
+            if (hostFile == null) {
+                throw new RiscVException("Guest file is outside configured mounts: " + absoluteGuestPath);
+            }
+            try {
+                if (!hostFile.getCanonicalFile().startsWith(hostMount.root().getCanonicalFile())) {
+                    throw new RiscVException("Guest file escapes configured mount: " + absoluteGuestPath);
+                }
+                if (!hostFile.isRegularFile()) {
+                    throw new RiscVException("Guest path is not a regular file: " + absoluteGuestPath);
+                }
+                try (InputStream input = hostFile.newInputStream()) {
+                    return readAllBytes(input);
+                }
+            } catch (IOException | SecurityException exception) {
+                throw new RiscVException("Failed to read guest file: " + absoluteGuestPath, exception);
+            }
+        }
+        throw new RiscVException("Guest file is not covered by a configured mount: " + absoluteGuestPath);
+    }
+
     /// Returns the process-leader thread state used by the initial architectural state.
     GuestThread initialThread() {
         return process.initialThread();
@@ -2220,7 +2270,10 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath);
+        @Nullable TarPath tarPath = resolveTarPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
         if (tarPath != null) {
             return accessTarNode(tarPath.node(), mode);
         }
@@ -2347,7 +2400,10 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath);
+        @Nullable TarPath tarPath = resolveTarPath(
+                directoryFileDescriptor,
+                guestPath,
+                false);
         if (tarPath != null) {
             return EROFS;
         }
@@ -2772,7 +2828,8 @@ public final class GuestSyscalls implements AutoCloseable {
         boolean append = (flags & O_APPEND) != 0;
         boolean directoryOnly = (flags & O_DIRECTORY) != 0;
 
-        @Nullable TarNode node = mount.fileSystem().node(relativeGuestPath(absoluteGuestPath, mount.guestPath()));
+        @Nullable TarPath tarPath = resolveTarPath(currentFilesystemMounts(), absoluteGuestPath, true);
+        @Nullable TarNode node = tarPath == null ? null : tarPath.node();
         if (node == null) {
             return create ? EROFS : ENOENT;
         }
@@ -3258,7 +3315,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath);
+        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath, false);
         if (tarPath != null) {
             return readlinkTarPath(tarPath.node(), bufferAddress, bufferSize);
         }
@@ -3315,7 +3372,10 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath);
+        @Nullable TarPath tarPath = resolveTarPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
         if (tarPath != null) {
             return statTarNode(tarPath.node(), statAddress);
         }
@@ -3465,7 +3525,10 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath);
+        @Nullable TarPath tarPath = resolveTarPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
         if (tarPath != null) {
             return statxTarNode(tarPath.node(), statxAddress, flags, requestedMask);
         }
@@ -5140,7 +5203,7 @@ public final class GuestSyscalls implements AutoCloseable {
         return programBreak;
     }
 
-    /// Implements anonymous `mmap` allocations and reservations in the guest address space.
+    /// Implements `mmap` allocations and private regular-file mappings in the guest address space.
     private long mmap(long address, long length, long protection, long flags, long fileDescriptor, long offset) {
         if (length <= 0 || offset < 0 || !isPageAligned(offset)) {
             return EINVAL;
@@ -5153,11 +5216,28 @@ public final class GuestSyscalls implements AutoCloseable {
         if (mappingType != MAP_PRIVATE && mappingType != MAP_SHARED) {
             return EINVAL;
         }
-        if ((flags & MAP_ANONYMOUS) == 0) {
-            return fileDescriptor < 0 ? EBADF : ENODEV;
+        boolean anonymous = (flags & MAP_ANONYMOUS) != 0;
+        @Nullable OpenFile mappedFile = null;
+        if (!anonymous) {
+            if (fileDescriptor < 0) {
+                return EBADF;
+            }
+            if (mappingType != MAP_PRIVATE) {
+                return ENODEV;
+            }
+            mappedFile = openFile((int) fileDescriptor);
+            if (mappedFile == null || mappedFile.isDirectory() || !mappedFile.isHostFile()) {
+                return EBADF;
+            }
+            if (!mappedFile.readable()) {
+                return EACCES;
+            }
         }
 
         boolean hugeTlb = (flags & MAP_HUGETLB) != 0;
+        if (!anonymous && hugeTlb) {
+            return ENODEV;
+        }
         long mappingAlignment = hugeTlb ? memory.hugePageSize() : pageSize;
         long alignedLength = alignUp(length, mappingAlignment);
         if (alignedLength <= 0) {
@@ -5182,14 +5262,69 @@ public final class GuestSyscalls implements AutoCloseable {
             }
         }
 
-        if (!ensureMemoryBacking(mappingAddress, alignedLength, protection, hugeTlb)) {
+        long backingProtection = anonymous || !isMemoryBackedProtection(protection)
+                ? protection
+                : Memory.PROTECTION_READ_WRITE_EXECUTE;
+        if (!ensureMemoryBacking(mappingAddress, alignedLength, backingProtection, hugeTlb)) {
             return ENOMEM;
         }
-        if (isMemoryBackedProtection(protection)) {
-            memory.clear(mappingAddress, alignedLength);
+        if (anonymous) {
+            if (isMemoryBackedProtection(protection)) {
+                memory.clear(mappingAddress, alignedLength);
+            }
+        } else if (isMemoryBackedProtection(protection)) {
+            assert mappedFile != null;
+            long loadResult = loadFileMapping(mappedFile, mappingAddress, length, alignedLength, offset, protection);
+            if (loadResult != 0) {
+                memory.unmap(mappingAddress, alignedLength);
+                return loadResult;
+            }
         }
         addMemoryMapping(mappingAddress, alignedLength, protection);
         return mappingAddress;
+    }
+
+    /// Copies a private file mapping into guest memory and applies the requested final protection.
+    private long loadFileMapping(
+            OpenFile mappedFile,
+            long mappingAddress,
+            long requestedLength,
+            long alignedLength,
+            long offset,
+            long protection) {
+        SeekableByteChannel channel = mappedFile.channel();
+        try {
+            memory.clear(mappingAddress, alignedLength);
+            long fileSize = channel.size();
+            if (offset < fileSize) {
+                long remaining = Math.min(requestedLength, fileSize - offset);
+                long destinationAddress = mappingAddress;
+                long previousPosition = channel.position();
+                try {
+                    channel.position(offset);
+                    ByteBuffer buffer = ByteBuffer.allocate(8192);
+                    while (remaining > 0) {
+                        buffer.clear();
+                        buffer.limit((int) Math.min(buffer.capacity(), remaining));
+                        int count = channel.read(buffer);
+                        if (count < 0) {
+                            break;
+                        }
+                        memory.writeBytes(destinationAddress, buffer.array(), 0, count);
+                        destinationAddress += count;
+                        remaining -= count;
+                    }
+                } finally {
+                    channel.position(previousPosition);
+                }
+            }
+            if (!memory.protect(mappingAddress, alignedLength, protection)) {
+                return ENOMEM;
+            }
+            return 0;
+        } catch (IOException | RiscVException | SecurityException exception) {
+            return EACCES;
+        }
     }
 
     /// Implements `munmap` by releasing tracked anonymous mappings.
@@ -5531,18 +5666,117 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Resolves a guest path below a configured tar filesystem mount.
     private @Nullable TarPath resolveTarPath(long directoryFileDescriptor, String guestPath) {
+        return resolveTarPath(directoryFileDescriptor, guestPath, true);
+    }
+
+    /// Resolves a guest path below a configured tar filesystem mount with optional final symlink following.
+    private @Nullable TarPath resolveTarPath(
+            long directoryFileDescriptor,
+            String guestPath,
+            boolean followFinalSymbolicLink) {
         @Nullable String absoluteGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
         if (absoluteGuestPath == null) {
             return null;
         }
 
         @Nullable FilesystemMount mount = mountForGuestPath(absoluteGuestPath);
-        if (!(mount instanceof TarMount tarMount)) {
+        if (!(mount instanceof TarMount)) {
             return null;
         }
 
-        String relativePath = relativeGuestPath(absoluteGuestPath, tarMount.guestPath());
-        return new TarPath(absoluteGuestPath, tarMount, tarMount.fileSystem().node(relativePath));
+        return resolveTarPath(currentFilesystemMounts(), absoluteGuestPath, followFinalSymbolicLink);
+    }
+
+    /// Resolves an absolute guest path below a tar mount, following tar symlinks as requested.
+    private static @Nullable TarPath resolveTarPath(
+            FilesystemMount @Unmodifiable [] mounts,
+            String absoluteGuestPath,
+            boolean followFinalSymbolicLink) {
+        @Nullable String currentGuestPath = normalizeAbsoluteGuestPath(absoluteGuestPath);
+        if (currentGuestPath == null) {
+            return null;
+        }
+
+        int symbolicLinks = 0;
+        while (true) {
+            @Nullable FilesystemMount mount = mountForGuestPath(mounts, currentGuestPath);
+            if (!(mount instanceof TarMount tarMount)) {
+                return null;
+            }
+
+            String relativePath = relativeGuestPath(currentGuestPath, tarMount.guestPath());
+            TarNode currentNode = tarMount.fileSystem().root();
+            String currentDirectoryGuestPath = tarMount.guestPath();
+            if (relativePath.isEmpty()) {
+                return new TarPath(currentGuestPath, tarMount, currentNode);
+            }
+
+            String[] segments = relativePath.split("/");
+            for (int index = 0; index < segments.length; index++) {
+                if (!currentNode.isDirectory()) {
+                    return new TarPath(currentGuestPath, tarMount, null);
+                }
+
+                String segment = segments[index];
+                @Nullable TarNode child = currentNode.children().get(segment);
+                if (child == null) {
+                    return new TarPath(currentGuestPath, tarMount, null);
+                }
+
+                boolean finalSegment = index == segments.length - 1;
+                if (child.isSymbolicLink() && (!finalSegment || followFinalSymbolicLink)) {
+                    symbolicLinks++;
+                    if (symbolicLinks > SYMBOLIC_LINK_LIMIT) {
+                        return new TarPath(currentGuestPath, tarMount, null);
+                    }
+
+                    String targetPath = child.linkTarget().startsWith("/")
+                            ? child.linkTarget()
+                            : appendGuestPath(currentDirectoryGuestPath, child.linkTarget());
+                    String remainingPath = joinRemainingSegments(segments, index + 1);
+                    if (!remainingPath.isEmpty()) {
+                        targetPath = appendGuestPath(targetPath, remainingPath);
+                    }
+                    currentGuestPath = normalizeAbsoluteGuestPath(targetPath);
+                    if (currentGuestPath == null) {
+                        return new TarPath(absoluteGuestPath, tarMount, null);
+                    }
+                    break;
+                }
+
+                currentNode = child;
+                if (!finalSegment) {
+                    currentDirectoryGuestPath = appendGuestPath(currentDirectoryGuestPath, segment);
+                } else {
+                    return new TarPath(currentGuestPath, tarMount, currentNode);
+                }
+            }
+        }
+    }
+
+    /// Appends a relative path to an absolute guest path and normalizes the result.
+    private static String appendGuestPath(String basePath, String relativePath) {
+        if (relativePath.isEmpty()) {
+            return basePath;
+        }
+        String combined = "/".equals(basePath) ? "/" + relativePath : basePath + "/" + relativePath;
+        @Nullable String normalized = normalizeAbsoluteGuestPath(combined);
+        return normalized == null ? combined : normalized;
+    }
+
+    /// Joins the remaining path segments after a followed symbolic link.
+    private static String joinRemainingSegments(String @Unmodifiable [] segments, int startIndex) {
+        if (startIndex >= segments.length) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int index = startIndex; index < segments.length; index++) {
+            if (!builder.isEmpty()) {
+                builder.append('/');
+            }
+            builder.append(segments[index]);
+        }
+        return builder.toString();
     }
 
     /// Converts a guest path and directory descriptor into an absolute normalized Linux path.
@@ -5688,6 +5922,19 @@ public final class GuestSyscalls implements AutoCloseable {
         return hostFile.exists() || hostFile.isSymbolicLink();
     }
 
+    /// Reads all bytes from a host input stream.
+    private static byte @Unmodifiable [] readAllBytes(InputStream input) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        while (true) {
+            int count = input.read(buffer);
+            if (count < 0) {
+                return output.toByteArray();
+            }
+            output.write(buffer, 0, count);
+        }
+    }
+
     /// Resizes a writable host file channel while preserving its current offset.
     private static void resizeHostChannel(SeekableByteChannel channel, long length) throws IOException {
         long position = channel.position();
@@ -5707,8 +5954,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns the mount selected for an absolute guest path.
     private @Nullable FilesystemMount mountForGuestPath(String guestPath) {
+        return mountForGuestPath(currentFilesystemMounts(), guestPath);
+    }
+
+    /// Returns the mount selected for an absolute guest path from the supplied mount list.
+    private static @Nullable FilesystemMount mountForGuestPath(
+            FilesystemMount @Unmodifiable [] mounts,
+            String guestPath) {
         @Nullable FilesystemMount best = null;
-        for (FilesystemMount mount : currentFilesystemMounts()) {
+        for (FilesystemMount mount : mounts) {
             if (guestPathMatchesMount(guestPath, mount.guestPath())
                     && (best == null || mount.guestPath().length() > best.guestPath().length())) {
                 best = mount;
@@ -5762,7 +6016,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
         ArrayList<FilesystemMount> mounts = new ArrayList<>();
         for (String spec : filesystemMountSpecs) {
-            @Nullable FilesystemMount mount = resolveMountSpec(spec);
+            @Nullable FilesystemMount mount = resolveMountSpec(env, spec);
             if (mount != null) {
                 mounts.add(mount);
             }
@@ -5771,8 +6025,22 @@ public final class GuestSyscalls implements AutoCloseable {
         return filesystemMounts;
     }
 
+    /// Resolves all configured filesystem mount specs.
+    private static FilesystemMount @Unmodifiable [] resolveFilesystemMounts(
+            TruffleLanguage.Env env,
+            String @Unmodifiable [] filesystemMountSpecs) {
+        ArrayList<FilesystemMount> mounts = new ArrayList<>();
+        for (String spec : filesystemMountSpecs) {
+            @Nullable FilesystemMount mount = resolveMountSpec(env, spec);
+            if (mount != null) {
+                mounts.add(mount);
+            }
+        }
+        return mounts.toArray(FilesystemMount[]::new);
+    }
+
     /// Resolves one configured filesystem mount spec.
-    private @Nullable FilesystemMount resolveMountSpec(String spec) {
+    private static @Nullable FilesystemMount resolveMountSpec(@Nullable TruffleLanguage.Env env, String spec) {
         int separator = spec.indexOf('=');
         if (separator <= 0 || separator == spec.length() - 1 || env == null) {
             return null;
@@ -6659,6 +6927,11 @@ public final class GuestSyscalls implements AutoCloseable {
     private static final class TarFileSystem {
         /// The synthetic root directory of the archive.
         private final TarNode root = TarNode.directory("", "", null, STAT_MODE_READ_EXECUTE_ALL);
+
+        /// Returns the synthetic root directory of the archive.
+        TarNode root() {
+            return root;
+        }
 
         /// Reads a tar archive into an in-memory filesystem tree.
         static TarFileSystem read(TruffleFile archive) throws IOException {

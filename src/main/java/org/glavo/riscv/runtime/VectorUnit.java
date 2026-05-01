@@ -260,12 +260,24 @@ public final class VectorUnit {
                         ? baseAddress + readElement(shape.indexRegister(), element, shape.elementBytes(), indexGroupBytes)
                         : baseAddress + element * stride;
                 for (int field = 0; field < shape.fields(); field++) {
+                    long value;
+                    try {
+                        value = readMemoryElement(memory, address + (long) field * dataBytes, dataBytes);
+                    } catch (RiscVException exception) {
+                        if (!shape.faultOnlyFirst() || element == start) {
+                            throw exception;
+                        }
+                        vectorLength = element;
+                        vectorStart = 0;
+                        state.setPc(nextPc);
+                        return;
+                    }
                     writeElement(
                             vd + field * dataGroupRegisters,
                             element,
                             dataBytes,
                             dataGroupBytes,
-                            readMemoryElement(memory, address + (long) field * dataBytes, dataBytes));
+                            value);
                 }
             }
         }

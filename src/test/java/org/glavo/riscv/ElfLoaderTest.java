@@ -12,8 +12,10 @@ import net.fornwall.jelf.ElfSegment;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -137,48 +139,71 @@ public final class ElfLoaderTest {
         assertTrue(exception.getMessage().contains("not inside an executable PT_LOAD segment"));
     }
 
-    /// Verifies that program-header dynamic metadata is rejected.
+    /// Verifies that program-header dynamic metadata is accepted for runtime-loaded ELF images.
     @Test
-    public void rejectsDynamicProgramSegment() {
-        byte[] elf = ElfTestImages.executable(ElfTestImages.ecall());
-        putProgramHeaderInt(elf, 0, 0, ElfSegment.PT_DYNAMIC);
+    public void acceptsDynamicProgramSegment() {
+        byte[] elf = withExtraProgramHeader(ElfTestImages.executable(ElfTestImages.ecall()), ElfSegment.PT_DYNAMIC);
 
-        RiscVException exception = assertThrows(RiscVException.class, () -> ElfLoader.load(elf));
+        ElfImage image = ElfLoader.load(elf);
 
-        assertTrue(exception.getMessage().contains("PT_DYNAMIC"));
+        assertEquals(2, image.programHeaderCount());
     }
 
-    /// Verifies that program-header interpreter metadata is rejected.
+    /// Verifies that program-header interpreter metadata is recorded.
     @Test
-    public void rejectsInterpreterProgramSegment() {
-        byte[] elf = ElfTestImages.executable(ElfTestImages.ecall());
-        putProgramHeaderInt(elf, 0, 0, ElfSegment.PT_INTERP);
+    public void recordsInterpreterProgramSegment() {
+        byte[] elf = withInterpreter(ElfTestImages.executable(ElfTestImages.ecall()), "/lib/ld-linux-riscv64-lp64d.so.1");
 
-        RiscVException exception = assertThrows(RiscVException.class, () -> ElfLoader.load(elf));
+        ElfImage image = ElfLoader.load(elf);
 
-        assertTrue(exception.getMessage().contains("PT_INTERP"));
+        assertEquals("/lib/ld-linux-riscv64-lp64d.so.1", image.interpreterPath());
     }
 
-    /// Verifies that relocation section metadata is rejected.
+    /// Verifies that relocation section metadata does not block runtime ELF loading.
     @Test
-    public void rejectsRelocationSections() {
-        assertUnsupportedSection(ElfSectionHeader.SHT_REL);
-        assertUnsupportedSection(ElfSectionHeader.SHT_RELA);
+    public void acceptsRelocationSections() {
+        assertAcceptedSection(ElfSectionHeader.SHT_REL);
+        assertAcceptedSection(ElfSectionHeader.SHT_RELA);
     }
 
-    /// Verifies that dynamic section metadata is rejected.
+    /// Verifies that dynamic section metadata does not block runtime ELF loading.
     @Test
-    public void rejectsDynamicSections() {
-        assertUnsupportedSection(ElfSectionHeader.SHT_DYNAMIC);
+    public void acceptsDynamicSections() {
+        assertAcceptedSection(ElfSectionHeader.SHT_DYNAMIC);
     }
 
-    /// Verifies that a specific section type is rejected as unsupported metadata.
-    private static void assertUnsupportedSection(int sectionType) {
+    /// Verifies that a specific section type is accepted as metadata.
+    private static void assertAcceptedSection(int sectionType) {
         byte[] elf = ElfTestImages.executableWithSectionType(sectionType);
 
-        RiscVException exception = assertThrows(RiscVException.class, () -> ElfLoader.load(elf));
+        ElfLoader.load(elf);
+    }
 
-        assertTrue(exception.getMessage().contains("Relocatable or dynamic ELF inputs are not supported"));
+    /// Returns an ELF image with one extra non-load program header.
+    private static byte[] withExtraProgramHeader(byte[] executable, int programHeaderType) {
+        byte[] elf = Arrays.copyOf(executable, executable.length);
+        putHeaderShort(elf, 56, 2);
+        putProgramHeaderInt(elf, 1, 0, programHeaderType);
+        return elf;
+    }
+
+    /// Returns an ELF image with one extra `PT_INTERP` program header.
+    private static byte[] withInterpreter(byte[] executable, String interpreterPath) {
+        byte[] elf = withExtraProgramHeader(executable, ElfSegment.PT_INTERP);
+        byte[] path = (interpreterPath + "\0").getBytes(StandardCharsets.UTF_8);
+        int pathOffset = 0x1800;
+        System.arraycopy(path, 0, elf, pathOffset, path.length);
+        putProgramHeaderLong(elf, 1, 8, pathOffset);
+        putProgramHeaderLong(elf, 1, 32, path.length);
+        putProgramHeaderLong(elf, 1, 40, path.length);
+        return elf;
+    }
+
+    /// Writes a 16-bit ELF header field in a generated ELF image.
+    private static void putHeaderShort(byte[] elf, int fieldOffset, int value) {
+        ByteBuffer.wrap(elf)
+                .order(ByteOrder.LITTLE_ENDIAN)
+                .putShort(fieldOffset, (short) value);
     }
 
     /// Writes a 32-bit program header field in a generated ELF image.

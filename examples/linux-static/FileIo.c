@@ -1,5 +1,5 @@
 /*
- * This static musl example validates basic host-root file I/O through libc. It
+ * This static musl example validates basic mounted file I/O through libc. It
  * creates a file, writes data, reopens the same path for reading, and confirms
  * the simulator's TruffleFile-backed path mapping preserves the contents.
  */
@@ -8,7 +8,7 @@
 #include <string.h>
 
 int main(void) {
-    /* Create a file at the guest root, which the test maps to a temporary host root. */
+    /* Create a file at the guest root, which the test maps to a temporary host directory. */
     FILE *out = fopen("/output.txt", "w");
     if (out == NULL) {
         puts("open-write-failed");

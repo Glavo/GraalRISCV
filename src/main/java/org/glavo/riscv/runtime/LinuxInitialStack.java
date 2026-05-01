@@ -7,6 +7,7 @@ import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.parser.ElfImage;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.nio.charset.StandardCharsets;
@@ -36,6 +37,9 @@ public final class LinuxInitialStack {
     /// Linux auxv program header table address type.
     private static final long AT_PHDR = 3;
 
+    /// Linux auxv dynamic interpreter load base type.
+    private static final long AT_BASE = 7;
+
     /// Linux auxv program header entry size type.
     private static final long AT_PHENT = 4;
 
@@ -44,6 +48,9 @@ public final class LinuxInitialStack {
 
     /// Linux auxv entry-point type.
     private static final long AT_ENTRY = 9;
+
+    /// Linux auxv executable filename pointer type.
+    private static final long AT_EXECFN = 31;
 
     /// Linux auxv real user id type.
     private static final long AT_UID = 11;
@@ -87,6 +94,19 @@ public final class LinuxInitialStack {
 
     /// Writes the initial stack with an explicit guest page size and returns the aligned guest stack pointer.
     public static long initialize(Memory memory, long stackTop, String[] arguments, ElfImage image, long pageSize) {
+        return initialize(memory, stackTop, arguments, image, 0, ElfImage.ABSENT_ADDRESS, null, pageSize);
+    }
+
+    /// Writes the initial stack with explicit load-bias metadata and returns the aligned guest stack pointer.
+    public static long initialize(
+            Memory memory,
+            long stackTop,
+            String[] arguments,
+            ElfImage image,
+            long loadBias,
+            long interpreterBase,
+            @Nullable String executablePath,
+            long pageSize) {
         long cursor = stackTop & ~0xfL;
         String[] argv = arguments.clone();
         long[] argumentPointers = new long[argv.length];
@@ -105,15 +125,21 @@ public final class LinuxInitialStack {
         long randomAddress = cursor;
         cursor = writeString(memory, cursor, PLATFORM);
         long platformAddress = cursor;
+        String execfn = executablePath == null ? (argv.length == 0 ? "" : argv[0]) : executablePath;
+        cursor = writeString(memory, cursor, execfn);
+        long execfnAddress = cursor;
 
         ArrayList<Long> auxv = new ArrayList<>();
         if (image.programHeaderAddress() != ElfImage.ABSENT_ADDRESS) {
-            addAuxiliaryVector(auxv, AT_PHDR, image.programHeaderAddress());
+            addAuxiliaryVector(auxv, AT_PHDR, image.programHeaderAddress() + loadBias);
             addAuxiliaryVector(auxv, AT_PHENT, image.programHeaderEntrySize());
             addAuxiliaryVector(auxv, AT_PHNUM, image.programHeaderCount());
         }
         addAuxiliaryVector(auxv, AT_PAGESZ, pageSize);
-        addAuxiliaryVector(auxv, AT_ENTRY, image.entryPoint());
+        if (interpreterBase != ElfImage.ABSENT_ADDRESS) {
+            addAuxiliaryVector(auxv, AT_BASE, interpreterBase);
+        }
+        addAuxiliaryVector(auxv, AT_ENTRY, image.entryPoint() + loadBias);
         addAuxiliaryVector(auxv, AT_UID, 0);
         addAuxiliaryVector(auxv, AT_EUID, 0);
         addAuxiliaryVector(auxv, AT_GID, 0);
@@ -122,6 +148,7 @@ public final class LinuxInitialStack {
         addAuxiliaryVector(auxv, AT_SECURE, 0);
         addAuxiliaryVector(auxv, AT_RANDOM, randomAddress);
         addAuxiliaryVector(auxv, AT_PLATFORM, platformAddress);
+        addAuxiliaryVector(auxv, AT_EXECFN, execfnAddress);
 
         long frameWords = 1L
                 + argumentPointers.length + 1L

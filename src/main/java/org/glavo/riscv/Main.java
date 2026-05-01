@@ -29,8 +29,10 @@ public final class Main {
     /// The usage text printed for invalid arguments or `--help`.
     private static final String USAGE = """
             Usage: graalriscv [options] <program.elf> [program-args...]
+                   graalriscv [options] --guest-program <path> [program-args...]
 
             Options:
+              --guest-program <path>    Load the executable from an absolute guest path resolved through --mount.
               --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
                                           Default is 0; auto infers the base from ELF load segments.
               --memory-size <bytes>      Guest virtual address window size in bytes.
@@ -81,12 +83,14 @@ public final class Main {
         }
 
         try {
-            byte[] elf = Files.readAllBytes(options.programPath());
+            byte[] elf = options.hostProgramPath() == null
+                    ? new byte[0]
+                    : Files.readAllBytes(options.hostProgramPath());
             try (Context context = createContext(options, in, out, err)) {
                 Source source = Source.newBuilder(
                                 RiscVLanguage.ID,
                                 ByteSequence.create(elf),
-                                options.programPath().toString())
+                                options.programPath())
                         .mimeType(RiscVLanguage.ELF_MIME_TYPE)
                         .build();
                 Value value = context.eval(source);
@@ -150,6 +154,9 @@ public final class Main {
                     .option("engine.TraceCompilation", "true");
         }
         builder.option("riscv.mounts", encodeMounts(options.mounts()));
+        if (options.guestProgramPath() != null) {
+            builder.option("riscv.guestProgramPath", options.guestProgramPath());
+        }
         if (options.trace()) {
             builder.option("riscv.trace", "true");
         }
@@ -178,7 +185,8 @@ public final class Main {
         ArrayList<MountOption> mounts = new ArrayList<>();
         boolean debugTraceCompilation = false;
         boolean trace = false;
-        @Nullable Path programPath = null;
+        @Nullable String programPath = null;
+        @Nullable Path hostProgramPath = null;
         ArrayList<String> programArguments = new ArrayList<>();
         boolean parseOptions = true;
 
@@ -194,6 +202,26 @@ public final class Main {
             }
             if (parseOptions && "--trace".equals(argument)) {
                 trace = true;
+                continue;
+            }
+            if (parseOptions && "--guest-program".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --guest-program.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                if (programPath != null) {
+                    err.println("Executable path was specified more than once.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                @Nullable String guestProgramPath = normalizeGuestPath("--guest-program", args[index], err);
+                if (guestProgramPath == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                programPath = guestProgramPath;
                 continue;
             }
             if (parseOptions && "--debug-trace-compilation".equals(argument)) {
@@ -350,7 +378,13 @@ public final class Main {
                 printUsage(err);
                 return CliOptions.error();
             }
-            programPath = Path.of(argument);
+            @Nullable Path parsedHostProgramPath = parsePathOption("ELF file", argument, err);
+            if (parsedHostProgramPath == null) {
+                printUsage(err);
+                return CliOptions.error();
+            }
+            programPath = argument;
+            hostProgramPath = parsedHostProgramPath;
         }
 
         if (programPath == null) {
@@ -359,11 +393,12 @@ public final class Main {
             return CliOptions.error();
         }
 
-        if (mounts.stream().noneMatch(mount -> "/".equals(mount.guestPath()))) {
-            mounts.add(new MountOption("/", defaultRootMount(programPath)));
+        if (hostProgramPath != null && mounts.stream().noneMatch(mount -> "/".equals(mount.guestPath()))) {
+            mounts.add(new MountOption("/", defaultRootMount(hostProgramPath)));
         }
         return CliOptions.execute(
                 programPath,
+                hostProgramPath,
                 programArguments,
                 memoryBase,
                 memorySize,
@@ -412,7 +447,7 @@ public final class Main {
             return null;
         }
 
-        @Nullable String guestPath = normalizeGuestMountPoint(value.substring(0, separator), err);
+        @Nullable String guestPath = normalizeGuestPath("Mount guest path", value.substring(0, separator), err);
         if (guestPath == null) {
             return null;
         }
@@ -420,14 +455,14 @@ public final class Main {
         return hostPath == null ? null : new MountOption(guestPath, hostPath);
     }
 
-    /// Normalizes an absolute Linux guest mount point.
-    private static @Nullable String normalizeGuestMountPoint(String guestPath, PrintStream err) {
+    /// Normalizes an absolute Linux guest path.
+    private static @Nullable String normalizeGuestPath(String label, String guestPath, PrintStream err) {
         if (!guestPath.startsWith("/")) {
-            err.println("Mount guest path must be absolute: " + guestPath);
+            err.println(label + " must be absolute: " + guestPath);
             return null;
         }
         if (guestPath.indexOf('\\') >= 0 || guestPath.indexOf(':') >= 0) {
-            err.println("Mount guest path must use Linux path syntax: " + guestPath);
+            err.println(label + " must use Linux path syntax: " + guestPath);
             return null;
         }
 
@@ -438,7 +473,7 @@ public final class Main {
             }
             if ("..".equals(segment)) {
                 if (segments.isEmpty()) {
-                    err.println("Mount guest path must not escape above `/`: " + guestPath);
+                    err.println(label + " must not escape above `/`: " + guestPath);
                     return null;
                 }
                 segments.remove(segments.size() - 1);
@@ -502,7 +537,8 @@ public final class Main {
     /// Stores parsed command-line options.
     ///
     /// @param mode the requested CLI action
-    /// @param programPath the guest ELF path to execute
+    /// @param programPath the executable path exposed as `argv[0]`
+    /// @param hostProgramPath the host file containing the ELF, or null when `programPath` is read from guest mounts
     /// @param programArguments the guest application arguments after the ELF path
     /// @param memoryBase the optional guest memory base option value
     /// @param memorySize the optional guest memory size option value
@@ -519,7 +555,8 @@ public final class Main {
     @NotNullByDefault
     private record CliOptions(
             CliMode mode,
-            Path programPath,
+            String programPath,
+            @Nullable Path hostProgramPath,
             String @Unmodifiable [] programArguments,
             @Nullable String memoryBase,
             @Nullable String memorySize,
@@ -555,6 +592,7 @@ public final class Main {
         static CliOptions help() {
             return new CliOptions(
                     CliMode.HELP,
+                    ".",
                     Path.of("."),
                     new String[0],
                     null,
@@ -575,6 +613,7 @@ public final class Main {
         static CliOptions error() {
             return new CliOptions(
                     CliMode.ERROR,
+                    ".",
                     Path.of("."),
                     new String[0],
                     null,
@@ -593,7 +632,8 @@ public final class Main {
 
         /// Creates options for executing a guest ELF program.
         static CliOptions execute(
-                Path programPath,
+                String programPath,
+                @Nullable Path hostProgramPath,
                 List<String> programArguments,
                 @Nullable String memoryBase,
                 @Nullable String memorySize,
@@ -610,6 +650,7 @@ public final class Main {
             return new CliOptions(
                     CliMode.EXECUTE,
                     programPath,
+                    hostProgramPath,
                     programArguments.toArray(String[]::new),
                     memoryBase,
                     memorySize,
@@ -628,9 +669,14 @@ public final class Main {
         /// Returns the arguments exposed to the guest as `argv`, including `argv[0]`.
         String @Unmodifiable [] applicationArguments() {
             String[] result = new String[programArguments.length + 1];
-            result[0] = programPath.toString();
+            result[0] = programPath;
             System.arraycopy(programArguments, 0, result, 1, programArguments.length);
             return result;
+        }
+
+        /// Returns the guest executable path when the program is loaded from guest mounts.
+        @Nullable String guestProgramPath() {
+            return hostProgramPath == null ? programPath : null;
         }
     }
 

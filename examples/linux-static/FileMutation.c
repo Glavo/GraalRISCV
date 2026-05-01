@@ -1,7 +1,7 @@
 /*
  * This static musl example validates mutating file-system syscalls. It creates
  * a directory and file, truncates and reads the file, then renames and removes
- * both entries through the simulator's host-root sandbox.
+ * both entries through the simulator's mounted filesystem sandbox.
  */
 
 #include <fcntl.h>

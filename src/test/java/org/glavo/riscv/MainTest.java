@@ -5,6 +5,7 @@ package org.glavo.riscv;
 
 import kala.compress.archivers.tar.TarArchiveEntry;
 import kala.compress.archivers.tar.TarArchiveOutputStream;
+import kala.compress.archivers.tar.TarConstants;
 import org.glavo.riscv.exception.*;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
@@ -233,6 +234,54 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that `--guest-program` loads the executable from configured guest mounts.
+    @Test
+    public void guestProgramOptionLoadsExecutableFromTarMount() throws Exception {
+        Path archive = tempDirectory.resolve("guest-program.tar");
+        writeTarEntry(archive, "bin/hello", ElfTestImages.executable(helloWorldCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "/=" + archive,
+                        "--guest-program", "/bin/hello"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that tar mounts follow symbolic links during normal guest path lookup.
+    @Test
+    public void mountOptionFollowsTarSymbolicLinks() throws Exception {
+        Path elfPath = tempDirectory.resolve("mount-tar-symlink-read.elf");
+        Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
+        Path archive = tempDirectory.resolve("mounted-symlink.tar");
+        writeTarSymlinkFixture(archive);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "/data=" + archive,
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Verifies that the removed `--host-root` compatibility option is rejected.
     @Test
     public void rejectsRemovedHostRootOption() {
@@ -307,10 +356,10 @@ public final class MainTest {
         assertEquals("", out.toString(StandardCharsets.UTF_8));
         assertTrue(diagnostics.contains("Execution failed:"));
         assertTrue(diagnostics.contains("ELF segment is outside guest memory"));
-        assertTrue(diagnostics.contains("segment=[0x80000000,0x80000040)"));
+        assertTrue(diagnostics.contains("segment=[0x80000000,0x80001000)"));
         assertTrue(diagnostics.contains("memory=[0x80000000,0x80000010)"));
         assertTrue(diagnostics.contains("Increase --memory-size"));
-        assertTrue(diagnostics.contains("at least 64 bytes"));
+        assertTrue(diagnostics.contains("at least 4096 bytes"));
     }
 
     /// Verifies that the CLI reports missing program paths as usage errors.
@@ -860,13 +909,32 @@ public final class MainTest {
     private static void writeTarEntry(Path archive, String name, byte[] data) throws Exception {
         try (OutputStream output = Files.newOutputStream(archive);
              TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
-            TarArchiveEntry entry = new TarArchiveEntry(name);
-            entry.setSize(data.length);
-            tarOutput.putArchiveEntry(entry);
-            tarOutput.write(data, 0, data.length);
+            writeTarFile(tarOutput, name, data);
+            tarOutput.finish();
+        }
+    }
+
+    /// Writes a tar archive containing a regular file and a symbolic link to it.
+    private static void writeTarSymlinkFixture(Path archive) throws Exception {
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, "actual.txt", "mounted-data".getBytes(StandardCharsets.UTF_8));
+            TarArchiveEntry link = new TarArchiveEntry("message.txt", TarConstants.LF_SYMLINK);
+            link.setLinkName("actual.txt");
+            link.setSize(0);
+            tarOutput.putArchiveEntry(link);
             tarOutput.closeArchiveEntry();
             tarOutput.finish();
         }
+    }
+
+    /// Writes one regular file entry to an open tar output stream.
+    private static void writeTarFile(TarArchiveOutputStream tarOutput, String name, byte[] data) throws Exception {
+        TarArchiveEntry entry = new TarArchiveEntry(name);
+        entry.setSize(data.length);
+        tarOutput.putArchiveEntry(entry);
+        tarOutput.write(data, 0, data.length);
+        tarOutput.closeArchiveEntry();
     }
 
     /// Builds a freestanding program that reads `/data/message.txt` and writes it to stdout.

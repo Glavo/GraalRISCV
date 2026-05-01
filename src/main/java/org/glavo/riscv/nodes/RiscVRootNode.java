@@ -26,6 +26,7 @@ import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.parser.DecodedInstruction;
 import org.glavo.riscv.parser.ElfImage;
+import org.glavo.riscv.parser.ElfLoader;
 import org.glavo.riscv.parser.RiscVDecoder;
 import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.GuestSyscalls;
@@ -41,12 +42,18 @@ public final class RiscVRootNode extends RootNode {
     /// The initial Linux user stack backing size.
     private static final long INITIAL_STACK_SIZE = 8L * 1024L * 1024L;
 
+    /// The deterministic base address used for guest-loaded position-independent executables.
+    private static final long DYNAMIC_EXECUTABLE_BASE = 0x0040_0000L;
+
+    /// The alignment used when assigning load bias values to `ET_DYN` images.
+    private static final long DYNAMIC_LOAD_ALIGNMENT = 0x0020_0000L;
+
     /// Resolves the current RISC-V context for this root node.
     private static final TruffleLanguage.ContextReference<RiscVContext> CONTEXT_REFERENCE =
             TruffleLanguage.ContextReference.create(RiscVLanguage.class);
 
-    /// The parsed ELF image executed by this root node.
-    private final ElfImage image;
+    /// The host-supplied source bytes, or an empty array when the executable is read from guest mounts.
+    private final byte @Unmodifiable [] sourceBytes;
 
     /// The lazily populated block cache for this execution root.
     private final BlockCache blocks;
@@ -54,10 +61,10 @@ public final class RiscVRootNode extends RootNode {
     /// The Truffle loop root used by the main thread and clone-created guest threads.
     private final RootCallTarget guestLoopTarget;
 
-    /// Creates a root node for a parsed ELF image.
-    public RiscVRootNode(RiscVLanguage language, ElfImage image) {
+    /// Creates a root node for a RISC-V ELF source.
+    public RiscVRootNode(RiscVLanguage language, byte @Unmodifiable [] sourceBytes) {
         super(language);
-        this.image = image;
+        this.sourceBytes = sourceBytes.clone();
         this.blocks = new BlockCache(language);
         this.guestLoopTarget = new GuestLoopRootNode(language, blocks).getCallTarget();
     }
@@ -66,15 +73,16 @@ public final class RiscVRootNode extends RootNode {
     @Override
     public Object execute(VirtualFrame frame) {
         RiscVContext context = CONTEXT_REFERENCE.get(this);
+        LoadedProgram program = loadProgram(context);
         try (Memory memory = Memory.sparse(
-                resolveMemoryBase(context),
+                resolveMemoryBase(context, program),
                 context.memorySize(),
                 context.pageSize(),
                 context.maxCommittedPages(),
                 context.hugePageSize(),
                 context.hugePages(),
                 context.mappedRegionCache())) {
-            MachineState state = createState(context, memory);
+            MachineState state = createState(context, memory, program);
             try {
                 return executeGuestLoop(memory, state);
             } catch (ProgramExitException exit) {
@@ -121,22 +129,109 @@ public final class RiscVRootNode extends RootNode {
         guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
     }
 
-    /// Creates and initializes architectural state for a guest run.
-    private MachineState createState(RiscVContext context, Memory memory) {
-        long initialProgramBreak = memory.baseAddress();
+    /// Loads the main executable and its optional dynamic interpreter before guest memory is created.
+    private LoadedProgram loadProgram(RiscVContext context) {
+        ElfImage executable = ElfLoader.load(readExecutableBytes(context));
+        LoadedImage loadedExecutable = loadImage(executable, DYNAMIC_EXECUTABLE_BASE, context.pageSize());
+        @Nullable LoadedImage loadedInterpreter = null;
+        @Nullable String interpreterPath = executable.interpreterPath();
+        if (interpreterPath != null) {
+            byte[] interpreterBytes = GuestSyscalls.readMountedFile(context.env(), context.filesystemMounts(), interpreterPath);
+            ElfImage interpreter = ElfLoader.load(interpreterBytes);
+            if (interpreter.hasInterpreter()) {
+                throw new RiscVException("ELF interpreter must not request another interpreter: " + interpreterPath);
+            }
+            loadedInterpreter = loadImage(
+                    interpreter,
+                    alignUp(
+                            Math.max(loadedExecutable.endAddress(), DYNAMIC_EXECUTABLE_BASE) + DYNAMIC_LOAD_ALIGNMENT,
+                            DYNAMIC_LOAD_ALIGNMENT),
+                    context.pageSize());
+        }
+        return new LoadedProgram(loadedExecutable, loadedInterpreter, context.guestProgramPath());
+    }
+
+    /// Reads executable bytes from the source or from the configured guest filesystem mounts.
+    private byte @Unmodifiable [] readExecutableBytes(RiscVContext context) {
+        @Nullable String guestProgramPath = context.guestProgramPath();
+        if (guestProgramPath == null) {
+            return sourceBytes.clone();
+        }
+        return GuestSyscalls.readMountedFile(context.env(), context.filesystemMounts(), guestProgramPath);
+    }
+
+    /// Assigns a load bias to an ELF image.
+    private static LoadedImage loadImage(ElfImage image, long requestedBase, long pageSize) {
+        long loadBias = 0;
+        if (image.isPositionIndependent()) {
+            long minimumAddress = imageMinimumAddress(image);
+            loadBias = alignUp(requestedBase, pageSize) - alignDown(minimumAddress, pageSize);
+        }
+        return new LoadedImage(image, loadBias);
+    }
+
+    /// Returns the lowest virtual address covered by a loadable image segment.
+    private static long imageMinimumAddress(ElfImage image) {
+        long minimumAddress = Long.MAX_VALUE;
         for (ElfImage.LoadSegment segment : image.loadSegments()) {
-            long contentsLength = segment.contents().length;
-            validateGuestRange(memory, segment.virtualAddress(), segment.memorySize());
-            if (!memory.hasDenseInitialBacking()) {
-                mapLoadSegment(memory, segment);
+            minimumAddress = Math.min(minimumAddress, segment.virtualAddress());
+        }
+        if (minimumAddress == Long.MAX_VALUE) {
+            throw new RiscVException("ELF image contains no PT_LOAD segments");
+        }
+        return minimumAddress;
+    }
+
+    /// Creates and initializes architectural state for a guest run.
+    private MachineState createState(RiscVContext context, Memory memory, LoadedProgram program) {
+        long initialProgramBreak = memory.baseAddress();
+        for (LoadedImage loadedImage : program.images()) {
+            for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
+                if (segment.memorySize() == 0) {
+                    continue;
+                }
+                long runtimeAddress = loadedImage.runtimeAddress(segment.virtualAddress());
+                long pageStart = alignDown(runtimeAddress, context.pageSize());
+                long pageEnd = alignUp(runtimeAddress + segment.memorySize(), context.pageSize());
+                long pageLength = pageEnd - pageStart;
+                validateGuestRange(memory, pageStart, pageLength);
+                if (!memory.hasDenseInitialBacking()) {
+                    mapLoadSegment(memory, pageStart, pageLength);
+                }
             }
-            memory.load(segment.virtualAddress(), segment.contents(), 0, (int) contentsLength);
-            if (segment.memorySize() > contentsLength) {
-                memory.clear(segment.virtualAddress() + contentsLength, segment.memorySize() - contentsLength);
+        }
+
+        for (LoadedImage loadedImage : program.images()) {
+            for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
+                if (segment.memorySize() == 0) {
+                    continue;
+                }
+                long runtimeAddress = loadedImage.runtimeAddress(segment.virtualAddress());
+                long contentsLength = segment.contents().length;
+                memory.load(runtimeAddress, segment.contents(), 0, (int) contentsLength);
+                if (segment.memorySize() > contentsLength) {
+                    memory.clear(runtimeAddress + contentsLength, segment.memorySize() - contentsLength);
+                }
+                initialProgramBreak = Math.max(
+                        initialProgramBreak,
+                        Math.min(alignUp(runtimeAddress + segment.memorySize(), 16), memory.endAddress()));
             }
-            initialProgramBreak = Math.max(
-                    initialProgramBreak,
-                    Math.min(alignUp(segment.virtualAddress() + segment.memorySize(), 16), memory.endAddress()));
+        }
+
+        for (LoadedImage loadedImage : program.images()) {
+            for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
+                if (segment.memorySize() == 0) {
+                    continue;
+                }
+                long runtimeAddress = loadedImage.runtimeAddress(segment.virtualAddress());
+                long pageStart = alignDown(runtimeAddress, context.pageSize());
+                long pageEnd = alignUp(runtimeAddress + segment.memorySize(), context.pageSize());
+                long pageLength = pageEnd - pageStart;
+                if (!memory.protect(pageStart, pageLength, segmentProtection(segment))) {
+                    throw new RiscVException("Failed to protect ELF segment page range: segment="
+                            + formatRange(pageStart, pageEnd));
+                }
+            }
         }
 
         GuestSyscalls syscalls = new GuestSyscalls(
@@ -153,36 +248,47 @@ public final class RiscVRootNode extends RootNode {
                 memory,
                 context.maxInstructions(),
                 context.trace(),
-                image.tohostAddress(),
-                image.fromhostAddress(),
+                program.executable().runtimeOptionalAddress(program.executable().image().tohostAddress()),
+                program.executable().runtimeOptionalAddress(program.executable().image().fromhostAddress()),
                 syscalls,
                 context.env().err(),
                 context.vectorVlenBits());
-        state.setPc(image.entryPoint());
-        state.setRegister(2, initializeLinuxStack(memory, context));
+        state.setPc(program.entryPoint());
+        state.setRegister(2, initializeLinuxStack(memory, context, program));
         return state;
     }
 
     /// Adds explicit backing for one ELF load segment.
-    private static void mapLoadSegment(Memory memory, ElfImage.LoadSegment segment) {
-        if (segment.memorySize() == 0) {
+    private static void mapLoadSegment(Memory memory, long runtimeAddress, long memorySize) {
+        if (memorySize == 0) {
             return;
         }
-        if (!memory.map(segment.virtualAddress(), segment.memorySize())) {
-            throw new RiscVException("ELF segment overlaps another guest memory region: segment="
-                    + formatRange(segment.virtualAddress(), segment.virtualAddress() + segment.memorySize())
-                    + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress()));
+        int pageSize = memory.pageSize();
+        long endAddress = runtimeAddress + memorySize;
+        for (long pageAddress = runtimeAddress; pageAddress < endAddress; pageAddress += pageSize) {
+            long pageLength = Math.min(pageSize, endAddress - pageAddress);
+            if (memory.isBacked(pageAddress, pageLength)) {
+                continue;
+            }
+            if (!memory.map(pageAddress, pageLength)) {
+                throw new RiscVException("ELF segment overlaps another guest memory region: segment="
+                        + formatRange(runtimeAddress, runtimeAddress + memorySize)
+                        + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress()));
+            }
         }
     }
 
     /// Initializes the Linux user stack at the top of the contiguous guest memory segment.
-    private long initializeLinuxStack(Memory memory, RiscVContext context) {
+    private long initializeLinuxStack(Memory memory, RiscVContext context, LoadedProgram program) {
         if (memory.hasDenseInitialBacking()) {
             return LinuxInitialStack.initialize(
                     memory,
                     memory.endAddress(),
                     context.programArguments(),
-                    image,
+                    program.executable().image(),
+                    program.executable().loadBias(),
+                    program.interpreterBase(),
+                    program.executablePath(),
                     context.pageSize());
         }
 
@@ -198,20 +304,45 @@ public final class RiscVRootNode extends RootNode {
                     + formatRange(stackBase, stackTop)
                     + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress()));
         }
-        return LinuxInitialStack.initialize(memory, stackTop, context.programArguments(), image, context.pageSize());
+        return LinuxInitialStack.initialize(
+                memory,
+                stackTop,
+                context.programArguments(),
+                program.executable().image(),
+                program.executable().loadBias(),
+                program.interpreterBase(),
+                program.executablePath(),
+                context.pageSize());
     }
 
     /// Resolves the memory base from context options or the lowest ELF load segment address.
-    private long resolveMemoryBase(RiscVContext context) {
+    private long resolveMemoryBase(RiscVContext context, LoadedProgram program) {
         if (context.memoryBase() != RiscVLanguage.AUTO_MEMORY_BASE) {
             return context.memoryBase();
         }
 
         long baseAddress = Long.MAX_VALUE;
-        for (ElfImage.LoadSegment segment : image.loadSegments()) {
-            baseAddress = Math.min(baseAddress, segment.virtualAddress());
+        for (LoadedImage loadedImage : program.images()) {
+            for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
+                baseAddress = Math.min(baseAddress, loadedImage.runtimeAddress(segment.virtualAddress()));
+            }
         }
         return baseAddress == Long.MAX_VALUE ? Memory.DEFAULT_BASE_ADDRESS : baseAddress;
+    }
+
+    /// Converts ELF segment flags into guest memory protection bits.
+    private static long segmentProtection(ElfImage.LoadSegment segment) {
+        long protection = 0;
+        if ((segment.flags() & 0x4) != 0) {
+            protection |= Memory.PROTECTION_READ;
+        }
+        if ((segment.flags() & 0x2) != 0) {
+            protection |= Memory.PROTECTION_WRITE;
+        }
+        if ((segment.flags() & 0x1) != 0) {
+            protection |= Memory.PROTECTION_EXECUTE;
+        }
+        return protection;
     }
 
     /// Ensures a loaded ELF segment fits in guest memory.
@@ -319,6 +450,65 @@ public final class RiscVRootNode extends RootNode {
     /// Rounds an address down to the requested power-of-two alignment.
     private static long alignDown(long address, long alignment) {
         return address & -alignment;
+    }
+
+    /// Describes the fully load-biased program images that form one process startup.
+    ///
+    /// @param executable the main executable image
+    /// @param interpreter the optional dynamic interpreter image
+    /// @param executablePath the guest executable path used for `AT_EXECFN`, or null for host-loaded programs
+    @NotNullByDefault
+    private record LoadedProgram(
+            LoadedImage executable,
+            @Nullable LoadedImage interpreter,
+            @Nullable String executablePath) {
+        /// Returns the images that must be mapped before execution starts.
+        private LoadedImage @Unmodifiable [] images() {
+            return interpreter == null
+                    ? new LoadedImage[]{executable}
+                    : new LoadedImage[]{executable, interpreter};
+        }
+
+        /// Returns the initial program counter.
+        private long entryPoint() {
+            return interpreter == null ? executable.runtimeEntryPoint() : interpreter.runtimeEntryPoint();
+        }
+
+        /// Returns the interpreter load base exposed through `AT_BASE`, or `ABSENT_ADDRESS` for static programs.
+        private long interpreterBase() {
+            return interpreter == null ? ElfImage.ABSENT_ADDRESS : interpreter.loadBias();
+        }
+    }
+
+    /// Describes one ELF image after applying its process load bias.
+    ///
+    /// @param image the parsed ELF image
+    /// @param loadBias the additive address load bias used for this image
+    @NotNullByDefault
+    private record LoadedImage(ElfImage image, long loadBias) {
+        /// Returns a load-biased runtime address.
+        private long runtimeAddress(long address) {
+            return address + loadBias;
+        }
+
+        /// Returns a load-biased optional runtime address.
+        private long runtimeOptionalAddress(long address) {
+            return address == ElfImage.ABSENT_ADDRESS ? ElfImage.ABSENT_ADDRESS : runtimeAddress(address);
+        }
+
+        /// Returns the runtime entry point.
+        private long runtimeEntryPoint() {
+            return runtimeAddress(image.entryPoint());
+        }
+
+        /// Returns the exclusive end of the highest loaded segment.
+        private long endAddress() {
+            long endAddress = 0;
+            for (ElfImage.LoadSegment segment : image.loadSegments()) {
+                endAddress = Math.max(endAddress, runtimeAddress(segment.virtualAddress()) + segment.memorySize());
+            }
+            return endAddress;
+        }
     }
 
     /// Holds per-thread guest loop state while a Truffle loop root is executing.

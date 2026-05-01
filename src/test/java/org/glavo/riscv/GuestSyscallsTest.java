@@ -4089,6 +4089,45 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that private file-backed `mmap` copies regular-file data into guest memory.
+    @Test
+    public void mmapMapsPrivateRegularFilePages() throws Exception {
+        Files.writeString(tempDirectory.resolve("mapped.txt"), "mapped-file-data", StandardCharsets.UTF_8);
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak,
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            writeGuestString(memory, pathAddress, "mapped.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertTrue(fileDescriptor >= 3);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ,
+                    MAP_PRIVATE,
+                    fileDescriptor,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+
+            long mappedAddress = state.register(10);
+            assertEquals(initialBreak, mappedAddress);
+            assertEquals("mapped-file-data", readGuestString(memory, mappedAddress, "mapped-file-data".length()));
+            assertEquals(0, memory.readUnsignedByte(mappedAddress + "mapped-file-data".length()));
+        }
+    }
+
     /// Verifies that `MAP_HUGETLB` consumes the configured guest huge-page pool.
     @Test
     public void mmapHugeTlbConsumesHugePagePool() {
@@ -4408,7 +4447,7 @@ public final class GuestSyscallsTest {
 
             setSyscall(state, SYS_MMAP, 0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, 0, 0);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(ENODEV, state.register(10));
+            assertEquals(EBADF, state.register(10));
 
             setSyscall(
                     state,
@@ -4764,6 +4803,15 @@ public final class GuestSyscallsTest {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         memory.writeBytes(address, bytes, 0, bytes.length);
         memory.writeByte(address + bytes.length, (byte) 0);
+    }
+
+    /// Reads a fixed-length UTF-8 string from guest memory.
+    private static String readGuestString(Memory memory, long address, int length) {
+        byte[] bytes = new byte[length];
+        for (int index = 0; index < bytes.length; index++) {
+            bytes[index] = (byte) memory.readUnsignedByte(address + index);
+        }
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /// Reads a null-terminated UTF-8 string from guest memory.

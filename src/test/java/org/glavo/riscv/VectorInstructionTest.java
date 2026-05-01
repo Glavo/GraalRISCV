@@ -136,6 +136,47 @@ public final class VectorInstructionTest {
         }
     }
 
+    /// Verifies fault-only-first vector loads trim `vl` after a non-leading memory fault.
+    @Test
+    public void faultOnlyFirstVectorLoadTrimsVlAfterBoundaryFault() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = machine.memory().endAddress() - 4;
+            for (int index = 0; index < 4; index++) {
+                machine.memory().writeByte(input + index, (byte) (index + 1));
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vleff(8, 1, 6),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 8);
+            machine.state().setRegister(6, input);
+
+            runDecodedProgram(machine);
+
+            assertEquals(4, machine.state().readControlStatusRegister(VL_CSR));
+            assertVectorBytes(machine.state(), 1, 1, 2, 3, 4);
+        }
+    }
+
+    /// Verifies fault-only-first vector loads still fault when the first active element faults.
+    @Test
+    public void faultOnlyFirstVectorLoadFaultsOnFirstElement() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vleff(8, 1, 6),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 8);
+            machine.state().setRegister(6, machine.memory().endAddress());
+
+            assertThrows(RiscVException.class, () -> runDecodedProgram(machine));
+        }
+    }
+
     /// Verifies vector-vector, vector-scalar, and masked integer operations.
     @Test
     public void vectorIntegerArithmeticFormsExecute() {
@@ -989,6 +1030,11 @@ public final class VectorInstructionTest {
     /// Encodes an unmasked unit-stride vector load.
     private static int vle(int sew, int vd, int rs1) {
         return (1 << 25) | (width(sew) << 12) | (rs1 << 15) | (vd << 7) | 0x07;
+    }
+
+    /// Encodes an unmasked unit-stride fault-only-first vector load.
+    private static int vleff(int sew, int vd, int rs1) {
+        return vectorMemory(true, sew, vd, rs1, 16, 0, 1, true);
     }
 
     /// Encodes an unmasked unit-stride vector store.

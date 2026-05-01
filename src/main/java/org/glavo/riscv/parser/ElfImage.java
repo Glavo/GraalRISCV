@@ -5,6 +5,7 @@ package org.glavo.riscv.parser;
 
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.List;
@@ -15,8 +16,20 @@ public final class ElfImage {
     /// Marks an optional guest address that is not present in the image.
     public static final long ABSENT_ADDRESS = -1L;
 
+    /// ELF object type for a fixed-address executable image.
+    public static final int TYPE_EXECUTABLE = 2;
+
+    /// ELF object type for a position-independent executable or shared object.
+    public static final int TYPE_DYNAMIC = 3;
+
     /// The initial guest program counter.
     private final long entryPoint;
+
+    /// The ELF object type.
+    private final int type;
+
+    /// The optional dynamic interpreter path from `PT_INTERP`.
+    private final @Nullable String interpreterPath;
 
     /// The immutable loadable segment list.
     private final @Unmodifiable List<LoadSegment> loadSegments;
@@ -38,14 +51,18 @@ public final class ElfImage {
 
     /// Creates a validated ELF image description.
     public ElfImage(
+            int type,
             long entryPoint,
+            @Nullable String interpreterPath,
             @Unmodifiable List<LoadSegment> loadSegments,
             long tohostAddress,
             long fromhostAddress,
             long programHeaderAddress,
             int programHeaderEntrySize,
             int programHeaderCount) {
+        this.type = type;
         this.entryPoint = entryPoint;
+        this.interpreterPath = interpreterPath;
         this.loadSegments = List.copyOf(loadSegments);
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
@@ -57,6 +74,26 @@ public final class ElfImage {
     /// Returns the initial guest program counter.
     public long entryPoint() {
         return entryPoint;
+    }
+
+    /// Returns the ELF object type.
+    public int type() {
+        return type;
+    }
+
+    /// Returns true when this image uses position-independent `ET_DYN` addresses.
+    public boolean isPositionIndependent() {
+        return type == TYPE_DYNAMIC;
+    }
+
+    /// Returns the optional dynamic interpreter path from `PT_INTERP`.
+    public @Nullable String interpreterPath() {
+        return interpreterPath;
+    }
+
+    /// Returns true when the image requests a dynamic interpreter.
+    public boolean hasInterpreter() {
+        return interpreterPath != null;
     }
 
     /// Returns the immutable loadable segment list.
@@ -96,14 +133,20 @@ public final class ElfImage {
 
     /// Describes a loadable ELF segment and its guest memory extent.
     ///
-    /// @param virtualAddress the guest virtual address where the segment starts
+    /// @param virtualAddress the ELF virtual address where the segment starts before load-bias relocation
+    /// @param fileOffset the ELF file offset backing the segment contents
     /// @param contents the bytes present in the ELF file for this segment
     /// @param memorySize the total guest memory size of the segment, including zero-filled bytes
+    /// @param flags the ELF `p_flags` access bits
+    /// @param alignment the ELF `p_align` value
     @NotNullByDefault
     public record LoadSegment(
             long virtualAddress,
+            long fileOffset,
             byte @Unmodifiable [] contents,
-            long memorySize) {
+            long memorySize,
+            int flags,
+            long alignment) {
         /// Creates a loadable segment description.
         public LoadSegment {
             if (memorySize < contents.length) {

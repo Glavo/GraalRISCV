@@ -12,8 +12,6 @@ import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.nodes.RiscVRootNode;
-import org.glavo.riscv.parser.ElfImage;
-import org.glavo.riscv.parser.ElfLoader;
 import org.glavo.riscv.runtime.TimeSource;
 import org.glavo.riscv.runtime.VectorUnit;
 import org.graalvm.options.OptionCategory;
@@ -164,6 +162,14 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             stability = OptionStability.STABLE)
     static final OptionKey<String> MOUNTS = new OptionKey<>("");
 
+    /// The `riscv.guestProgramPath` language option.
+    @Option(
+            name = "guestProgramPath",
+            help = "Absolute guest path to load as the executable when the source bytes are supplied by a mounted filesystem.",
+            category = OptionCategory.EXPERT,
+            stability = OptionStability.STABLE)
+    static final OptionKey<String> GUEST_PROGRAM_PATH = new OptionKey<>("");
+
     /// Creates a RISC-V Truffle language instance.
     @SuppressWarnings("deprecation")
     public RiscVLanguage() {
@@ -187,6 +193,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 timeSourceFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),
                 env.getOptions().get(HOST_ROOT),
                 env.getOptions().get(MOUNTS),
+                env.getOptions().get(GUEST_PROGRAM_PATH),
                 mappedRegionCache);
     }
 
@@ -217,8 +224,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             throw new RiscVException("RISC-V sources must be byte-based ELF inputs");
         }
 
-        ElfImage image = ElfLoader.load(source.getBytes().toByteArray());
-        return new RiscVRootNode(this, image).getCallTarget();
+        return new RiscVRootNode(this, source.getBytes().toByteArray()).getCallTarget();
     }
 
     /// Returns descriptors for the language options supported by this language.

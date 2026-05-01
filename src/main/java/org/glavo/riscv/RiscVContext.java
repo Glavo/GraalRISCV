@@ -10,6 +10,7 @@ import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.runtime.TimeSource;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.ArrayList;
@@ -56,6 +57,9 @@ public final class RiscVContext {
     /// The configured guest filesystem mounts.
     private final String @Unmodifiable [] filesystemMounts;
 
+    /// The guest path to load as the executable, or null when the source bytes are the executable.
+    private final @Nullable String guestProgramPath;
+
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
@@ -77,6 +81,7 @@ public final class RiscVContext {
             TimeSource timeSource,
             String hostRoot,
             String filesystemMounts,
+            String guestProgramPath,
             ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
@@ -105,6 +110,9 @@ public final class RiscVContext {
 
         String[] parsedFilesystemMounts = parseFilesystemMounts(hostRoot, filesystemMounts);
         validateFilesystemMounts(env, parsedFilesystemMounts);
+        @Nullable String normalizedGuestProgramPath = guestProgramPath.isEmpty()
+                ? null
+                : normalizeMountGuestPath(guestProgramPath);
 
         this.env = env;
         this.memoryBase = memoryBase;
@@ -119,6 +127,7 @@ public final class RiscVContext {
         this.timeSource = timeSource;
         this.hostRoot = hostRoot;
         this.filesystemMounts = parsedFilesystemMounts;
+        this.guestProgramPath = normalizedGuestProgramPath;
         this.programArguments = env.getApplicationArguments().clone();
         this.mappedRegionCache = mappedRegionCache;
     }
@@ -186,6 +195,11 @@ public final class RiscVContext {
     /// Returns a copy of the configured guest filesystem mounts.
     public String @Unmodifiable [] filesystemMounts() {
         return filesystemMounts.clone();
+    }
+
+    /// Returns the guest path to load as the executable, or null when source bytes contain the executable.
+    public @Nullable String guestProgramPath() {
+        return guestProgramPath;
     }
 
     /// Returns the guest application arguments supplied after the ELF path.

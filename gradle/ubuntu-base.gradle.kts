@@ -1,6 +1,15 @@
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.charset.StandardCharsets
+import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPInputStream
+import org.gradle.api.plugins.JavaApplication
+import org.gradle.api.tasks.SourceSetContainer
+
+val applicationExtension = extensions.getByType<JavaApplication>()
+val sourceSets = extensions.getByType<SourceSetContainer>()
+val ubuntuBaseMainClassName = applicationExtension.mainClass.get()
+val ubuntuBaseApplicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 
 val ubuntuBaseVersion = "26.04"
 val ubuntuBaseArchitecture = "riscv64"
@@ -64,6 +73,47 @@ tasks.register("decompressUbuntuBaseImage") {
             throw GradleException("Failed to decompress Ubuntu Base gzip archive: $archive", exception)
         } finally {
             delete(temporaryTar)
+        }
+    }
+}
+
+tasks.register<JavaExec>("testUbuntuBaseTrue") {
+    group = "verification"
+    description = "Runs /usr/bin/true from the downloaded Ubuntu Base RISC-V root tar."
+
+    dependsOn("classes", "decompressUbuntuBaseImage")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = ubuntuBaseMainClassName
+    jvmArgs(ubuntuBaseApplicationDefaultJvmArgs)
+    isIgnoreExitValue = true
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(
+            "--mount", "/=${ubuntuBaseTarFile.get().asFile.absolutePath}",
+            "--guest-program", "/usr/bin/true"
+        ))
+    }
+
+    doLast {
+        val exitCode = executionResult.get().exitValue
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput.isNotEmpty()) {
+            throw GradleException("Ubuntu Base true wrote to stdout: $actualOutput")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (exitCode != 0) {
+            throw GradleException("Ubuntu Base true exited with $exitCode. stderr: $actualError")
+        }
+        if (actualError.isNotEmpty()) {
+            throw GradleException("Ubuntu Base true wrote to stderr: $actualError")
         }
     }
 }

@@ -33,8 +33,10 @@ java --sun-misc-unsafe-memory-access=allow -jar build/libs/GraalRISCV-1.0-SNAPSH
 
 ```text
 graalriscv [options] <program.elf> [program-args...]
+graalriscv [options] --guest-program <path> [program-args...]
 
 Options:
+  --guest-program <path>    Load the executable from an absolute guest path resolved through --mount.
   --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
                               Default is 0; auto infers the base from ELF load segments.
   --memory-size <bytes>      Guest virtual address window size in bytes.
@@ -52,28 +54,28 @@ Options:
   -h, --help                 Print this help message.
 ```
 
-`--mount` controls the host directories and tar archives visible to guest file
-syscalls. For example, `--mount /=sandbox` exposes `sandbox` as the guest `/`,
-and `--mount /data=dataset.tar` overlays `dataset.tar` at guest `/data`. If no
-`/` mount is provided, the CLI mounts the directory containing the guest program
-at `/`.
+`<program.elf>` is interpreted as a host path. Use `--guest-program` when the
+executable should be loaded from the guest filesystem. `--mount` controls the
+host directories and tar archives visible to guest file syscalls. For example,
+`--mount /=ubuntu-base.tar --guest-program /usr/bin/true` runs a guest path from
+the mounted root archive, and `--mount /data=dataset.tar` overlays `dataset.tar`
+at guest `/data`. If no `/` mount is provided for a host executable, the CLI
+mounts the directory containing that executable at `/`.
 
 ## Supported ELF Inputs
 
-The loader accepts ELF64 little-endian RISC-V executable files with statically
-resolved `PT_LOAD` segments. It validates segment ranges, alignment,
-permissions, overlap, and entry-point placement before execution.
-
-Static Linux and freestanding executables are the intended input shape. Dynamic
-ELF metadata such as `PT_INTERP`, `PT_DYNAMIC`, `SHT_DYNAMIC`, `SHT_REL`, and
-`SHT_RELA` is rejected during loading.
+The loader accepts ELF64 little-endian RISC-V `ET_EXEC` and `ET_DYN` inputs. It
+validates segment ranges, alignment, permissions, overlap, entry-point
+placement, and dynamic interpreter metadata before execution. Dynamically linked
+Linux programs are supported when their interpreter and shared libraries are
+available through configured guest mounts.
 
 ## Current Linux User-Mode Support
 
 The simulator implements enough Linux RISC-V user-mode behavior to run the
-bundled static musl examples, the static Go example, CoreMark, and similar
-static ELF programs. File access is sandboxed under configured `--mount`
-entries.
+bundled static musl examples, the static Go example, CoreMark, RVV examples, and
+dynamic programs such as `/usr/bin/true` from the Ubuntu Base root tar. File
+access is sandboxed under configured `--mount` entries.
 
 ## Examples
 
@@ -83,6 +85,12 @@ it.
 The `decompressUbuntuBaseImage` task downloads Ubuntu Base 26.04 for RISC-V and
 produces a `.tar` root filesystem under `build/downloads/ubuntu-base/26.04`
 without unpacking the tar entries.
+
+Run the Ubuntu Base dynamic-linking smoke test:
+
+```text
+./gradlew testUbuntuBaseTrue
+```
 
 The C and CoreMark examples use Zig CC. Gradle downloads the configured Zig
 release when needed. To use an existing Zig executable, set one of

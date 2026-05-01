@@ -2,29 +2,20 @@
 
 ## Current Status
 
-- GraalRISCV is a user-mode RV64 emulator for statically linked 64-bit little-endian RISC-V ELF programs on a Linux-like runtime.
+- GraalRISCV is a user-mode RV64 emulator for 64-bit little-endian RISC-V ELF programs on a Linux-like runtime.
 - The implemented profile is RVA23U64 when the configured VLEN is profile-valid; shorter vector configurations expose the RVA22U64 capability surface.
 - Privileged mode, guest page tables, interrupts, devices, and Linux kernel boot are out of scope unless a later plan explicitly adds them.
-- The build covers unit tests, package smoke tests, example workloads, pinned `riscv-tests`, and repository-owned RVA22U64/RVA23U64 acceptance tests.
+- The build covers unit tests, package smoke tests, example workloads, pinned `riscv-tests`, repository-owned RVA22U64/RVA23U64 acceptance tests, and an Ubuntu Base dynamic-linking smoke test.
 
 ## Completed
 
 - RVA22U64 and RVA23U64 user-mode profile support is implemented, centrally reported, and covered by focused tests.
 - RVV 1.0, mandatory RVA23U64 vector additions, `Zkt`/`Zvkt`, and optional standard `Zvbc` are implemented; the CRC example exercises `Zvbc`.
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
+- Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, file-backed `MAP_PRIVATE`, tar symlink lookup, and the Ubuntu Base `/usr/bin/true` smoke test.
 - The memory, `--mount` filesystem sandboxing, read-only tar mounts, Ubuntu Base image preparation, process/thread state, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 
 ## Remaining Work
-
-### Dynamic Linking And Ubuntu Root Image
-
-- Support dynamically linked Linux ELF programs while preserving the existing static ELF path.
-- Let the CLI load a guest executable from configured mounts when the program argument is an absolute guest path such as `/usr/bin/true`; keep host-file loading when the argument names an existing host file.
-- Accept dynamic ELF metadata in the loader, record interpreter and dynamic-program metadata, map `ET_EXEC` and `ET_DYN` images with correct load bias handling, and start `PT_INTERP` programs through the guest dynamic linker.
-- Build the initial Linux stack for dynamic programs with main-program auxv values, including `AT_BASE` for the interpreter and `AT_EXECFN` for the guest executable path.
-- Add file-backed `MAP_PRIVATE` support for regular files so the dynamic linker can map shared libraries from mounted directories or read-only tar archives.
-- Make tar mounts resolve symbolic links for normal path lookup, including Ubuntu Base paths such as `/bin`, `/lib`, interpreter symlinks, and relative links, while preserving `readlinkat` and no-follow behavior.
-- Add an Ubuntu Base acceptance task that runs at least `/usr/bin/true` from the downloaded root tar via `--mount /=build/downloads/ubuntu-base/26.04/ubuntu-base-26.04-base-riscv64.tar`.
 
 ### ISA And Profile Correctness
 
@@ -34,7 +25,7 @@
 
 ### Linux Runtime Compatibility
 
-- Expand ELF, auxv, stack, `mmap`, syscall, and runtime behavior only when direct tests or real workloads require it.
+- Expand ELF, auxv, stack, `mmap`, syscall, dynamic-linking, and runtime behavior only when direct tests or real workloads require it.
 - Continue improving signal and clone semantics while keeping thread behavior deterministic.
 
 ### Memory And Mapping
