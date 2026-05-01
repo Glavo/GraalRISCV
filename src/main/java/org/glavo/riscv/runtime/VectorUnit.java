@@ -379,6 +379,10 @@ public final class VectorUnit {
             executeIntegerBitManipUnary(raw, vd, vs1, vs2, nextPc, state);
             return;
         }
+        if (isCarrylessMultiply(funct3, funct6)) {
+            executeCarrylessMultiply(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
         if (isWholeRegisterMove(funct3, funct6)) {
             executeWholeRegisterMove(raw, vd, vs1, vs2, nextPc, state);
             return;
@@ -1810,6 +1814,56 @@ public final class VectorUnit {
         };
     }
 
+    /// Executes `Zvbc` vector carry-less multiplication instructions.
+    private void executeCarrylessMultiply(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        int funct3 = (raw >>> 12) & 0x7;
+        int funct6 = (raw >>> 26) & 0x3f;
+        if (sewBits() != Long.SIZE) {
+            throw new RiscVException("Zvbc vector carry-less multiplication requires SEW 64");
+        }
+        requireRegisterGroup(vd);
+        requireRegisterGroup(vs2);
+        if (funct3 == OPMVV) {
+            requireRegisterGroup(vs1);
+        }
+
+        boolean highHalf = funct6 == 0x0d;
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                long left = readElement(vs2, element);
+                long right = funct3 == OPMVV ? readElement(vs1, element) : state.decodedRegister(vs1);
+                writeElement(
+                        vd,
+                        element,
+                        highHalf ? carrylessMultiplyHigh(left, right) : carrylessMultiplyLow(left, right));
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Returns the low half of a 64-bit carry-less multiplication.
+    private static long carrylessMultiplyLow(long left, long right) {
+        long result = 0;
+        for (int bit = 0; bit < Long.SIZE; bit++) {
+            long mask = -((right >>> bit) & 1L);
+            result ^= left << bit & mask;
+        }
+        return result;
+    }
+
+    /// Returns the high half of a 64-bit carry-less multiplication.
+    private static long carrylessMultiplyHigh(long left, long right) {
+        long result = 0;
+        for (int bit = 1; bit < Long.SIZE; bit++) {
+            long mask = -((right >>> bit) & 1L);
+            result ^= left >>> (Long.SIZE - bit) & mask;
+        }
+        return result;
+    }
+
     /// Executes `vwsll.[vv,vx,vi]`.
     private void executeWideningShiftLeftLogical(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
         int funct3 = (raw >>> 12) & 0x7;
@@ -2657,6 +2711,11 @@ public final class VectorUnit {
         return funct3 == OPMVV
                 && funct6 == 0x12
                 && (vs1 == 8 || vs1 == 9 || vs1 == 10 || vs1 == 12 || vs1 == 13 || vs1 == 14);
+    }
+
+    /// Returns whether the operation is a `Zvbc` carry-less multiplication instruction.
+    private static boolean isCarrylessMultiply(int funct3, int funct6) {
+        return (funct6 == 0x0c || funct6 == 0x0d) && (funct3 == OPMVV || funct3 == OPMVX);
     }
 
     /// Returns whether the operation is a whole-register vector move.

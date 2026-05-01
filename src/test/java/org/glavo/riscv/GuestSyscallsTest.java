@@ -3202,6 +3202,7 @@ public final class GuestSyscallsTest {
                     Rva22Profile.HWPROBE_COMPATIBILITY_EXTENSIONS,
                     imaExtensions & Rva22Profile.HWPROBE_COMPATIBILITY_EXTENSIONS);
             assertEquals(RiscVExtensions.HWPROBE_EXT_ZKT, imaExtensions & RiscVExtensions.HWPROBE_EXT_ZKT);
+            assertEquals(RiscVExtensions.HWPROBE_EXT_ZVBC, imaExtensions & RiscVExtensions.HWPROBE_EXT_ZVBC);
             long expectedSplitAtomicAndCounterExtensions =
                     RiscVExtensions.HWPROBE_EXT_ZIHPM
                             | RiscVExtensions.HWPROBE_EXT_ZAAMO

@@ -90,6 +90,10 @@ public final class Rva23Profile {
             "Zvkt",
             "Zvl128b");
 
+    /// Implemented optional vector crypto extensions beyond the RVA23U64 mandatory set.
+    public static final @Unmodifiable List<String> IMPLEMENTED_OPTIONAL_VECTOR_EXTENSIONS = List.of(
+            "Zvbc");
+
     /// RVA23U64 mandatory areas that still block reporting the full profile.
     public static final @Unmodifiable List<String> PENDING_MANDATORY_AREAS = List.of();
 
@@ -114,9 +118,15 @@ public final class Rva23Profile {
                     | RiscVExtensions.HWPROBE_EXT_ZCMOP
                     | RiscVExtensions.HWPROBE_EXT_SUPM;
 
+    /// Linux hwprobe bits for implemented optional RVA23U64 vector extensions.
+    public static final long HWPROBE_IMPLEMENTED_OPTIONAL_EXTENSIONS =
+            RiscVExtensions.HWPROBE_EXT_ZVBC;
+
     /// Linux hwprobe bits reported for the complete RVA23U64 user-mode profile.
     public static final long HWPROBE_REPORTED_EXTENSIONS =
-            Rva22Profile.HWPROBE_REPORTED_EXTENSIONS | HWPROBE_IMPLEMENTED_ADDITIONAL_EXTENSIONS;
+            Rva22Profile.HWPROBE_REPORTED_EXTENSIONS
+                    | HWPROBE_IMPLEMENTED_ADDITIONAL_EXTENSIONS
+                    | HWPROBE_IMPLEMENTED_OPTIONAL_EXTENSIONS;
 
     /// Prevents construction of this constants class.
     private Rva23Profile() {

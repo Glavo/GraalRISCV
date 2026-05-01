@@ -4,6 +4,7 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.exception.ProgramExitException;
+import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.parser.ElfImage;
@@ -19,6 +20,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /// Tests RVV 1.0 vector configuration, CSR, memory, integer, fixed-point, and floating-point behavior.
@@ -568,6 +570,70 @@ public final class VectorInstructionTest {
             assertEquals(0xc000, machine.memory().readUnsignedShort(halfOutput + Short.BYTES));
             assertEquals(0x3800, machine.memory().readUnsignedShort(halfOutput + 2L * Short.BYTES));
             assertEquals(0x7c00, machine.memory().readUnsignedShort(halfOutput + 3L * Short.BYTES));
+        }
+    }
+
+    /// Verifies optional `Zvbc` vector carry-less multiplication instructions.
+    @Test
+    public void vectorCarrylessMultiplyInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            long multipliers = TEST_PC + 512;
+            long[] values = {0x0123_4567_89ab_cdefL, 0xffff_0000_ffff_0000L};
+            long[] multiplierValues = {0x1111_1111_1111_1111L, 0x0000_0001_0000_0001L};
+            long scalarMultiplier = 0x1b;
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeLong(input + (long) index * Long.BYTES, values[index]);
+                machine.memory().writeLong(multipliers + (long) index * Long.BYTES, multiplierValues[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(64, 1)),
+                    vle(64, 1, 6),
+                    vle(64, 2, 7),
+                    vclmulVv(3, 1, 2),
+                    vclmulhVv(4, 1, 2),
+                    vclmulVx(5, 1, 11),
+                    vclmulhVx(6, 1, 11),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(7, multipliers);
+            machine.state().setRegister(11, scalarMultiplier);
+
+            runDecodedProgram(machine);
+
+            for (int index = 0; index < values.length; index++) {
+                assertEquals(
+                        carrylessMultiplyLowExpected(values[index], multiplierValues[index]),
+                        machine.state().vectorUnit().readElement(3, index));
+                assertEquals(
+                        carrylessMultiplyHighExpected(values[index], multiplierValues[index]),
+                        machine.state().vectorUnit().readElement(4, index));
+                assertEquals(
+                        carrylessMultiplyLowExpected(values[index], scalarMultiplier),
+                        machine.state().vectorUnit().readElement(5, index));
+                assertEquals(
+                        carrylessMultiplyHighExpected(values[index], scalarMultiplier),
+                        machine.state().vectorUnit().readElement(6, index));
+            }
+        }
+    }
+
+    /// Verifies `Zvbc` rejects element widths other than 64 bits.
+    @Test
+    public void vectorCarrylessMultiplyRejectsNon64BitSew() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(32, 1)),
+                    vclmulVv(3, 1, 2),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 2);
+
+            assertThrows(RiscVException.class, () -> runDecodedProgram(machine));
         }
     }
 
@@ -1157,6 +1223,26 @@ public final class VectorInstructionTest {
         return vectorInteger(0x35, true, vd, immediate & 0x1f, vs2, 3);
     }
 
+    /// Encodes `vclmul.vv`.
+    private static int vclmulVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x0c, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vclmul.vx`.
+    private static int vclmulVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x0c, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vclmulh.vv`.
+    private static int vclmulhVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x0d, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vclmulh.vx`.
+    private static int vclmulhVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x0d, true, vd, rs1, vs2, 6);
+    }
+
     /// Encodes `vsaddu.vi`.
     private static int vsadduVi(int vd, int vs2, int immediate) {
         return vectorInteger(0x20, true, vd, immediate, vs2, 3);
@@ -1321,6 +1407,28 @@ public final class VectorInstructionTest {
                 | (funct3 << 12)
                 | (vd << 7)
                 | 0x57;
+    }
+
+    /// Computes the expected low half of a 64-bit carry-less multiplication.
+    private static long carrylessMultiplyLowExpected(long left, long right) {
+        long result = 0;
+        for (int bit = 0; bit < Long.SIZE; bit++) {
+            if (((right >>> bit) & 1L) != 0) {
+                result ^= left << bit;
+            }
+        }
+        return result;
+    }
+
+    /// Computes the expected high half of a 64-bit carry-less multiplication.
+    private static long carrylessMultiplyHighExpected(long left, long right) {
+        long result = 0;
+        for (int bit = 1; bit < Long.SIZE; bit++) {
+            if (((right >>> bit) & 1L) != 0) {
+                result ^= left >>> (Long.SIZE - bit);
+            }
+        }
+        return result;
     }
 
     /// Returns the vector memory width encoding for a SEW.

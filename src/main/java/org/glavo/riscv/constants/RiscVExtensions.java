@@ -38,6 +38,9 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_EXT_ZVBB`.
     public static final long HWPROBE_EXT_ZVBB = 1L << 17;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZVBC`.
+    public static final long HWPROBE_EXT_ZVBC = 1L << 18;
+
     /// Linux `RISCV_HWPROBE_EXT_ZVKB`.
     public static final long HWPROBE_EXT_ZVKB = 1L << 19;
 

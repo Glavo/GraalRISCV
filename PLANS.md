@@ -38,8 +38,9 @@
 - `Supm` pointer masking is implemented through Linux `PR_SET_TAGGED_ADDR_CTRL` and `PR_GET_TAGGED_ADDR_CTRL`, with default PMLEN `0`, implemented PMLEN `7`, syscall tagged-address ABI gating through `PR_TAGGED_ADDR_ENABLE`, clone inheritance, and masking for instruction fetch, PC targets, memory accesses, atomics, CBO zeroing, and syscall guest pointers. Micro-block hot memory paths use a precomputed mask and avoid `ThreadLocal` lookups.
 - Base RVV 1.0 is implemented in the interpreter and reusable micro-block fallback path: vector architectural state, configurable `VLEN`, vector CSRs, `vsetvli`/`vsetivli`/`vsetvl`, unit-stride/strided/indexed/segment/mask/whole-register vector load-store, fault-only-first load decoding and execution, single-width and mixed-width integer arithmetic, fixed-point rounding/saturation, compare, mask, scalar move, carry/borrow, reductions, slide, gather, compress, multiply, divide, remainder, floating-point arithmetic, reductions, fused operations, conversions, scalar moves, and focused unit and RVA23 acceptance coverage.
 - Mandatory RVA23U64 vector additions on top of base `V` are implemented and tested: `Zvbb`, `Zvkb`, `Zvfhmin`, `Zvkt`, and the `Zvl128b` minimum-length requirement.
+- Optional standard `Zvbc` vector carry-less multiplication is implemented and reported for `SEW=64` `vclmul.[vv,vx]` and `vclmulh.[vv,vx]`.
 - `src/test/asm/rva23` and `testRva23Acceptance` build and run repository-owned RVA23 scalar, Supm, vector, vector bit-manipulation, and half-conversion acceptance coverage.
-- Optional future-profile extensions such as `Zfh`, `Zacas`, and vector crypto groups remain unreported until implemented.
+- Optional future-profile extensions such as `Zfh`, `Zacas`, and remaining vector crypto groups remain unreported until implemented.
 
 ## Remaining Work
 
@@ -48,7 +49,7 @@
 - Keep `Rva23Profile`, Linux `riscv_hwprobe`, README, CI aggregation, and RVA23 acceptance tests aligned whenever scalar, vector, Supm, or profile-reporting behavior changes.
 - Broaden `testRva23Acceptance` with more illegal-opcode boundaries and vector corner cases as bugs or spec ambiguities are found.
 - Preserve the `Zkt`/`Zvkt` audit boundary by keeping guest-visible data-dependent branches, table lookups, exceptions, counters, and syscall time out of mandatory data-independent instruction paths.
-- Keep optional extensions such as `Zfh`, `Zacas`, `Zvkng`, and `Zvksg` as separate future work rather than reporting them as part of RVA23U64.
+- Keep optional extensions such as `Zfh`, `Zacas`, `Zvkng`, and `Zvksg` as separate future work unless they are implemented and tested like `Zvbc`.
 
 ### Broaden Static Linux Compatibility
 
