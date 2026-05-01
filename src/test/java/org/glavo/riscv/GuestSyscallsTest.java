@@ -333,6 +333,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `gettid`.
     private static final long SYS_GETTID = 178;
 
+    /// The Linux RISC-V syscall number for `sysinfo`.
+    private static final long SYS_SYSINFO = 179;
+
     /// The Linux RISC-V syscall number for `socket`.
     private static final long SYS_SOCKET = 198;
 
@@ -656,6 +659,42 @@ public final class GuestSyscallsTest {
 
     /// The byte offset of `ru_stime` inside Linux RISC-V 64-bit `struct rusage`.
     private static final int RUSAGE_SYSTEM_TIME_OFFSET = 2 * Long.BYTES;
+
+    /// The byte offset of `uptime` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_UPTIME_OFFSET = 0;
+
+    /// The byte offset of `loads` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_LOADS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `totalram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_TOTAL_RAM_OFFSET = 4 * Long.BYTES;
+
+    /// The byte offset of `freeram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_FREE_RAM_OFFSET = 5 * Long.BYTES;
+
+    /// The byte offset of `sharedram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_SHARED_RAM_OFFSET = 6 * Long.BYTES;
+
+    /// The byte offset of `bufferram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_BUFFER_RAM_OFFSET = 7 * Long.BYTES;
+
+    /// The byte offset of `totalswap` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_TOTAL_SWAP_OFFSET = 8 * Long.BYTES;
+
+    /// The byte offset of `freeswap` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_FREE_SWAP_OFFSET = 9 * Long.BYTES;
+
+    /// The byte offset of `procs` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_PROCESSES_OFFSET = 10 * Long.BYTES;
+
+    /// The byte offset of `totalhigh` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_TOTAL_HIGH_OFFSET = 11 * Long.BYTES;
+
+    /// The byte offset of `freehigh` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_FREE_HIGH_OFFSET = 12 * Long.BYTES;
+
+    /// The byte offset of `mem_unit` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_MEMORY_UNIT_OFFSET = 13 * Long.BYTES;
 
     /// Linux `RUSAGE_CHILDREN`.
     private static final long RUSAGE_CHILDREN = -1;
@@ -2307,6 +2346,58 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_PIPE2, pipeAddress, O_APPEND, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies that `dup3` can redirect standard descriptors to pipe endpoints.
+    @Test
+    public void dup3CanReplaceStandardDescriptors() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream("host".getBytes(StandardCharsets.UTF_8)),
+                    out,
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pipeAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 32;
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
+
+            setSyscall(state, SYS_DUP3, writeFileDescriptor, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            memory.writeBytes(bufferAddress, "abc".getBytes(StandardCharsets.UTF_8), 0, 3);
+            setSyscall(state, SYS_WRITE, 1, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertEquals("", out.toString(StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_READ, readFileDescriptor, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertArrayEquals("abc".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 3));
+
+            memory.writeBytes(bufferAddress, "xy".getBytes(StandardCharsets.UTF_8), 0, 2);
+            setSyscall(state, SYS_WRITE, writeFileDescriptor, bufferAddress, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_DUP3, readFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, 0, bufferAddress, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertArrayEquals("xy".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 2));
         }
     }
 
@@ -4025,6 +4116,37 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETTIMEOFDAY, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies deterministic `sysinfo` memory, load, and process metadata.
+    @Test
+    public void sysinfoReportsSyntheticSystemMetadata() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long sysinfoAddress = memory.baseAddress() + 128;
+
+            setSyscall(state, SYS_SYSINFO, sysinfoAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(memory.readLong(sysinfoAddress + SYSINFO_UPTIME_OFFSET) >= 0);
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_LOADS_OFFSET));
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_LOADS_OFFSET + Long.BYTES));
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_LOADS_OFFSET + 2L * Long.BYTES));
+            assertEquals(memory.size(), memory.readLong(sysinfoAddress + SYSINFO_TOTAL_RAM_OFFSET));
+            assertTrue(memory.readLong(sysinfoAddress + SYSINFO_FREE_RAM_OFFSET) <= memory.size());
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_SHARED_RAM_OFFSET));
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_BUFFER_RAM_OFFSET));
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_TOTAL_SWAP_OFFSET));
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_FREE_SWAP_OFFSET));
+            assertEquals(1, memory.readUnsignedShort(sysinfoAddress + SYSINFO_PROCESSES_OFFSET));
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_TOTAL_HIGH_OFFSET));
+            assertEquals(0, memory.readLong(sysinfoAddress + SYSINFO_FREE_HIGH_OFFSET));
+            assertEquals(1, memory.readInt(sysinfoAddress + SYSINFO_MEMORY_UNIT_OFFSET));
+
+            setSyscall(state, SYS_SYSINFO, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
         }
     }
 

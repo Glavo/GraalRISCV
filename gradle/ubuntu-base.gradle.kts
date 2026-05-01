@@ -138,6 +138,20 @@ registerUbuntuBaseSmokeTest(
 )
 
 registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseBashPipe",
+    "Runs a bash pipeline from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/bash", "-c", "printf abc | /usr/bin/wc -c"),
+    "3\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseBashExternalPipe",
+    "Runs an external-command bash pipeline from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/bash", "-c", "/usr/bin/sort /etc/issue | /usr/bin/wc -l"),
+    "2\n"
+)
+
+registerUbuntuBaseSmokeTest(
     "testUbuntuBaseLs",
     "Runs /usr/bin/ls from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/ls", "-1", "/usr/bin/bash"),
@@ -170,6 +184,13 @@ registerUbuntuBaseSmokeTest(
     "Runs /usr/bin/sha256sum from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/sha256sum", "/etc/issue"),
     "547700963039ce6e3779f128ec369b54f8559db50e9d20fa39459f5b5b7434de  /etc/issue\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseSort",
+    "Runs /usr/bin/sort from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/sort", "/etc/issue"),
+    "\nUbuntu 26.04 LTS \\n \\l\n"
 )
 
 registerUbuntuBaseSmokeTest(

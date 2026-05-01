@@ -275,6 +275,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `gettid`.
     private static final int SYS_GETTID = 178;
 
+    /// The Linux RISC-V syscall number for `sysinfo`.
+    private static final int SYS_SYSINFO = 179;
+
     /// The Linux RISC-V syscall number for `socket`.
     private static final int SYS_SOCKET = 198;
 
@@ -801,6 +804,45 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte offset of `ru_stime` inside Linux RISC-V 64-bit `struct rusage`.
     private static final int RUSAGE_SYSTEM_TIME_OFFSET = 2 * Long.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_SIZE = 112;
+
+    /// The byte offset of `uptime` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_UPTIME_OFFSET = 0;
+
+    /// The byte offset of `loads` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_LOADS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `totalram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_TOTAL_RAM_OFFSET = 4 * Long.BYTES;
+
+    /// The byte offset of `freeram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_FREE_RAM_OFFSET = 5 * Long.BYTES;
+
+    /// The byte offset of `sharedram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_SHARED_RAM_OFFSET = 6 * Long.BYTES;
+
+    /// The byte offset of `bufferram` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_BUFFER_RAM_OFFSET = 7 * Long.BYTES;
+
+    /// The byte offset of `totalswap` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_TOTAL_SWAP_OFFSET = 8 * Long.BYTES;
+
+    /// The byte offset of `freeswap` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_FREE_SWAP_OFFSET = 9 * Long.BYTES;
+
+    /// The byte offset of `procs` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_PROCESSES_OFFSET = 10 * Long.BYTES;
+
+    /// The byte offset of `totalhigh` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_TOTAL_HIGH_OFFSET = 11 * Long.BYTES;
+
+    /// The byte offset of `freehigh` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_FREE_HIGH_OFFSET = 12 * Long.BYTES;
+
+    /// The byte offset of `mem_unit` inside Linux RISC-V 64-bit `struct sysinfo`.
+    private static final int SYSINFO_MEMORY_UNIT_OFFSET = 13 * Long.BYTES;
 
     /// Linux `RUSAGE_CHILDREN`.
     private static final long RUSAGE_CHILDREN = -1;
@@ -1621,6 +1663,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The guest file descriptor table for host files opened by `openat`.
     private final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
 
+    /// Overrides for standard descriptors when guest code redirects stdin, stdout, or stderr.
+    private final @Nullable OpenFile[] standardFiles = new @Nullable OpenFile[3];
+
     /// Allocates process and thread ids for this emulator run.
     private final GuestProcessRegistry processRegistry;
 
@@ -1996,6 +2041,7 @@ public final class GuestSyscalls implements AutoCloseable {
         System.arraycopy(parent.resourceLimitMaximum, 0, resourceLimitMaximum, 0, resourceLimitMaximum.length);
         this.randomState = parent.randomState;
         this.timeSource = parent.timeSource;
+        copyStandardFilesFrom(parent);
         copyOpenFilesFrom(parent);
     }
 
@@ -2246,6 +2292,7 @@ public final class GuestSyscalls implements AutoCloseable {
             case SYS_GETPPID -> state.setRegister(10, process.parentId());
             case SYS_GETUID, SYS_GETEUID -> state.setRegister(10, GUEST_USER_ID);
             case SYS_GETGID, SYS_GETEGID -> state.setRegister(10, GUEST_GROUP_ID);
+            case SYS_SYSINFO -> state.setRegister(10, sysinfo(state.register(10)));
             case SYS_SOCKET -> state.setRegister(10, socket(state.register(10), state.register(11), state.register(12)));
             case SYS_GETSOCKNAME, SYS_GETPEERNAME -> state.setRegister(10, ENOTSOCK);
             case SYS_CLONE -> state.setRegister(10, clone(
@@ -2343,6 +2390,19 @@ public final class GuestSyscalls implements AutoCloseable {
     @Override
     public void close() {
         closeChildProcesses();
+        for (int index = 0; index < standardFiles.length; index++) {
+            @Nullable OpenFile openFile = standardFiles[index];
+            if (openFile == null) {
+                continue;
+            }
+
+            try {
+                standardFiles[index] = null;
+                releaseOpenFile(openFile);
+            } catch (IOException exception) {
+                throw new RiscVException("Failed to close guest standard file descriptor", exception);
+            }
+        }
         for (int index = 0; index < openFiles.size(); index++) {
             @Nullable OpenFile openFile = openFiles.get(index);
             if (openFile == null) {
@@ -2425,7 +2485,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((flags & ~SUPPORTED_DUP3_FLAGS) != 0 || oldFileDescriptor == newFileDescriptor) {
             return EINVAL;
         }
-        if (newFileDescriptor < 3) {
+        if (newFileDescriptor < 0) {
             return EBADF;
         }
 
@@ -2434,16 +2494,8 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        int index = openFileIndex(newFileDescriptor);
         try {
-            if (index < openFiles.size()) {
-                @Nullable OpenFile previous = openFiles.get(index);
-                if (previous != null) {
-                    openFiles.set(index, null);
-                    releaseOpenFile(previous);
-                }
-            }
-            setOpenFile(newFileDescriptor, source);
+            replaceOpenFile(newFileDescriptor, source);
             return newFileDescriptor;
         } catch (IOException exception) {
             try {
@@ -3649,6 +3701,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
             memory.writeBytes(address, buffer, 0, count);
             return count;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
         } catch (IOException exception) {
             throw new RiscVException("Guest read syscall failed", exception);
         }
@@ -3934,6 +3989,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 }
             }
             return total;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
         } catch (IOException exception) {
             throw new RiscVException("Guest splice syscall failed", exception);
         }
@@ -3946,7 +4004,7 @@ public final class GuestSyscalls implements AutoCloseable {
             long offset,
             byte[] buffer,
             int length,
-            boolean nonblocking) throws IOException {
+            boolean nonblocking) throws IOException, InterruptedException {
         @Nullable InputStream stream = inputStreamFor(fileDescriptor);
         if (stream != null) {
             if (offsetAddress != 0) {
@@ -4267,6 +4325,15 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Handles `close` for standard streams and guest-opened file descriptors.
     private long close(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
+            @Nullable OpenFile openFile = standardFiles[fileDescriptor];
+            if (openFile != null) {
+                try {
+                    standardFiles[fileDescriptor] = null;
+                    releaseOpenFile(openFile);
+                } catch (IOException exception) {
+                    throw new RiscVException("Guest close syscall failed", exception);
+                }
+            }
             return 0;
         }
 
@@ -6481,6 +6548,46 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Writes deterministic Linux `struct sysinfo` values for libc and coreutils memory queries.
+    private long sysinfo(long sysinfoAddress) {
+        if (sysinfoAddress == 0) {
+            return EFAULT;
+        }
+
+        long totalRam = memory.size();
+        long committedRam = saturatedMultiply(memory.committedPages(), memory.pageSize());
+        long freeRam = Math.max(0, totalRam - committedRam);
+        short processes = (short) Math.min(Short.toUnsignedInt((short) -1), process.threadCount());
+
+        memory.clear(sysinfoAddress, SYSINFO_SIZE);
+        memory.writeLong(sysinfoAddress + SYSINFO_UPTIME_OFFSET, Math.max(0, elapsedDuration().getSeconds()));
+        memory.writeLong(sysinfoAddress + SYSINFO_LOADS_OFFSET, 0);
+        memory.writeLong(sysinfoAddress + SYSINFO_LOADS_OFFSET + Long.BYTES, 0);
+        memory.writeLong(sysinfoAddress + SYSINFO_LOADS_OFFSET + 2L * Long.BYTES, 0);
+        memory.writeLong(sysinfoAddress + SYSINFO_TOTAL_RAM_OFFSET, totalRam);
+        memory.writeLong(sysinfoAddress + SYSINFO_FREE_RAM_OFFSET, freeRam);
+        memory.writeLong(sysinfoAddress + SYSINFO_SHARED_RAM_OFFSET, 0);
+        memory.writeLong(sysinfoAddress + SYSINFO_BUFFER_RAM_OFFSET, 0);
+        memory.writeLong(sysinfoAddress + SYSINFO_TOTAL_SWAP_OFFSET, 0);
+        memory.writeLong(sysinfoAddress + SYSINFO_FREE_SWAP_OFFSET, 0);
+        memory.writeShort(sysinfoAddress + SYSINFO_PROCESSES_OFFSET, processes);
+        memory.writeLong(sysinfoAddress + SYSINFO_TOTAL_HIGH_OFFSET, 0);
+        memory.writeLong(sysinfoAddress + SYSINFO_FREE_HIGH_OFFSET, 0);
+        memory.writeInt(sysinfoAddress + SYSINFO_MEMORY_UNIT_OFFSET, 1);
+        return 0;
+    }
+
+    /// Returns a saturated product of two non-negative byte counts.
+    private static long saturatedMultiply(long left, long right) {
+        if (left <= 0 || right <= 0) {
+            return 0;
+        }
+        if (left > Long.MAX_VALUE / right) {
+            return Long.MAX_VALUE;
+        }
+        return left * right;
+    }
+
     /// Writes a null-terminated US-ASCII string into a fixed-size guest field.
     private void writeNullTerminatedAscii(long address, String value, int fieldSize) {
         byte[] bytes = value.getBytes(StandardCharsets.US_ASCII);
@@ -8269,7 +8376,22 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Stores an open file description at an explicit non-standard descriptor.
-    private void setOpenFile(int fileDescriptor, OpenFile openFile) {
+    private void replaceOpenFile(int fileDescriptor, OpenFile openFile) throws IOException {
+        @Nullable OpenFile previous = openFile(fileDescriptor);
+        if (previous != null) {
+            setOpenFile(fileDescriptor, null);
+            releaseOpenFile(previous);
+        }
+        setOpenFile(fileDescriptor, openFile);
+    }
+
+    /// Stores an open file description at an explicit descriptor.
+    private void setOpenFile(int fileDescriptor, @Nullable OpenFile openFile) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            standardFiles[fileDescriptor] = openFile;
+            return;
+        }
+
         int index = openFileIndex(fileDescriptor);
         while (openFiles.size() <= index) {
             openFiles.add(null);
@@ -8278,6 +8400,17 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Copies the parent's descriptor table using Linux fork-style shared open file descriptions.
+    private void copyStandardFilesFrom(GuestSyscalls parent) {
+        for (int index = 0; index < standardFiles.length; index++) {
+            @Nullable OpenFile openFile = parent.standardFiles[index];
+            if (openFile != null) {
+                openFile.retain();
+            }
+            standardFiles[index] = openFile;
+        }
+    }
+
+    /// Copies the parent's non-standard descriptor table using Linux fork-style shared open file descriptions.
     private void copyOpenFilesFrom(GuestSyscalls parent) {
         for (@Nullable OpenFile openFile : parent.openFiles) {
             if (openFile != null) {
@@ -8310,6 +8443,10 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns an open file description for a guest file descriptor.
     private @Nullable OpenFile openFile(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return standardFiles[fileDescriptor];
+        }
+
         int index = openFileIndex(fileDescriptor);
         if (index < 0 || index >= openFiles.size()) {
             return null;
@@ -8766,6 +8903,10 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns the host output stream mapped to a guest file descriptor.
     private @Nullable OutputStream outputStreamFor(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor) && standardFiles[fileDescriptor] != null) {
+            return null;
+        }
+
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor == 1) {
             return out;
@@ -8778,12 +8919,20 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns the host input stream mapped to a guest file descriptor.
     private @Nullable InputStream inputStreamFor(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor) && standardFiles[fileDescriptor] != null) {
+            return null;
+        }
+
         return standardFileDescriptorFor(fileDescriptor) == 0 ? in : null;
     }
 
     /// Returns the underlying standard descriptor number, or `-1` for non-standard descriptors.
     private int standardFileDescriptorFor(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
+            @Nullable OpenFile openFile = standardFiles[fileDescriptor];
+            if (openFile != null) {
+                return openFile.isStandardFileDescriptor() ? openFile.standardFileDescriptor() : -1;
+            }
             return fileDescriptor;
         }
 
@@ -9073,9 +9222,17 @@ public final class GuestSyscalls implements AutoCloseable {
         private boolean writerOpen = true;
 
         /// Reads up to the requested byte count into the supplied destination.
-        int read(byte[] destination, int maximumLength, boolean nonblocking) {
+        synchronized int read(byte[] destination, int maximumLength, boolean nonblocking) throws InterruptedException {
             if (length == 0) {
-                return writerOpen && nonblocking ? (int) EAGAIN : 0;
+                if (nonblocking) {
+                    return writerOpen ? (int) EAGAIN : 0;
+                }
+                while (length == 0 && writerOpen) {
+                    wait();
+                }
+                if (length == 0) {
+                    return 0;
+                }
             }
 
             int count = Math.min(maximumLength, length);
@@ -9095,7 +9252,7 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         /// Writes all supplied bytes to the pipe buffer.
-        long write(byte[] source) {
+        synchronized long write(byte[] source) {
             if (!readerOpen) {
                 return EPIPE;
             }
@@ -9109,31 +9266,34 @@ public final class GuestSyscalls implements AutoCloseable {
                 System.arraycopy(source, firstCount, buffer, 0, secondCount);
             }
             length += source.length;
+            notifyAll();
             return source.length;
         }
 
         /// Marks the read endpoint as closed.
-        void closeReader() {
+        synchronized void closeReader() {
             readerOpen = false;
+            notifyAll();
         }
 
         /// Marks the write endpoint as closed.
-        void closeWriter() {
+        synchronized void closeWriter() {
             writerOpen = false;
+            notifyAll();
         }
 
         /// Returns true when a read endpoint would observe data or end-of-file immediately.
-        boolean isReadable() {
+        synchronized boolean isReadable() {
             return length > 0 || !writerOpen;
         }
 
         /// Returns true when at least one read endpoint is still open.
-        boolean isReaderOpen() {
+        synchronized boolean isReaderOpen() {
             return readerOpen;
         }
 
         /// Returns true when at least one write endpoint is still open.
-        boolean isWriterOpen() {
+        synchronized boolean isWriterOpen() {
             return writerOpen;
         }
 
