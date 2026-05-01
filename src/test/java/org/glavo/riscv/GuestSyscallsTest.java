@@ -714,8 +714,14 @@ public final class GuestSyscallsTest {
     /// Linux `O_DIRECTORY`.
     private static final long O_DIRECTORY = 00200000L;
 
+    /// Linux `F_DUPFD`.
+    private static final long F_DUPFD = 0;
+
     /// Linux `F_GETFL`.
     private static final long F_GETFL = 3;
+
+    /// Linux `F_DUPFD_CLOEXEC`.
+    private static final long F_DUPFD_CLOEXEC = 1030;
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
@@ -1239,6 +1245,51 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_CLOSE, 9, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies `fcntl` descriptor duplication with a requested minimum descriptor.
+    @Test
+    public void fcntlDuplicatesDescriptorsAtMinimumDescriptor() throws Exception {
+        Files.createDirectories(tempDirectory.resolve("directory"));
+        Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "directory");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, directoryFileDescriptor, F_DUPFD_CLOEXEC, 10);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicatedFileDescriptor = (int) state.register(10);
+            assertEquals(10, duplicatedFileDescriptor);
+
+            setSyscall(state, SYS_CLOSE, directoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETDENTS64, duplicatedFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            long nextEntry = assertDirectoryEntry(memory, bufferAddress, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+            assertDirectoryEntry(memory, nextEntry, "message.txt", DIRECTORY_ENTRY_REGULAR_FILE, 3);
+
+            setSyscall(state, SYS_FCNTL, duplicatedFileDescriptor, F_DUPFD, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 

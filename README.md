@@ -77,10 +77,10 @@ available through configured guest mounts.
 
 The simulator implements enough Linux RISC-V user-mode behavior to run the
 bundled static musl examples, the static Go example, CoreMark, RVV examples, and
-dynamic programs such as `/usr/bin/true`, `/usr/bin/bash`, `/usr/bin/ls`, and
-`/usr/bin/cat` from the Ubuntu Base root tar. File access is sandboxed under
-configured `--mount` entries, with built-in `/proc` and `/dev` virtual
-filesystems for process metadata and basic character devices.
+common dynamically linked Ubuntu Base shell, coreutils, and findutils commands.
+File access is sandboxed under configured `--mount` entries, with built-in
+`/proc` and `/dev` virtual filesystems for process metadata and basic character
+devices.
 
 ## Examples
 
@@ -98,6 +98,7 @@ Run the Ubuntu Base dynamic-linking smoke tests:
 ./gradlew testUbuntuBaseBash
 ./gradlew testUbuntuBaseLs
 ./gradlew testUbuntuBaseCat
+./gradlew testUbuntuBaseFind
 ```
 
 The C and CoreMark examples use Zig CC. Gradle downloads the configured Zig

@@ -152,6 +152,20 @@ registerUbuntuBaseSmokeTest(
 )
 
 registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseHead",
+    "Runs /usr/bin/head from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/head", "-n", "1", "/etc/issue"),
+    "Ubuntu 26.04 LTS \\n \\l\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseWc",
+    "Runs /usr/bin/wc from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/wc", "-c", "/etc/issue"),
+    "24 /etc/issue\n"
+)
+
+registerUbuntuBaseSmokeTest(
     "testUbuntuBaseGrep",
     "Runs /usr/bin/grep from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/grep", "Ubuntu", "/etc/issue"),
@@ -163,6 +177,13 @@ registerUbuntuBaseSmokeTest(
     "Runs /usr/bin/readlink from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/readlink", "-f", "/usr/bin/bash"),
     "/usr/bin/bash\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBasePwd",
+    "Runs /usr/bin/pwd from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/pwd"),
+    "/\n"
 )
 
 registerUbuntuBaseSmokeTest(
@@ -187,9 +208,23 @@ registerUbuntuBaseSmokeTest(
 )
 
 registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseStat",
+    "Runs /usr/bin/stat from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/stat", "-c", "%s", "/usr/bin/bash"),
+    "1318632\n"
+)
+
+registerUbuntuBaseSmokeTest(
     "testUbuntuBaseDf",
     "Runs /usr/bin/df from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/df", "-P", "-k", "/"),
     "Filesystem     1024-blocks  Used Available Capacity Mounted on\n" +
             "graalriscv         4194304     0   4194304       0% /\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseFind",
+    "Runs /usr/bin/find from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/find", "/usr/bin", "-maxdepth", "1", "-name", "bash", "-print"),
+    "/usr/bin/bash\n"
 )

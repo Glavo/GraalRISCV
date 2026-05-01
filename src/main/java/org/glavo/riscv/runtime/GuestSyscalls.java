@@ -652,6 +652,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux flags accepted by `dup3`.
     private static final long SUPPORTED_DUP3_FLAGS = O_CLOEXEC;
 
+    /// Linux `F_DUPFD`.
+    private static final long F_DUPFD = 0;
+
     /// Linux `F_GETFD`.
     private static final long F_GETFD = 1;
 
@@ -672,6 +675,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `F_SETLKW`.
     private static final long F_SETLKW = 7;
+
+    /// Linux `F_DUPFD_CLOEXEC`.
+    private static final long F_DUPFD_CLOEXEC = 1030;
 
     /// Linux `F_UNLCK`.
     private static final short F_UNLCK = 2;
@@ -5112,6 +5118,16 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
+        if (command == F_DUPFD || command == F_DUPFD_CLOEXEC) {
+            if (argument < 0 || argument > Integer.MAX_VALUE) {
+                return EINVAL;
+            }
+            @Nullable OpenFile duplicate = duplicateOpenFile(fileDescriptor);
+            if (duplicate == null) {
+                return EBADF;
+            }
+            return addOpenFileAtLeast(duplicate, (int) argument);
+        }
         if (command == F_GETFD) {
             return 0;
         }
@@ -8213,6 +8229,23 @@ public final class GuestSyscalls implements AutoCloseable {
             }
         }
 
+        openFiles.add(openFile);
+        return openFiles.size() + 2L;
+    }
+
+    /// Adds an open file description to the lowest guest descriptor no lower than the requested minimum.
+    private long addOpenFileAtLeast(OpenFile openFile, int minimumFileDescriptor) {
+        int startIndex = Math.max(0, openFileIndex(minimumFileDescriptor));
+        for (int index = startIndex; index < openFiles.size(); index++) {
+            if (openFiles.get(index) == null) {
+                openFiles.set(index, openFile);
+                return index + 3L;
+            }
+        }
+
+        while (openFiles.size() < startIndex) {
+            openFiles.add(null);
+        }
         openFiles.add(openFile);
         return openFiles.size() + 2L;
     }
