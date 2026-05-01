@@ -36,6 +36,96 @@ final class TerminalDevice implements AutoCloseable {
     /// The Linux generic `struct winsize` size exposed to the guest.
     private static final int WINDOW_SIZE_SIZE = 8;
 
+    /// The byte offset of `c_iflag` inside Linux generic `struct termios`.
+    private static final int TERMIOS_INPUT_FLAGS_OFFSET = 0;
+
+    /// The byte offset of `c_oflag` inside Linux generic `struct termios`.
+    private static final int TERMIOS_OUTPUT_FLAGS_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `c_cflag` inside Linux generic `struct termios`.
+    private static final int TERMIOS_CONTROL_FLAGS_OFFSET = 2 * Integer.BYTES;
+
+    /// The byte offset of `c_lflag` inside Linux generic `struct termios`.
+    private static final int TERMIOS_LOCAL_FLAGS_OFFSET = 3 * Integer.BYTES;
+
+    /// The byte offset of `c_cc` inside Linux generic `struct termios`.
+    private static final int TERMIOS_CONTROL_CHARS_OFFSET = 4 * Integer.BYTES + Byte.BYTES;
+
+    /// Linux generic `ICRNL`.
+    private static final int TERMIOS_INPUT_CARRIAGE_RETURN_TO_NEWLINE = 0x00100;
+
+    /// Linux generic `IXON`.
+    private static final int TERMIOS_INPUT_START_STOP_OUTPUT_CONTROL = 0x00400;
+
+    /// Linux generic `OPOST`.
+    private static final int TERMIOS_OUTPUT_POST_PROCESSING = 0x00001;
+
+    /// Linux generic `ONLCR`.
+    private static final int TERMIOS_OUTPUT_NEWLINE_TO_CARRIAGE_RETURN_NEWLINE = 0x00004;
+
+    /// Linux generic `B38400`.
+    private static final int TERMIOS_CONTROL_BAUD_38400 = 0x0000f;
+
+    /// Linux generic `CS8`.
+    private static final int TERMIOS_CONTROL_CHARACTER_SIZE_8 = 0x00030;
+
+    /// Linux generic `CREAD`.
+    private static final int TERMIOS_CONTROL_ENABLE_RECEIVER = 0x00080;
+
+    /// Linux generic `ISIG`.
+    private static final int TERMIOS_LOCAL_SIGNALS = 0x00001;
+
+    /// Linux generic `ICANON`.
+    private static final int TERMIOS_LOCAL_CANONICAL = 0x00002;
+
+    /// Linux generic `ECHO`.
+    private static final int TERMIOS_LOCAL_ECHO = 0x00008;
+
+    /// Linux generic `ECHOE`.
+    private static final int TERMIOS_LOCAL_ECHO_ERASE = 0x00010;
+
+    /// Linux generic `ECHOK`.
+    private static final int TERMIOS_LOCAL_ECHO_KILL = 0x00020;
+
+    /// Linux generic `ECHOCTL`.
+    private static final int TERMIOS_LOCAL_ECHO_CONTROL = 0x00200;
+
+    /// Linux generic `ECHOKE`.
+    private static final int TERMIOS_LOCAL_ECHO_KILL_ERASE = 0x00800;
+
+    /// Linux generic `IEXTEN`.
+    private static final int TERMIOS_LOCAL_EXTENDED_INPUT = 0x08000;
+
+    /// Linux generic `VINTR`.
+    private static final int TERMIOS_INTERRUPT_INDEX = 0;
+
+    /// Linux generic `VQUIT`.
+    private static final int TERMIOS_QUIT_INDEX = 1;
+
+    /// Linux generic `VERASE`.
+    private static final int TERMIOS_ERASE_INDEX = 2;
+
+    /// Linux generic `VKILL`.
+    private static final int TERMIOS_KILL_INDEX = 3;
+
+    /// Linux generic `VEOF`.
+    private static final int TERMIOS_END_OF_FILE_INDEX = 4;
+
+    /// Linux generic `VTIME`.
+    private static final int TERMIOS_READ_TIMEOUT_INDEX = 5;
+
+    /// Linux generic `VMIN`.
+    private static final int TERMIOS_MINIMUM_READ_INDEX = 6;
+
+    /// Linux generic `VSTART`.
+    private static final int TERMIOS_START_INDEX = 8;
+
+    /// Linux generic `VSTOP`.
+    private static final int TERMIOS_STOP_INDEX = 9;
+
+    /// Linux generic `VSUSP`.
+    private static final int TERMIOS_SUSPEND_INDEX = 10;
+
     /// The default terminal row count exposed before a host value is available.
     private static final short DEFAULT_ROWS = 24;
 
@@ -60,6 +150,7 @@ final class TerminalDevice implements AutoCloseable {
     /// Creates a terminal device backed by the supplied backend.
     private TerminalDevice(Backend backend) {
         this.backend = backend;
+        initializeDefaultTermios(termios);
         backend.readTermios(termios);
     }
 
@@ -70,8 +161,9 @@ final class TerminalDevice implements AutoCloseable {
             if (hostBackend != null) {
                 return new TerminalDevice(hostBackend);
             }
+            return new TerminalDevice(new StreamBackend(in, out, PosixTerminalMode.openStandardInput()));
         }
-        return new TerminalDevice(new StreamBackend(in, out));
+        return new TerminalDevice(new StreamBackend(in, out, null));
     }
 
     /// Adds one process-level reference to this shared terminal.
@@ -92,7 +184,6 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Writes the current guest-visible `struct termios`.
     void writeTermios(Memory memory, long address) {
-        backend.readTermios(termios);
         memory.writeBytes(address, termios, 0, termios.length);
     }
 
@@ -134,6 +225,41 @@ final class TerminalDevice implements AutoCloseable {
         }
     }
 
+    /// Initializes a stream-backed terminal with a sane Linux default state.
+    private static void initializeDefaultTermios(byte[] buffer) {
+        ByteBuffer bytes = ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder());
+        bytes.putInt(TERMIOS_INPUT_FLAGS_OFFSET,
+                TERMIOS_INPUT_CARRIAGE_RETURN_TO_NEWLINE
+                        | TERMIOS_INPUT_START_STOP_OUTPUT_CONTROL);
+        bytes.putInt(TERMIOS_OUTPUT_FLAGS_OFFSET,
+                TERMIOS_OUTPUT_POST_PROCESSING
+                        | TERMIOS_OUTPUT_NEWLINE_TO_CARRIAGE_RETURN_NEWLINE);
+        bytes.putInt(TERMIOS_CONTROL_FLAGS_OFFSET,
+                TERMIOS_CONTROL_BAUD_38400
+                        | TERMIOS_CONTROL_CHARACTER_SIZE_8
+                        | TERMIOS_CONTROL_ENABLE_RECEIVER);
+        bytes.putInt(TERMIOS_LOCAL_FLAGS_OFFSET,
+                TERMIOS_LOCAL_SIGNALS
+                        | TERMIOS_LOCAL_CANONICAL
+                        | TERMIOS_LOCAL_ECHO
+                        | TERMIOS_LOCAL_ECHO_ERASE
+                        | TERMIOS_LOCAL_ECHO_KILL
+                        | TERMIOS_LOCAL_ECHO_CONTROL
+                        | TERMIOS_LOCAL_ECHO_KILL_ERASE
+                        | TERMIOS_LOCAL_EXTENDED_INPUT);
+
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_INTERRUPT_INDEX] = 3;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_QUIT_INDEX] = 28;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_ERASE_INDEX] = 127;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_KILL_INDEX] = 21;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_END_OF_FILE_INDEX] = 4;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_READ_TIMEOUT_INDEX] = 0;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_MINIMUM_READ_INDEX] = 1;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_START_INDEX] = 17;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_STOP_INDEX] = 19;
+        buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_SUSPEND_INDEX] = 26;
+    }
+
     /// Provides terminal I/O and optional host terminal metadata.
     private interface Backend extends AutoCloseable {
         /// Reads up to `length` bytes into the destination buffer.
@@ -169,7 +295,11 @@ final class TerminalDevice implements AutoCloseable {
     ///
     /// @param in the input stream used for terminal reads
     /// @param out the output stream used for terminal writes
-    private record StreamBackend(InputStream in, OutputStream out) implements Backend {
+    /// @param terminalMode the optional native terminal mode controller for host stdin
+    private record StreamBackend(
+            InputStream in,
+            OutputStream out,
+            @Nullable PosixTerminalMode terminalMode) implements Backend {
         /// Reads bytes from the configured input stream.
         @Override
         public int read(byte[] buffer, int length) throws IOException {
@@ -190,9 +320,65 @@ final class TerminalDevice implements AutoCloseable {
             return null;
         }
 
-        /// Leaves externally owned streams open.
+        /// Reads host standard-input termios when native access is available.
         @Override
-        public void close() {
+        public void readTermios(byte[] buffer) {
+            if (terminalMode != null) {
+                terminalMode.readTermios(buffer);
+            }
+        }
+
+        /// Applies guest termios to host standard input when native access is available.
+        @Override
+        public void writeTermios(byte[] buffer, long request) {
+            if (terminalMode != null) {
+                terminalMode.writeTermios(buffer, request);
+            }
+        }
+
+        /// Restores host terminal mode and leaves externally owned streams open.
+        @Override
+        public void close() throws IOException {
+            if (terminalMode != null) {
+                terminalMode.close();
+            }
+        }
+    }
+
+    /// Applies guest termios updates to one host POSIX terminal file descriptor.
+    ///
+    /// @param fileDescriptor the host terminal file descriptor
+    /// @param originalTermios the host terminal settings captured before guest changes
+    private record PosixTerminalMode(int fileDescriptor, byte[] originalTermios) implements AutoCloseable {
+        /// Opens a terminal-mode controller for host standard input, or null when unavailable.
+        static @Nullable PosixTerminalMode openStandardInput() {
+            byte @Nullable [] originalTermios = PosixBackend.nativeTermios(0);
+            return originalTermios == null ? null : new PosixTerminalMode(0, originalTermios);
+        }
+
+        /// Reads the current native terminal `struct termios` byte image.
+        void readTermios(byte[] buffer) {
+            byte @Nullable [] bytes = PosixBackend.nativeTermios(fileDescriptor);
+            if (bytes == null) {
+                return;
+            }
+            System.arraycopy(bytes, 0, buffer, 0, Math.min(bytes.length, buffer.length));
+        }
+
+        /// Applies a native terminal `struct termios` byte image.
+        void writeTermios(byte[] buffer, long request) {
+            if (request != PosixBackend.TCSETS && request != PosixBackend.TCSETSW && request != PosixBackend.TCSETSF) {
+                return;
+            }
+            PosixBackend.writeNativeTermios(fileDescriptor, request, buffer);
+        }
+
+        /// Restores the original host terminal mode.
+        @Override
+        public void close() throws IOException {
+            if (!PosixBackend.writeNativeTermios(fileDescriptor, PosixBackend.TCSETS, originalTermios)) {
+                throw new IOException("restore(stdin) failed");
+            }
         }
     }
 

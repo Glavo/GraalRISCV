@@ -441,6 +441,15 @@ public final class GuestSyscallsTest {
     /// The byte size of Linux generic `struct termios`.
     private static final int TERMIOS_SIZE = 36;
 
+    /// The byte offset of `c_lflag` inside Linux generic `struct termios`.
+    private static final int TERMIOS_LOCAL_FLAGS_OFFSET = 3 * Integer.BYTES;
+
+    /// Linux generic `ICANON`.
+    private static final int TERMIOS_LOCAL_CANONICAL = 0x00002;
+
+    /// Linux generic `ECHO`.
+    private static final int TERMIOS_LOCAL_ECHO = 0x00008;
+
     /// The byte size of Linux generic `struct winsize`.
     private static final int WINSIZE_SIZE = 8;
 
@@ -3174,6 +3183,26 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
             assertEquals(0, memory.readUnsignedByte(memory.baseAddress()));
+            int localFlags = memory.readInt(memory.baseAddress() + TERMIOS_LOCAL_FLAGS_OFFSET);
+            assertEquals(
+                    TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO,
+                    localFlags & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
+
+            memory.writeInt(
+                    memory.baseAddress() + TERMIOS_LOCAL_FLAGS_OFFSET,
+                    localFlags & ~TERMIOS_LOCAL_ECHO);
+            setSyscall(state, SYS_IOCTL, 0, TCSETS, memory.baseAddress());
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.clear(memory.baseAddress(), TERMIOS_SIZE);
+            setSyscall(state, SYS_IOCTL, 1, TCGETS, memory.baseAddress());
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(
+                    TERMIOS_LOCAL_CANONICAL,
+                    memory.readInt(memory.baseAddress() + TERMIOS_LOCAL_FLAGS_OFFSET)
+                            & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
 
             setSyscall(state, SYS_IOCTL, 1, TIOCGWINSZ, memory.baseAddress());
             state.syscalls().handle(state, TEST_PC);

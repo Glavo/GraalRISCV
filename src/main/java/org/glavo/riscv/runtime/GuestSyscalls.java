@@ -3929,6 +3929,14 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         try {
+            @Nullable TerminalDevice terminalInput = terminalInputFor(fileDescriptor);
+            if (terminalInput != null) {
+                byte[] buffer = new byte[(int) length];
+                int count = terminalInput.read(buffer, buffer.length);
+                memory.writeBytes(address, buffer, 0, count);
+                return count;
+            }
+
             @Nullable InputStream stream = inputStreamFor(fileDescriptor);
             if (stream != null) {
                 byte[] buffer = new byte[(int) length];
@@ -4287,6 +4295,14 @@ public final class GuestSyscalls implements AutoCloseable {
             byte[] buffer,
             int length,
             boolean nonblocking) throws IOException, InterruptedException {
+        @Nullable TerminalDevice terminalInput = terminalInputFor(fileDescriptor);
+        if (terminalInput != null) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return terminalInput.read(buffer, length);
+        }
+
         @Nullable InputStream stream = inputStreamFor(fileDescriptor);
         if (stream != null) {
             if (offsetAddress != 0) {
@@ -5467,6 +5483,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
         return ENOTTY;
+    }
+
+    /// Returns the terminal backing a descriptor that resolves to standard input.
+    private @Nullable TerminalDevice terminalInputFor(int fileDescriptor) {
+        return standardFileDescriptorFor(fileDescriptor) == 0 ? terminalDevice : null;
     }
 
     /// Returns the terminal backing a descriptor, or null when the descriptor is not terminal-like.
