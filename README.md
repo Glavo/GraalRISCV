@@ -107,6 +107,7 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 | Static Go showcase | Run a larger Go standard-library workload covering JSON, sorting, compression, hashing, and goroutines. | `./gradlew runGoShowcaseExample` |
 | Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
 | SQLite showcase | Download SQLite, build a static RISC-V file-database demo, and run transactions and queries. | `./gradlew runSQLiteShowcaseExample` |
+| RVV vector add | Build and run the RVV vector-add example. | `./gradlew runRvvVectorAddExample` |
 | CoreMark | Build and run the downloaded CoreMark benchmark. | `./gradlew runCoreMarkExample` |
 
 Run the larger showcase workloads together:

@@ -19,7 +19,7 @@
 
 ### Linux User-Mode Runtime
 
-- Static freestanding, musl C, Go, SQLite, CoreMark, and `riscv-tests` workloads are supported by the current syscall and ELF runtime.
+- Static freestanding, musl C, Go, SQLite, RVV vector-add, CoreMark, and `riscv-tests` workloads are supported by the current syscall and ELF runtime.
 - File syscalls are sandboxed through `--mount` entries backed by `TruffleFile`; `--host-root` remains a compatibility alias for `--mount /=<path>`.
 - `GuestProcess` and `GuestThread` hold Linux user-mode process and thread state for thread ids, clear-child-TID wakeups, robust futex lists, alternate signal stacks, restartable sequence registration, and signal masks.
 - Guest time syscalls use `TimeSource`, including a non-default virtual-time implementation based on retired instruction count.
@@ -28,7 +28,7 @@
 
 - `Memory` uses lazy committed heap `long[]` pages accessed through `jdk.internal.misc.Unsafe`, with software ITLB/DTLB fast paths, VMA tracking, committed-page limits, configurable base pages, and HugeTLB pool accounting.
 - ELF segments, stack, `brk`, anonymous mappings, `munmap`, `mremap`, `mprotect`, and `madvise` are integrated with the paged-memory model for current workloads.
-- Gradle builds examples and acceptance tests on Windows without Make, including pinned `riscv-tests` and `riscv-test-env` archives.
+- Gradle builds examples and acceptance tests on Windows without Make, including pinned `rvv-examples`, `riscv-tests`, and `riscv-test-env` archives.
 - Trace and micro-bytecode execution paths exist as the current performance foundation; diagnostic tracing and Truffle compilation logging remain opt-in.
 
 ### RVA23U64 Scalar And Supm Groundwork

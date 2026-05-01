@@ -1284,6 +1284,147 @@ tasks.register<JavaExec>("runSQLiteShowcaseExample") {
     }
 }
 
+// Downloaded RVV vector-add example.
+val rvvExamplesRevision = "29b4973954799cdbc32ea354df22c4bab6b82b67"
+val rvvExamplesArchiveRoot = "rvv-examples-$rvvExamplesRevision"
+val rvvExamplesArchiveFile = layout.buildDirectory.file("downloads/rvv-examples/rvv-examples-$rvvExamplesRevision.zip")
+val rvvExamplesSourceDirectory = layout.buildDirectory.dir("downloads/rvv-examples/$rvvExamplesRevision")
+val rvvVectorAddExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-vector-add.elf")
+val rvvVectorAddSourcePaths = listOf(
+    "src/vector_add/bench_vector_add.c",
+    "src/vector_add/vector_add_intrinsics.c"
+)
+val rvvVectorAddSourceFiles = rvvVectorAddSourcePaths.associateWith { sourcePath ->
+    rvvExamplesSourceDirectory.map { directory -> directory.file(sourcePath) }
+}
+
+val downloadRvvExamplesArchive by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
+    group = "build setup"
+    description = "Downloads nibrunie/rvv-examples source archive revision $rvvExamplesRevision."
+
+    src("https://github.com/nibrunie/rvv-examples/archive/$rvvExamplesRevision.zip")
+    dest(rvvExamplesArchiveFile.get().asFile)
+    overwrite(false)
+    tempAndMove(true)
+    retries(3)
+    connectTimeout(30_000)
+    readTimeout(30_000)
+
+    doFirst {
+        val archive = rvvExamplesArchiveFile.get().asFile
+        val parent = archive.parentFile
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            throw GradleException("Failed to create rvv-examples archive directory: $parent")
+        }
+        if (archive.isFile && archive.length() == 0L) {
+            delete(archive)
+        }
+    }
+}
+
+tasks.register("extractRvvExamplesSources") {
+    group = "build setup"
+    description = "Extracts the selected nibrunie/rvv-examples sources used by the vector-add example."
+
+    dependsOn(downloadRvvExamplesArchive)
+    inputs.file(rvvExamplesArchiveFile)
+    outputs.files(rvvVectorAddSourceFiles.values)
+
+    doLast {
+        copy {
+            from(zipTree(rvvExamplesArchiveFile.get().asFile)) {
+                rvvVectorAddSourcePaths.forEach { sourcePath ->
+                    include("$rvvExamplesArchiveRoot/$sourcePath")
+                }
+                eachFile {
+                    relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray())
+                }
+                includeEmptyDirs = false
+            }
+            into(rvvExamplesSourceDirectory)
+        }
+        val missingFiles = rvvVectorAddSourceFiles.values
+            .map { it.get().asFile }
+            .filterNot { it.isFile }
+        if (missingFiles.isNotEmpty()) {
+            throw GradleException("rvv-examples archive did not contain expected files: ${missingFiles.joinToString()}")
+        }
+    }
+}
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvVectorAddExample") {
+    group = "verification"
+    description = "Downloads nibrunie/rvv-examples and builds the RVV vector-add example as a static RISC-V Linux executable."
+
+    dependsOn("extractRvvExamplesSources")
+    configureZigExecutable()
+    enabledTargetFeatures.set(listOf("m", "a", "f", "d", "c", "v", "zicsr", "zifencei"))
+    sourceFiles.from(
+        rvvVectorAddSourceFiles.getValue("src/vector_add/bench_vector_add.c"),
+        rvvVectorAddSourceFiles.getValue("src/vector_add/vector_add_intrinsics.c")
+    )
+    outputFile.set(rvvVectorAddExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        listOf(
+            "-O2",
+            "-g0",
+            "-no-pie",
+            "-DARRAY_SIZE=16",
+            "-Wno-format"
+        )
+    )
+}
+
+tasks.register<JavaExec>("runRvvVectorAddExample") {
+    group = "verification"
+    description = "Runs the downloaded RVV vector-add example with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildRvvVectorAddExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(rvvVectorAddExampleElf.get().asFile.absolutePath))
+    }
+}
+
+tasks.register<JavaExec>("testRvvVectorAddExample") {
+    group = "verification"
+    description = "Runs the downloaded RVV vector-add example and verifies its summary output."
+
+    dependsOn("classes", "buildRvvVectorAddExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(rvvVectorAddExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (!actualOutput.contains("vector_add_intrinsics used ")
+            || !actualOutput.contains(" to evaluate 16 element(s).")) {
+            throw GradleException("Unexpected RVV vector-add output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("RVV vector-add example wrote to stderr: $actualError")
+        }
+    }
+}
+
 // Downloaded static Linux CoreMark example.
 val coreMarkRevision = "1f483d5b8316753a742cbf5590caf5bd0a4e4777"
 val coreMarkArchiveRoot = "coremark-$coreMarkRevision"
@@ -1449,6 +1590,7 @@ tasks.register("checkShowcaseExamples") {
         "testGoShowcaseExample",
         "testHotLoopExample",
         "testSQLiteShowcaseExample",
+        "testRvvVectorAddExample",
         "testCoreMarkExample"
     )
 }
