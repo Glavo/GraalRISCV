@@ -45,7 +45,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.Map;
 import java.util.Set;
 
 /// Handles the small Linux-compatible syscall subset exposed by the simulator.
@@ -300,6 +299,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
     private static final int SYS_RISCV_HWPROBE = 258;
 
+    /// The Linux RISC-V syscall number for `wait4`.
+    private static final int SYS_WAIT4 = 260;
+
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final int SYS_PRLIMIT64 = 261;
 
@@ -326,6 +328,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
+
+    /// Linux `ECHILD` as a raw negative syscall result.
+    private static final long ECHILD = -10;
 
     /// Linux `ENOENT` as a raw negative syscall result.
     private static final long ENOENT = -2;
@@ -895,6 +900,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `CLONE_VM`.
     private static final long CLONE_VM = 0x00000100L;
 
+    /// Linux `CSIGNAL` clone exit-signal mask.
+    private static final long CLONE_EXIT_SIGNAL_MASK = 0xffL;
+
+    /// Linux `SIGCHLD`.
+    private static final long SIGNAL_CHILD = 17L;
+
     /// Linux `CLONE_FS`.
     private static final long CLONE_FS = 0x00000200L;
 
@@ -940,6 +951,29 @@ public final class GuestSyscalls implements AutoCloseable {
                     | CLONE_CHILD_CLEARTID
                     | CLONE_DETACHED
                     | CLONE_CHILD_SETTID;
+
+    /// Clone flags accepted for independent child-process creation.
+    private static final long SUPPORTED_PROCESS_CLONE_FLAGS =
+            CLONE_EXIT_SIGNAL_MASK
+                    | CLONE_FS
+                    | CLONE_FILES
+                    | CLONE_SYSVSEM
+                    | CLONE_SETTLS
+                    | CLONE_PARENT_SETTID
+                    | CLONE_CHILD_CLEARTID
+                    | CLONE_CHILD_SETTID;
+
+    /// Linux `WNOHANG`.
+    private static final long WAIT_NO_HANG = 0x00000001L;
+
+    /// Linux `WUNTRACED`.
+    private static final long WAIT_UNTRACED = 0x00000002L;
+
+    /// Linux `WCONTINUED`.
+    private static final long WAIT_CONTINUED = 0x00000008L;
+
+    /// Wait options accepted by the simulator.
+    private static final long SUPPORTED_WAIT_OPTIONS = WAIT_NO_HANG | WAIT_UNTRACED | WAIT_CONTINUED;
 
     /// The byte size of Linux generic 64-bit kernel `sigset_t`.
     private static final long KERNEL_SIGSET_SIZE = 8;
@@ -1391,15 +1425,6 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Synthetic inode base used for virtual proc entries.
     private static final long PROC_INODE_BASE = 0x7000_0000L;
 
-    /// The fixed guest process id returned by process identity syscalls.
-    private static final long GUEST_PROCESS_ID = GuestProcess.PROCESS_ID;
-
-    /// The fixed guest parent process id returned by `getppid`.
-    private static final long GUEST_PARENT_PROCESS_ID = GuestProcess.PARENT_PROCESS_ID;
-
-    /// The fixed guest process group id used by process-group syscalls.
-    private static final long GUEST_PROCESS_GROUP_ID = GuestProcess.PROCESS_GROUP_ID;
-
     /// The deterministic guest user id exposed by identity syscalls.
     private static final long GUEST_USER_ID = 1000;
 
@@ -1439,6 +1464,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The guest filesystem mount namespace used by sandboxed file syscalls.
     private final GuestFileSystem fileSystem;
 
+    /// The filesystem namespace before process-local default virtual mounts are attached.
+    private final GuestFileSystem baseFileSystem;
+
     /// The guest-visible current working directory in absolute Linux path syntax.
     private String guestWorkingDirectory = "/";
 
@@ -1472,14 +1500,26 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The guest file descriptor table for host files opened by `openat`.
     private final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
 
+    /// Allocates process and thread ids for this emulator run.
+    private final GuestProcessRegistry processRegistry;
+
     /// Process-level state shared by all guest threads.
-    private final GuestProcess process = new GuestProcess();
+    private final GuestProcess process;
+
+    /// The parent process that can wait for this process, or null for the initial process.
+    private final @Nullable GuestSyscalls parentProcess;
 
     /// Guards guest thread, futex, and process-exit state.
     private final Object threadLock = new Object();
 
+    /// Guards child process exit and reaping state.
+    private final Object childProcessLock = new Object();
+
     /// Host threads currently executing cloned guest threads.
     private final ArrayList<Thread> guestThreads = new ArrayList<>();
+
+    /// Child processes created by process-style `clone`.
+    private final ArrayList<ChildProcess> childProcesses = new ArrayList<>();
 
     /// Futex waiters currently blocked in guest syscalls.
     private final ArrayList<FutexWaiter> futexWaiters = new ArrayList<>();
@@ -1498,6 +1538,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Whether guest dispatch needs to poll process-wide thread and exit state between blocks.
     private volatile boolean processStatusPollingRequired;
+
+    /// Whether the final process exit has already been reported to the parent process.
+    private boolean parentExitNotified;
 
     /// The signal reported by `PR_GET_PDEATHSIG`, or zero when unset.
     private int parentDeathSignal;
@@ -1730,12 +1773,53 @@ public final class GuestSyscalls implements AutoCloseable {
         this.err = err;
         this.env = env;
         this.guestThreadRunner = guestThreadRunner;
+        this.baseFileSystem = fileSystem;
         this.fileSystem = fileSystem.withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem());
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
         this.programBreakBackingEnd = initialProgramBreak;
         this.pageSize = memory.pageSize();
         this.timeSource = timeSource;
+        this.processRegistry = new GuestProcessRegistry();
+        this.process = GuestProcess.initial();
+        this.parentProcess = null;
+    }
+
+    /// Creates a child-process syscall handler by copying fork-inherited parent state.
+    private GuestSyscalls(GuestSyscalls parent, Memory memory, GuestProcess process) {
+        this.memory = memory;
+        this.in = parent.in;
+        this.out = parent.out;
+        this.err = parent.err;
+        this.env = parent.env;
+        this.guestThreadRunner = parent.guestThreadRunner;
+        this.baseFileSystem = parent.baseFileSystem;
+        this.fileSystem = baseFileSystem.withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem());
+        this.guestWorkingDirectory = parent.guestWorkingDirectory;
+        this.auxiliaryVectorBytes = parent.auxiliaryVectorBytes.clone();
+        this.procCommandLineBytes = parent.procCommandLineBytes.clone();
+        this.procEnvironmentBytes = parent.procEnvironmentBytes.clone();
+        this.procExecutablePath = parent.procExecutablePath;
+        this.initialProgramBreak = parent.initialProgramBreak;
+        this.programBreak = parent.programBreak;
+        this.programBreakBackingEnd = parent.programBreakBackingEnd;
+        this.memoryMappings.addAll(parent.memoryMappings);
+        this.pageSize = memory.pageSize();
+        this.processRegistry = parent.processRegistry;
+        this.process = process;
+        this.parentProcess = parent;
+        this.parentDeathSignal = 0;
+        this.dumpable = parent.dumpable;
+        System.arraycopy(parent.processName, 0, processName, 0, processName.length);
+        this.timerSlackNanoseconds = parent.timerSlackNanoseconds;
+        this.childSubreaper = parent.childSubreaper;
+        this.noNewPrivileges = parent.noNewPrivileges;
+        this.transparentHugePagesDisabled = parent.transparentHugePagesDisabled;
+        System.arraycopy(parent.resourceLimitCurrent, 0, resourceLimitCurrent, 0, resourceLimitCurrent.length);
+        System.arraycopy(parent.resourceLimitMaximum, 0, resourceLimitMaximum, 0, resourceLimitMaximum.length);
+        this.randomState = parent.randomState;
+        this.timeSource = parent.timeSource;
+        copyOpenFilesFrom(parent);
     }
 
     /// Captures the auxiliary vector from the initialized Linux stack for later `PR_GET_AUXV` calls.
@@ -1972,9 +2056,9 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(14)));
             case SYS_GETCPU -> state.setRegister(10, getcpu(state.register(10), state.register(11)));
             case SYS_GETTIMEOFDAY -> state.setRegister(10, gettimeofday(state.register(10), state.register(11)));
-            case SYS_GETPID -> state.setRegister(10, GUEST_PROCESS_ID);
+            case SYS_GETPID -> state.setRegister(10, process.id());
             case SYS_GETTID -> state.setRegister(10, state.threadId());
-            case SYS_GETPPID -> state.setRegister(10, GUEST_PARENT_PROCESS_ID);
+            case SYS_GETPPID -> state.setRegister(10, process.parentId());
             case SYS_GETUID, SYS_GETEUID -> state.setRegister(10, GUEST_USER_ID);
             case SYS_GETGID, SYS_GETEGID -> state.setRegister(10, GUEST_GROUP_ID);
             case SYS_SOCKET -> state.setRegister(10, socket(state.register(10), state.register(11), state.register(12)));
@@ -2011,6 +2095,11 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(13),
                     state.register(14),
                     state));
+            case SYS_WAIT4 -> state.setRegister(10, wait4(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_PRLIMIT64 -> state.setRegister(10, prlimit64(
                     state.register(10),
                     state.register(11),
@@ -2057,6 +2146,7 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Closes all host files opened by guest file descriptors.
     @Override
     public void close() {
+        closeChildProcesses();
         for (int index = 0; index < openFiles.size(); index++) {
             @Nullable OpenFile openFile = openFiles.get(index);
             if (openFile == null) {
@@ -2069,6 +2159,22 @@ public final class GuestSyscalls implements AutoCloseable {
             } catch (IOException exception) {
                 throw new RiscVException("Failed to close guest file descriptor", exception);
             }
+        }
+    }
+
+    /// Requests any still-running child processes to stop and joins their host threads.
+    private void closeChildProcesses() {
+        ChildProcess[] children;
+        synchronized (childProcessLock) {
+            children = childProcesses.toArray(ChildProcess[]::new);
+            childProcesses.clear();
+        }
+
+        for (ChildProcess child : children) {
+            child.syscalls().requestProcessExit(processExitCode);
+        }
+        for (ChildProcess child : children) {
+            joinChildProcess(child);
         }
     }
 
@@ -4457,6 +4563,9 @@ public final class GuestSyscalls implements AutoCloseable {
             }
             threadLock.notifyAll();
         }
+        synchronized (childProcessLock) {
+            childProcessLock.notifyAll();
+        }
     }
 
     /// Records that a guest thread exited and returns the process exit code once it is known.
@@ -4479,6 +4588,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 processExitCode = exitCode;
                 processStatusPollingRequired = true;
             }
+            notifyParentProcessExitLocked();
             threadLock.notifyAll();
         }
     }
@@ -4492,8 +4602,18 @@ public final class GuestSyscalls implements AutoCloseable {
             processExitRequested = true;
             processExitCode = 1;
             processStatusPollingRequired = true;
+            notifyParentProcessExitLocked();
             threadLock.notifyAll();
         }
+    }
+
+    /// Reports this process exit to its parent once all guest threads have exited.
+    private void notifyParentProcessExitLocked() {
+        if (parentProcess == null || parentExitNotified || !processExitRequested || liveThreadCount != 0) {
+            return;
+        }
+        parentExitNotified = true;
+        parentProcess.recordChildProcessExit(process.id(), processExitCode);
     }
 
     /// Joins all guest host threads before the shared guest memory is closed.
@@ -4550,6 +4670,56 @@ public final class GuestSyscalls implements AutoCloseable {
                 throw guestThreadFailure(threadFailure);
             }
             return processExitCode;
+        }
+    }
+
+    /// Records that one child process has exited and wakes waiters.
+    private void recordChildProcessExit(int processId, long exitCode) {
+        synchronized (childProcessLock) {
+            for (ChildProcess child : childProcesses) {
+                if (child.processId() == processId) {
+                    child.recordExit(exitCode);
+                    childProcessLock.notifyAll();
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Removes a child process whose host thread could not be started.
+    private void removeUnstartedChildProcess(ChildProcess childProcess) {
+        synchronized (childProcessLock) {
+            childProcesses.remove(childProcess);
+            childProcessLock.notifyAll();
+        }
+    }
+
+    /// Returns true when a process id names a known child process.
+    private boolean isKnownChildProcessId(long processId) {
+        if (processId != (int) processId) {
+            return false;
+        }
+        synchronized (childProcessLock) {
+            for (ChildProcess child : childProcesses) {
+                if (child.processId() == (int) processId) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// Joins the host thread that executed a child process.
+    private static void joinChildProcess(ChildProcess childProcess) {
+        Thread thread = childProcess.thread();
+        if (thread == Thread.currentThread()) {
+            return;
+        }
+        try {
+            thread.join();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new RiscVException("Interrupted while waiting for guest child process", exception);
         }
     }
 
@@ -4760,8 +4930,28 @@ public final class GuestSyscalls implements AutoCloseable {
         return env != null && guestThreadRunner != null;
     }
 
-    /// Handles the parent return path for Linux thread-style `clone` requests.
+    /// Handles the parent return path for Linux `clone` requests.
     private long clone(
+            MachineState state,
+            long pc,
+            long flags,
+            long stackAddress,
+            long parentTidAddress,
+            long tlsAddress,
+            long childTidAddress) {
+        long exitSignal = flags & CLONE_EXIT_SIGNAL_MASK;
+        long controlFlags = flags & ~CLONE_EXIT_SIGNAL_MASK;
+        if ((controlFlags & CLONE_THREAD) != 0) {
+            if (exitSignal != 0) {
+                return EINVAL;
+            }
+            return cloneThread(state, pc, controlFlags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
+        }
+        return cloneProcess(state, pc, flags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
+    }
+
+    /// Handles the parent return path for Linux thread-style `clone` requests.
+    private long cloneThread(
             MachineState state,
             long pc,
             long flags,
@@ -4783,7 +4973,7 @@ public final class GuestSyscalls implements AutoCloseable {
             if (processExitRequested || threadFailure != null) {
                 return EAGAIN;
             }
-            childThread = process.createChildThread();
+            childThread = processRegistry.createChildThread(process);
             if (childThread == null) {
                 return ENOMEM;
             }
@@ -4806,7 +4996,7 @@ public final class GuestSyscalls implements AutoCloseable {
         GuestThreadRunner currentRunner = guestThreadRunner;
         Thread thread;
         try {
-            thread = currentEnv.newTruffleThreadBuilder(() -> currentRunner.runGuestThread(child)).build();
+            thread = currentEnv.newTruffleThreadBuilder(() -> currentRunner.runGuestThread(memory, child)).build();
         } catch (RuntimeException exception) {
             return EAGAIN;
         }
@@ -4836,6 +5026,103 @@ public final class GuestSyscalls implements AutoCloseable {
             return EAGAIN;
         }
         return threadId;
+    }
+
+    /// Handles the parent return path for Linux process-style `clone` requests.
+    private long cloneProcess(
+            MachineState state,
+            long pc,
+            long flags,
+            long stackAddress,
+            long parentTidAddress,
+            long tlsAddress,
+            long childTidAddress) {
+        long exitSignal = flags & CLONE_EXIT_SIGNAL_MASK;
+        if ((flags & ~SUPPORTED_PROCESS_CLONE_FLAGS) != 0
+                || (flags & CLONE_VM) != 0
+                || exitSignal != SIGNAL_CHILD && exitSignal != 0) {
+            return EINVAL;
+        }
+        if (!guestThreadingEnabled()) {
+            return EAGAIN;
+        }
+        synchronized (threadLock) {
+            if (processExitRequested || threadFailure != null) {
+                return EAGAIN;
+            }
+        }
+
+        @Nullable GuestProcess childProcess = processRegistry.createChildProcess(process);
+        if (childProcess == null) {
+            return ENOMEM;
+        }
+
+        Memory childMemory;
+        try {
+            childMemory = memory.fork();
+        } catch (RiscVException exception) {
+            return ENOMEM;
+        }
+
+        GuestSyscalls childSyscalls = new GuestSyscalls(this, childMemory, childProcess);
+        GuestThread childThread = childProcess.initialThread();
+        childThread.setSignalMask(state.guestThread().signalMask());
+        childThread.inheritExecutionControlsFrom(state.guestThread());
+        if ((flags & CLONE_CHILD_CLEARTID) != 0) {
+            childThread.setClearChildTidAddress(childTidAddress);
+        }
+
+        long childStackAddress = stackAddress == 0 ? state.register(2) : stackAddress;
+        MachineState child = state.forkForProcess(
+                childThread,
+                childMemory,
+                childSyscalls,
+                pc + Integer.BYTES,
+                childStackAddress,
+                tlsAddress,
+                (flags & CLONE_SETTLS) != 0);
+
+        if ((flags & CLONE_PARENT_SETTID) != 0) {
+            memory.writeInt(parentTidAddress, childProcess.id());
+        }
+        if ((flags & CLONE_CHILD_SETTID) != 0) {
+            childMemory.writeInt(childTidAddress, childProcess.id());
+        }
+
+        TruffleLanguage.Env currentEnv = env;
+        GuestThreadRunner currentRunner = guestThreadRunner;
+        Thread thread;
+        try {
+            thread = currentEnv.newTruffleThreadBuilder(() -> {
+                try {
+                    currentRunner.runGuestThread(childMemory, child);
+                } finally {
+                    childSyscalls.joinGuestThreads();
+                    childSyscalls.close();
+                    childMemory.close();
+                }
+            }).build();
+        } catch (RuntimeException exception) {
+            childSyscalls.close();
+            childMemory.close();
+            return EAGAIN;
+        }
+        thread.setUncaughtExceptionHandler((failedThread, throwable) -> childSyscalls.recordThreadFailure(throwable));
+
+        ChildProcess childRecord = new ChildProcess(childProcess.id(), childProcess.processGroupId(), childSyscalls, thread);
+        synchronized (childProcessLock) {
+            childProcesses.add(childRecord);
+        }
+
+        try {
+            thread.start();
+        } catch (RuntimeException exception) {
+            removeUnstartedChildProcess(childRecord);
+            childSyscalls.close();
+            childMemory.close();
+            return EAGAIN;
+        }
+        return childProcess.id();
     }
 
     /// Removes a child thread that failed before it could start running guest code.
@@ -5150,12 +5437,16 @@ public final class GuestSyscalls implements AutoCloseable {
         return true;
     }
 
-    /// Accepts signal sends that target the single guest process.
+    /// Accepts signal sends that target known guest processes.
     private long kill(long processId, long signalNumber) {
         if (!isValidSignalNumber(signalNumber)) {
             return EINVAL;
         }
-        if (processId == 0 || processId == -1 || processId == GUEST_PROCESS_ID || processId == -GUEST_PROCESS_GROUP_ID) {
+        if (processId == 0
+                || processId == -1
+                || processId == process.id()
+                || processId == -process.processGroupId()
+                || isKnownChildProcessId(processId)) {
             return 0;
         }
         return ESRCH;
@@ -5169,12 +5460,12 @@ public final class GuestSyscalls implements AutoCloseable {
         return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
     }
 
-    /// Accepts signal sends that target known guest thread ids in the single process.
+    /// Accepts signal sends that target known guest thread ids in the current process.
     private long tgkill(long processId, long threadId, long signalNumber) {
         if (!isValidSignalNumber(signalNumber)) {
             return EINVAL;
         }
-        if (processId != GUEST_PROCESS_ID) {
+        if (processId != process.id()) {
             return ESRCH;
         }
         return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
@@ -5182,15 +5473,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns the deterministic process group id for the guest process.
     private long getpgid(long processId) {
-        if (processId == 0 || processId == GUEST_PROCESS_ID) {
-            return GUEST_PROCESS_GROUP_ID;
+        if (processId == 0 || processId == process.id() || isKnownChildProcessId(processId)) {
+            return process.processGroupId();
         }
         return ESRCH;
     }
 
-    /// Accepts session creation as a deterministic no-op for the single guest process.
-    private static long setsid() {
-        return GUEST_PROCESS_GROUP_ID;
+    /// Accepts session creation as a deterministic no-op for the current guest process.
+    private long setsid() {
+        return process.processGroupId();
     }
 
     /// Returns true when a signal number is zero or a regular Linux signal.
@@ -5257,6 +5548,61 @@ public final class GuestSyscalls implements AutoCloseable {
             writeTimevalFromDuration(rusageAddress + RUSAGE_SYSTEM_TIME_OFFSET, Duration.ZERO);
         }
         return 0;
+    }
+
+    /// Waits for an exited child process and reports its Linux wait status.
+    private long wait4(long processId, long statusAddress, long options, long rusageAddress) {
+        if ((options & ~SUPPORTED_WAIT_OPTIONS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable ChildProcess exitedChild = null;
+        while (true) {
+            synchronized (childProcessLock) {
+                if (processExitRequested || threadFailure != null) {
+                    return EINTR;
+                }
+                boolean hasMatchingChild = false;
+                for (int index = 0; index < childProcesses.size(); index++) {
+                    ChildProcess child = childProcesses.get(index);
+                    if (!child.matches(processId)) {
+                        continue;
+                    }
+                    hasMatchingChild = true;
+                    if (child.exited()) {
+                        exitedChild = child;
+                        childProcesses.remove(index);
+                        break;
+                    }
+                }
+
+                if (exitedChild == null && hasMatchingChild) {
+                    if ((options & WAIT_NO_HANG) != 0) {
+                        return 0;
+                    }
+                    try {
+                        childProcessLock.wait();
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        return EINTR;
+                    }
+                    continue;
+                }
+                if (!hasMatchingChild) {
+                    return ECHILD;
+                }
+                break;
+            }
+        }
+
+        joinChildProcess(exitedChild);
+        if (statusAddress != 0) {
+            memory.writeInt(statusAddress, exitedChild.waitStatus());
+        }
+        if (rusageAddress != 0) {
+            memory.clear(rusageAddress, RUSAGE_SIZE);
+        }
+        return exitedChild.processId();
     }
 
     /// Reports the simulated single CPU and NUMA node.
@@ -6000,9 +6346,9 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
-    /// Gets or lowers Linux resource limits for the single guest process.
+    /// Gets or lowers Linux resource limits for the current guest process.
     private long prlimit64(long processId, long resource, long newLimitAddress, long oldLimitAddress) {
-        if (processId != 0 && processId != GUEST_PROCESS_ID) {
+        if (processId != 0 && processId != process.id()) {
             return ESRCH;
         }
         if (resource < 0 || resource >= RESOURCE_LIMIT_COUNT) {
@@ -6249,9 +6595,9 @@ public final class GuestSyscalls implements AutoCloseable {
             return VirtualNode.directory(path);
         }
         if ((PROC_MOUNT_PATH + "/self").equals(path)) {
-            return VirtualNode.symbolicLink(path, Long.toString(GUEST_PROCESS_ID));
+            return VirtualNode.symbolicLink(path, Integer.toString(process.id()));
         }
-        if ((PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID).equals(path)) {
+        if ((PROC_MOUNT_PATH + "/" + process.id()).equals(path)) {
             return VirtualNode.directory(path);
         }
         if ((PROC_MOUNT_PATH + "/cpuinfo").equals(path)) {
@@ -6270,7 +6616,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return VirtualNode.file(path, ProcFile.VERSION);
         }
 
-        String processPrefix = PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID;
+        String processPrefix = PROC_MOUNT_PATH + "/" + process.id();
         if ((processPrefix + "/auxv").equals(path)) {
             return VirtualNode.file(path, ProcFile.AUXV);
         }
@@ -6316,7 +6662,7 @@ public final class GuestSyscalls implements AutoCloseable {
     private ArrayList<VirtualNode> procChildNodes(String directoryGuestPath) {
         ArrayList<VirtualNode> children = new ArrayList<>();
         if (PROC_MOUNT_PATH.equals(directoryGuestPath)) {
-            addProcChild(children, PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID);
+            addProcChild(children, PROC_MOUNT_PATH + "/" + process.id());
             addProcChild(children, PROC_MOUNT_PATH + "/cpuinfo");
             addProcChild(children, PROC_MOUNT_PATH + "/meminfo");
             addProcChild(children, PROC_MOUNT_PATH + "/self");
@@ -6326,7 +6672,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return children;
         }
 
-        String processPrefix = PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID;
+        String processPrefix = PROC_MOUNT_PATH + "/" + process.id();
         if (processPrefix.equals(directoryGuestPath)) {
             addProcChild(children, processPrefix + "/auxv");
             addProcChild(children, processPrefix + "/cmdline");
@@ -6544,10 +6890,10 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns `/proc/self/stat` content.
     private String procProcessStat() {
         long ticks = elapsedClockTicks();
-        return GUEST_PROCESS_ID + " (" + processNameString() + ") R "
-                + GUEST_PARENT_PROCESS_ID + ' '
-                + GUEST_PROCESS_GROUP_ID + ' '
-                + GUEST_PROCESS_GROUP_ID
+        return process.id() + " (" + processNameString() + ") R "
+                + process.parentId() + ' '
+                + process.processGroupId() + ' '
+                + process.processGroupId()
                 + " 0 -1 0 0 0 0 0 "
                 + ticks + ' ' + ticks
                 + " 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n";
@@ -6557,9 +6903,9 @@ public final class GuestSyscalls implements AutoCloseable {
     private String procStatus() {
         return "Name:\t" + processNameString() + "\n"
                 + "State:\tR (running)\n"
-                + "Tgid:\t" + GUEST_PROCESS_ID + "\n"
-                + "Pid:\t" + GUEST_PROCESS_ID + "\n"
-                + "PPid:\t" + GUEST_PARENT_PROCESS_ID + "\n"
+                + "Tgid:\t" + process.id() + "\n"
+                + "Pid:\t" + process.id() + "\n"
+                + "PPid:\t" + process.parentId() + "\n"
                 + "TracerPid:\t0\n"
                 + "Uid:\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\n"
                 + "Gid:\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\n"
@@ -6857,6 +7203,16 @@ public final class GuestSyscalls implements AutoCloseable {
             openFiles.add(null);
         }
         openFiles.set(index, openFile);
+    }
+
+    /// Copies the parent's descriptor table using Linux fork-style shared open file descriptions.
+    private void copyOpenFilesFrom(GuestSyscalls parent) {
+        for (@Nullable OpenFile openFile : parent.openFiles) {
+            if (openFile != null) {
+                openFile.retain();
+            }
+            openFiles.add(openFile);
+        }
     }
 
     /// Returns a new descriptor entry that duplicates the supplied file descriptor.
@@ -7364,6 +7720,82 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns true when the file descriptor is one of stdin, stdout, or stderr.
     private static boolean isStandardFileDescriptor(int fileDescriptor) {
         return fileDescriptor >= 0 && fileDescriptor <= 2;
+    }
+
+    /// Stores one process-style `clone` child tracked by its parent process.
+    private static final class ChildProcess {
+        /// The Linux process id visible to the parent.
+        private final int processId;
+
+        /// The Linux process group id visible to wait selectors.
+        private final int processGroupId;
+
+        /// The syscall handler owned by the child process.
+        private final GuestSyscalls syscalls;
+
+        /// The host thread running the child process leader.
+        private final Thread thread;
+
+        /// Whether the child process has reported a final exit code.
+        private boolean exited;
+
+        /// The low eight bits of the child process exit code.
+        private int exitCode;
+
+        /// Creates a tracked child process.
+        private ChildProcess(int processId, int processGroupId, GuestSyscalls syscalls, Thread thread) {
+            this.processId = processId;
+            this.processGroupId = processGroupId;
+            this.syscalls = syscalls;
+            this.thread = thread;
+        }
+
+        /// Returns the Linux process id visible to the parent.
+        private int processId() {
+            return processId;
+        }
+
+        /// Returns the child process syscall handler.
+        private GuestSyscalls syscalls() {
+            return syscalls;
+        }
+
+        /// Returns the host thread running the child process leader.
+        private Thread thread() {
+            return thread;
+        }
+
+        /// Returns true when this child matches a Linux `wait4` pid selector.
+        private boolean matches(long waitProcessId) {
+            if (waitProcessId == -1) {
+                return true;
+            }
+            if (waitProcessId == 0) {
+                return true;
+            }
+            if (waitProcessId > 0) {
+                return waitProcessId == processId;
+            }
+            return waitProcessId < -1 && -waitProcessId == processGroupId;
+        }
+
+        /// Records the final child exit code.
+        private void recordExit(long exitCode) {
+            if (!exited) {
+                this.exitCode = (int) exitCode & 0xff;
+                exited = true;
+            }
+        }
+
+        /// Returns true after the child has exited.
+        private boolean exited() {
+            return exited;
+        }
+
+        /// Returns the Linux wait status for a normal process exit.
+        private int waitStatus() {
+            return exitCode << 8;
+        }
     }
 
     /// Describes an anonymous guest memory mapping tracked by the syscall layer.
@@ -8151,12 +8583,12 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         /// Adds one guest descriptor reference to this entry.
-        void retain() {
+        synchronized void retain() {
             references++;
         }
 
         /// Removes one guest descriptor reference and returns true when this entry is no longer referenced.
-        boolean release() {
+        synchronized boolean release() {
             references--;
             if (references < 0) {
                 throw new AssertionError("open file reference count became negative");

@@ -379,6 +379,40 @@ public final class MachineState {
                 traceStream,
                 childThread,
                 vectorUnit.vlenBits());
+        copyArchitecturalStateTo(child, childPc, stackAddress, tlsAddress, setThreadPointer);
+        return child;
+    }
+
+    /// Creates the child architectural state produced by a Linux process-style `clone`.
+    MachineState forkForProcess(
+            GuestThread childThread,
+            Memory childMemory,
+            GuestSyscalls childSyscalls,
+            long childPc,
+            long stackAddress,
+            long tlsAddress,
+            boolean setThreadPointer) {
+        MachineState child = new MachineState(
+                childMemory,
+                maxInstructions,
+                trace,
+                tohostAddress,
+                fromhostAddress,
+                childSyscalls,
+                traceStream,
+                childThread,
+                vectorUnit.vlenBits());
+        copyArchitecturalStateTo(child, childPc, stackAddress, tlsAddress, setThreadPointer);
+        return child;
+    }
+
+    /// Copies register and CSR state into a freshly allocated clone child.
+    private void copyArchitecturalStateTo(
+            MachineState child,
+            long childPc,
+            long stackAddress,
+            long tlsAddress,
+            boolean setThreadPointer) {
         System.arraycopy(registers, 0, child.registers, 0, registers.length);
         System.arraycopy(floatingPointRegisters, 0, child.floatingPointRegisters, 0, floatingPointRegisters.length);
         vectorUnit.copyTo(child.vectorUnit);
@@ -386,12 +420,13 @@ public final class MachineState {
         child.instructionFetchGeneration = instructionFetchGeneration;
         child.pc = childPc;
         child.registers[0] = 0;
-        child.registers[2] = stackAddress;
+        if (stackAddress != 0) {
+            child.registers[2] = stackAddress;
+        }
         if (setThreadPointer) {
             child.registers[4] = tlsAddress;
         }
         child.registers[10] = 0;
-        return child;
     }
 
     /// Returns the guest clear-child-TID address for this thread.

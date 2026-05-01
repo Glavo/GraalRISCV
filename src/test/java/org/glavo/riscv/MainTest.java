@@ -91,6 +91,12 @@ public final class MainTest {
     /// The Linux RISC-V syscall number for `exit`.
     private static final int SYS_EXIT = 93;
 
+    /// The Linux RISC-V syscall number for `clone`.
+    private static final int SYS_CLONE = 220;
+
+    /// The Linux RISC-V syscall number for `wait4`.
+    private static final int SYS_WAIT4 = 260;
+
     /// A temporary directory for generated ELF files.
     @TempDir
     private Path tempDirectory;
@@ -561,6 +567,26 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that the CLI can execute a process-style Linux `clone` program.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    public void runsProcessStyleCloneProgram() throws Exception {
+        Path elfPath = tempDirectory.resolve("clone-process.elf");
+        Files.write(elfPath, ElfTestImages.executable(cloneProcessCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--max-instructions", "1000000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(7, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Verifies that guest futex waits with relative timeouts report `ETIMEDOUT`.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -791,6 +817,76 @@ public final class MainTest {
         code.putInt(0);
         code.putInt(0);
         return Arrays.copyOf(code.array(), childStackOffset);
+    }
+
+    /// Builds a program that starts one guest process and waits for its exit status.
+    private static byte[] cloneProcessCode() {
+        int resultOffset = 0x300;
+        int statusOffset = 0x304;
+        ByteBuffer code = ByteBuffer.allocate(0x400).order(ByteOrder.LITTLE_ENDIAN);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 17));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(14, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_CLONE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int childBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, 2));
+        int childPidFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, resultOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 3));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, 0));
+        putLoadAddress(code, 11, statusOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_WAIT4));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, 2));
+        int waitPidFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, statusOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        putLoadImmediate(code, 7, 42 << 8);
+        int waitStatusFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, resultOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(7, 0, 3));
+        int forkIsolationFailBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 7));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int childPosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 172));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, 2));
+        int childGetpidFailBranchPosition = reserveInstruction(code);
+        putLoadAddress(code, 5, resultOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 42));
+        ElfTestImages.putInt(code, sw(6, 0, 5));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 42));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int failPosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 21));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, childBranchPosition, beq(10, 0, childPosition - childBranchPosition));
+        patchInstruction(code, childPidFailBranchPosition, bne(10, 5, failPosition - childPidFailBranchPosition));
+        patchInstruction(code, waitPidFailBranchPosition, bne(10, 5, failPosition - waitPidFailBranchPosition));
+        patchInstruction(code, waitStatusFailBranchPosition, bne(6, 7, failPosition - waitStatusFailBranchPosition));
+        patchInstruction(code, forkIsolationFailBranchPosition, bne(6, 7, failPosition - forkIsolationFailBranchPosition));
+        patchInstruction(code, childGetpidFailBranchPosition, bne(10, 5, failPosition - childGetpidFailBranchPosition));
+
+        code.position(resultOffset);
+        code.putInt(0);
+        code.putInt(0);
+        return code.array();
     }
 
     /// Builds a program that expects `futex(FUTEX_WAIT, timeout)` to return `-ETIMEDOUT`.

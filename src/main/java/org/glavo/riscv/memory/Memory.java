@@ -260,6 +260,24 @@ public final class Memory implements AutoCloseable {
         writeBytes(address, source, offset, length);
     }
 
+    /// Creates an independent address-space snapshot for a Linux process fork.
+    public synchronized Memory fork() {
+        Memory copy = new Memory(
+                baseAddress,
+                size,
+                layout.pageSize(),
+                maxCommittedPages,
+                hugePageSize,
+                hugePageCapacity,
+                cachedMappedRegion,
+                initialWindowMapped);
+        copy.vmas = vmas;
+        copy.reservedHugePages = reservedHugePages;
+        copy.committedPages = pages.copyInto(copy.pages, pageWords, layout.pageSize());
+        copy.invalidateSoftwareTlb();
+        return copy;
+    }
+
     /// Activates a RISC-V userspace pointer mask for the current host thread and returns the previous mask.
     public long enterPointerMaskLength(int length) {
         long previousMask = activePointerMask.get();

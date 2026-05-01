@@ -3,12 +3,13 @@
 
 package org.glavo.riscv.runtime;
 
+import org.glavo.riscv.memory.Memory;
 import org.jetbrains.annotations.NotNullByDefault;
 
 /// Runs one guest thread state until that thread exits or requests process termination.
 @FunctionalInterface
 @NotNullByDefault
 public interface GuestThreadRunner {
-    /// Executes the supplied guest thread state.
-    void runGuestThread(MachineState state);
+    /// Executes the supplied guest thread state with its selected address space.
+    void runGuestThread(Memory memory, MachineState state);
 }

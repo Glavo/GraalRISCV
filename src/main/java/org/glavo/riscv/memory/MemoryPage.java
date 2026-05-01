@@ -39,6 +39,13 @@ final class MemoryPage {
         return new MemoryPage(data, MemoryUnsafe.HEAP_LONG_ARRAY_BASE_OFFSET, data, null);
     }
 
+    /// Creates an independent heap-backed copy of this page.
+    MemoryPage copy(int pageWords, long byteCount) {
+        MemoryPage copy = heap(pageWords);
+        MemoryUnsafe.UNSAFE.copyMemory(baseObject, baseOffset, copy.baseObject, copy.baseOffset, byteCount);
+        return copy;
+    }
+
     /// Returns the Unsafe base object, or null for absolute native-address backing.
     @Nullable Object baseObject() {
         return baseObject;

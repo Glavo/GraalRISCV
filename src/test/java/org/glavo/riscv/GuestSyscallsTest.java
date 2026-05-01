@@ -48,6 +48,9 @@ public final class GuestSyscallsTest {
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
 
+    /// Linux `ECHILD` as a raw negative syscall result.
+    private static final long ECHILD = -10;
+
     /// Linux `ENOENT` as a raw negative syscall result.
     private static final long ENOENT = -2;
 
@@ -359,6 +362,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
     private static final long SYS_RISCV_HWPROBE = 258;
+
+    /// The Linux RISC-V syscall number for `wait4`.
+    private static final long SYS_WAIT4 = 260;
 
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final long SYS_PRLIMIT64 = 261;
@@ -2991,6 +2997,21 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `wait4` reports no children for the initial single-process state.
+    @Test
+    public void wait4WithoutChildrenReportsEchild() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long statusAddress = memory.baseAddress() + 64;
+            long rusageAddress = memory.baseAddress() + 128;
+
+            setSyscall(state, SYS_WAIT4, -1, statusAddress, 0, rusageAddress);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(ECHILD, state.register(10));
+        }
+    }
+
     /// Verifies signal-send syscalls use deterministic single-process validation.
     @Test
     public void signalSendSyscallsValidateSingleProcessTargets() {
@@ -3058,7 +3079,7 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that unsupported `clone` forms remain explicit errors.
+    /// Verifies process-style `clone` requires a runner and unsupported mixed clone flags are rejected.
     @Test
     public void cloneRejectsUnsupportedProcessCreationForms() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
@@ -3067,7 +3088,7 @@ public final class GuestSyscallsTest {
 
             setSyscall(state, SYS_CLONE, 17, stackAddress, 0, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(EINVAL, state.register(10));
+            assertEquals(EAGAIN, state.register(10));
 
             setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS & ~CLONE_THREAD, stackAddress, 0, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);

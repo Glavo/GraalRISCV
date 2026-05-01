@@ -73,6 +73,11 @@ final class PageTable {
         ENTRY_HANDLE.setRelease(node, levelIndex(pageNumber, 0), page);
     }
 
+    /// Copies every committed page into another page table and returns the copied page count.
+    long copyInto(PageTable destination, int pageWords, long pageSize) {
+        return copyInto(root, rootShift, 0, destination, pageWords, pageSize);
+    }
+
     /// Removes, closes, and counts pages with guest page numbers in the supplied half-open range.
     long removeRange(long startPageNumber, long endPageNumber) {
         if (startPageNumber >= endPageNumber) {
@@ -84,6 +89,33 @@ final class PageTable {
     /// Closes every committed page and resets the table to its initial empty state.
     void closeAndClear() {
         closeAndClear(root, rootShift);
+    }
+
+    /// Copies committed pages from a radix subtree into another page table.
+    private static long copyInto(
+            Object[] node,
+            int shift,
+            long nodeBase,
+            PageTable destination,
+            int pageWords,
+            long pageSize) {
+        long copiedPages = 0;
+        for (int index = 0; index < LEVEL_SIZE; index++) {
+            @Nullable Object entry = ENTRY_HANDLE.getAcquire(node, index);
+            if (entry == null) {
+                continue;
+            }
+
+            long childBase = nodeBase + ((long) index << shift);
+            if (shift == 0) {
+                MemoryPage page = (MemoryPage) entry;
+                destination.put(childBase, page.copy(pageWords, pageSize));
+                copiedPages++;
+            } else {
+                copiedPages += copyInto((Object[]) entry, shift - LEVEL_BITS, childBase, destination, pageWords, pageSize);
+            }
+        }
+        return copiedPages;
     }
 
     /// Returns true when a page number is representable in this table's root level.
