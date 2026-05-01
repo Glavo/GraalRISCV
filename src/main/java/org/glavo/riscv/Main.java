@@ -38,6 +38,7 @@ public final class Main {
               --max-committed-pages <n>  Maximum committed guest base pages; 0 means unlimited.
               --huge-page-size <bytes>   Guest HugeTLB page size in bytes.
               --huge-pages <n>           Guest HugeTLB page pool size.
+              --vector-vlen <bits>       Vector register length in bits. Default is 128.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --mount <guest>=<path>     Mount a host directory at an absolute guest path.
               --host-root <path>         Alias for --mount /=<path>.
@@ -132,6 +133,9 @@ public final class Main {
         if (options.hugePages() != null) {
             builder.option("riscv.hugePages", options.hugePages());
         }
+        if (options.vectorVlen() != null) {
+            builder.option("riscv.vectorVlen", options.vectorVlen());
+        }
         if (options.maxInstructions() != null) {
             builder.option("riscv.maxInstructions", options.maxInstructions());
         }
@@ -170,6 +174,7 @@ public final class Main {
         @Nullable String maxCommittedPages = null;
         @Nullable String hugePageSize = null;
         @Nullable String hugePages = null;
+        @Nullable String vectorVlen = null;
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
         @Nullable Path hostRoot = null;
@@ -282,6 +287,20 @@ public final class Main {
                 }
                 continue;
             }
+            if (parseOptions && "--vector-vlen".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --vector-vlen.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                vectorVlen = parseLongOption("--vector-vlen", args[index], err);
+                if (vectorVlen == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
             if (parseOptions && "--max-instructions".equals(argument)) {
                 index++;
                 if (index >= args.length) {
@@ -370,6 +389,7 @@ public final class Main {
                 maxCommittedPages,
                 hugePageSize,
                 hugePages,
+                vectorVlen,
                 maxInstructions,
                 debugFixedClockNanos,
                 resolvedRootMount,
@@ -509,6 +529,7 @@ public final class Main {
     /// @param maxCommittedPages the optional committed guest base page limit option value
     /// @param hugePageSize the optional guest HugeTLB page size option value
     /// @param hugePages the optional guest HugeTLB page pool size option value
+    /// @param vectorVlen the optional vector register length option value
     /// @param maxInstructions the optional maximum instruction count option value
     /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
     /// @param rootMount the host directory mounted at the guest root
@@ -526,6 +547,7 @@ public final class Main {
             @Nullable String maxCommittedPages,
             @Nullable String hugePageSize,
             @Nullable String hugePages,
+            @Nullable String vectorVlen,
             @Nullable String maxInstructions,
             @Nullable String debugFixedClockNanos,
             Path rootMount,
@@ -564,6 +586,7 @@ public final class Main {
                     null,
                     null,
                     null,
+                    null,
                     Path.of("."),
                     new MountOption[0],
                     false,
@@ -576,6 +599,7 @@ public final class Main {
                     CliMode.ERROR,
                     Path.of("."),
                     new String[0],
+                    null,
                     null,
                     null,
                     null,
@@ -600,6 +624,7 @@ public final class Main {
                 @Nullable String maxCommittedPages,
                 @Nullable String hugePageSize,
                 @Nullable String hugePages,
+                @Nullable String vectorVlen,
                 @Nullable String maxInstructions,
                 @Nullable String debugFixedClockNanos,
                 Path rootMount,
@@ -616,6 +641,7 @@ public final class Main {
                     maxCommittedPages,
                     hugePageSize,
                     hugePages,
+                    vectorVlen,
                     maxInstructions,
                     debugFixedClockNanos,
                     rootMount,

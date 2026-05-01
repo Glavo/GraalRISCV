@@ -196,6 +196,7 @@ tasks.register<RiscVTestsBuildTask>("buildRva22AcceptanceTests") {
         "f",
         "d",
         "c",
+        "v",
         "zicsr",
         "zifencei",
         "zba",

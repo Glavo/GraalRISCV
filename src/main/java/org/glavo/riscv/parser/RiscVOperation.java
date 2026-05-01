@@ -320,6 +320,18 @@ public enum RiscVOperation {
     MOP_RR,
     /// Compressed may-be-operation.
     C_MOP,
+    /// Vector set vector length and type from a scalar AVL and immediate type.
+    VSETVLI,
+    /// Vector set vector length and type from immediate AVL and immediate type.
+    VSETIVLI,
+    /// Vector set vector length and type from scalar AVL and scalar type.
+    VSETVL,
+    /// Unit-stride vector load.
+    VECTOR_LOAD,
+    /// Unit-stride vector store.
+    VECTOR_STORE,
+    /// Vector integer arithmetic.
+    VECTOR_INTEGER,
     /// Memory fence no-op for the single-threaded MVP.
     FENCE,
     /// Instruction-fetch fence no-op for the single-threaded MVP.

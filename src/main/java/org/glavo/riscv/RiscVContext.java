@@ -38,6 +38,9 @@ public final class RiscVContext {
     /// The number of guest HugeTLB pages reserved for MAP_HUGETLB.
     private final long hugePages;
 
+    /// The vector register length in bits.
+    private final int vectorVlenBits;
+
     /// The maximum guest instruction count, or zero when unlimited.
     private final long maxInstructions;
 
@@ -68,6 +71,7 @@ public final class RiscVContext {
             long maxCommittedPages,
             long hugePageSize,
             long hugePages,
+            long vectorVlenBits,
             long maxInstructions,
             boolean trace,
             TimeSource timeSource,
@@ -91,6 +95,10 @@ public final class RiscVContext {
         if (hugePages < 0) {
             throw new RiscVException("riscv.hugePages must be non-negative: " + hugePages);
         }
+        if (vectorVlenBits < Integer.MIN_VALUE || vectorVlenBits > Integer.MAX_VALUE) {
+            throw new RiscVException("riscv.vectorVlen is outside the supported int range: " + vectorVlenBits);
+        }
+        org.glavo.riscv.runtime.VectorUnit.validateVectorLength((int) vectorVlenBits);
         if (maxInstructions < 0) {
             throw new RiscVException("riscv.maxInstructions must be non-negative: " + maxInstructions);
         }
@@ -105,6 +113,7 @@ public final class RiscVContext {
         this.maxCommittedPages = maxCommittedPages;
         this.hugePageSize = hugePageSize;
         this.hugePages = hugePages;
+        this.vectorVlenBits = (int) vectorVlenBits;
         this.maxInstructions = maxInstructions;
         this.trace = trace;
         this.timeSource = timeSource;
@@ -147,6 +156,11 @@ public final class RiscVContext {
     /// Returns the configured guest HugeTLB page pool size.
     public long hugePages() {
         return hugePages;
+    }
+
+    /// Returns the configured vector register length in bits.
+    public int vectorVlenBits() {
+        return vectorVlenBits;
     }
 
     /// Returns the configured maximum guest instruction count, or zero when unlimited.

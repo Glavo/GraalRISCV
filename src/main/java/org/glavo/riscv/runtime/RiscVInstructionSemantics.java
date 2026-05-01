@@ -310,6 +310,8 @@ public abstract sealed class RiscVInstructionSemantics {
                     new Rva22InstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case CZERO_EQZ, CZERO_NEZ, MOP_R, MOP_RR ->
                     new Rva23InstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case VSETVLI, VSETIVLI, VSETVL, VECTOR_LOAD, VECTOR_STORE, VECTOR_INTEGER ->
+                    new VectorInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
                     FMIN, FMAX, FMINM, FMAXM, FLI, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H,
                     FCVT_H_S, FCVT_H_D, FROUND, FROUNDNX, FCVTMOD_W_D, FEQ, FLT, FLE, FLTQ, FLEQ,
@@ -539,6 +541,8 @@ public abstract sealed class RiscVInstructionSemantics {
                         BCLR, BCLRI, BEXT, BEXTI, BINV, BINVI, BSET, BSETI,
                         CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO -> executeRva22(state, memory, nextPc);
                 case CZERO_EQZ, CZERO_NEZ, MOP_R, MOP_RR -> executeRva23(state, nextPc);
+                case VSETVLI, VSETIVLI, VSETVL, VECTOR_LOAD, VECTOR_STORE, VECTOR_INTEGER ->
+                        executeVector(state, memory, nextPc);
                 case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
                         FMIN, FMAX, FMINM, FMAXM, FLI, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H,
                         FCVT_H_S, FCVT_H_D, FROUND, FROUNDNX, FCVTMOD_W_D, FEQ, FLT, FLE, FLTQ, FLEQ,
@@ -1647,6 +1651,30 @@ public abstract sealed class RiscVInstructionSemantics {
 
     }
 
+    /// Executes RVV 1.0 vector configuration, memory, and arithmetic operations.
+    private static final class VectorInstructionSemantics extends RiscVInstructionSemantics {
+        /// Creates a decoded vector instruction semantic helper.
+        private VectorInstructionSemantics(
+                long address,
+                int raw,
+                int length,
+                RiscVOperation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded vector instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeVector(state, state.memory(), nextPc);
+        }
+
+    }
+
     /// Executes floating-point arithmetic and conversion operations as a specialized instruction semantic helper.
     private static final class FloatingPointInstructionSemantics extends RiscVInstructionSemantics {
         /// Creates a decoded floating-point arithmetic or conversion instruction semantic helper.
@@ -1922,6 +1950,20 @@ public abstract sealed class RiscVInstructionSemantics {
                             state.decodedRegister(rs1)));
             case MOP_R, MOP_RR -> binaryRegister(state, nextPc, 0);
             default -> throw unexpectedOperationGroup("RVA23");
+        }
+    }
+
+    /// Executes implemented RVV 1.0 vector operations.
+    protected final void executeVector(MachineState state, Memory memory, long nextPc) {
+        VectorUnit vector = state.vectorUnit();
+        switch (operation) {
+            case VSETVLI -> vector.executeVsetVli(state, rd, rs1, (int) immediate, nextPc);
+            case VSETIVLI -> vector.executeVsetIVli(state, rd, rs1, (int) immediate, nextPc);
+            case VSETVL -> vector.executeVsetVl(state, rd, rs1, rs2, nextPc);
+            case VECTOR_LOAD -> vector.executeUnitStrideLoad(state, memory, raw, rd, rs1, nextPc);
+            case VECTOR_STORE -> vector.executeUnitStrideStore(state, memory, raw, rd, rs1, nextPc);
+            case VECTOR_INTEGER -> vector.executeIntegerArithmetic(state, raw, rd, rs1, rs2, nextPc);
+            default -> throw unexpectedOperationGroup("vector");
         }
     }
 

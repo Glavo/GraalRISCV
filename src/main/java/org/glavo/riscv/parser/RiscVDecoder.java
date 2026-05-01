@@ -85,6 +85,7 @@ public final class RiscVDecoder {
             case 0x4b -> decodeFloatingPointFusedMultiplyAdd(address, raw, RiscVOperation.FNMSUB);
             case 0x4f -> decodeFloatingPointFusedMultiplyAdd(address, raw, RiscVOperation.FNMADD);
             case 0x53 -> decodeFloatingPointOperation(address, raw);
+            case 0x57 -> decodeVectorOperation(address, raw);
             case 0x0f -> decodeMiscMemory(address, raw);
             case 0x73 -> decodeSystem(address, raw);
             case 0x2f -> decodeAtomic(address, raw);
@@ -151,6 +152,9 @@ public final class RiscVDecoder {
 
     /// Decodes floating-point load instructions.
     private static DecodedInstruction decodeFloatingPointLoad(long address, int raw) {
+        if (isVectorMemoryWidth(funct3(raw))) {
+            return decodeVectorLoad(address, raw);
+        }
         RiscVOperation operation = switch (funct3(raw)) {
             case 1 -> RiscVOperation.FLH;
             case 2 -> RiscVOperation.FLW;
@@ -174,6 +178,9 @@ public final class RiscVDecoder {
 
     /// Decodes floating-point store instructions.
     private static DecodedInstruction decodeFloatingPointStore(long address, int raw) {
+        if (isVectorMemoryWidth(funct3(raw))) {
+            return decodeVectorStore(address, raw);
+        }
         RiscVOperation operation = switch (funct3(raw)) {
             case 1 -> RiscVOperation.FSH;
             case 2 -> RiscVOperation.FSW;
@@ -181,6 +188,18 @@ public final class RiscVDecoder {
             default -> throw illegalException(address, raw);
         };
         return instruction(address, raw, operation, 0, rs1(raw), rs2(raw), storeImmediate(raw), false);
+    }
+
+    /// Decodes a supported vector load instruction.
+    private static DecodedInstruction decodeVectorLoad(long address, int raw) {
+        requireSupportedVectorMemory(address, raw);
+        return instruction(address, raw, RiscVOperation.VECTOR_LOAD, rd(raw), rs1(raw), 0, raw, false);
+    }
+
+    /// Decodes a supported vector store instruction.
+    private static DecodedInstruction decodeVectorStore(long address, int raw) {
+        requireSupportedVectorMemory(address, raw);
+        return instruction(address, raw, RiscVOperation.VECTOR_STORE, rd(raw), rs1(raw), 0, raw, false);
     }
 
     /// Decodes floating-point fused multiply-add instructions.
@@ -682,6 +701,28 @@ public final class RiscVDecoder {
         return instruction(address, raw, operation, rd(raw), rs1(raw), 0, raw >>> 20, false);
     }
 
+    /// Decodes vector configuration and arithmetic instructions.
+    private static DecodedInstruction decodeVectorOperation(long address, int raw) {
+        int funct3 = funct3(raw);
+        if (funct3 == 7) {
+            if ((raw >>> 31) == 0) {
+                return instruction(address, raw, RiscVOperation.VSETVLI, rd(raw), rs1(raw), 0, (raw >>> 20) & 0x7ff, false);
+            }
+            if (((raw >>> 30) & 0x1) != 0) {
+                return instruction(address, raw, RiscVOperation.VSETIVLI, rd(raw), rs1(raw), 0, (raw >>> 20) & 0x3ff, false);
+            }
+            if (((raw >>> 25) & 0x3f) == 0) {
+                return instruction(address, raw, RiscVOperation.VSETVL, rd(raw), rs1(raw), rs2(raw), 0, false);
+            }
+            throw illegalException(address, raw);
+        }
+
+        if (funct3 == 0 || funct3 == 2 || funct3 == 3 || funct3 == 4 || funct3 == 6) {
+            return instruction(address, raw, RiscVOperation.VECTOR_INTEGER, rd(raw), rs1(raw), rs2(raw), raw, false);
+        }
+        throw illegalException(address, raw);
+    }
+
     /// Decodes atomic memory instructions.
     private static DecodedInstruction decodeAtomic(long address, int raw) {
         int width = funct3(raw);
@@ -1004,6 +1045,22 @@ public final class RiscVDecoder {
             return format;
         }
         throw illegalException(address, raw);
+    }
+
+    /// Returns true when a LOAD-FP/STORE-FP width field denotes a vector memory instruction.
+    private static boolean isVectorMemoryWidth(int width) {
+        return width == 0 || width == 5 || width == 6 || width == 7;
+    }
+
+    /// Validates the vector memory subset implemented by the current decoder.
+    private static void requireSupportedVectorMemory(long address, int raw) {
+        int mop = (raw >>> 26) & 0x3;
+        int mew = (raw >>> 28) & 0x1;
+        int nf = (raw >>> 29) & 0x7;
+        int lumopOrSumop = (raw >>> 20) & 0x1f;
+        if (mew != 0 || nf != 0 || mop == 0 && lumopOrSumop != 0) {
+            throw illegalException(address, raw);
+        }
     }
 
     /// Validates a static floating-point rounding mode field.

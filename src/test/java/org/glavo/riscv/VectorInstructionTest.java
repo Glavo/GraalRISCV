@@ -1,0 +1,650 @@
+// Copyright (c) 2026 Glavo
+// SPDX-License-Identifier: MPL-2.0
+
+package org.glavo.riscv;
+
+import org.glavo.riscv.exception.ProgramExitException;
+import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.parser.DecodedBlock;
+import org.glavo.riscv.parser.ElfImage;
+import org.glavo.riscv.parser.RiscVDecoder;
+import org.glavo.riscv.runtime.GuestSyscalls;
+import org.glavo.riscv.runtime.MachineState;
+import org.jetbrains.annotations.NotNullByDefault;
+import org.junit.jupiter.api.Test;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
+
+/// Tests the implemented RVV 1.0 vector configuration, CSR, memory, and integer arithmetic behavior.
+@NotNullByDefault
+public final class VectorInstructionTest {
+    /// The guest address used for vector instruction tests.
+    private static final long TEST_PC = Memory.DEFAULT_BASE_ADDRESS;
+
+    /// The `vl` vector CSR address.
+    private static final int VL_CSR = 0xc20;
+
+    /// The `vtype` vector CSR address.
+    private static final int VTYPE_CSR = 0xc21;
+
+    /// The `vlenb` vector CSR address.
+    private static final int VLENB_CSR = 0xc22;
+
+    /// The `vcsr` vector CSR address.
+    private static final int VCSR_CSR = 0x00f;
+
+    /// The `vill` bit for RV64 `vtype`.
+    private static final long VTYPE_VILL = Long.MIN_VALUE;
+
+    /// The Linux syscall register.
+    private static final int SYSCALL_REGISTER = 17;
+
+    /// The Linux `exit` syscall number.
+    private static final long EXIT_SYSCALL = 93;
+
+    /// The RVA23U64 default vector length in bits.
+    private static final int VLEN_BITS = 128;
+
+    /// Verifies `vsetvli`, `vsetivli`, `vsetvl`, and vector CSRs.
+    @Test
+    public void vectorConfigurationInstructionsUpdateCsrs() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(32, 1)),
+                    vsetivli(6, 3, vtype(16, 1)),
+                    vsetvl(7, 10, 11),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 10);
+            machine.state().setRegister(11, vtype(8, 2));
+
+            runDecodedProgram(machine);
+
+            assertEquals(4, machine.state().register(5));
+            assertEquals(3, machine.state().register(6));
+            assertEquals(10, machine.state().register(7));
+            assertEquals(10, machine.state().readControlStatusRegister(VL_CSR));
+            assertEquals(vtype(8, 2), machine.state().readControlStatusRegister(VTYPE_CSR));
+            assertEquals(VLEN_BITS / Byte.SIZE, machine.state().readControlStatusRegister(VLENB_CSR));
+        }
+    }
+
+    /// Verifies vector fixed-point control CSR aliases.
+    @Test
+    public void vectorControlStatusRegisterAliasesUpdateState() {
+        try (TestMachine machine = TestMachine.create()) {
+            machine.state().writeControlStatusRegister(VCSR_CSR, 0x5);
+
+            assertEquals(0x5, machine.state().readControlStatusRegister(VCSR_CSR));
+        }
+    }
+
+    /// Verifies unsupported vector types set `vill` and reset `vl`.
+    @Test
+    public void unsupportedVectorTypeSetsVill() {
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtypeRaw(64, 5)),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 1);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0, machine.state().register(5));
+            assertEquals(0, machine.state().readControlStatusRegister(VL_CSR));
+            assertEquals(VTYPE_VILL, machine.state().readControlStatusRegister(VTYPE_CSR));
+        }
+    }
+
+    /// Verifies unit-stride vector loads, integer arithmetic, and stores.
+    @Test
+    public void vectorLoadAddAndStoreExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            long output = TEST_PC + 512;
+            for (int index = 0; index < 4; index++) {
+                machine.memory().writeInt(input + (long) index * Integer.BYTES, index + 1);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(32, 1)),
+                    vle(32, 1, 6),
+                    vaddVi(2, 1, 5),
+                    vse(32, 2, 7),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 4);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(7, output);
+
+            runDecodedProgram(machine);
+
+            for (int index = 0; index < 4; index++) {
+                assertEquals(index + 6, machine.memory().readInt(output + (long) index * Integer.BYTES));
+            }
+        }
+    }
+
+    /// Verifies vector-vector, vector-scalar, and masked integer operations.
+    @Test
+    public void vectorIntegerArithmeticFormsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            long output = TEST_PC + 512;
+            for (int index = 0; index < 8; index++) {
+                machine.memory().writeShort(input + (long) index * Short.BYTES, (short) (index + 1));
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(16, 1)),
+                    vle(16, 1, 6),
+                    vaddVv(2, 1, 1),
+                    vsubVx(3, 2, 11),
+                    vorVvMasked(4, 3, 1),
+                    vse(16, 4, 7),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 8);
+            machine.state().setRegister(11, 1);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(7, output);
+            machine.state().vectorUnit().writeElement(0, 0, 0b0101_0101);
+
+            runDecodedProgram(machine);
+
+            for (int index = 0; index < 8; index++) {
+                int expected = (index & 1) == 0 ? ((index + 1) * 2 - 1) | (index + 1) : 0;
+                assertEquals(expected, machine.memory().readUnsignedShort(output + (long) index * Short.BYTES));
+            }
+        }
+    }
+
+    /// Verifies additional single-width integer arithmetic and merge operations.
+    @Test
+    public void vectorExtendedIntegerArithmeticExecutes() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            int[] values = {1, 2, 3, 4, 0x80, 0xf0, 0x7f, 0xff};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeByte(input + index, (byte) values[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vle(8, 1, 6),
+                    vminuVx(2, 1, 11),
+                    vmaxVx(3, 1, 12),
+                    vsrlVi(4, 1, 1),
+                    vsraVi(5, 1, 1),
+                    vmergeVvm(6, 2, 3),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(11, 3);
+            machine.state().setRegister(12, -2);
+            machine.state().setRegister(6, input);
+            machine.state().vectorUnit().writeElement(0, 0, 0b0101_0101);
+
+            runDecodedProgram(machine);
+
+            int[] expectedMinUnsigned = {1, 2, 3, 3, 3, 3, 3, 3};
+            int[] expectedMaxSigned = {1, 2, 3, 4, 0xfe, 0xfe, 0x7f, 0xff};
+            int[] expectedShiftRight = {0, 1, 1, 2, 0x40, 0x78, 0x3f, 0x7f};
+            int[] expectedArithmeticShiftRight = {0, 1, 1, 2, 0xc0, 0xf8, 0x3f, 0xff};
+            int[] expectedMerge = {1, 2, 3, 3, 0xfe, 3, 0x7f, 3};
+            assertVectorBytes(machine.state(), 2, expectedMinUnsigned);
+            assertVectorBytes(machine.state(), 3, expectedMaxSigned);
+            assertVectorBytes(machine.state(), 4, expectedShiftRight);
+            assertVectorBytes(machine.state(), 5, expectedArithmeticShiftRight);
+            assertVectorBytes(machine.state(), 6, expectedMerge);
+        }
+    }
+
+    /// Verifies mask-producing compares and mask logical operations.
+    @Test
+    public void vectorCompareAndMaskLogicalInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            int[] values = {1, 2, 3, 4, 0x80, 0xf0, 0x7f, 0xff};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeByte(input + index, (byte) values[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vle(8, 1, 6),
+                    vmsltuVx(2, 1, 11),
+                    vmsgtVi(3, 1, 0),
+                    vmandMm(4, 2, 3),
+                    vmxorMm(5, 2, 3),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(11, 4);
+            machine.state().setRegister(6, input);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0b0000_0111, machine.state().vectorUnit().readElement(2, 0));
+            assertEquals(0b0100_1111, machine.state().vectorUnit().readElement(3, 0));
+            assertEquals(0b0000_0111, machine.state().vectorUnit().readElement(4, 0));
+            assertEquals(0b0100_1000, machine.state().vectorUnit().readElement(5, 0));
+        }
+    }
+
+    /// Verifies single-width vector multiply, divide, and remainder operations.
+    @Test
+    public void vectorMultiplyDivideAndRemainderInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            int[] values = {12, 13, 0xfff6, 0x8000, 5, 0};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeShort(input + (long) index * Short.BYTES, (short) values[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(16, 1)),
+                    vle(16, 1, 6),
+                    vmulVx(2, 1, 11),
+                    vdivuVx(3, 1, 11),
+                    vdivVx(4, 1, 11),
+                    vremVx(5, 1, 11),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(11, 5);
+            machine.state().setRegister(6, input);
+
+            runDecodedProgram(machine);
+
+            assertVectorElements(machine.state(), 2, 60, 65, 0xffce, 0x8000, 25, 0);
+            assertVectorElements(machine.state(), 3, 2, 2, 13105, 6553, 1, 0);
+            assertVectorElements(machine.state(), 4, 2, 2, 0xfffe, 0xe667, 1, 0);
+            assertVectorElements(machine.state(), 5, 2, 3, 0, 0xfffd, 0, 0);
+        }
+    }
+
+    /// Verifies single-width vector high-half multiply operations.
+    @Test
+    public void vectorMultiplyHighInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            long[] values = {0xffff_ffffL, 0x8000_0000L, 0x7fff_ffffL, 2};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeInt(input + (long) index * Integer.BYTES, (int) values[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(32, 1)),
+                    vle(32, 1, 6),
+                    vmulhuVx(2, 1, 11),
+                    vmulhVx(3, 1, 12),
+                    vmulhsuVx(4, 1, 11),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(11, 2);
+            machine.state().setRegister(12, -2);
+            machine.state().setRegister(6, input);
+
+            runDecodedProgram(machine);
+
+            assertVectorElements(machine.state(), 2, 1, 1, 0, 0);
+            assertVectorElements(machine.state(), 3, 0, 1, 0xffff_ffffL, 0xffff_ffffL);
+            assertVectorElements(machine.state(), 4, 0xffff_ffffL, 0xffff_ffffL, 0, 0);
+        }
+    }
+
+    /// Verifies strided vector loads and stores.
+    @Test
+    public void vectorStridedLoadAndStoreExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            long output = TEST_PC + 512;
+            for (int index = 0; index < 4; index++) {
+                machine.memory().writeShort(input + (long) index * 4, (short) (index + 1));
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(16, 1)),
+                    vlse(16, 1, 6, 11),
+                    vaddVi(2, 1, 3),
+                    vsse(16, 2, 7, 12),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 4);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(7, output);
+            machine.state().setRegister(11, 4);
+            machine.state().setRegister(12, 4);
+
+            runDecodedProgram(machine);
+
+            for (int index = 0; index < 4; index++) {
+                assertEquals(index + 4, machine.memory().readUnsignedShort(output + (long) index * 4));
+            }
+        }
+    }
+
+    /// Verifies indexed vector loads and stores with index EEW equal to SEW.
+    @Test
+    public void vectorIndexedLoadAndStoreExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long offsets = TEST_PC + 256;
+            long input = TEST_PC + 512;
+            long output = TEST_PC + 768;
+            for (int index = 0; index < 4; index++) {
+                machine.memory().writeShort(offsets + (long) index * Short.BYTES, (short) (index * 4));
+                machine.memory().writeShort(input + (long) index * 4, (short) (index + 1));
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(16, 1)),
+                    vle(16, 1, 6),
+                    vluxei(16, 2, 7, 1),
+                    vaddVi(3, 2, 2),
+                    vsuxei(16, 3, 8, 1),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 4);
+            machine.state().setRegister(6, offsets);
+            machine.state().setRegister(7, input);
+            machine.state().setRegister(8, output);
+
+            runDecodedProgram(machine);
+
+            for (int index = 0; index < 4; index++) {
+                assertEquals(index + 3, machine.memory().readUnsignedShort(output + (long) index * 4));
+            }
+        }
+    }
+
+    /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
+    private static void prepareExit(MachineState state) {
+        state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
+    }
+
+    /// Runs decoded blocks until the test program exits.
+    private static void runDecodedProgram(TestMachine machine) {
+        for (int index = 0; index < 8; index++) {
+            try {
+                DecodedBlock block = RiscVDecoder.decodeBlock(machine.memory(), machine.state().pc());
+                DecodedBlockTestExecutor.execute(machine.state(), block);
+            } catch (ProgramExitException exception) {
+                return;
+            }
+        }
+        fail("Decoded vector program did not exit");
+    }
+
+    /// Asserts vector byte elements.
+    private static void assertVectorBytes(MachineState state, int register, int... expected) {
+        for (int index = 0; index < expected.length; index++) {
+            assertEquals(expected[index], state.vectorUnit().readElement(register, index));
+        }
+    }
+
+    /// Asserts vector elements.
+    private static void assertVectorElements(MachineState state, int register, long... expected) {
+        for (int index = 0; index < expected.length; index++) {
+            assertEquals(expected[index], state.vectorUnit().readElement(register, index));
+        }
+    }
+
+    /// Loads little-endian instruction words at the vector test address.
+    private static void loadInstructions(Memory memory, int... instructions) {
+        ByteBuffer code = ByteBuffer.allocate(instructions.length * Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        for (int instruction : instructions) {
+            code.putInt(instruction);
+        }
+        memory.load(TEST_PC, code.array(), 0, code.capacity());
+    }
+
+    /// Encodes a `vtype` immediate.
+    private static int vtype(int sew, int lmul) {
+        int vsew = switch (sew) {
+            case 8 -> 0;
+            case 16 -> 1;
+            case 32 -> 2;
+            case 64 -> 3;
+            default -> throw new IllegalArgumentException("Unsupported SEW: " + sew);
+        };
+        int vlmul = switch (lmul) {
+            case 1 -> 0;
+            case 2 -> 1;
+            case 4 -> 2;
+            case 8 -> 3;
+            default -> throw new IllegalArgumentException("Unsupported LMUL: " + lmul);
+        };
+        return (1 << 7) | (1 << 6) | (vsew << 3) | vlmul;
+    }
+
+    /// Encodes a raw `vtype` immediate with a caller-supplied `vlmul` field.
+    private static int vtypeRaw(int sew, int vlmul) {
+        int vsew = switch (sew) {
+            case 8 -> 0;
+            case 16 -> 1;
+            case 32 -> 2;
+            case 64 -> 3;
+            default -> throw new IllegalArgumentException("Unsupported SEW: " + sew);
+        };
+        return (1 << 7) | (1 << 6) | (vsew << 3) | vlmul;
+    }
+
+    /// Encodes `vsetvli`.
+    private static int vsetvli(int rd, int rs1, int vtype) {
+        return (vtype << 20) | (rs1 << 15) | (7 << 12) | (rd << 7) | 0x57;
+    }
+
+    /// Encodes `vsetivli`.
+    private static int vsetivli(int rd, int avl, int vtype) {
+        return (3 << 30) | (vtype << 20) | (avl << 15) | (7 << 12) | (rd << 7) | 0x57;
+    }
+
+    /// Encodes `vsetvl`.
+    private static int vsetvl(int rd, int rs1, int rs2) {
+        return (1 << 31) | (rs2 << 20) | (rs1 << 15) | (7 << 12) | (rd << 7) | 0x57;
+    }
+
+    /// Encodes an unmasked unit-stride vector load.
+    private static int vle(int sew, int vd, int rs1) {
+        return (1 << 25) | (width(sew) << 12) | (rs1 << 15) | (vd << 7) | 0x07;
+    }
+
+    /// Encodes an unmasked unit-stride vector store.
+    private static int vse(int sew, int vs3, int rs1) {
+        return (1 << 25) | (width(sew) << 12) | (rs1 << 15) | (vs3 << 7) | 0x27;
+    }
+
+    /// Encodes an unmasked strided vector load.
+    private static int vlse(int sew, int vd, int rs1, int rs2) {
+        return (2 << 26) | (1 << 25) | (rs2 << 20) | (rs1 << 15) | (width(sew) << 12) | (vd << 7) | 0x07;
+    }
+
+    /// Encodes an unmasked strided vector store.
+    private static int vsse(int sew, int vs3, int rs1, int rs2) {
+        return (2 << 26) | (1 << 25) | (rs2 << 20) | (rs1 << 15) | (width(sew) << 12) | (vs3 << 7) | 0x27;
+    }
+
+    /// Encodes an unmasked unordered indexed vector load.
+    private static int vluxei(int sew, int vd, int rs1, int vs2) {
+        return (1 << 26) | (1 << 25) | (vs2 << 20) | (rs1 << 15) | (width(sew) << 12) | (vd << 7) | 0x07;
+    }
+
+    /// Encodes an unmasked unordered indexed vector store.
+    private static int vsuxei(int sew, int vs3, int rs1, int vs2) {
+        return (1 << 26) | (1 << 25) | (vs2 << 20) | (rs1 << 15) | (width(sew) << 12) | (vs3 << 7) | 0x27;
+    }
+
+    /// Encodes `vadd.vi`.
+    private static int vaddVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x00, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vadd.vv`.
+    private static int vaddVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x00, true, vd, vs1, vs2, 0);
+    }
+
+    /// Encodes `vsub.vx`.
+    private static int vsubVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x02, true, vd, rs1, vs2, 4);
+    }
+
+    /// Encodes `vminu.vx`.
+    private static int vminuVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x04, true, vd, rs1, vs2, 4);
+    }
+
+    /// Encodes `vmax.vx`.
+    private static int vmaxVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x07, true, vd, rs1, vs2, 4);
+    }
+
+    /// Encodes masked `vor.vv`.
+    private static int vorVvMasked(int vd, int vs2, int vs1) {
+        return vectorInteger(0x0a, false, vd, vs1, vs2, 0);
+    }
+
+    /// Encodes `vsrl.vi`.
+    private static int vsrlVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x28, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vsra.vi`.
+    private static int vsraVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x29, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vmerge.vvm`.
+    private static int vmergeVvm(int vd, int vs2, int vs1) {
+        return vectorInteger(0x17, false, vd, vs1, vs2, 0);
+    }
+
+    /// Encodes `vmsltu.vx`.
+    private static int vmsltuVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x1a, true, vd, rs1, vs2, 4);
+    }
+
+    /// Encodes `vmsgt.vi`.
+    private static int vmsgtVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x1f, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vmand.mm`.
+    private static int vmandMm(int vd, int vs2, int vs1) {
+        return vectorInteger(0x19, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vmxor.mm`.
+    private static int vmxorMm(int vd, int vs2, int vs1) {
+        return vectorInteger(0x1b, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vmul.vx`.
+    private static int vmulVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x25, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vmulhu.vx`.
+    private static int vmulhuVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x24, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vmulh.vx`.
+    private static int vmulhVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x27, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vmulhsu.vx`.
+    private static int vmulhsuVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x26, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vdivu.vx`.
+    private static int vdivuVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x20, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vdiv.vx`.
+    private static int vdivVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x21, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vrem.vx`.
+    private static int vremVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x23, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes a vector integer instruction.
+    private static int vectorInteger(int funct6, boolean unmasked, int vd, int rs1, int vs2, int funct3) {
+        return (funct6 << 26)
+                | ((unmasked ? 1 : 0) << 25)
+                | (vs2 << 20)
+                | (rs1 << 15)
+                | (funct3 << 12)
+                | (vd << 7)
+                | 0x57;
+    }
+
+    /// Returns the vector memory width encoding for a SEW.
+    private static int width(int sew) {
+        return switch (sew) {
+            case 8 -> 0;
+            case 16 -> 5;
+            case 32 -> 6;
+            case 64 -> 7;
+            default -> throw new IllegalArgumentException("Unsupported SEW: " + sew);
+        };
+    }
+
+    /// Owns a vector test machine and its closeable resources.
+    ///
+    /// @param memory the guest memory under test
+    /// @param syscalls the syscall handler attached to the machine state
+    /// @param state the mutable architectural state under test
+    @NotNullByDefault
+    private record TestMachine(
+            Memory memory,
+            GuestSyscalls syscalls,
+            MachineState state) implements AutoCloseable {
+        /// Creates a test machine initialized at the vector test address.
+        private static TestMachine create() {
+            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
+            GuestSyscalls syscalls = new GuestSyscalls(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            MachineState state = new MachineState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            state.setPc(TEST_PC);
+            return new TestMachine(memory, syscalls, state);
+        }
+
+        /// Closes the syscall handler and guest memory backing this test machine.
+        @Override
+        public void close() {
+            try {
+                syscalls.close();
+            } finally {
+                memory.close();
+            }
+        }
+    }
+}

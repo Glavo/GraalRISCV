@@ -31,6 +31,18 @@ public final class MachineState {
     /// The `fcsr` floating-point control and status CSR address.
     private static final int FCSR_CSR = 0x003;
 
+    /// The first writable vector CSR address.
+    private static final int VSTART_CSR = 0x008;
+
+    /// The fixed-point saturation vector CSR address.
+    private static final int VXSAT_CSR = 0x009;
+
+    /// The fixed-point rounding-mode vector CSR address.
+    private static final int VXRM_CSR = 0x00a;
+
+    /// The combined vector fixed-point control CSR address.
+    private static final int VCSR_CSR = 0x00f;
+
     /// The `satp` supervisor address translation and protection CSR address.
     private static final int SATP_CSR = 0x180;
 
@@ -82,6 +94,15 @@ public final class MachineState {
     /// The last `hpmcounter` user hardware performance counter CSR address.
     private static final int LAST_HPMCOUNTER_CSR = 0xc1f;
 
+    /// The read-only vector length CSR address.
+    private static final int VL_CSR = 0xc20;
+
+    /// The read-only vector type CSR address.
+    private static final int VTYPE_CSR = 0xc21;
+
+    /// The read-only vector register byte-length CSR address.
+    private static final int VLENB_CSR = 0xc22;
+
     /// The writable bit mask for `fflags`.
     private static final int FFLAGS_MASK = 0x1f;
 
@@ -96,6 +117,9 @@ public final class MachineState {
 
     /// The mutable floating-point register file, stored as raw 64-bit values.
     private final long[] floatingPointRegisters = new long[FLOATING_POINT_REGISTER_COUNT];
+
+    /// The mutable vector architectural state.
+    private final VectorUnit vectorUnit;
 
     /// The guest memory for this execution.
     private final Memory memory;
@@ -168,6 +192,19 @@ public final class MachineState {
             long fromhostAddress,
             GuestSyscalls syscalls,
             OutputStream traceStream) {
+        this(memory, maxInstructions, trace, tohostAddress, fromhostAddress, syscalls, traceStream, VectorUnit.DEFAULT_VLEN_BITS);
+    }
+
+    /// Creates a new architectural state container with an explicit trace stream and vector register length.
+    public MachineState(
+            Memory memory,
+            long maxInstructions,
+            boolean trace,
+            long tohostAddress,
+            long fromhostAddress,
+            GuestSyscalls syscalls,
+            OutputStream traceStream,
+            int vectorVlenBits) {
         this(
                 memory,
                 maxInstructions,
@@ -176,7 +213,8 @@ public final class MachineState {
                 fromhostAddress,
                 syscalls,
                 asPrintStream(traceStream),
-                syscalls.initialThread());
+                syscalls.initialThread(),
+                vectorVlenBits);
     }
 
     /// Creates a new architectural state container with a prepared trace print stream.
@@ -188,8 +226,10 @@ public final class MachineState {
             long fromhostAddress,
             GuestSyscalls syscalls,
             PrintStream traceStream,
-            GuestThread thread) {
+            GuestThread thread,
+            int vectorVlenBits) {
         this.memory = memory;
+        this.vectorUnit = new VectorUnit(vectorVlenBits);
         this.maxInstructions = maxInstructions;
         this.trace = trace;
         this.canRetireBlock = maxInstructions == 0 && !trace;
@@ -267,6 +307,11 @@ public final class MachineState {
         floatingPointRegisters[index] = value;
     }
 
+    /// Returns the mutable vector architectural state.
+    public VectorUnit vectorUnit() {
+        return vectorUnit;
+    }
+
     /// Returns the optional `fromhost` symbol guest address.
     public long fromhostAddress() {
         return fromhostAddress;
@@ -332,9 +377,11 @@ public final class MachineState {
                 fromhostAddress,
                 syscalls,
                 traceStream,
-                childThread);
+                childThread,
+                vectorUnit.vlenBits());
         System.arraycopy(registers, 0, child.registers, 0, registers.length);
         System.arraycopy(floatingPointRegisters, 0, child.floatingPointRegisters, 0, floatingPointRegisters.length);
+        vectorUnit.copyTo(child.vectorUnit);
         child.floatingPointControlStatus = floatingPointControlStatus;
         child.instructionFetchGeneration = instructionFetchGeneration;
         child.pc = childPc;
@@ -367,11 +414,15 @@ public final class MachineState {
             case FFLAGS_CSR -> floatingPointControlStatus & FFLAGS_MASK;
             case FRM_CSR -> (floatingPointControlStatus >>> 5) & FRM_MASK;
             case FCSR_CSR -> floatingPointControlStatus & FCSR_MASK;
+            case VSTART_CSR, VXSAT_CSR, VXRM_CSR, VCSR_CSR -> vectorUnit.readWritableControlStatusRegister(csr);
             case SATP_CSR, STVEC_CSR, MSTATUS_CSR, MEDELEG_CSR, MIDELEG_CSR, MIE_CSR, MTVEC_CSR,
                  PMPCFG0_CSR, PMPADDR0_CSR, MNSTATUS_CSR -> 0;
             case MEPC_CSR -> machineExceptionProgramCounter;
             case MHARTID_CSR -> 0;
             case CYCLE_CSR, TIME_CSR, INSTRET_CSR -> instructionCount;
+            case VL_CSR -> vectorUnit.vectorLength();
+            case VTYPE_CSR -> vectorUnit.vectorType();
+            case VLENB_CSR -> vectorUnit.vlenBytes();
             default -> throw unsupportedControlStatusRegister(csr);
         };
     }
@@ -392,6 +443,7 @@ public final class MachineState {
                         | (((int) value & FRM_MASK) << 5);
             }
             case FCSR_CSR -> floatingPointControlStatus = (int) value & FCSR_MASK;
+            case VSTART_CSR, VXSAT_CSR, VXRM_CSR, VCSR_CSR -> vectorUnit.writeWritableControlStatusRegister(csr, value);
             case SATP_CSR, STVEC_CSR, MSTATUS_CSR, MEDELEG_CSR, MIDELEG_CSR, MIE_CSR, MTVEC_CSR,
                  PMPCFG0_CSR, PMPADDR0_CSR, MNSTATUS_CSR -> {
             }

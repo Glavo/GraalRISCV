@@ -1,2 +1,3 @@
 rva23_sc_tests = \
-	rva23-scalar-supm
+    rva23-scalar-supm \
+    rva23-vector-basic

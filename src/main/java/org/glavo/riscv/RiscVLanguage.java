@@ -15,6 +15,7 @@ import org.glavo.riscv.nodes.RiscVRootNode;
 import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.ElfLoader;
 import org.glavo.riscv.runtime.TimeSource;
+import org.glavo.riscv.runtime.VectorUnit;
 import org.graalvm.options.OptionCategory;
 import org.graalvm.options.OptionDescriptors;
 import org.graalvm.options.OptionKey;
@@ -54,6 +55,9 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
 
     /// The default HugeTLB page pool size.
     public static final long DEFAULT_HUGE_PAGES = Memory.DEFAULT_HUGE_PAGES;
+
+    /// The default vector register length in bits.
+    public static final long DEFAULT_VECTOR_VLEN = VectorUnit.DEFAULT_VLEN_BITS;
 
     /// The sentinel value that asks the runtime to infer the memory base from ELF load segments.
     public static final long AUTO_MEMORY_BASE = -1L;
@@ -112,6 +116,14 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             stability = OptionStability.STABLE)
     static final OptionKey<Long> HUGE_PAGES = new OptionKey<>(DEFAULT_HUGE_PAGES);
 
+    /// The `riscv.vectorVlen` language option.
+    @Option(
+            name = "vectorVlen",
+            help = "Vector register length in bits; power of two from 64 through 65536. Default: 128.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> VECTOR_VLEN = new OptionKey<>(DEFAULT_VECTOR_VLEN);
+
     /// The `riscv.maxInstructions` language option.
     @Option(
             name = "maxInstructions",
@@ -169,6 +181,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(MAX_COMMITTED_PAGES),
                 env.getOptions().get(HUGE_PAGE_SIZE),
                 env.getOptions().get(HUGE_PAGES),
+                env.getOptions().get(VECTOR_VLEN),
                 env.getOptions().get(MAX_INSTRUCTIONS),
                 env.getOptions().get(TRACE),
                 timeSourceFromDebugFixedClockNanos(env.getOptions().get(DEBUG_FIXED_CLOCK_NANOS)),

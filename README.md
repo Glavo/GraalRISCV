@@ -42,6 +42,7 @@ Options:
   --max-committed-pages <n>  Maximum committed guest base pages; 0 means unlimited.
   --huge-page-size <bytes>   Guest HugeTLB page size in bytes.
   --huge-pages <n>           Guest HugeTLB page pool size.
+  --vector-vlen <bits>       Vector register length in bits. Default is 128.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
   --mount <guest>=<path>     Mount a host directory at an absolute guest path.
   --host-root <path>         Alias for --mount /=<path>.

@@ -5,7 +5,7 @@
 - GraalRISCV is a user-mode RV64 emulator that implements the RVA22U64 user-mode profile.
 - The supported execution target is statically linked 64-bit little-endian RISC-V ELF programs on a Linux-like user-mode runtime.
 - The project remains user-mode only. Privileged mode, guest page tables, interrupts, devices, and Linux kernel boot are out of scope unless a later plan explicitly adds them.
-- The current build can run unit tests, package smoke tests, example workloads, pinned `riscv-tests`, and repository-owned RVA22U64 acceptance tests.
+- The current build can run unit tests, package smoke tests, example workloads, pinned `riscv-tests`, and repository-owned RVA22U64/RVA23U64 acceptance tests.
 
 ## Completed Milestones
 
@@ -37,7 +37,8 @@
 - Additional RVA23U64 scalar instructions are implemented and unit-tested in the decoder and interpreter: `Zicond`, `Zimop`, `Zcmop`, `Zcb`, and `Zawrs`.
 - RVA23U64 scalar instructions and no-op hints are covered in the production micro-bytecode path, including `czero`, `mop`, `wrs`, and `c.mop`.
 - `Supm` pointer masking is implemented through Linux `PR_SET_TAGGED_ADDR_CTRL` and `PR_GET_TAGGED_ADDR_CTRL`, with default PMLEN `0`, implemented PMLEN `7`, syscall tagged-address ABI gating through `PR_TAGGED_ADDR_ENABLE`, clone inheritance, and masking for instruction fetch, PC targets, memory accesses, atomics, CBO zeroing, and syscall guest pointers. Micro-block hot memory paths use a precomputed mask and avoid `ThreadLocal` lookups.
-- `src/test/asm/rva23` and `testRva23Acceptance` build and run repository-owned RVA23 scalar/Supm acceptance coverage.
+- RVV 1.0 execution groundwork is implemented: vector architectural state, configurable `VLEN`, vector CSRs, `vsetvli`/`vsetivli`/`vsetvl`, unit-stride/strided/indexed vector load-store, single-width integer arithmetic, compare, mask, multiply, divide, and remainder subsets, interpreter execution, reusable micro-block fallback semantics, and focused unit and RVA23 acceptance coverage.
+- `src/test/asm/rva23` and `testRva23Acceptance` build and run repository-owned RVA23 scalar, Supm, and vector-smoke acceptance coverage.
 - `Zfa` and `Zihintntl` remain implemented compatibility features today and are listed as RVA23U64 mandatory target requirements.
 
 ## Remaining Work
@@ -46,10 +47,10 @@
 
 - Treat RVA23U64 as a complete-profile target, not a partial feature flag. Do not report RVA23U64 through README, `riscv_hwprobe`, or profile constants until all mandatory user-mode requirements and acceptance tests pass.
 - Keep `Rva23Profile` as the target source of truth and wire it into reporting only after the remaining mandatory vector and acceptance-test gates pass.
-- Implement vector support for correctness first through the interpreter: vector architectural state, vector CSRs, configurable `VLEN`, `V` 1.0 base behavior, `Zvfhmin`, `Zvbb`, and `Zvkt`. Micro-block and trace execution may initially fall back to shared interpreter semantics for vector instructions.
-- Add `--vector-vlen <bits>`, defaulting to `128`, and accept only power-of-two values that can satisfy the implemented vector register layout. RVA23U64 reporting requires a configuration that satisfies the profile minimum.
+- Complete the remaining RVV 1.0 instruction surface beyond the current foundation: widening/narrowing arithmetic, carry/borrow, reductions, slides, gather/compress, fixed-point rounding/saturation, remaining vector load/store forms such as segment and whole-register transfers, fault-only-first loads, vector floating-point, vector conversion, and precise illegal-instruction boundaries.
+- Complete RVA23U64 mandatory vector extensions on top of base `V`: `Zvfhmin`, `Zvbb`, `Zvkb`, `Zvkt`, and the `Zvl*` minimum-length requirements. Keep `--vector-vlen <bits>` as the configuration mechanism and require a profile-valid VLEN before enabling full RVA23U64 reporting.
 - Extend `riscv_hwprobe` reporting for RVA23U64 mandatory scalar and vector capabilities, update misaligned vector reporting to match the implementation, and continue leaving optional extensions such as `Zvkng`, `Zvksg`, and `Zacas` unreported until implemented.
-- Extend `testRva23Acceptance` beyond the current scalar/Supm suite for vector configuration, vector integer/FP/load-store behavior, vector bit-manipulation, `Zvkt` data-independent behavior, `hwprobe`, and illegal opcode boundaries.
+- Extend `testRva23Acceptance` beyond the current scalar/Supm/vector-smoke suite for complete vector integer/FP/load-store behavior, vector bit-manipulation, `Zvkt` data-independent behavior, `hwprobe`, and illegal opcode boundaries.
 
 ### Broaden Static Linux Compatibility
 
