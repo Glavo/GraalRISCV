@@ -375,6 +375,10 @@ public final class VectorUnit {
             executeIntegerExtensionUnary(raw, vd, vs1, vs2, nextPc, state);
             return;
         }
+        if (isIntegerBitManipUnary(funct3, funct6, vs1)) {
+            executeIntegerBitManipUnary(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
         if (isWholeRegisterMove(funct3, funct6)) {
             executeWholeRegisterMove(raw, vd, vs1, vs2, nextPc, state);
             return;
@@ -397,6 +401,10 @@ public final class VectorUnit {
         }
         if (isCompress(funct3, funct6)) {
             executeCompress(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
+        if (isWideningShiftLeftLogical(funct3, funct6)) {
+            executeWideningShiftLeftLogical(raw, vd, vs1, vs2, nextPc, state);
             return;
         }
         if (isWideningInteger(funct3, funct6)) {
@@ -850,6 +858,7 @@ public final class VectorUnit {
         long normalizedRight = right & mask;
         return switch (funct6) {
             case 0x00 -> (normalizedLeft + normalizedRight) & mask;
+            case 0x01 -> normalizedLeft & ~normalizedRight & mask;
             case 0x02 -> (normalizedLeft - normalizedRight) & mask;
             case 0x03 -> (normalizedRight - normalizedLeft) & mask;
             case 0x04 -> Long.compareUnsigned(normalizedLeft, normalizedRight) <= 0 ? normalizedLeft : normalizedRight;
@@ -859,6 +868,10 @@ public final class VectorUnit {
             case 0x09 -> normalizedLeft & normalizedRight;
             case 0x0a -> normalizedLeft | normalizedRight;
             case 0x0b -> normalizedLeft ^ normalizedRight;
+            case 0x14 -> rotateRightElement(normalizedLeft, rotationAmount(funct6, funct3, raw, normalizedRight));
+            case 0x15 -> funct3 == OPIVI
+                    ? rotateRightElement(normalizedLeft, rotationAmount(funct6, funct3, raw, normalizedRight))
+                    : rotateLeftElement(normalizedLeft, normalizedRight);
             case 0x17 -> executeMerge(raw, element, normalizedLeft, normalizedRight);
             case 0x20 -> divideUnsignedElement(normalizedLeft, normalizedRight);
             case 0x21 -> divideSignedElement(normalizedLeft, normalizedRight);
@@ -881,16 +894,19 @@ public final class VectorUnit {
     private void executeFloatingPoint(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
-        if (sewBits() != Float.SIZE && sewBits() != Double.SIZE) {
-            throw new RiscVException("Vector floating-point operations require SEW 32 or 64");
-        }
         if (isFloatingPointScalarMove(funct3, funct6, vs1, vs2)) {
+            if (sewBits() != Float.SIZE && sewBits() != Double.SIZE) {
+                throw new RiscVException("Vector floating-point scalar moves require SEW 32 or 64");
+            }
             executeFloatingPointScalarMove(raw, vd, vs1, vs2, nextPc, state);
             return;
         }
         if (isFloatingPointUnary(funct3, funct6)) {
             executeFloatingPointUnary(raw, vd, vs1, vs2, nextPc, state);
             return;
+        }
+        if (sewBits() != Float.SIZE && sewBits() != Double.SIZE) {
+            throw new RiscVException("Vector floating-point operations require SEW 32 or 64");
         }
         if (isFloatingPointReduction(funct3, funct6)) {
             executeFloatingPointReduction(raw, vd, vs1, vs2, nextPc, state);
@@ -996,8 +1012,12 @@ public final class VectorUnit {
 
     /// Executes widening and narrowing floating-point conversion operations.
     private void executeMixedWidthFloatingPointConvert(int raw, int vd, int selector, int vs2, long nextPc, MachineState state) {
+        if (sewBits() == Short.SIZE) {
+            executeHalfSingleFloatingPointConvert(raw, vd, selector, vs2, nextPc, state);
+            return;
+        }
         if (sewBits() != Float.SIZE) {
-            throw new RiscVException("Mixed-width vector floating-point conversions require SEW 32");
+            throw new RiscVException("Mixed-width vector floating-point conversions require SEW 16 or 32");
         }
         int roundingMode = effectiveFloatingPointRoundingMode(state);
         long narrowGroupBytes = groupBytesForElementBits(Float.SIZE);
@@ -1033,6 +1053,44 @@ public final class VectorUnit {
                         default -> throw new RiscVException("Unsupported vector narrowing conversion selector: " + selector);
                     };
                     writeElement(vd, element, Float.BYTES, narrowGroupBytes, result);
+                }
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes the `Zvfhmin` half/single vector floating-point conversions.
+    private void executeHalfSingleFloatingPointConvert(int raw, int vd, int selector, int vs2, long nextPc, MachineState state) {
+        int roundingMode = effectiveFloatingPointRoundingMode(state);
+        long halfGroupBytes = groupBytesForElementBits(Short.SIZE);
+        long singleGroupBytes = groupBytesForElementBits(Float.SIZE);
+        boolean widening = selector == 12;
+        if (!widening && selector != 20) {
+            throw new RiscVException("Unsupported Zvfhmin vector conversion selector: " + selector);
+        }
+        requireRegisterGroup(vd, widening ? singleGroupBytes : halfGroupBytes);
+        requireRegisterGroup(vs2, widening ? halfGroupBytes : singleGroupBytes);
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                if (widening) {
+                    int halfBits = (int) readElement(vs2, element, Short.BYTES, halfGroupBytes);
+                    writeElement(
+                            vd,
+                            element,
+                            Float.BYTES,
+                            singleGroupBytes,
+                            RiscVInstructionSemantics.convertHalfBitsToSingleBits(state, halfBits) & 0xffff_ffffL);
+                } else {
+                    int singleBits = (int) readElement(vs2, element, Float.BYTES, singleGroupBytes);
+                    writeElement(
+                            vd,
+                            element,
+                            Short.BYTES,
+                            halfGroupBytes,
+                            RiscVInstructionSemantics.convertSingleBitsToHalfBits(state, singleBits, roundingMode));
                 }
             }
         }
@@ -1723,6 +1781,66 @@ public final class VectorUnit {
         state.setPc(nextPc);
     }
 
+    /// Executes `Zvbb`/`Zvkb` vector bit-manipulation unary instructions.
+    private void executeIntegerBitManipUnary(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        requireRegisterGroup(vd);
+        requireRegisterGroup(vs2);
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                writeElement(vd, element, executeIntegerBitManipUnaryOperation(vs1, readElement(vs2, element)));
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes one `Zvbb`/`Zvkb` vector bit-manipulation unary operation.
+    private long executeIntegerBitManipUnaryOperation(int selector, long value) {
+        long normalized = value & elementMask();
+        return switch (selector) {
+            case 8 -> reverseBitsInBytes(normalized);
+            case 9 -> reverseBytesInElement(normalized);
+            case 10 -> reverseBitsInElement(normalized);
+            case 12 -> leadingZerosInElement(normalized);
+            case 13 -> trailingZerosInElement(normalized);
+            case 14 -> DataIndependent.bitCount(normalized);
+            default -> throw new AssertionError("Unexpected vector bit-manipulation selector: " + selector);
+        };
+    }
+
+    /// Executes `vwsll.[vv,vx,vi]`.
+    private void executeWideningShiftLeftLogical(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        int funct3 = (raw >>> 12) & 0x7;
+        int sourceBits = sewBits();
+        int resultBits = sourceBits * 2;
+        requireSupportedWideElement(resultBits);
+        long sourceGroupBytes = groupBytesForElementBits(sourceBits);
+        long resultGroupBytes = groupBytesForElementBits(resultBits);
+        requireRegisterGroup(vd, resultGroupBytes);
+        requireRegisterGroup(vs2, sourceGroupBytes);
+        if (funct3 == OPIVV) {
+            requireRegisterGroup(vs1, sourceGroupBytes);
+        }
+        long start = vectorStart;
+        long length = vectorLength;
+        for (long element = start; element < length; element++) {
+            if (isActive(raw, element)) {
+                long value = readElement(vs2, element, sourceBits / Byte.SIZE, sourceGroupBytes);
+                long shift = integerOperand(funct3, vs1, element, state, sourceBits, true) & (resultBits - 1);
+                writeElement(
+                        vd,
+                        element,
+                        resultBits / Byte.SIZE,
+                        resultGroupBytes,
+                        value << shift & maskForBits(resultBits));
+            }
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
     /// Executes a whole-vector-register move.
     private void executeWholeRegisterMove(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
         if (((raw >>> 25) & 0x1) == 0) {
@@ -1966,6 +2084,80 @@ public final class VectorUnit {
             default -> throw new RiscVException("Unsupported vector integer compare funct6: 0x"
                     + Integer.toUnsignedString(funct6, 16));
         };
+    }
+
+    /// Returns the rotation amount encoded by a vector rotate instruction.
+    private int rotationAmount(int funct6, int funct3, int raw, long right) {
+        int amount = (int) right;
+        if (funct3 == OPIVI && funct6 == 0x15) {
+            amount = ((raw >>> 26) & 1) << 5 | ((raw >>> 15) & 0x1f);
+        }
+        return amount;
+    }
+
+    /// Rotates an element left by a masked amount.
+    private long rotateLeftElement(long value, long amount) {
+        int bits = sewBits();
+        int shift = (int) amount & (bits - 1);
+        long mask = elementMask();
+        long normalized = value & mask;
+        return (normalized << shift | normalized >>> ((bits - shift) & (bits - 1))) & mask;
+    }
+
+    /// Rotates an element right by a masked amount.
+    private long rotateRightElement(long value, long amount) {
+        int bits = sewBits();
+        int shift = (int) amount & (bits - 1);
+        long mask = elementMask();
+        long normalized = value & mask;
+        return (normalized >>> shift | normalized << ((bits - shift) & (bits - 1))) & mask;
+    }
+
+    /// Reverses all bits in the current element width.
+    private long reverseBitsInElement(long value) {
+        return Long.reverse(value & elementMask()) >>> (Long.SIZE - sewBits());
+    }
+
+    /// Reverses bits independently in every byte of the current element.
+    private long reverseBitsInBytes(long value) {
+        long result = 0;
+        int bytes = sewBytes();
+        for (int index = 0; index < bytes; index++) {
+            long byteValue = value >>> (index * Byte.SIZE) & 0xffL;
+            result |= reverseByte(byteValue) << (index * Byte.SIZE);
+        }
+        return result;
+    }
+
+    /// Reverses byte order in the current element.
+    private long reverseBytesInElement(long value) {
+        long result = 0;
+        int bytes = sewBytes();
+        for (int index = 0; index < bytes; index++) {
+            long byteValue = value >>> (index * Byte.SIZE) & 0xffL;
+            result |= byteValue << ((bytes - 1 - index) * Byte.SIZE);
+        }
+        return result;
+    }
+
+    /// Reverses the bits in one byte without a lookup table.
+    private static long reverseByte(long value) {
+        long result = value & 0xffL;
+        result = (result >>> 1 & 0x55) | (result & 0x55) << 1;
+        result = (result >>> 2 & 0x33) | (result & 0x33) << 2;
+        return (result >>> 4 & 0x0f) | (result & 0x0f) << 4;
+    }
+
+    /// Counts leading zero bits in the current element.
+    private long leadingZerosInElement(long value) {
+        int bits = sewBits();
+        long zeros = DataIndependent.numberOfLeadingZeros(value << (Long.SIZE - bits));
+        return zeros - (zeros >>> 6) * (Long.SIZE - bits);
+    }
+
+    /// Counts trailing zero bits in the current element.
+    private long trailingZerosInElement(long value) {
+        return DataIndependent.numberOfTrailingZeros(value | ~elementMask());
     }
 
     /// Executes unsigned element division.
@@ -2316,6 +2508,11 @@ public final class VectorUnit {
                     throw unsupportedVectorIntegerFormat(funct6, funct3);
                 }
             }
+            case 0x01 -> {
+                if (funct3 != OPIVV && funct3 != OPIVX) {
+                    throw unsupportedVectorIntegerFormat(funct6, funct3);
+                }
+            }
             case 0x02, 0x04, 0x05, 0x06, 0x07, 0x1a, 0x1b -> {
                 if (funct3 != OPIVV && funct3 != OPIVX) {
                     throw unsupportedVectorIntegerFormat(funct6, funct3);
@@ -2323,6 +2520,16 @@ public final class VectorUnit {
             }
             case 0x03, 0x1e, 0x1f -> {
                 if (funct3 != OPIVX && funct3 != OPIVI) {
+                    throw unsupportedVectorIntegerFormat(funct6, funct3);
+                }
+            }
+            case 0x14 -> {
+                if (funct3 != OPIVV && funct3 != OPIVX && funct3 != OPIVI) {
+                    throw unsupportedVectorIntegerFormat(funct6, funct3);
+                }
+            }
+            case 0x15 -> {
+                if (funct3 != OPIVV && funct3 != OPIVX && funct3 != OPIVI) {
                     throw unsupportedVectorIntegerFormat(funct6, funct3);
                 }
             }
@@ -2445,6 +2652,13 @@ public final class VectorUnit {
         return funct3 == OPMVV && funct6 == 0x12 && vs1 >= 2 && vs1 <= 7;
     }
 
+    /// Returns whether the operation is a `Zvbb`/`Zvkb` bit-manipulation unary instruction.
+    private static boolean isIntegerBitManipUnary(int funct3, int funct6, int vs1) {
+        return funct3 == OPMVV
+                && funct6 == 0x12
+                && (vs1 == 8 || vs1 == 9 || vs1 == 10 || vs1 == 12 || vs1 == 13 || vs1 == 14);
+    }
+
     /// Returns whether the operation is a whole-register vector move.
     private static boolean isWholeRegisterMove(int funct3, int funct6) {
         return funct3 == OPIVI && funct6 == 0x27;
@@ -2477,9 +2691,16 @@ public final class VectorUnit {
 
     /// Returns whether the operation is a widening integer arithmetic instruction.
     private static boolean isWideningInteger(int funct3, int funct6) {
-        return (funct3 == OPIVV || funct3 == OPIVX)
-                && (funct6 >= 0x30 && funct6 <= 0x38
-                || funct6 == 0x3a || funct6 == 0x3b);
+        boolean opiv = funct3 == OPIVV || funct3 == OPIVX;
+        boolean opm = funct3 == OPMVV || funct3 == OPMVX;
+        return opiv && funct6 >= 0x30 && funct6 <= 0x33
+                || opm && funct6 >= 0x34 && funct6 <= 0x38
+                || opm && (funct6 == 0x3a || funct6 == 0x3b);
+    }
+
+    /// Returns whether the operation is `vwsll.[vv,vx,vi]`.
+    private static boolean isWideningShiftLeftLogical(int funct3, int funct6) {
+        return funct6 == 0x35 && (funct3 == OPIVV || funct3 == OPIVX || funct3 == OPIVI);
     }
 
     /// Returns whether the operation is an integer multiply-add instruction.

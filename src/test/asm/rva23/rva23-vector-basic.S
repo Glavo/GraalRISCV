@@ -2,13 +2,22 @@
 #include "test_macros.h"
 
 .equ VTYPE_E8_M1_TA_MA, ((1 << 7) | (1 << 6) | (0 << 3) | 0)
+.equ VTYPE_E16_M1_TA_MA, ((1 << 7) | (1 << 6) | (1 << 3) | 0)
 .equ VTYPE_E32_M1_TA_MA, ((1 << 7) | (1 << 6) | (2 << 3) | 0)
 .equ VSETVLI_T2_A0_E8_M1, ((VTYPE_E8_M1_TA_MA << 20) | (10 << 15) | (7 << 12) | (7 << 7) | 0x57)
+.equ VSETVLI_T2_A0_E16_M1, ((VTYPE_E16_M1_TA_MA << 20) | (10 << 15) | (7 << 12) | (7 << 7) | 0x57)
 .equ VSETVLI_T2_A0_E32_M1, ((VTYPE_E32_M1_TA_MA << 20) | (10 << 15) | (7 << 12) | (7 << 7) | 0x57)
 .equ VLE8_V1_T0, ((1 << 25) | (0 << 12) | (5 << 15) | (1 << 7) | 0x07)
+.equ VLE16_V1_T0, ((1 << 25) | (5 << 12) | (5 << 15) | (1 << 7) | 0x07)
 .equ VLE32_V1_T0, ((1 << 25) | (6 << 12) | (5 << 15) | (1 << 7) | 0x07)
 .equ VLE32_V2_T1, ((1 << 25) | (6 << 12) | (6 << 15) | (2 << 7) | 0x07)
 .equ VLE32_V4_T1, ((1 << 25) | (6 << 12) | (6 << 15) | (4 << 7) | 0x07)
+.equ VANDN_VV_V3_V1_V2, ((0x01 << 26) | (1 << 25) | (1 << 20) | (2 << 15) | (0 << 12) | (3 << 7) | 0x57)
+.equ VREV8_V_V4_V1, ((0x12 << 26) | (1 << 25) | (1 << 20) | (9 << 15) | (2 << 12) | (4 << 7) | 0x57)
+.equ VROR_VI_V5_V1_7, ((0x14 << 26) | (1 << 25) | (1 << 20) | (7 << 15) | (3 << 12) | (5 << 7) | 0x57)
+.equ VWSLL_VI_V6_V1_3, ((0x35 << 26) | (1 << 25) | (1 << 20) | (3 << 15) | (3 << 12) | (6 << 7) | 0x57)
+.equ VFWCVT_F_F_V_V2_V1, ((0x12 << 26) | (1 << 25) | (1 << 20) | (12 << 15) | (1 << 12) | (2 << 7) | 0x57)
+.equ VFNCVT_F_F_W_V6_V4, ((0x12 << 26) | (1 << 25) | (4 << 20) | (20 << 15) | (1 << 12) | (6 << 7) | 0x57)
 .equ VADD_VI_V2_V1_5, ((1 << 25) | (1 << 20) | (5 << 15) | (3 << 12) | (2 << 7) | 0x57)
 .equ VMSLTU_VX_V2_V1_A1, ((0x1a << 26) | (1 << 25) | (1 << 20) | (11 << 15) | (4 << 12) | (2 << 7) | 0x57)
 .equ VMSGT_VI_V3_V1_0, ((0x1f << 26) | (1 << 25) | (1 << 20) | (0 << 15) | (3 << 12) | (3 << 7) | 0x57)
@@ -22,9 +31,12 @@
 .equ VSE8_V4_T1, ((1 << 25) | (0 << 12) | (6 << 15) | (4 << 7) | 0x27)
 .equ VSE8_V6_T1, ((1 << 25) | (0 << 12) | (6 << 15) | (6 << 7) | 0x27)
 .equ VSE8_V7_T2, ((1 << 25) | (0 << 12) | (7 << 15) | (7 << 7) | 0x27)
+.equ VSE16_V6_T2, ((1 << 25) | (5 << 12) | (7 << 15) | (6 << 7) | 0x27)
 .equ VSE32_V2_T1, ((1 << 25) | (6 << 12) | (6 << 15) | (2 << 7) | 0x27)
 .equ VSE32_V3_T2, ((1 << 25) | (6 << 12) | (7 << 15) | (3 << 7) | 0x27)
+.equ VSE32_V4_T2, ((1 << 25) | (6 << 12) | (7 << 15) | (4 << 7) | 0x27)
 .equ VSE32_V5_T2, ((1 << 25) | (6 << 12) | (7 << 15) | (5 << 7) | 0x27)
+.equ VSE64_V6_T2, ((1 << 25) | (7 << 12) | (7 << 15) | (6 << 7) | 0x27)
 
 RVTEST_RV64U
 RVTEST_CODE_BEGIN
@@ -155,6 +167,69 @@ RVTEST_CODE_BEGIN
   2: \
   )
 
+  TEST_CASE( 8, a0, 0x0000000000000000, \
+    la t0, vector_bitmanip_input; \
+    la t1, vector_bitmanip_masks; \
+    li a0, 4; \
+    .word VSETVLI_T2_A0_E32_M1; \
+    la t2, vector_bitmanip_output; \
+    .word VLE32_V1_T0; \
+    .word VLE32_V2_T1; \
+    .word VANDN_VV_V3_V1_V2; \
+    .word VSE32_V3_T2; \
+    lw t3, 0(t2); \
+    li t4, 0x01004500; \
+    bne t3, t4, 1f; \
+    .word VREV8_V_V4_V1; \
+    .word VSE32_V4_T2; \
+    lw t3, 0(t2); \
+    li t4, 0x67452301; \
+    bne t3, t4, 1f; \
+    .word VROR_VI_V5_V1_7; \
+    .word VSE32_V5_T2; \
+    lwu t3, 0(t2); \
+    li t4, 0xce02468a; \
+    bne t3, t4, 1f; \
+    .word VWSLL_VI_V6_V1_3; \
+    .word VSE64_V6_T2; \
+    ld t3, 0(t2); \
+    li t4, 0x091a2b38; \
+    bne t3, t4, 1f; \
+    li a0, 0; \
+    j 2f; \
+  1: \
+    li a0, 1; \
+  2: \
+  )
+
+  TEST_CASE( 9, a0, 0x0000000000000000, \
+    la t0, vector_half_input; \
+    la t1, vector_single_input; \
+    li a0, 4; \
+    .word VSETVLI_T2_A0_E16_M1; \
+    la t2, vector_half_output; \
+    .word VLE16_V1_T0; \
+    .word VFWCVT_F_F_V_V2_V1; \
+    .word VSE32_V2_T1; \
+    lw t3, 0(t1); \
+    li t4, 0x3f800000; \
+    bne t3, t4, 1f; \
+    .word VLE32_V4_T1; \
+    .word VFNCVT_F_F_W_V6_V4; \
+    .word VSE16_V6_T2; \
+    lhu t3, 0(t2); \
+    li t4, 0x3c00; \
+    bne t3, t4, 1f; \
+    lhu t3, 2(t2); \
+    li t4, 0xc000; \
+    bne t3, t4, 1f; \
+    li a0, 0; \
+    j 2f; \
+  1: \
+    li a0, 1; \
+  2: \
+  )
+
   TEST_PASSFAIL
 
 RVTEST_CODE_END
@@ -185,6 +260,18 @@ vector_iota_output:
   .byte 0, 0, 0, 0, 0, 0, 0, 0
 vector_index_output:
   .byte 0, 0, 0, 0, 0, 0, 0, 0
+vector_bitmanip_input:
+  .word 0x01234567, 0x80000000, 0x00000010, 0xffffffff
+vector_bitmanip_masks:
+  .word 0x00ff00ff, 0xffffffff, 0x0000000f, 0x55555555
+vector_bitmanip_output:
+  .dword 0, 0, 0, 0
+vector_half_input:
+  .half 0x3c00, 0xc000, 0x7e00, 0x0000
+vector_single_input:
+  .word 0x00000000, 0xc0000000, 0x3f000000, 0x7f800000
+vector_half_output:
+  .half 0, 0, 0, 0
 
 RVTEST_DATA_BEGIN
 

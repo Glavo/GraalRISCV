@@ -467,6 +467,110 @@ public final class VectorInstructionTest {
         }
     }
 
+    /// Verifies RVA23U64 mandatory `Zvbb`/`Zvkb` vector bit-manipulation instructions.
+    @Test
+    public void vectorBitManipulationInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            long masks = TEST_PC + 512;
+            long wideOutput = TEST_PC + 768;
+            long[] values = {0x0123_4567L, 0x8000_0000L, 0x10, 0xffff_ffffL};
+            long[] maskValues = {0x00ff_00ffL, 0xffff_ffffL, 0x0f, 0x5555_5555L};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeInt(input + (long) index * Integer.BYTES, (int) values[index]);
+                machine.memory().writeInt(masks + (long) index * Integer.BYTES, (int) maskValues[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(32, 1)),
+                    vle(32, 1, 6),
+                    vle(32, 2, 7),
+                    vandnVv(3, 1, 2),
+                    vbrevV(4, 1),
+                    vbrev8V(5, 1),
+                    vrev8V(6, 1),
+                    vclzV(7, 1),
+                    vctzV(8, 1),
+                    vcpopV(9, 1),
+                    vrorVi(10, 1, 7),
+                    vrolVx(11, 1, 11),
+                    vwsllVi(12, 1, 3),
+                    vse(64, 12, 12),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(7, masks);
+            machine.state().setRegister(11, 4);
+            machine.state().setRegister(12, wideOutput);
+
+            runDecodedProgram(machine);
+
+            assertVectorElements(machine.state(), 3, 0x0100_4500L, 0, 0x10, 0xaaaa_aaaaL);
+            assertVectorElements(machine.state(), 4, 0xe6a2_c480L, 0x1, 0x0800_0000L, 0xffff_ffffL);
+            assertVectorElements(machine.state(), 5, 0x80c4_a2e6L, 0x0100_0000L, 0x8, 0xffff_ffffL);
+            assertVectorElements(machine.state(), 6, 0x6745_2301L, 0x80, 0x1000_0000L, 0xffff_ffffL);
+            assertVectorElements(machine.state(), 7, 7, 0, 27, 0);
+            assertVectorElements(machine.state(), 8, 0, 31, 4, 0);
+            assertVectorElements(machine.state(), 9, 12, 1, 1, 32);
+            assertVectorElements(machine.state(), 10, 0xce02_468aL, 0x0100_0000L, 0x2000_0000L, 0xffff_ffffL);
+            assertVectorElements(machine.state(), 11, 0x1234_5670L, 0x8, 0x100, 0xffff_ffffL);
+            assertEquals(0x091a_2b38L, machine.memory().readLong(wideOutput));
+            assertEquals(0x4_0000_0000L, machine.memory().readLong(wideOutput + Long.BYTES));
+            assertEquals(0x80L, machine.memory().readLong(wideOutput + 2L * Long.BYTES));
+            assertEquals(0x7_ffff_fff8L, machine.memory().readLong(wideOutput + 3L * Long.BYTES));
+        }
+    }
+
+    /// Verifies RVA23U64 mandatory `Zvfhmin` half/single vector conversions.
+    @Test
+    public void vectorHalfPrecisionMinimumConversionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long halfInput = TEST_PC + 256;
+            long singleOutput = TEST_PC + 512;
+            long singleInput = TEST_PC + 768;
+            long halfOutput = TEST_PC + 1024;
+            int[] halfValues = {0x3c00, 0xc000, 0x7e00, 0};
+            int[] singleValues = {
+                    Float.floatToRawIntBits(1.0f),
+                    Float.floatToRawIntBits(-2.0f),
+                    Float.floatToRawIntBits(0.5f),
+                    Float.floatToRawIntBits(Float.POSITIVE_INFINITY)
+            };
+            for (int index = 0; index < halfValues.length; index++) {
+                machine.memory().writeShort(halfInput + (long) index * Short.BYTES, (short) halfValues[index]);
+                machine.memory().writeInt(singleInput + (long) index * Integer.BYTES, singleValues[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(16, 1)),
+                    vle(16, 1, 6),
+                    vfwcvtFFV(2, 1),
+                    vse(32, 2, 7),
+                    vle(32, 4, 8),
+                    vfncvtFFW(6, 4),
+                    vse(16, 6, 9),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, halfValues.length);
+            machine.state().setRegister(6, halfInput);
+            machine.state().setRegister(7, singleOutput);
+            machine.state().setRegister(8, singleInput);
+            machine.state().setRegister(9, halfOutput);
+
+            runDecodedProgram(machine);
+
+            assertEquals(Float.floatToRawIntBits(1.0f), machine.memory().readInt(singleOutput));
+            assertEquals(Float.floatToRawIntBits(-2.0f), machine.memory().readInt(singleOutput + Integer.BYTES));
+            assertEquals(0x7fc0_0000, machine.memory().readInt(singleOutput + 2L * Integer.BYTES));
+            assertEquals(0, machine.memory().readInt(singleOutput + 3L * Integer.BYTES));
+            assertEquals(0x3c00, machine.memory().readUnsignedShort(halfOutput));
+            assertEquals(0xc000, machine.memory().readUnsignedShort(halfOutput + Short.BYTES));
+            assertEquals(0x3800, machine.memory().readUnsignedShort(halfOutput + 2L * Short.BYTES));
+            assertEquals(0x7c00, machine.memory().readUnsignedShort(halfOutput + 3L * Short.BYTES));
+        }
+    }
+
     /// Verifies integer reduction operations.
     @Test
     public void vectorReductionInstructionsExecute() {
@@ -1003,6 +1107,56 @@ public final class VectorInstructionTest {
         return vectorInteger(0x12, true, vd, 7, vs2, 2);
     }
 
+    /// Encodes `vandn.vv`.
+    private static int vandnVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x01, true, vd, vs1, vs2, 0);
+    }
+
+    /// Encodes `vbrev.v`.
+    private static int vbrevV(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 10, vs2, 2);
+    }
+
+    /// Encodes `vbrev8.v`.
+    private static int vbrev8V(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 8, vs2, 2);
+    }
+
+    /// Encodes `vrev8.v`.
+    private static int vrev8V(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 9, vs2, 2);
+    }
+
+    /// Encodes `vclz.v`.
+    private static int vclzV(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 12, vs2, 2);
+    }
+
+    /// Encodes `vctz.v`.
+    private static int vctzV(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 13, vs2, 2);
+    }
+
+    /// Encodes `vcpop.v`.
+    private static int vcpopV(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 14, vs2, 2);
+    }
+
+    /// Encodes `vror.vi`.
+    private static int vrorVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x14 | (immediate >>> 5 & 1), true, vd, immediate & 0x1f, vs2, 3);
+    }
+
+    /// Encodes `vrol.vx`.
+    private static int vrolVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x15, true, vd, rs1, vs2, 4);
+    }
+
+    /// Encodes `vwsll.vi`.
+    private static int vwsllVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x35, true, vd, immediate & 0x1f, vs2, 3);
+    }
+
     /// Encodes `vsaddu.vi`.
     private static int vsadduVi(int vd, int vs2, int immediate) {
         return vectorInteger(0x20, true, vd, immediate, vs2, 3);
@@ -1146,6 +1300,16 @@ public final class VectorInstructionTest {
     /// Encodes `vfcvt.x.f.v`.
     private static int vfcvtXFV(int vd, int vs2) {
         return vectorInteger(0x12, true, vd, 1, vs2, 1);
+    }
+
+    /// Encodes `vfwcvt.f.f.v`.
+    private static int vfwcvtFFV(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 12, vs2, 1);
+    }
+
+    /// Encodes `vfncvt.f.f.w`.
+    private static int vfncvtFFW(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 20, vs2, 1);
     }
 
     /// Encodes a vector integer instruction.

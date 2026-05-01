@@ -3769,8 +3769,16 @@ public abstract sealed class RiscVInstructionSemantics {
         return Double.isNaN(value) ? CANONICAL_DOUBLE_NAN : Double.doubleToRawLongBits(value);
     }
 
+    /// Converts raw half-precision bits to canonical raw single-precision bits.
+    static int convertHalfBitsToSingleBits(MachineState state, int bits) {
+        if (isSignalingHalfNaN(bits)) {
+            state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
+        }
+        return canonicalizeSingleBits(Float.float16ToFloat((short) bits));
+    }
+
     /// Converts raw single-precision bits to raw half-precision bits.
-    private static int convertSingleBitsToHalfBits(MachineState state, int bits, int roundingMode) {
+    static int convertSingleBitsToHalfBits(MachineState state, int bits, int roundingMode) {
         int sign = (bits >>> 16) & 0x8000;
         int magnitude = bits & 0x7fff_ffff;
         if (isSignalingSingleNaN(bits)) {

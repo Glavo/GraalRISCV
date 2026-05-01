@@ -8,7 +8,7 @@ import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.List;
 
-/// Defines the target RVA23U64 profile capability sets without enabling profile reporting.
+/// Defines the simulator-visible RVA23U64 profile capability sets.
 @NotNullByDefault
 public final class Rva23Profile {
     /// The canonical profile name.
@@ -16,6 +16,9 @@ public final class Rva23Profile {
 
     /// The mandatory base ISA for the profile.
     public static final String MANDATORY_BASE = "RV64I";
+
+    /// The minimum vector register length required by RVA23U64.
+    public static final int MINIMUM_VLEN_BITS = 128;
 
     /// The mandatory RVA23U64 extensions and named mandatory features.
     public static final @Unmodifiable List<String> MANDATORY_EXTENSIONS = List.of(
@@ -79,18 +82,41 @@ public final class Rva23Profile {
             "Zcb",
             "Zawrs");
 
-    /// RVA23U64 mandatory areas that still block reporting the full profile.
-    public static final @Unmodifiable List<String> PENDING_MANDATORY_AREAS = List.of(
+    /// RVA23U64 mandatory vector extensions implemented on top of base `V`.
+    public static final @Unmodifiable List<String> IMPLEMENTED_ADDITIONAL_VECTOR_EXTENSIONS = List.of(
             "Zvbb",
             "Zvfhmin",
             "Zvkb",
             "Zvkt",
             "Zvl128b");
 
-    /// Linux hwprobe bits for the implemented additional RVA23U64 scalar extensions.
-    public static final long HWPROBE_IMPLEMENTED_ADDITIONAL_SCALAR_EXTENSIONS =
+    /// RVA23U64 mandatory areas that still block reporting the full profile.
+    public static final @Unmodifiable List<String> PENDING_MANDATORY_AREAS = List.of();
+
+    /// Linux hwprobe bits for the implemented additional RVA23U64 scalar and vector extensions.
+    public static final long HWPROBE_IMPLEMENTED_ADDITIONAL_EXTENSIONS =
             RiscVExtensions.HWPROBE_EXT_ZICOND
-                    | RiscVExtensions.HWPROBE_EXT_ZAWRS;
+                    | RiscVExtensions.HWPROBE_IMA_V
+                    | RiscVExtensions.HWPROBE_EXT_ZAWRS
+                    | RiscVExtensions.HWPROBE_EXT_ZVBB
+                    | RiscVExtensions.HWPROBE_EXT_ZVKB
+                    | RiscVExtensions.HWPROBE_EXT_ZVKT
+                    | RiscVExtensions.HWPROBE_EXT_ZVFHMIN
+                    | RiscVExtensions.HWPROBE_EXT_ZVE32X
+                    | RiscVExtensions.HWPROBE_EXT_ZVE32F
+                    | RiscVExtensions.HWPROBE_EXT_ZVE64X
+                    | RiscVExtensions.HWPROBE_EXT_ZVE64F
+                    | RiscVExtensions.HWPROBE_EXT_ZVE64D
+                    | RiscVExtensions.HWPROBE_EXT_ZIMOP
+                    | RiscVExtensions.HWPROBE_EXT_ZCA
+                    | RiscVExtensions.HWPROBE_EXT_ZCB
+                    | RiscVExtensions.HWPROBE_EXT_ZCD
+                    | RiscVExtensions.HWPROBE_EXT_ZCMOP
+                    | RiscVExtensions.HWPROBE_EXT_SUPM;
+
+    /// Linux hwprobe bits reported for the complete RVA23U64 user-mode profile.
+    public static final long HWPROBE_REPORTED_EXTENSIONS =
+            Rva22Profile.HWPROBE_REPORTED_EXTENSIONS | HWPROBE_IMPLEMENTED_ADDITIONAL_EXTENSIONS;
 
     /// Prevents construction of this constants class.
     private Rva23Profile() {

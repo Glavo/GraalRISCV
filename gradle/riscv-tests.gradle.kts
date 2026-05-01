@@ -224,7 +224,7 @@ tasks.register<Sync>("prepareRva23AcceptanceSources") {
 
 tasks.register<RiscVTestsBuildTask>("buildRva23AcceptanceTests") {
     group = "verification"
-    description = "Builds repository-owned RVA23U64 acceptance ELFs for currently implemented scalar and Supm behavior."
+    description = "Builds repository-owned RVA23U64 acceptance ELFs."
 
     dependsOn("prepareRva23AcceptanceSources", "extractRiscVTestEnvSources")
     configureZigExecutable()
@@ -240,6 +240,7 @@ tasks.register<RiscVTestsBuildTask>("buildRva23AcceptanceTests") {
         "f",
         "d",
         "c",
+        "v",
         "zicsr",
         "zifencei",
         "zba",
@@ -253,6 +254,10 @@ tasks.register<RiscVTestsBuildTask>("buildRva23AcceptanceTests") {
         "zcmop",
         "zcb",
         "zawrs",
+        "zvbb",
+        "zvkb",
+        "zvfhmin",
+        "zvkt",
     ))
 }
 
@@ -284,7 +289,7 @@ tasks.register<RiscVTestsRunTask>("testRva22Acceptance") {
 
 tasks.register<RiscVTestsRunTask>("testRva23Acceptance") {
     group = "verification"
-    description = "Builds and runs repository-owned RVA23U64 scalar and Supm acceptance ELFs with the GraalRISCV CLI."
+    description = "Builds and runs repository-owned RVA23U64 acceptance ELFs with the GraalRISCV CLI."
 
     dependsOn("classes", "buildRva23AcceptanceTests")
     elfDirectory.set(rva23AcceptanceElfDirectory)

@@ -35,6 +35,15 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_EXT_ZKT`.
     public static final long HWPROBE_EXT_ZKT = 1L << 16;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZVBB`.
+    public static final long HWPROBE_EXT_ZVBB = 1L << 17;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZVKB`.
+    public static final long HWPROBE_EXT_ZVKB = 1L << 19;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZVKT`.
+    public static final long HWPROBE_EXT_ZVKT = 1L << 26;
+
     /// Linux `RISCV_HWPROBE_EXT_ZFH`.
     public static final long HWPROBE_EXT_ZFH = 1L << 27;
 
@@ -43,6 +52,9 @@ public final class RiscVExtensions {
 
     /// Linux `RISCV_HWPROBE_EXT_ZIHINTNTL`.
     public static final long HWPROBE_EXT_ZIHINTNTL = 1L << 29;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZVFHMIN`.
+    public static final long HWPROBE_EXT_ZVFHMIN = 1L << 31;
 
     /// Linux `RISCV_HWPROBE_EXT_ZFA`.
     public static final long HWPROBE_EXT_ZFA = 1L << 32;
@@ -56,8 +68,41 @@ public final class RiscVExtensions {
     /// Linux `RISCV_HWPROBE_EXT_ZIHINTPAUSE`.
     public static final long HWPROBE_EXT_ZIHINTPAUSE = 1L << 36;
 
+    /// Linux `RISCV_HWPROBE_EXT_ZVE32X`.
+    public static final long HWPROBE_EXT_ZVE32X = 1L << 37;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZVE32F`.
+    public static final long HWPROBE_EXT_ZVE32F = 1L << 38;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZVE64X`.
+    public static final long HWPROBE_EXT_ZVE64X = 1L << 39;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZVE64F`.
+    public static final long HWPROBE_EXT_ZVE64F = 1L << 40;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZVE64D`.
+    public static final long HWPROBE_EXT_ZVE64D = 1L << 41;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZIMOP`.
+    public static final long HWPROBE_EXT_ZIMOP = 1L << 42;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZCA`.
+    public static final long HWPROBE_EXT_ZCA = 1L << 43;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZCB`.
+    public static final long HWPROBE_EXT_ZCB = 1L << 44;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZCD`.
+    public static final long HWPROBE_EXT_ZCD = 1L << 45;
+
+    /// Linux `RISCV_HWPROBE_EXT_ZCMOP`.
+    public static final long HWPROBE_EXT_ZCMOP = 1L << 47;
+
     /// Linux `RISCV_HWPROBE_EXT_ZAWRS`.
     public static final long HWPROBE_EXT_ZAWRS = 1L << 48;
+
+    /// Linux `RISCV_HWPROBE_EXT_SUPM`.
+    public static final long HWPROBE_EXT_SUPM = 1L << 49;
 
     /// Linux `RISCV_HWPROBE_EXT_ZICNTR`.
     public static final long HWPROBE_EXT_ZICNTR = 1L << 50;

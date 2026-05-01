@@ -2,7 +2,7 @@
 
 
 GraalRISCV is a pure Java 64-bit RISC-V user-mode emulator built with GraalVM’s Truffle framework.
-It implements the RVA22U64 user-mode profile.
+It implements the RVA23U64 user-mode profile.
 
 ## Requirements
 
@@ -137,6 +137,12 @@ Run the repository-owned RVA22U64 extension acceptance tests:
 ./gradlew testRva22Acceptance
 ```
 
+Run the repository-owned RVA23U64 extension acceptance tests:
+
+```text
+./gradlew testRva23Acceptance
+```
+
 Use `graalriscv.riscvTestsFilter` to run a subset by ELF filename regex, and
 `graalriscv.riscvTestsMaxInstructions` to override the per-ELF instruction
 limit:
@@ -167,7 +173,7 @@ This compiles main and test sources, runs the unit tests, builds distribution
 artifacts, builds the Shadow JAR, and runs no-toolchain package smoke checks.
 When the managed Zig archive, extracted toolchain, or manual Zig executable
 configuration is already present, it also runs the static Linux C example
-checks and the RVA22U64 acceptance suite.
+checks and the RVA22U64/RVA23U64 acceptance suites.
 
 Run the Zig-backed CI example checks explicitly:
 

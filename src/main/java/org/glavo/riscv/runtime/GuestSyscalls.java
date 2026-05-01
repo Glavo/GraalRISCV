@@ -9,6 +9,7 @@ import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.constants.Rva22Profile;
+import org.glavo.riscv.constants.Rva23Profile;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
@@ -959,8 +960,8 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF`.
     private static final long RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF = 10;
 
-    /// Linux `RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED`.
-    private static final long RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED = 4;
+    /// Linux `RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW`.
+    private static final long RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW = 2;
 
     /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0`.
     private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0 = 11;
@@ -1779,7 +1780,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13),
-                    state.register(14)));
+                    state.register(14),
+                    state));
             case SYS_PRLIMIT64 -> state.setRegister(10, prlimit64(
                     state.register(10),
                     state.register(11),
@@ -4186,7 +4188,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Reports deterministic RISC-V hardware probe values for the single simulated CPU.
-    private long riscvHwprobe(long pairsAddress, long pairCount, long cpuSetSize, long cpuSetAddress, long flags) {
+    private long riscvHwprobe(long pairsAddress, long pairCount, long cpuSetSize, long cpuSetAddress, long flags, MachineState state) {
         if (pairCount < 0
                 || pairCount > Integer.MAX_VALUE
                 || (flags & ~RISCV_HWPROBE_WHICH_CPUS) != 0
@@ -4200,7 +4202,7 @@ public final class GuestSyscalls implements AutoCloseable {
             if (cpuSetAddress != 0 && !cpuSetContainsGuestCpu(cpuSetAddress)) {
                 return EINVAL;
             }
-            populateHwprobePairs(pairsAddress, pairCount);
+            populateHwprobePairs(pairsAddress, pairCount, state);
             return 0;
         }
 
@@ -4209,7 +4211,7 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         boolean selected = cpuSetContainsGuestCpu(cpuSetAddress) || cpuSetIsEmpty(cpuSetAddress, cpuSetSize);
-        boolean matches = selected && hwprobePairsMatch(pairsAddress, pairCount);
+        boolean matches = selected && hwprobePairsMatch(pairsAddress, pairCount, state);
         memory.clear(cpuSetAddress, cpuSetSize);
         if (matches) {
             memory.writeByte(cpuSetAddress, (byte) 1);
@@ -4218,12 +4220,12 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Writes values for all requested RISC-V hardware probe pairs.
-    private void populateHwprobePairs(long pairsAddress, long pairCount) {
+    private void populateHwprobePairs(long pairsAddress, long pairCount, MachineState state) {
         for (long index = 0; index < pairCount; index++) {
             long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
             long key = memory.readLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET);
             if (isSupportedHwprobeKey(key)) {
-                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, hwprobeValue(key));
+                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, hwprobeValue(key, state));
             } else {
                 memory.writeLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET, -1);
                 memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, 0);
@@ -4232,7 +4234,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Returns true when all supplied RISC-V hardware probe constraints match the simulated CPU.
-    private boolean hwprobePairsMatch(long pairsAddress, long pairCount) {
+    private boolean hwprobePairsMatch(long pairsAddress, long pairCount, MachineState state) {
         boolean matches = true;
         for (long index = 0; index < pairCount; index++) {
             long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
@@ -4245,7 +4247,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 continue;
             }
 
-            long actualValue = hwprobeValue(key);
+            long actualValue = hwprobeValue(key, state);
             if (isHwprobeBitmaskKey(key)) {
                 if ((actualValue & requestedValue) != requestedValue) {
                     matches = false;
@@ -4263,7 +4265,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Returns the deterministic value for a supported RISC-V hardware probe key.
-    private static long hwprobeValue(long key) {
+    private static long hwprobeValue(long key, MachineState state) {
         return switch ((int) key) {
             case (int) RISCV_HWPROBE_KEY_MVENDORID,
                     (int) RISCV_HWPROBE_KEY_MARCHID,
@@ -4275,14 +4277,21 @@ public final class GuestSyscalls implements AutoCloseable {
                     (int) RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE,
                     (int) RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE -> RiscVExtensions.CACHE_BLOCK_SIZE;
             case (int) RISCV_HWPROBE_KEY_BASE_BEHAVIOR -> RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
-            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> Rva22Profile.HWPROBE_REPORTED_EXTENSIONS;
+            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> hwprobeImaExtensions(state);
             case (int) RISCV_HWPROBE_KEY_CPUPERF_0 -> RISCV_HWPROBE_MISALIGNED_EMULATED;
             case (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF -> RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED;
-            case (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_VECTOR_UNSUPPORTED;
+            case (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW;
             case (int) RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS -> Long.MAX_VALUE;
             case (int) RISCV_HWPROBE_KEY_TIME_CSR_FREQ -> NANOSECONDS_PER_SECOND;
             default -> throw new AssertionError("validated RISC-V hardware probe key");
         };
+    }
+
+    /// Returns the ISA extension bits visible through Linux `riscv_hwprobe`.
+    private static long hwprobeImaExtensions(MachineState state) {
+        return state.vectorUnit().vlenBits() >= Rva23Profile.MINIMUM_VLEN_BITS
+                ? Rva23Profile.HWPROBE_REPORTED_EXTENSIONS
+                : Rva22Profile.HWPROBE_REPORTED_EXTENSIONS;
     }
 
     /// Returns true when a hardware probe key uses bitmask matching.
