@@ -432,6 +432,12 @@ public final class GuestSyscallsTest {
     /// The `st_nlink` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_LINK_COUNT_OFFSET = 20;
 
+    /// The `st_uid` byte offset inside Linux generic 64-bit `struct stat`.
+    private static final int STAT_UID_OFFSET = 24;
+
+    /// The `st_gid` byte offset inside Linux generic 64-bit `struct stat`.
+    private static final int STAT_GID_OFFSET = 28;
+
     /// The `st_blksize` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_BLOCK_SIZE_OFFSET = 56;
 
@@ -3498,6 +3504,101 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies configurable guest credentials drive identity syscalls and metadata.
+    @Test
+    public void processIdentitySyscallsUseConfiguredCredentials() {
+        GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "42,43", "/home/alice", "/bin/bash");
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.empty(),
+                    credentials);
+            long realIdAddress = memory.baseAddress() + 64;
+            long effectiveIdAddress = memory.baseAddress() + 68;
+            long savedIdAddress = memory.baseAddress() + 72;
+            long groupsAddress = memory.baseAddress() + 96;
+            long statAddress = memory.baseAddress() + 128;
+            long pathAddress = memory.baseAddress() + 512;
+            long bufferAddress = memory.baseAddress() + 1024;
+            long statxAddress = memory.baseAddress() + 4096;
+
+            setSyscall(state, SYS_GETUID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1234, state.register(10));
+
+            setSyscall(state, SYS_GETEUID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1234, state.register(10));
+
+            setSyscall(state, SYS_GETGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5678, state.register(10));
+
+            setSyscall(state, SYS_GETEGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5678, state.register(10));
+
+            setSyscall(state, SYS_GETRESUID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1234, memory.readInt(realIdAddress));
+            assertEquals(1234, memory.readInt(effectiveIdAddress));
+            assertEquals(1234, memory.readInt(savedIdAddress));
+
+            setSyscall(state, SYS_GETRESGID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(5678, memory.readInt(realIdAddress));
+            assertEquals(5678, memory.readInt(effectiveIdAddress));
+            assertEquals(5678, memory.readInt(savedIdAddress));
+
+            setSyscall(state, SYS_GETGROUPS, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_GETGROUPS, 1, groupsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_GETGROUPS, 2, groupsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals(42, memory.readInt(groupsAddress));
+            assertEquals(43, memory.readInt(groupsAddress + Integer.BYTES));
+
+            setSyscall(state, SYS_FSTAT, 0, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1234, memory.readInt(statAddress + STAT_UID_OFFSET));
+            assertEquals(5678, memory.readInt(statAddress + STAT_GID_OFFSET));
+
+            writeGuestString(memory, pathAddress, "/proc/self/status");
+            setSyscall(state, SYS_STATX, AT_FDCWD, pathAddress, 0, STATX_BASIC_STATS_MASK, statxAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1234, memory.readInt(statxAddress + STATX_UID_OFFSET));
+            assertEquals(5678, memory.readInt(statxAddress + STATX_GID_OFFSET));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int statusFileDescriptor = (int) state.register(10);
+            assertEquals(3, statusFileDescriptor);
+
+            setSyscall(state, SYS_READ, statusFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            String status = new String(
+                    memory.readBytes(bufferAddress, (int) state.register(10)),
+                    StandardCharsets.UTF_8);
+            assertTrue(status.contains("Uid:\t1234\t1234\t1234\t1234\n"));
+            assertTrue(status.contains("Gid:\t5678\t5678\t5678\t5678\n"));
+        }
+    }
+
     /// Verifies `wait4` reports no children for the initial single-process state.
     @Test
     public void wait4WithoutChildrenReportsEchild() {
@@ -5824,6 +5925,18 @@ public final class GuestSyscallsTest {
             OutputStream err,
             long initialProgramBreak,
             GuestFileSystem fileSystem) {
+        return state(memory, in, out, err, initialProgramBreak, fileSystem, GuestCredentials.defaultUser());
+    }
+
+    /// Creates test machine state with a syscall handler, custom filesystem namespace, and credentials.
+    private static MachineState state(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            GuestFileSystem fileSystem,
+            GuestCredentials credentials) {
         GuestSyscalls syscalls = new GuestSyscalls(
                 memory,
                 in,
@@ -5831,7 +5944,8 @@ public final class GuestSyscallsTest {
                 err,
                 initialProgramBreak,
                 fileSystem,
-                TimeSource.system());
+                TimeSource.system(),
+                credentials);
         return new MachineState(
                 memory,
                 0,

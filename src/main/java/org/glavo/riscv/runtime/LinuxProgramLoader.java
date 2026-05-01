@@ -87,8 +87,26 @@ public final class LinuxProgramLoader {
             String @Unmodifiable [] arguments,
             String @Unmodifiable [] environment,
             long pageSize) {
+        return initialize(memory, program, arguments, environment, GuestCredentials.defaultUser(), pageSize);
+    }
+
+    /// Maps, initializes, protects, and stacks a loaded program with explicit environment and credentials.
+    ///
+    /// @param memory the guest address space
+    /// @param program the loaded executable metadata
+    /// @param arguments the argument vector exposed to the guest
+    /// @param environment the environment vector exposed to the guest
+    /// @param credentials the guest identity values exposed through auxv
+    /// @param pageSize the guest base page size
+    public static LoadedProcess initialize(
+            Memory memory,
+            LoadedProgram program,
+            String @Unmodifiable [] arguments,
+            String @Unmodifiable [] environment,
+            GuestCredentials credentials,
+            long pageSize) {
         long initialProgramBreak = loadImages(memory, program, pageSize);
-        long stackPointer = initializeLinuxStack(memory, program, arguments, environment, pageSize);
+        long stackPointer = initializeLinuxStack(memory, program, arguments, environment, credentials, pageSize);
         return new LoadedProcess(initialProgramBreak, stackPointer);
     }
 
@@ -189,6 +207,7 @@ public final class LinuxProgramLoader {
             LoadedProgram program,
             String @Unmodifiable [] arguments,
             String @Unmodifiable [] environment,
+            GuestCredentials credentials,
             long pageSize) {
         long stackTop = memory.endAddress();
         ensureStackBacking(memory, stackTop, pageSize);
@@ -201,6 +220,7 @@ public final class LinuxProgramLoader {
                 program.executable().loadBias(),
                 program.interpreterBase(),
                 program.executablePath(),
+                credentials,
                 pageSize);
     }
 

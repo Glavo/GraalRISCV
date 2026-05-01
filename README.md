@@ -48,6 +48,12 @@ Options:
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
   --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
   --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
+  --user <name>              Guest login name. Default is user.
+  --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
+  --gid <id>                 Guest real, effective, and saved gid. Default is 1000.
+  --groups <ids|none>        Comma-separated supplementary guest gids, or none.
+  --home <path>              Guest home directory used by the default environment.
+  --shell <path>             Guest shell path used by the default environment.
   --debug-fixed-clock-nanos <nanos>
                               Fixed epoch nanoseconds for deterministic guest time.
   --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
@@ -80,7 +86,8 @@ bundled static musl examples, the static Go example, CoreMark, RVV examples, and
 common dynamically linked Ubuntu Base shell, coreutils, and findutils commands.
 File access is sandboxed under configured `--mount` entries, with built-in
 `/proc` and `/dev` virtual filesystems for process metadata and basic character
-devices.
+devices. Guest uid, gid, supplementary groups, login name, home, and shell can be
+configured with CLI options.
 
 ## Examples
 

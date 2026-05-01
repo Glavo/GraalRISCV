@@ -100,6 +100,9 @@ public final class MainTest {
     /// The Linux RISC-V syscall number for `wait4`.
     private static final int SYS_WAIT4 = 260;
 
+    /// The Linux RISC-V syscall number for `getuid`.
+    private static final int SYS_GETUID = 174;
+
     /// A temporary directory for generated ELF files.
     @TempDir
     private Path tempDirectory;
@@ -189,6 +192,34 @@ public final class MainTest {
 
         assertEquals(0, exitCode);
         assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that guest user options configure process identity syscalls.
+    @Test
+    public void guestUserOptionsConfigureProcessIdentity() throws Exception {
+        Path elfPath = tempDirectory.resolve("check-user.elf");
+        Files.write(elfPath, ElfTestImages.executable(checkConfiguredUidCode(1234)));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--user", "alice",
+                        "--uid", "1234",
+                        "--gid", "4321",
+                        "--groups", "42,43",
+                        "--home", "/users/alice",
+                        "--shell", "/bin/bash",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
@@ -1217,6 +1248,24 @@ public final class MainTest {
         code.position(bufferOffset);
         code.put(new byte[byteCount]);
         return code.array();
+    }
+
+    /// Builds a program that exits successfully only when `getuid` returns the expected value.
+    private static byte[] checkConfiguredUidCode(int expectedUid) {
+        ByteBuffer code = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_GETUID));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        putLoadImmediate(code, 5, expectedUid);
+        int mismatchBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int failurePosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        patchInstruction(code, mismatchBranchPosition, bne(10, 5, failurePosition - mismatchBranchPosition));
+        return Arrays.copyOf(code.array(), code.position());
     }
 
     /// Builds a program that invokes an unsupported Linux syscall with recognizable arguments.

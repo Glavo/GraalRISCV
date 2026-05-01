@@ -8,6 +8,7 @@ import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.TimeSource;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
@@ -63,6 +64,9 @@ public final class RiscVContext {
     /// Whether `/dev/tty` should try to use the host controlling terminal.
     private final boolean useHostTty;
 
+    /// The Linux user and group identity exposed to the guest process.
+    private final GuestCredentials guestCredentials;
+
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
@@ -86,6 +90,12 @@ public final class RiscVContext {
             String filesystemMounts,
             String guestProgramPath,
             boolean useHostTty,
+            String guestUserName,
+            long guestUid,
+            long guestGid,
+            String guestGroups,
+            String guestHome,
+            String guestShell,
             ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
@@ -117,6 +127,13 @@ public final class RiscVContext {
         @Nullable String normalizedGuestProgramPath = guestProgramPath.isEmpty()
                 ? null
                 : normalizeMountGuestPath(guestProgramPath);
+        GuestCredentials parsedGuestCredentials = GuestCredentials.of(
+                guestUserName,
+                guestUid,
+                guestGid,
+                guestGroups,
+                guestHome,
+                guestShell);
 
         this.env = env;
         this.memoryBase = memoryBase;
@@ -133,6 +150,7 @@ public final class RiscVContext {
         this.filesystemMounts = parsedFilesystemMounts;
         this.guestProgramPath = normalizedGuestProgramPath;
         this.useHostTty = useHostTty;
+        this.guestCredentials = parsedGuestCredentials;
         this.programArguments = env.getApplicationArguments().clone();
         this.mappedRegionCache = mappedRegionCache;
     }
@@ -210,6 +228,11 @@ public final class RiscVContext {
     /// Returns whether `/dev/tty` should try to use the host controlling terminal.
     public boolean useHostTty() {
         return useHostTty;
+    }
+
+    /// Returns the Linux user and group identity exposed to the guest process.
+    public GuestCredentials guestCredentials() {
+        return guestCredentials;
     }
 
     /// Returns the guest application arguments supplied after the ELF path.

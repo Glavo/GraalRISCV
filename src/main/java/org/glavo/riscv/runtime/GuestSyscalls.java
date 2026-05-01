@@ -1432,6 +1432,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The `st_nlink` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_LINK_COUNT_OFFSET = 20;
 
+    /// The `st_uid` byte offset inside Linux generic 64-bit `struct stat`.
+    private static final int STAT_UID_OFFSET = 24;
+
+    /// The `st_gid` byte offset inside Linux generic 64-bit `struct stat`.
+    private static final int STAT_GID_OFFSET = 28;
+
     /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE_OFFSET = 48;
 
@@ -1582,15 +1588,6 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Synthetic inode base used for virtual proc entries.
     private static final long PROC_INODE_BASE = 0x7000_0000L;
 
-    /// The deterministic guest user id exposed by identity syscalls.
-    private static final long GUEST_USER_ID = 1000;
-
-    /// The deterministic guest group id exposed by identity syscalls.
-    private static final long GUEST_GROUP_ID = 1000;
-
-    /// The number of deterministic supplementary groups exposed by `getgroups`.
-    private static final int GUEST_SUPPLEMENTARY_GROUP_COUNT = 1;
-
     /// The non-cryptographic seed used for deterministic `getrandom` bytes.
     private static final long RANDOM_SEED = 0x4752_4953_4356_0001L;
 
@@ -1629,6 +1626,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The process-shared terminal exposed through standard descriptors and `/dev/tty`.
     private final TerminalDevice terminalDevice;
+
+    /// The Linux user and group identity exposed to this guest process.
+    private final GuestCredentials credentials;
 
     /// The guest-visible current working directory in absolute Linux path syntax.
     private String guestWorkingDirectory = "/";
@@ -1784,7 +1784,18 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
-        this(memory, in, out, err, initialProgramBreak, GuestFileSystem.empty(), null, TimeSource.system(), false, null);
+        this(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                GuestFileSystem.empty(),
+                null,
+                TimeSource.system(),
+                false,
+                GuestCredentials.defaultUser(),
+                null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and resolved root mount.
@@ -1817,6 +1828,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 null,
                 timeSource,
                 false,
+                GuestCredentials.defaultUser(),
                 null);
     }
 
@@ -1829,7 +1841,31 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             GuestFileSystem fileSystem,
             TimeSource timeSource) {
-        this(memory, in, out, err, initialProgramBreak, fileSystem, null, timeSource, false, null);
+        this(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                fileSystem,
+                null,
+                timeSource,
+                false,
+                GuestCredentials.defaultUser(),
+                null);
+    }
+
+    /// Creates a syscall handler backed by streams, filesystem namespace, guest time source, and credentials.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            GuestFileSystem fileSystem,
+            TimeSource timeSource,
+            GuestCredentials credentials) {
+        this(memory, in, out, err, initialProgramBreak, fileSystem, null, timeSource, false, credentials, null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy root mount.
@@ -1864,6 +1900,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 env,
                 timeSource,
                 false,
+                GuestCredentials.defaultUser(),
                 null);
     }
 
@@ -1904,6 +1941,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 env,
                 timeSource,
                 useHostTty,
+                GuestCredentials.defaultUser(),
                 guestThreadRunner);
     }
 
@@ -1927,6 +1965,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 env,
                 timeSource,
                 false,
+                GuestCredentials.defaultUser(),
                 null);
     }
 
@@ -1963,10 +2002,39 @@ public final class GuestSyscalls implements AutoCloseable {
                 out,
                 err,
                 initialProgramBreak,
+                env,
+                filesystemMountSpecs,
+                timeSource,
+                useHostTty,
+                GuestCredentials.defaultUser(),
+                guestThreadRunner);
+    }
+
+    /// Creates a syscall handler backed by streams, lazy filesystem mounts, time source, credentials,
+    /// terminal option, and guest thread runner.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            TruffleLanguage.Env env,
+            String @Unmodifiable [] filesystemMountSpecs,
+            TimeSource timeSource,
+            boolean useHostTty,
+            GuestCredentials credentials,
+            GuestThreadRunner guestThreadRunner) {
+        this(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
                 GuestFileSystem.forMountSpecs(env, filesystemMountSpecs),
                 env,
                 timeSource,
                 useHostTty,
+                credentials,
                 guestThreadRunner);
     }
 
@@ -1981,6 +2049,7 @@ public final class GuestSyscalls implements AutoCloseable {
             @Nullable TruffleLanguage.Env env,
             TimeSource timeSource,
             boolean useHostTty,
+            GuestCredentials credentials,
             @Nullable GuestThreadRunner guestThreadRunner) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
@@ -1996,6 +2065,7 @@ public final class GuestSyscalls implements AutoCloseable {
         this.baseFileSystem = fileSystem;
         this.terminalDevice = TerminalDevice.open(in, out, useHostTty);
         this.fileSystem = addDefaultVirtualMounts(fileSystem);
+        this.credentials = credentials;
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
         this.programBreakBackingEnd = initialProgramBreak;
@@ -2017,6 +2087,7 @@ public final class GuestSyscalls implements AutoCloseable {
         this.baseFileSystem = parent.baseFileSystem;
         this.terminalDevice = parent.terminalDevice.retain();
         this.fileSystem = addDefaultVirtualMounts(baseFileSystem);
+        this.credentials = parent.credentials;
         this.guestWorkingDirectory = parent.guestWorkingDirectory;
         this.auxiliaryVectorBytes = parent.auxiliaryVectorBytes.clone();
         this.procCommandLineBytes = parent.procCommandLineBytes.clone();
@@ -2266,12 +2337,16 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(10),
                     state.register(11),
                     state.register(12),
-                    GUEST_USER_ID));
+                    credentials.realUserId(),
+                    credentials.effectiveUserId(),
+                    credentials.savedUserId()));
             case SYS_GETRESGID -> state.setRegister(10, getresid(
                     state.register(10),
                     state.register(11),
                     state.register(12),
-                    GUEST_GROUP_ID));
+                    credentials.realGroupId(),
+                    credentials.effectiveGroupId(),
+                    credentials.savedGroupId()));
             case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
             case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
             case SYS_SETSID -> state.setRegister(10, setsid());
@@ -2290,8 +2365,10 @@ public final class GuestSyscalls implements AutoCloseable {
             case SYS_GETPID -> state.setRegister(10, process.id());
             case SYS_GETTID -> state.setRegister(10, state.threadId());
             case SYS_GETPPID -> state.setRegister(10, process.parentId());
-            case SYS_GETUID, SYS_GETEUID -> state.setRegister(10, GUEST_USER_ID);
-            case SYS_GETGID, SYS_GETEGID -> state.setRegister(10, GUEST_GROUP_ID);
+            case SYS_GETUID -> state.setRegister(10, credentials.realUserId());
+            case SYS_GETEUID -> state.setRegister(10, credentials.effectiveUserId());
+            case SYS_GETGID -> state.setRegister(10, credentials.realGroupId());
+            case SYS_GETEGID -> state.setRegister(10, credentials.effectiveGroupId());
             case SYS_SYSINFO -> state.setRegister(10, sysinfo(state.register(10)));
             case SYS_SOCKET -> state.setRegister(10, socket(state.register(10), state.register(11), state.register(12)));
             case SYS_GETSOCKNAME, SYS_GETPEERNAME -> state.setRegister(10, ENOTSOCK);
@@ -5065,6 +5142,8 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeLong(statAddress + STAT_INODE_OFFSET, inode);
         memory.writeInt(statAddress + STAT_MODE_OFFSET, mode);
         memory.writeInt(statAddress + STAT_LINK_COUNT_OFFSET, 1);
+        memory.writeInt(statAddress + STAT_UID_OFFSET, GuestCredentials.idToInt(credentials.effectiveUserId()));
+        memory.writeInt(statAddress + STAT_GID_OFFSET, GuestCredentials.idToInt(credentials.effectiveGroupId()));
         memory.writeLong(statAddress + STAT_SIZE_OFFSET, size);
         memory.writeInt(statAddress + STAT_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
         memory.writeLong(statAddress + STAT_BLOCK_COUNT_OFFSET, (size + 511L) / 512L);
@@ -5081,8 +5160,8 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeInt(statxAddress + STATX_BLOCK_SIZE_OFFSET, STANDARD_STREAM_BLOCK_SIZE);
         memory.writeLong(statxAddress + STATX_ATTRIBUTES_OFFSET, 0);
         memory.writeInt(statxAddress + STATX_LINK_COUNT_OFFSET, 1);
-        memory.writeInt(statxAddress + STATX_UID_OFFSET, (int) GUEST_USER_ID);
-        memory.writeInt(statxAddress + STATX_GID_OFFSET, (int) GUEST_GROUP_ID);
+        memory.writeInt(statxAddress + STATX_UID_OFFSET, GuestCredentials.idToInt(credentials.effectiveUserId()));
+        memory.writeInt(statxAddress + STATX_GID_OFFSET, GuestCredentials.idToInt(credentials.effectiveGroupId()));
         memory.writeShort(statxAddress + STATX_MODE_OFFSET, (short) mode);
         memory.writeLong(statxAddress + STATX_INODE_OFFSET, inode);
         memory.writeLong(statxAddress + STATX_FILE_SIZE_OFFSET, size);
@@ -5721,7 +5800,7 @@ public final class GuestSyscalls implements AutoCloseable {
             String @Unmodifiable [] environment) {
         memory.resetAddressSpace();
         LinuxProgramLoader.LoadedProcess loadedProcess =
-                LinuxProgramLoader.initialize(memory, program, arguments, environment, pageSize);
+                LinuxProgramLoader.initialize(memory, program, arguments, environment, credentials, pageSize);
         resetForExec(state, loadedProcess.initialProgramBreak(), program.executablePath());
         recordInitialAuxiliaryVector(loadedProcess.stackPointer());
         state.resetForExec(
@@ -7182,34 +7261,48 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
-    /// Writes the deterministic real, effective, and saved user or group id values.
-    private long getresid(long realIdAddress, long effectiveIdAddress, long savedIdAddress, long id) {
+    /// Writes the configured real, effective, and saved user or group id values.
+    private long getresid(
+            long realIdAddress,
+            long effectiveIdAddress,
+            long savedIdAddress,
+            long realId,
+            long effectiveId,
+            long savedId) {
         if (!memory.isBacked(realIdAddress, Integer.BYTES)
                 || !memory.isBacked(effectiveIdAddress, Integer.BYTES)
                 || !memory.isBacked(savedIdAddress, Integer.BYTES)) {
             return EFAULT;
         }
-        memory.writeInt(realIdAddress, (int) id);
-        memory.writeInt(effectiveIdAddress, (int) id);
-        memory.writeInt(savedIdAddress, (int) id);
+        memory.writeInt(realIdAddress, GuestCredentials.idToInt(realId));
+        memory.writeInt(effectiveIdAddress, GuestCredentials.idToInt(effectiveId));
+        memory.writeInt(savedIdAddress, GuestCredentials.idToInt(savedId));
         return 0;
     }
 
-    /// Writes the deterministic supplementary group list for identity queries.
+    /// Writes the configured supplementary group list for identity queries.
     private long getgroups(long size, long listAddress) {
         if (size < 0 || size > Integer.MAX_VALUE) {
             return EINVAL;
         }
 
+        int groupCount = credentials.supplementaryGroupCount();
         if (size == 0) {
-            return GUEST_SUPPLEMENTARY_GROUP_COUNT;
+            return groupCount;
         }
-        if (!memory.isBacked(listAddress, Integer.BYTES)) {
+        if (size < groupCount) {
+            return EINVAL;
+        }
+        long bytes = (long) groupCount * Integer.BYTES;
+        if (!memory.isBacked(listAddress, bytes)) {
             return EFAULT;
         }
 
-        memory.writeInt(listAddress, (int) GUEST_GROUP_ID);
-        return GUEST_SUPPLEMENTARY_GROUP_COUNT;
+        for (int index = 0; index < groupCount; index++) {
+            memory.writeInt(listAddress + (long) index * Integer.BYTES,
+                    GuestCredentials.idToInt(credentials.supplementaryGroupAt(index)));
+        }
+        return groupCount;
     }
 
     /// Rejects socket creation for the current non-networked user-mode runtime.
@@ -8069,8 +8162,14 @@ public final class GuestSyscalls implements AutoCloseable {
                 + "Pid:\t" + process.id() + "\n"
                 + "PPid:\t" + process.parentId() + "\n"
                 + "TracerPid:\t0\n"
-                + "Uid:\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\n"
-                + "Gid:\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\n"
+                + "Uid:\t" + credentials.realUserId()
+                + "\t" + credentials.effectiveUserId()
+                + "\t" + credentials.savedUserId()
+                + "\t" + credentials.effectiveUserId() + "\n"
+                + "Gid:\t" + credentials.realGroupId()
+                + "\t" + credentials.effectiveGroupId()
+                + "\t" + credentials.savedGroupId()
+                + "\t" + credentials.effectiveGroupId() + "\n"
                 + "Threads:\t" + process.threadCount() + "\n";
     }
 

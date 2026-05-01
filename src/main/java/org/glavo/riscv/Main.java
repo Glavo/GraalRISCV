@@ -4,6 +4,7 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.runtime.GuestCredentials;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
 import org.graalvm.polyglot.Value;
@@ -44,6 +45,12 @@ public final class Main {
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
+              --user <name>              Guest login name. Default is user.
+              --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
+              --gid <id>                 Guest real, effective, and saved gid. Default is 1000.
+              --groups <ids|none>        Comma-separated supplementary guest gids, or none.
+              --home <path>              Guest home directory used by the default environment.
+              --shell <path>             Guest shell path used by the default environment.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
               --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
@@ -161,6 +168,24 @@ public final class Main {
         if (options.useHostTty()) {
             builder.option("riscv.useHostTty", "true");
         }
+        if (options.guestUserName() != null) {
+            builder.option("riscv.guestUserName", options.guestUserName());
+        }
+        if (options.guestUid() != null) {
+            builder.option("riscv.guestUid", options.guestUid());
+        }
+        if (options.guestGid() != null) {
+            builder.option("riscv.guestGid", options.guestGid());
+        }
+        if (options.guestGroups() != null) {
+            builder.option("riscv.guestGroups", options.guestGroups());
+        }
+        if (options.guestHome() != null) {
+            builder.option("riscv.guestHome", options.guestHome());
+        }
+        if (options.guestShell() != null) {
+            builder.option("riscv.guestShell", options.guestShell());
+        }
         if (options.trace()) {
             builder.option("riscv.trace", "true");
         }
@@ -186,6 +211,12 @@ public final class Main {
         @Nullable String vectorVlen = null;
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
+        @Nullable String guestUserName = null;
+        @Nullable String guestUid = null;
+        @Nullable String guestGid = null;
+        @Nullable String guestGroups = null;
+        @Nullable String guestHome = null;
+        @Nullable String guestShell = null;
         ArrayList<MountOption> mounts = new ArrayList<>();
         boolean useHostTty = false;
         boolean debugTraceCompilation = false;
@@ -211,6 +242,90 @@ public final class Main {
             }
             if (parseOptions && "--use-host-tty".equals(argument)) {
                 useHostTty = true;
+                continue;
+            }
+            if (parseOptions && "--user".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --user.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                guestUserName = parseGuestUserNameOption("--user", args[index], err);
+                if (guestUserName == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--uid".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --uid.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                guestUid = parseLinuxIdOption("--uid", args[index], err);
+                if (guestUid == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--gid".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --gid.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                guestGid = parseLinuxIdOption("--gid", args[index], err);
+                if (guestGid == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--groups".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --groups.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                guestGroups = parseGuestGroupsOption("--groups", args[index], err);
+                if (guestGroups == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--home".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --home.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                guestHome = normalizeGuestPath("--home", args[index], err);
+                if (guestHome == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--shell".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --shell.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                guestShell = normalizeGuestPath("--shell", args[index], err);
+                if (guestShell == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
                 continue;
             }
             if (parseOptions && "--guest-program".equals(argument)) {
@@ -420,6 +535,12 @@ public final class Main {
                 debugFixedClockNanos,
                 mounts,
                 useHostTty,
+                guestUserName,
+                guestUid,
+                guestGid,
+                guestGroups,
+                guestHome,
+                guestShell,
                 debugTraceCompilation,
                 trace);
     }
@@ -433,6 +554,39 @@ public final class Main {
         try {
             return Long.toString(Long.decode(value));
         } catch (NumberFormatException exception) {
+            err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
+    }
+
+    /// Parses a Linux uid or gid option and returns its normalized decimal string value.
+    private static @Nullable String parseLinuxIdOption(String optionName, String value, PrintStream err) {
+        try {
+            long id = Long.decode(value);
+            GuestCredentials.validateId(optionName, id);
+            return Long.toString(id);
+        } catch (NumberFormatException | RiscVException exception) {
+            err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
+    }
+
+    /// Parses a guest login name option.
+    private static @Nullable String parseGuestUserNameOption(String optionName, String value, PrintStream err) {
+        try {
+            GuestCredentials.validateUserName(optionName, value);
+            return value;
+        } catch (RiscVException exception) {
+            err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
+    }
+
+    /// Parses a supplementary group list option.
+    private static @Nullable String parseGuestGroupsOption(String optionName, String value, PrintStream err) {
+        try {
+            return GuestCredentials.normalizeSupplementaryGroupsOption(value);
+        } catch (RiscVException exception) {
             err.println("Invalid value for " + optionName + ": " + value);
             return null;
         }
@@ -561,6 +715,12 @@ public final class Main {
     /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
     /// @param mounts the configured guest filesystem mounts
     /// @param useHostTty whether `/dev/tty` should try to use the host controlling terminal
+    /// @param guestUserName the optional guest login name option value
+    /// @param guestUid the optional guest uid option value
+    /// @param guestGid the optional guest gid option value
+    /// @param guestGroups the optional supplementary guest gid list option value
+    /// @param guestHome the optional guest home directory option value
+    /// @param guestShell the optional guest shell option value
     /// @param debugTraceCompilation whether Truffle compilation diagnostics should be enabled
     /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
@@ -580,6 +740,12 @@ public final class Main {
             @Nullable String debugFixedClockNanos,
             MountOption @Unmodifiable [] mounts,
             boolean useHostTty,
+            @Nullable String guestUserName,
+            @Nullable String guestUid,
+            @Nullable String guestGid,
+            @Nullable String guestGroups,
+            @Nullable String guestHome,
+            @Nullable String guestShell,
             boolean debugTraceCompilation,
             boolean trace) {
         /// Creates parsed command-line options.
@@ -618,6 +784,12 @@ public final class Main {
                     null,
                     new MountOption[0],
                     false,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
                     false,
                     false);
         }
@@ -640,6 +812,12 @@ public final class Main {
                     null,
                     new MountOption[0],
                     false,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
                     false,
                     false);
         }
@@ -660,6 +838,12 @@ public final class Main {
                 @Nullable String debugFixedClockNanos,
                 List<MountOption> mounts,
                 boolean useHostTty,
+                @Nullable String guestUserName,
+                @Nullable String guestUid,
+                @Nullable String guestGid,
+                @Nullable String guestGroups,
+                @Nullable String guestHome,
+                @Nullable String guestShell,
                 boolean debugTraceCompilation,
                 boolean trace) {
             return new CliOptions(
@@ -678,6 +862,12 @@ public final class Main {
                     debugFixedClockNanos,
                     mounts.toArray(MountOption[]::new),
                     useHostTty,
+                    guestUserName,
+                    guestUid,
+                    guestGid,
+                    guestGroups,
+                    guestHome,
+                    guestShell,
                     debugTraceCompilation,
                     trace);
         }

@@ -116,6 +116,56 @@ public final class LinuxInitialStack {
                 loadBias,
                 interpreterBase,
                 executablePath,
+                GuestCredentials.defaultUser(),
+                pageSize);
+    }
+
+    /// Writes the initial stack with explicit environment, credentials, and load-bias metadata.
+    public static long initialize(
+            Memory memory,
+            long stackTop,
+            String[] arguments,
+            ElfImage image,
+            long loadBias,
+            long interpreterBase,
+            @Nullable String executablePath,
+            String @Unmodifiable [] environment,
+            GuestCredentials credentials,
+            long pageSize) {
+        return initialize(
+                memory,
+                stackTop,
+                arguments,
+                environment,
+                image,
+                loadBias,
+                interpreterBase,
+                executablePath,
+                credentials,
+                pageSize);
+    }
+
+    /// Writes the initial stack with explicit environment and default guest credentials.
+    public static long initialize(
+            Memory memory,
+            long stackTop,
+            String @Unmodifiable [] arguments,
+            String @Unmodifiable [] environment,
+            ElfImage image,
+            long loadBias,
+            long interpreterBase,
+            @Nullable String executablePath,
+            long pageSize) {
+        return initialize(
+                memory,
+                stackTop,
+                arguments,
+                environment,
+                image,
+                loadBias,
+                interpreterBase,
+                executablePath,
+                GuestCredentials.defaultUser(),
                 pageSize);
     }
 
@@ -129,6 +179,7 @@ public final class LinuxInitialStack {
     /// @param loadBias the main executable load bias
     /// @param interpreterBase the dynamic interpreter load base, or `ABSENT_ADDRESS` for static programs
     /// @param executablePath the guest executable path used for `AT_EXECFN`, or null to derive it from `argv`
+    /// @param credentials the guest identity values exposed through auxv
     /// @param pageSize the guest base page size exposed through `AT_PAGESZ`
     public static long initialize(
             Memory memory,
@@ -139,6 +190,7 @@ public final class LinuxInitialStack {
             long loadBias,
             long interpreterBase,
             @Nullable String executablePath,
+            GuestCredentials credentials,
             long pageSize) {
         long cursor = stackTop & ~0xfL;
         String[] argv = arguments.clone();
@@ -174,10 +226,10 @@ public final class LinuxInitialStack {
             addAuxiliaryVector(auxv, AT_BASE, interpreterBase);
         }
         addAuxiliaryVector(auxv, AT_ENTRY, image.entryPoint() + loadBias);
-        addAuxiliaryVector(auxv, AT_UID, 0);
-        addAuxiliaryVector(auxv, AT_EUID, 0);
-        addAuxiliaryVector(auxv, AT_GID, 0);
-        addAuxiliaryVector(auxv, AT_EGID, 0);
+        addAuxiliaryVector(auxv, AT_UID, credentials.realUserId());
+        addAuxiliaryVector(auxv, AT_EUID, credentials.effectiveUserId());
+        addAuxiliaryVector(auxv, AT_GID, credentials.realGroupId());
+        addAuxiliaryVector(auxv, AT_EGID, credentials.effectiveGroupId());
         addAuxiliaryVector(auxv, AT_CLKTCK, CLOCK_TICKS_PER_SECOND);
         addAuxiliaryVector(auxv, AT_SECURE, 0);
         addAuxiliaryVector(auxv, AT_RANDOM, randomAddress);

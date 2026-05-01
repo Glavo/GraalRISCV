@@ -24,6 +24,18 @@ public final class LinuxInitialStackTest {
     /// The expected Linux auxv entry-point type.
     private static final long AT_ENTRY = 9;
 
+    /// The expected Linux auxv real uid type.
+    private static final long AT_UID = 11;
+
+    /// The expected Linux auxv effective uid type.
+    private static final long AT_EUID = 12;
+
+    /// The expected Linux auxv real gid type.
+    private static final long AT_GID = 13;
+
+    /// The expected Linux auxv effective gid type.
+    private static final long AT_EGID = 14;
+
     /// The expected Linux auxv platform string pointer type.
     private static final long AT_PLATFORM = 15;
 
@@ -61,11 +73,51 @@ public final class LinuxInitialStackTest {
             long auxv = envp + 4L * Long.BYTES;
             assertAuxvContains(memory, auxv, AT_PAGESZ, 4096);
             assertAuxvContains(memory, auxv, AT_ENTRY, image.entryPoint());
+            assertAuxvContains(memory, auxv, AT_UID, 1000);
+            assertAuxvContains(memory, auxv, AT_EUID, 1000);
+            assertAuxvContains(memory, auxv, AT_GID, 1000);
+            assertAuxvContains(memory, auxv, AT_EGID, 1000);
             long platform = auxvValue(memory, auxv, AT_PLATFORM);
             assertEquals("riscv64", readString(memory, platform));
             long random = auxvValue(memory, auxv, AT_RANDOM);
             assertEquals('G', memory.readUnsignedByte(random));
             assertEquals('8', memory.readUnsignedByte(random + 15));
+        }
+    }
+
+    /// Verifies explicit environment and credentials are reflected in envp and auxv.
+    @Test
+    public void buildsInitialStackWithConfiguredCredentials() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
+            ElfImage image = ElfLoader.load(ElfTestImages.executable(ElfTestImages.ecall()));
+            GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "42", "/home/alice", "/bin/bash");
+            long stackPointer = LinuxInitialStack.initialize(
+                    memory,
+                    memory.endAddress(),
+                    new String[]{"program.elf"},
+                    image,
+                    0,
+                    ElfImage.ABSENT_ADDRESS,
+                    "/program.elf",
+                    credentials.initialEnvironment(),
+                    credentials,
+                    Memory.DEFAULT_PAGE_SIZE);
+
+            long envp = stackPointer + 3L * Long.BYTES;
+            assertEquals("LANG=C", readString(memory, memory.readLong(envp)));
+            assertEquals("PATH=/usr/bin:/bin", readString(memory, memory.readLong(envp + Long.BYTES)));
+            assertEquals("PWD=/", readString(memory, memory.readLong(envp + 2L * Long.BYTES)));
+            assertEquals("USER=alice", readString(memory, memory.readLong(envp + 3L * Long.BYTES)));
+            assertEquals("LOGNAME=alice", readString(memory, memory.readLong(envp + 4L * Long.BYTES)));
+            assertEquals("HOME=/home/alice", readString(memory, memory.readLong(envp + 5L * Long.BYTES)));
+            assertEquals("SHELL=/bin/bash", readString(memory, memory.readLong(envp + 6L * Long.BYTES)));
+            assertEquals(0, memory.readLong(envp + 7L * Long.BYTES));
+
+            long auxv = envp + 8L * Long.BYTES;
+            assertAuxvContains(memory, auxv, AT_UID, 1234);
+            assertAuxvContains(memory, auxv, AT_EUID, 1234);
+            assertAuxvContains(memory, auxv, AT_GID, 5678);
+            assertAuxvContains(memory, auxv, AT_EGID, 5678);
         }
     }
 

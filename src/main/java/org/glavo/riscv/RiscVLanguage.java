@@ -12,6 +12,7 @@ import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.nodes.RiscVRootNode;
+import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.TimeSource;
 import org.glavo.riscv.runtime.VectorUnit;
 import org.graalvm.options.OptionCategory;
@@ -178,6 +179,54 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             stability = OptionStability.STABLE)
     static final OptionKey<Boolean> USE_HOST_TTY = new OptionKey<>(false);
 
+    /// The `riscv.guestUserName` language option.
+    @Option(
+            name = "guestUserName",
+            help = "Guest login name exposed through process identity metadata. Default: user.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<String> GUEST_USER_NAME = new OptionKey<>(GuestCredentials.DEFAULT_USER_NAME);
+
+    /// The `riscv.guestUid` language option.
+    @Option(
+            name = "guestUid",
+            help = "Guest real, effective, and saved uid. Default: 1000.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> GUEST_UID = new OptionKey<>(GuestCredentials.DEFAULT_USER_ID);
+
+    /// The `riscv.guestGid` language option.
+    @Option(
+            name = "guestGid",
+            help = "Guest real, effective, and saved gid. Default: 1000.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Long> GUEST_GID = new OptionKey<>(GuestCredentials.DEFAULT_GROUP_ID);
+
+    /// The `riscv.guestGroups` language option.
+    @Option(
+            name = "guestGroups",
+            help = "Comma-separated supplementary guest gids, `none`, or empty to use the primary gid.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<String> GUEST_GROUPS = new OptionKey<>("");
+
+    /// The `riscv.guestHome` language option.
+    @Option(
+            name = "guestHome",
+            help = "Guest home directory. Empty selects /home/<guestUserName> or /root for root.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<String> GUEST_HOME = new OptionKey<>("");
+
+    /// The `riscv.guestShell` language option.
+    @Option(
+            name = "guestShell",
+            help = "Guest shell path exposed through the default environment. Default: /bin/sh.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<String> GUEST_SHELL = new OptionKey<>(GuestCredentials.DEFAULT_SHELL);
+
     /// Creates a RISC-V Truffle language instance.
     @SuppressWarnings("deprecation")
     public RiscVLanguage() {
@@ -203,6 +252,12 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(MOUNTS),
                 env.getOptions().get(GUEST_PROGRAM_PATH),
                 env.getOptions().get(USE_HOST_TTY),
+                env.getOptions().get(GUEST_USER_NAME),
+                env.getOptions().get(GUEST_UID),
+                env.getOptions().get(GUEST_GID),
+                env.getOptions().get(GUEST_GROUPS),
+                env.getOptions().get(GUEST_HOME),
+                env.getOptions().get(GUEST_SHELL),
                 mappedRegionCache);
     }
 

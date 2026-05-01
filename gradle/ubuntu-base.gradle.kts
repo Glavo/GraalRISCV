@@ -222,6 +222,21 @@ registerUbuntuBaseSmokeTest(
 )
 
 registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseConfiguredUser",
+    "Runs Ubuntu Base commands with configured guest user credentials.",
+    listOf(
+        "--user", "alice",
+        "--uid", "1234",
+        "--gid", "4321",
+        "--home", "/users/alice",
+        "--shell", "/bin/bash",
+        "--guest-program", "/usr/bin/bash",
+        "-c", "/usr/bin/id -u; printf '%s:%s:%s\\n' \"\$USER\" \"\$HOME\" \"\$SHELL\""
+    ),
+    "1234\nalice:/users/alice:/bin/bash\n"
+)
+
+registerUbuntuBaseSmokeTest(
     "testUbuntuBaseUname",
     "Runs /usr/bin/uname from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/uname", "-m"),
