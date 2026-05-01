@@ -521,7 +521,7 @@ public abstract sealed class RiscVInstructionSemantics {
         protected void executeInstruction(MachineState state, long nextPc) {
             Memory memory = state.memory();
             switch (operation) {
-                case NOP, FENCE, FENCE_I, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU,
+                case NOP, FENCE, WRS_NTO, WRS_STO, C_MOP, FENCE_I, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU,
                         CSRRW, CSRRS, CSRRC, CSRRWI, CSRRSI, CSRRCI, ECALL, EBREAK, MRET -> executeControl(state, nextPc);
                 case LB, LH, LW, LD, LBU, LHU, LWU -> executeLoad(state, memory, nextPc);
                 case FLH, FLW, FLD -> executeFloatingPointLoad(state, memory, nextPc);
@@ -538,6 +538,7 @@ public abstract sealed class RiscVInstructionSemantics {
                         SEXT_B, SEXT_H, ZEXT_H, ORC_B, REV8, ROL, ROR, RORI, ROLW, RORW, RORIW,
                         BCLR, BCLRI, BEXT, BEXTI, BINV, BINVI, BSET, BSETI,
                         CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO -> executeRva22(state, memory, nextPc);
+                case CZERO_EQZ, CZERO_NEZ, MOP_R, MOP_RR -> executeRva23(state, nextPc);
                 case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
                         FMIN, FMAX, FMINM, FMAXM, FLI, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H,
                         FCVT_H_S, FCVT_H_D, FROUND, FROUNDNX, FCVTMOD_W_D, FEQ, FLT, FLE, FLTQ, FLEQ,
@@ -1697,7 +1698,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes control-flow and system operations.
     protected final void executeControl(MachineState state, long nextPc) {
         switch (operation) {
-            case NOP, FENCE -> state.setPc(nextPc);
+            case NOP, FENCE, WRS_NTO, WRS_STO, C_MOP -> state.setPc(nextPc);
             case FENCE_I -> {
                 state.fenceInstructionFetch();
                 state.setPc(nextPc);

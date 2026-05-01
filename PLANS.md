@@ -35,7 +35,9 @@
 
 - `Rva23Profile` exists as the non-reported target definition for the full RVA23U64 profile; `riscv_hwprobe` and README still report only the completed RVA22U64 baseline.
 - Additional RVA23U64 scalar instructions are implemented and unit-tested in the decoder and interpreter: `Zicond`, `Zimop`, `Zcmop`, `Zcb`, and `Zawrs`.
+- RVA23U64 scalar instructions and no-op hints are covered in the production micro-bytecode path, including `czero`, `mop`, `wrs`, and `c.mop`.
 - `Supm` pointer masking is implemented through Linux `PR_SET_TAGGED_ADDR_CTRL` and `PR_GET_TAGGED_ADDR_CTRL`, with default PMLEN `0`, implemented PMLEN `7`, syscall tagged-address ABI gating through `PR_TAGGED_ADDR_ENABLE`, clone inheritance, and masking for instruction fetch, PC targets, memory accesses, atomics, CBO zeroing, and syscall guest pointers. Micro-block hot memory paths use a precomputed mask and avoid `ThreadLocal` lookups.
+- `src/test/asm/rva23` and `testRva23Acceptance` build and run repository-owned RVA23 scalar/Supm acceptance coverage.
 - `Zfa` and `Zihintntl` remain implemented compatibility features today and are listed as RVA23U64 mandatory target requirements.
 
 ## Remaining Work
@@ -47,8 +49,7 @@
 - Implement vector support for correctness first through the interpreter: vector architectural state, vector CSRs, configurable `VLEN`, `V` 1.0 base behavior, `Zvfhmin`, `Zvbb`, and `Zvkt`. Micro-block and trace execution may initially fall back to shared interpreter semantics for vector instructions.
 - Add `--vector-vlen <bits>`, defaulting to `128`, and accept only power-of-two values that can satisfy the implemented vector register layout. RVA23U64 reporting requires a configuration that satisfies the profile minimum.
 - Extend `riscv_hwprobe` reporting for RVA23U64 mandatory scalar and vector capabilities, update misaligned vector reporting to match the implementation, and continue leaving optional extensions such as `Zvkng`, `Zvksg`, and `Zacas` unreported until implemented.
-- Add `src/test/asm/rva23` and a `testRva23Acceptance` Gradle task using `-march=rva23u64` or the equivalent explicit extension string; keep `testRva22Acceptance` as a regression suite.
-- Extend assembly acceptance coverage for implemented scalar additions, vector configuration, vector integer/FP/load-store behavior, vector bit-manipulation, `Zvkt` data-independent behavior, Supm masking, `hwprobe`, and illegal opcode boundaries.
+- Extend `testRva23Acceptance` beyond the current scalar/Supm suite for vector configuration, vector integer/FP/load-store behavior, vector bit-manipulation, `Zvkt` data-independent behavior, `hwprobe`, and illegal opcode boundaries.
 
 ### Broaden Static Linux Compatibility
 

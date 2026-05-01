@@ -85,7 +85,7 @@ final class RiscVMicroBlockCompiler {
     /// Converts a decoded operation to a micro-bytecode opcode.
     private static byte opcode(RiscVOperation operation) {
         return switch (operation) {
-            case NOP, FENCE -> RiscVMicroOpcode.ADVANCE_PC;
+            case NOP, FENCE, WRS_NTO, WRS_STO, C_MOP -> RiscVMicroOpcode.ADVANCE_PC;
             case LUI -> RiscVMicroOpcode.LUI;
             case AUIPC -> RiscVMicroOpcode.AUIPC;
             case JAL -> RiscVMicroOpcode.JAL;

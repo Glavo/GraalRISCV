@@ -86,8 +86,7 @@ public final class Rva23Profile {
             "Zvfhmin",
             "Zvkb",
             "Zvkt",
-            "Zvl128b",
-            "Supm");
+            "Zvl128b");
 
     /// Linux hwprobe bits for the implemented additional RVA23U64 scalar extensions.
     public static final long HWPROBE_IMPLEMENTED_ADDITIONAL_SCALAR_EXTENSIONS =
