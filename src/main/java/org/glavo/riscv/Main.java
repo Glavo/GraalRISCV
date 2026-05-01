@@ -43,6 +43,7 @@ public final class Main {
               --vector-vlen <bits>       Vector register length in bits. Default is 128.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
+              --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
               --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
@@ -157,6 +158,9 @@ public final class Main {
         if (options.guestProgramPath() != null) {
             builder.option("riscv.guestProgramPath", options.guestProgramPath());
         }
+        if (options.useHostTty()) {
+            builder.option("riscv.useHostTty", "true");
+        }
         if (options.trace()) {
             builder.option("riscv.trace", "true");
         }
@@ -183,6 +187,7 @@ public final class Main {
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
         ArrayList<MountOption> mounts = new ArrayList<>();
+        boolean useHostTty = false;
         boolean debugTraceCompilation = false;
         boolean trace = false;
         @Nullable String programPath = null;
@@ -202,6 +207,10 @@ public final class Main {
             }
             if (parseOptions && "--trace".equals(argument)) {
                 trace = true;
+                continue;
+            }
+            if (parseOptions && "--use-host-tty".equals(argument)) {
+                useHostTty = true;
                 continue;
             }
             if (parseOptions && "--guest-program".equals(argument)) {
@@ -410,6 +419,7 @@ public final class Main {
                 maxInstructions,
                 debugFixedClockNanos,
                 mounts,
+                useHostTty,
                 debugTraceCompilation,
                 trace);
     }
@@ -550,6 +560,7 @@ public final class Main {
     /// @param maxInstructions the optional maximum instruction count option value
     /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
     /// @param mounts the configured guest filesystem mounts
+    /// @param useHostTty whether `/dev/tty` should try to use the host controlling terminal
     /// @param debugTraceCompilation whether Truffle compilation diagnostics should be enabled
     /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
@@ -568,6 +579,7 @@ public final class Main {
             @Nullable String maxInstructions,
             @Nullable String debugFixedClockNanos,
             MountOption @Unmodifiable [] mounts,
+            boolean useHostTty,
             boolean debugTraceCompilation,
             boolean trace) {
         /// Creates parsed command-line options.
@@ -606,6 +618,7 @@ public final class Main {
                     null,
                     new MountOption[0],
                     false,
+                    false,
                     false);
         }
 
@@ -627,6 +640,7 @@ public final class Main {
                     null,
                     new MountOption[0],
                     false,
+                    false,
                     false);
         }
 
@@ -645,6 +659,7 @@ public final class Main {
                 @Nullable String maxInstructions,
                 @Nullable String debugFixedClockNanos,
                 List<MountOption> mounts,
+                boolean useHostTty,
                 boolean debugTraceCompilation,
                 boolean trace) {
             return new CliOptions(
@@ -662,6 +677,7 @@ public final class Main {
                     maxInstructions,
                     debugFixedClockNanos,
                     mounts.toArray(MountOption[]::new),
+                    useHostTty,
                     debugTraceCompilation,
                     trace);
         }

@@ -259,6 +259,7 @@ public final class RiscVRootNode extends RootNode {
                 context.env(),
                 context.filesystemMounts(),
                 context.timeSource(),
+                context.useHostTty(),
                 this::runGuestThread);
         long stackPointer = initializeLinuxStack(memory, context, program);
         syscalls.recordInitialAuxiliaryVector(stackPointer);

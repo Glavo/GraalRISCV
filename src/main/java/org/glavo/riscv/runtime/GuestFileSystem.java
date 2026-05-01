@@ -45,8 +45,14 @@ public final class GuestFileSystem {
     /// Linux `DT_LNK` directory entry type.
     public static final byte DIRECTORY_ENTRY_SYMBOLIC_LINK = 10;
 
+    /// Linux `DT_CHR` directory entry type.
+    public static final byte DIRECTORY_ENTRY_CHARACTER_DEVICE = 2;
+
     /// The Linux file-type bit for directories.
     public static final int STAT_MODE_DIRECTORY = 0040000;
+
+    /// The Linux file-type bit for character devices.
+    public static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
 
     /// The Linux file-type bit for regular files.
     public static final int STAT_MODE_REGULAR_FILE = 0100000;
@@ -704,7 +710,7 @@ public final class GuestFileSystem {
     /// @param directoryEntryType the Linux directory entry type exposed for this node
     /// @param statType the file-type bits exposed through metadata syscalls
     /// @param permissions the Linux permission bits for this node
-    /// @param fileKey provider-specific regular-file identity, or null for non-file nodes
+    /// @param fileKey provider-specific node identity, or null when the provider does not need one
     /// @param linkTarget the symbolic link target, or null for non-link nodes
     public record VirtualNode(
             String name,
@@ -738,6 +744,18 @@ public final class GuestFileSystem {
                     null);
         }
 
+        /// Creates a virtual character-device node.
+        public static VirtualNode characterDevice(String guestPath, Object fileKey) {
+            return new VirtualNode(
+                    leafName(guestPath),
+                    guestPath,
+                    DIRECTORY_ENTRY_CHARACTER_DEVICE,
+                    STAT_MODE_CHARACTER_DEVICE,
+                    STAT_MODE_ALL,
+                    fileKey,
+                    null);
+        }
+
         /// Creates a virtual symbolic-link node.
         public static VirtualNode symbolicLink(String guestPath, String linkTarget) {
             return new VirtualNode(
@@ -758,6 +776,11 @@ public final class GuestFileSystem {
         /// Returns true when this node is a regular file.
         public boolean isFile() {
             return directoryEntryType == DIRECTORY_ENTRY_REGULAR_FILE;
+        }
+
+        /// Returns true when this node is a character device.
+        public boolean isCharacterDevice() {
+            return directoryEntryType == DIRECTORY_ENTRY_CHARACTER_DEVICE;
         }
 
         /// Returns true when this node is a symbolic link.

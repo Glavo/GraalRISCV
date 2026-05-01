@@ -60,6 +60,9 @@ public final class RiscVContext {
     /// The guest path to load as the executable, or null when the source bytes are the executable.
     private final @Nullable String guestProgramPath;
 
+    /// Whether `/dev/tty` should try to use the host controlling terminal.
+    private final boolean useHostTty;
+
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
@@ -82,6 +85,7 @@ public final class RiscVContext {
             String hostRoot,
             String filesystemMounts,
             String guestProgramPath,
+            boolean useHostTty,
             ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
         if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
@@ -128,6 +132,7 @@ public final class RiscVContext {
         this.hostRoot = hostRoot;
         this.filesystemMounts = parsedFilesystemMounts;
         this.guestProgramPath = normalizedGuestProgramPath;
+        this.useHostTty = useHostTty;
         this.programArguments = env.getApplicationArguments().clone();
         this.mappedRegionCache = mappedRegionCache;
     }
@@ -200,6 +205,11 @@ public final class RiscVContext {
     /// Returns the guest path to load as the executable, or null when source bytes contain the executable.
     public @Nullable String guestProgramPath() {
         return guestProgramPath;
+    }
+
+    /// Returns whether `/dev/tty` should try to use the host controlling terminal.
+    public boolean useHostTty() {
+        return useHostTty;
     }
 
     /// Returns the guest application arguments supplied after the ELF path.

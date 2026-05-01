@@ -170,6 +170,14 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
             stability = OptionStability.STABLE)
     static final OptionKey<String> GUEST_PROGRAM_PATH = new OptionKey<>("");
 
+    /// The `riscv.useHostTty` language option.
+    @Option(
+            name = "useHostTty",
+            help = "Use the host controlling terminal for guest /dev/tty when available. Default: false.",
+            category = OptionCategory.USER,
+            stability = OptionStability.STABLE)
+    static final OptionKey<Boolean> USE_HOST_TTY = new OptionKey<>(false);
+
     /// Creates a RISC-V Truffle language instance.
     @SuppressWarnings("deprecation")
     public RiscVLanguage() {
@@ -194,6 +202,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
                 env.getOptions().get(HOST_ROOT),
                 env.getOptions().get(MOUNTS),
                 env.getOptions().get(GUEST_PROGRAM_PATH),
+                env.getOptions().get(USE_HOST_TTY),
                 mappedRegionCache);
     }
 

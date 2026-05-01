@@ -393,8 +393,26 @@ public final class GuestSyscallsTest {
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
 
+    /// The Linux generic tty `TCSETS` ioctl request number.
+    private static final long TCSETS = 0x5402;
+
+    /// The Linux generic tty `TIOCGPGRP` ioctl request number.
+    private static final long TIOCGPGRP = 0x540F;
+
+    /// The Linux generic tty `TIOCSPGRP` ioctl request number.
+    private static final long TIOCSPGRP = 0x5410;
+
     /// The Linux generic tty `TIOCGWINSZ` ioctl request number.
     private static final long TIOCGWINSZ = 0x5413;
+
+    /// The Linux generic tty `TIOCSWINSZ` ioctl request number.
+    private static final long TIOCSWINSZ = 0x5414;
+
+    /// The byte size of Linux generic `struct termios`.
+    private static final int TERMIOS_SIZE = 36;
+
+    /// The byte size of Linux generic `struct winsize`.
+    private static final int WINSIZE_SIZE = 8;
 
     /// The `st_mode` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_MODE_OFFSET = 16;
@@ -407,6 +425,9 @@ public final class GuestSyscallsTest {
 
     /// The expected `st_mode` value for simulator standard streams.
     private static final int STANDARD_STREAM_STAT_MODE = 0020000 | 0666;
+
+    /// The expected `st_mode` value for virtual character devices.
+    private static final int CHARACTER_DEVICE_STAT_MODE = 0020000 | 0777;
 
     /// The expected `st_mode` value for pipe endpoints.
     private static final int PIPE_STAT_MODE = 0010000 | 0444;
@@ -440,6 +461,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `DT_DIR` directory entry type.
     private static final int DIRECTORY_ENTRY_DIRECTORY = 4;
+
+    /// Linux `DT_CHR` directory entry type.
+    private static final int DIRECTORY_ENTRY_CHARACTER_DEVICE = 2;
 
     /// Linux `DT_REG` directory entry type.
     private static final int DIRECTORY_ENTRY_REGULAR_FILE = 8;
@@ -2849,6 +2873,171 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_IOCTL, 9, TCGETS, memory.baseAddress());
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `/dev/tty` opens as a terminal device with stream-backed I/O.
+    @Test
+    public void openatOpensDevTtyAsTerminalDevice() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[]{'x'}),
+                    out,
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            long pathAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 128;
+            long ioctlAddress = memory.baseAddress() + 256;
+            long statAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "/dev/tty");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            byte[] bytes = "tty".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(dataAddress, bytes, 0, bytes.length);
+            setSyscall(state, SYS_WRITE, fileDescriptor, dataAddress, bytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(bytes.length, state.register(10));
+            assertEquals("tty", out.toString(StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_READ, fileDescriptor, dataAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertEquals('x', memory.readUnsignedByte(dataAddress));
+
+            memory.writeByte(ioctlAddress, (byte) 0x5a);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCSETS, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            memory.clear(ioctlAddress, TERMIOS_SIZE);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCGETS, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0x5a, memory.readUnsignedByte(ioctlAddress));
+
+            memory.writeShort(ioctlAddress, (short) 40);
+            memory.writeShort(ioctlAddress + Short.BYTES, (short) 120);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TIOCSWINSZ, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            memory.clear(ioctlAddress, WINSIZE_SIZE);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TIOCGWINSZ, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(40, memory.readUnsignedShort(ioctlAddress));
+            assertEquals(120, memory.readUnsignedShort(ioctlAddress + Short.BYTES));
+
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TIOCGPGRP, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int processGroupId = memory.readInt(ioctlAddress);
+            assertTrue(processGroupId > 0);
+            memory.writeInt(ioctlAddress, processGroupId);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TIOCSPGRP, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(CHARACTER_DEVICE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+        }
+    }
+
+    /// Verifies that `/dev/null` consumes writes and returns end-of-file on reads.
+    @Test
+    public void openatOpensDevNullAsNullDevice() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[]{'x'}),
+                    out,
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            long pathAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 128;
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/dev/null");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            byte[] bytes = "discarded".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(dataAddress, bytes, 0, bytes.length);
+            setSyscall(state, SYS_WRITE, fileDescriptor, dataAddress, bytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(bytes.length, state.register(10));
+            assertEquals("", out.toString(StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_READ, fileDescriptor, dataAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(CHARACTER_DEVICE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+        }
+    }
+
+    /// Verifies built-in `/dev` directory entries and standard descriptor aliases.
+    @Test
+    public void devFilesystemListsDevicesAndStandardAliases() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    out,
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "/dev");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long directoryFileDescriptor = state.register(10);
+            assertEquals(3, directoryFileDescriptor);
+
+            setSyscall(state, SYS_GETDENTS64, directoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            long nextAddress = assertDirectoryEntry(
+                    memory,
+                    bufferAddress,
+                    ".",
+                    DIRECTORY_ENTRY_DIRECTORY,
+                    1);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+            assertDirectoryEntry(memory, nextAddress, "console", DIRECTORY_ENTRY_CHARACTER_DEVICE, 3);
+
+            writeGuestString(memory, pathAddress, "/dev/stdout");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long outputFileDescriptor = state.register(10);
+            assertEquals(4, outputFileDescriptor);
+
+            byte[] bytes = "stdout".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(bufferAddress, bytes, 0, bytes.length);
+            setSyscall(state, SYS_WRITE, outputFileDescriptor, bufferAddress, bytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(bytes.length, state.register(10));
+            assertEquals("stdout", out.toString(StandardCharsets.UTF_8));
+
+            writeGuestString(memory, pathAddress, "/dev/fd");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("/proc/self/fd".length(), state.register(10));
+            assertEquals("/proc/self/fd", readGuestString(memory, bufferAddress, (int) state.register(10)));
         }
     }
 

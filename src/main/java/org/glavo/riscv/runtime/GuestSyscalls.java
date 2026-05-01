@@ -687,20 +687,35 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
 
+    /// The Linux generic tty `TCSETS` ioctl request number.
+    private static final long TCSETS = 0x5402;
+
+    /// The Linux generic tty `TCSETSW` ioctl request number.
+    private static final long TCSETSW = 0x5403;
+
+    /// The Linux generic tty `TCSETSF` ioctl request number.
+    private static final long TCSETSF = 0x5404;
+
+    /// The Linux generic tty `TIOCSCTTY` ioctl request number.
+    private static final long TIOCSCTTY = 0x540E;
+
+    /// The Linux generic tty `TIOCGPGRP` ioctl request number.
+    private static final long TIOCGPGRP = 0x540F;
+
+    /// The Linux generic tty `TIOCSPGRP` ioctl request number.
+    private static final long TIOCSPGRP = 0x5410;
+
     /// The Linux generic tty `TIOCGWINSZ` ioctl request number.
     private static final long TIOCGWINSZ = 0x5413;
+
+    /// The Linux generic tty `TIOCSWINSZ` ioctl request number.
+    private static final long TIOCSWINSZ = 0x5414;
 
     /// The byte size of Linux generic `struct termios`.
     private static final int TERMIOS_SIZE = 36;
 
     /// The byte size of Linux generic `struct winsize`.
     private static final int WINSIZE_SIZE = 8;
-
-    /// The default terminal row count returned by `TIOCGWINSZ`.
-    private static final short DEFAULT_TERMINAL_ROWS = 24;
-
-    /// The default terminal column count returned by `TIOCGWINSZ`.
-    private static final short DEFAULT_TERMINAL_COLUMNS = 80;
 
     /// The byte size of Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE = 128;
@@ -1464,6 +1479,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The guest path where the built-in virtual proc filesystem is mounted.
     private static final String PROC_MOUNT_PATH = "/proc";
 
+    /// The guest path where the built-in virtual device filesystem is mounted.
+    private static final String DEV_MOUNT_PATH = "/dev";
+
     /// Synthetic inode base used for virtual proc entries.
     private static final long PROC_INODE_BASE = 0x7000_0000L;
 
@@ -1508,6 +1526,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The filesystem namespace before process-local default virtual mounts are attached.
     private final GuestFileSystem baseFileSystem;
+
+    /// The process-shared terminal exposed through standard descriptors and `/dev/tty`.
+    private final TerminalDevice terminalDevice;
 
     /// The guest-visible current working directory in absolute Linux path syntax.
     private String guestWorkingDirectory = "/";
@@ -1646,6 +1667,13 @@ public final class GuestSyscalls implements AutoCloseable {
         return limits;
     }
 
+    /// Adds process-local default virtual filesystems unless the user already supplied those mount points.
+    private GuestFileSystem addDefaultVirtualMounts(GuestFileSystem fileSystem) {
+        return fileSystem
+                .withDefaultVirtualMount(DEV_MOUNT_PATH, new DevFileSystem())
+                .withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem());
+    }
+
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
     public GuestSyscalls(
             Memory memory,
@@ -1653,7 +1681,7 @@ public final class GuestSyscalls implements AutoCloseable {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak) {
-        this(memory, in, out, err, initialProgramBreak, GuestFileSystem.empty(), null, TimeSource.system(), null);
+        this(memory, in, out, err, initialProgramBreak, GuestFileSystem.empty(), null, TimeSource.system(), false, null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and resolved root mount.
@@ -1676,7 +1704,17 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             @Nullable TruffleFile hostRoot,
             TimeSource timeSource) {
-        this(memory, in, out, err, initialProgramBreak, GuestFileSystem.forHostRoot(hostRoot), null, timeSource, null);
+        this(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                GuestFileSystem.forHostRoot(hostRoot),
+                null,
+                timeSource,
+                false,
+                null);
     }
 
     /// Creates a syscall handler backed by the supplied streams, filesystem namespace, and guest time source.
@@ -1688,7 +1726,7 @@ public final class GuestSyscalls implements AutoCloseable {
             long initialProgramBreak,
             GuestFileSystem fileSystem,
             TimeSource timeSource) {
-        this(memory, in, out, err, initialProgramBreak, fileSystem, null, timeSource, null);
+        this(memory, in, out, err, initialProgramBreak, fileSystem, null, timeSource, false, null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy root mount.
@@ -1722,6 +1760,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 GuestFileSystem.forMountSpecs(env, new String[]{"/=" + hostRootPath}),
                 env,
                 timeSource,
+                false,
                 null);
     }
 
@@ -1736,6 +1775,22 @@ public final class GuestSyscalls implements AutoCloseable {
             String hostRootPath,
             TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
+        this(memory, in, out, err, initialProgramBreak, env, hostRootPath, timeSource, false, guestThreadRunner);
+    }
+
+    /// Creates a syscall handler backed by streams, lazy root mount, guest time source, terminal option,
+    /// and guest thread runner.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            TruffleLanguage.Env env,
+            String hostRootPath,
+            TimeSource timeSource,
+            boolean useHostTty,
+            GuestThreadRunner guestThreadRunner) {
         this(
                 memory,
                 in,
@@ -1745,6 +1800,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 GuestFileSystem.forMountSpecs(env, new String[]{"/=" + hostRootPath}),
                 env,
                 timeSource,
+                useHostTty,
                 guestThreadRunner);
     }
 
@@ -1767,6 +1823,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 GuestFileSystem.forMountSpecs(env, filesystemMountSpecs),
                 env,
                 timeSource,
+                false,
                 null);
     }
 
@@ -1781,6 +1838,22 @@ public final class GuestSyscalls implements AutoCloseable {
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
+        this(memory, in, out, err, initialProgramBreak, env, filesystemMountSpecs, timeSource, false, guestThreadRunner);
+    }
+
+    /// Creates a syscall handler backed by streams, lazy filesystem mounts, guest time source, terminal option,
+    /// and guest thread runner.
+    public GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            TruffleLanguage.Env env,
+            String @Unmodifiable [] filesystemMountSpecs,
+            TimeSource timeSource,
+            boolean useHostTty,
+            GuestThreadRunner guestThreadRunner) {
         this(
                 memory,
                 in,
@@ -1790,6 +1863,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 GuestFileSystem.forMountSpecs(env, filesystemMountSpecs),
                 env,
                 timeSource,
+                useHostTty,
                 guestThreadRunner);
     }
 
@@ -1803,6 +1877,7 @@ public final class GuestSyscalls implements AutoCloseable {
             GuestFileSystem fileSystem,
             @Nullable TruffleLanguage.Env env,
             TimeSource timeSource,
+            boolean useHostTty,
             @Nullable GuestThreadRunner guestThreadRunner) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
@@ -1816,7 +1891,8 @@ public final class GuestSyscalls implements AutoCloseable {
         this.env = env;
         this.guestThreadRunner = guestThreadRunner;
         this.baseFileSystem = fileSystem;
-        this.fileSystem = fileSystem.withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem());
+        this.terminalDevice = TerminalDevice.open(in, out, useHostTty);
+        this.fileSystem = addDefaultVirtualMounts(fileSystem);
         this.initialProgramBreak = initialProgramBreak;
         this.programBreak = initialProgramBreak;
         this.programBreakBackingEnd = initialProgramBreak;
@@ -1836,7 +1912,8 @@ public final class GuestSyscalls implements AutoCloseable {
         this.env = parent.env;
         this.guestThreadRunner = parent.guestThreadRunner;
         this.baseFileSystem = parent.baseFileSystem;
-        this.fileSystem = baseFileSystem.withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem());
+        this.terminalDevice = parent.terminalDevice.retain();
+        this.fileSystem = addDefaultVirtualMounts(baseFileSystem);
         this.guestWorkingDirectory = parent.guestWorkingDirectory;
         this.auxiliaryVectorBytes = parent.auxiliaryVectorBytes.clone();
         this.procCommandLineBytes = parent.procCommandLineBytes.clone();
@@ -2213,6 +2290,11 @@ public final class GuestSyscalls implements AutoCloseable {
             } catch (IOException exception) {
                 throw new RiscVException("Failed to close guest file descriptor", exception);
             }
+        }
+        try {
+            terminalDevice.close();
+        } catch (IOException exception) {
+            throw new RiscVException("Failed to close guest terminal", exception);
         }
     }
 
@@ -2725,7 +2807,8 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((mode & X_OK) != 0 && !openFile.isDirectory()) {
             return EACCES;
         }
-        if ((mode & W_OK) != 0 && (openFile.isTarEntry() || openFile.isVirtualEntry())) {
+        if ((mode & W_OK) != 0
+                && (openFile.isTarEntry() || (openFile.isVirtualEntry() && !openFile.isCharacterDevice()))) {
             return EACCES;
         }
         return 0;
@@ -3332,6 +3415,7 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Opens a read-only file or directory from a virtual filesystem.
     private long openVirtualPath(VirtualMount mount, String absoluteGuestPath, long flags) {
         long accessMode = flags & O_ACCMODE;
+        boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
         boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
         boolean create = (flags & O_CREAT) != 0;
         boolean truncate = (flags & O_TRUNC) != 0;
@@ -3345,6 +3429,15 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (create && (flags & O_EXCL) != 0) {
             return EEXIST;
+        }
+        if (node.isCharacterDevice()) {
+            return openVirtualCharacterDevice(
+                    node,
+                    virtualPath.mount(),
+                    virtualPath.guestPath(),
+                    flags,
+                    readable,
+                    writable);
         }
         if (writable || truncate || append) {
             return EROFS;
@@ -3371,6 +3464,53 @@ public final class GuestSyscalls implements AutoCloseable {
                 virtualPath.guestPath(),
                 new ByteArraySeekableByteChannel(virtualPath.mount().fileSystem().fileData(node)),
                 true));
+    }
+
+    /// Opens one virtual character device node.
+    private long openVirtualCharacterDevice(
+            VirtualNode node,
+            VirtualMount mount,
+            String guestPath,
+            long flags,
+            boolean readable,
+            boolean writable) {
+        if ((flags & O_DIRECTORY) != 0) {
+            return ENOTDIR;
+        }
+
+        Object fileKey = node.fileKey();
+        if (!(fileKey instanceof DeviceFile deviceFile)) {
+            return ENODEV;
+        }
+
+        return switch (deviceFile) {
+            case NULL -> addOpenFile(OpenFile.nullDevice(node, mount, guestPath, readable, writable));
+            case TTY, CONSOLE -> addOpenFile(OpenFile.terminalDevice(
+                    node,
+                    mount,
+                    guestPath,
+                    terminalDevice,
+                    readable,
+                    writable));
+            case STDIN -> {
+                if (writable) {
+                    yield EACCES;
+                }
+                yield addOpenFile(OpenFile.standardFileDescriptor(0, guestPath));
+            }
+            case STDOUT -> {
+                if (readable) {
+                    yield EACCES;
+                }
+                yield addOpenFile(OpenFile.standardFileDescriptor(1, guestPath));
+            }
+            case STDERR -> {
+                if (readable) {
+                    yield EACCES;
+                }
+                yield addOpenFile(OpenFile.standardFileDescriptor(2, guestPath));
+            }
+        };
     }
 
     /// Opens the target of a virtual symbolic link through normal guest path resolution.
@@ -3427,6 +3567,15 @@ public final class GuestSyscalls implements AutoCloseable {
             if (openFile.isDirectory()) {
                 return EISDIR;
             }
+            if (openFile.isTerminalDevice()) {
+                byte[] buffer = new byte[(int) length];
+                int count = openFile.terminalDevice().read(buffer, buffer.length);
+                memory.writeBytes(address, buffer, 0, count);
+                return count;
+            }
+            if (openFile.isNullDevice()) {
+                return 0;
+            }
 
             byte[] buffer = new byte[(int) length];
             int count;
@@ -3478,6 +3627,9 @@ public final class GuestSyscalls implements AutoCloseable {
                     return EINVAL;
                 }
                 byte[] bytes = memory.readBytes(address, length);
+                if (openFile.isNullDevice()) {
+                    return bytes.length;
+                }
                 long count = writeOpenFile(openFile, bytes);
                 if (count < 0) {
                     return count;
@@ -3760,6 +3912,18 @@ public final class GuestSyscalls implements AutoCloseable {
         if (openFile.isEventFile() || openFile.isEpollFile()) {
             return EINVAL;
         }
+        if (openFile.isTerminalDevice()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return openFile.terminalDevice().read(buffer, length);
+        }
+        if (openFile.isNullDevice()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return 0;
+        }
         if (openFile.isPipeReader()) {
             if (offsetAddress != 0) {
                 return ESPIPE;
@@ -3803,6 +3967,19 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (openFile.isEventFile() || openFile.isEpollFile()) {
             return EINVAL;
+        }
+        if (openFile.isTerminalDevice()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            openFile.terminalDevice().write(buffer, length);
+            return length;
+        }
+        if (openFile.isNullDevice()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return length;
         }
         if (openFile.isPipeWriter()) {
             if (offsetAddress != 0) {
@@ -3849,6 +4026,13 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Writes all bytes to an open host file or pipe endpoint.
     private static long writeOpenFile(OpenFile openFile, byte[] bytes) throws IOException {
+        if (openFile.isTerminalDevice()) {
+            openFile.terminalDevice().write(bytes, bytes.length);
+            return bytes.length;
+        }
+        if (openFile.isNullDevice()) {
+            return bytes.length;
+        }
         if (openFile.isPipeWriter()) {
             return openFile.pipe().write(bytes);
         }
@@ -3920,6 +4104,16 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         if (openFile.isPipeWriter()) {
             return openFile.pipe().isReaderOpen() ? EPOLLOUT : EPOLLERR;
+        }
+        if (openFile.isTerminalDevice() || openFile.isNullDevice()) {
+            int events = 0;
+            if (openFile.readable()) {
+                events |= EPOLLIN;
+            }
+            if (openFile.writable()) {
+                events |= EPOLLOUT;
+            }
+            return events;
         }
         if (openFile.isHostFile() || openFile.isDirectory()) {
             int events = 0;
@@ -4237,6 +4431,9 @@ public final class GuestSyscalls implements AutoCloseable {
             return EINVAL;
         }
         if (openFile.isEventFile() || openFile.isEpollFile()) {
+            return EINVAL;
+        }
+        if (openFile.isTerminalDevice() || openFile.isNullDevice()) {
             return EINVAL;
         }
         if (openFile.isDirectory()) {
@@ -4566,7 +4763,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((mode & R_OK) != 0 && (permissions & STAT_MODE_READ_ALL) == 0) {
             return EACCES;
         }
-        if ((mode & W_OK) != 0) {
+        if ((mode & W_OK) != 0 && (permissions & 0222) == 0) {
             return EACCES;
         }
         if ((mode & X_OK) != 0 && (permissions & 0111) == 0) {
@@ -4745,24 +4942,71 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Handles tty-related ioctls used by common `isatty` and stdio setup paths.
     private long ioctl(int fileDescriptor, long request, long argument) {
-        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
-        if (standardFileDescriptor < 0) {
-            if (isOpenFileDescriptor(fileDescriptor)) {
-                return ENOTTY;
+        @Nullable TerminalDevice terminal = terminalDeviceFor(fileDescriptor);
+        if (terminal == null) {
+            if (!isOpenFileDescriptor(fileDescriptor)) {
+                return EBADF;
             }
-            return EBADF;
+            return ENOTTY;
         }
         if (request == TCGETS) {
-            memory.clear(argument, TERMIOS_SIZE);
+            if (!memory.isBacked(argument, TERMIOS_SIZE)) {
+                return EFAULT;
+            }
+            terminal.writeTermios(memory, argument);
+            return 0;
+        }
+        if (request == TCSETS || request == TCSETSW || request == TCSETSF) {
+            if (!memory.isBacked(argument, TERMIOS_SIZE)) {
+                return EFAULT;
+            }
+            terminal.readTermios(memory, argument);
             return 0;
         }
         if (request == TIOCGWINSZ) {
-            memory.clear(argument, WINSIZE_SIZE);
-            memory.writeShort(argument, DEFAULT_TERMINAL_ROWS);
-            memory.writeShort(argument + Short.BYTES, DEFAULT_TERMINAL_COLUMNS);
+            if (!memory.isBacked(argument, WINSIZE_SIZE)) {
+                return EFAULT;
+            }
+            terminal.writeWindowSize(memory, argument);
+            return 0;
+        }
+        if (request == TIOCSWINSZ) {
+            if (!memory.isBacked(argument, WINSIZE_SIZE)) {
+                return EFAULT;
+            }
+            terminal.readWindowSize(memory, argument);
+            return 0;
+        }
+        if (request == TIOCGPGRP) {
+            if (!memory.isBacked(argument, Integer.BYTES)) {
+                return EFAULT;
+            }
+            memory.writeInt(argument, process.processGroupId());
+            return 0;
+        }
+        if (request == TIOCSPGRP) {
+            if (!memory.isBacked(argument, Integer.BYTES)) {
+                return EFAULT;
+            }
+            int processGroupId = memory.readInt(argument);
+            return processGroupId <= 0 ? EINVAL : 0;
+        }
+        if (request == TIOCSCTTY) {
             return 0;
         }
         return ENOTTY;
+    }
+
+    /// Returns the terminal backing a descriptor, or null when the descriptor is not terminal-like.
+    private @Nullable TerminalDevice terminalDeviceFor(int fileDescriptor) {
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
+            return terminalDevice;
+        }
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.isTerminalDevice()) {
+            return null;
+        }
+        return openFile.terminalDevice();
     }
 
     /// Handles the minimal `fcntl` subset used by static single-process libc code.
@@ -6981,6 +7225,88 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeBytes(address, bytes, 0, bytes.length);
     }
 
+    /// Identifies the built-in virtual device nodes exposed below `/dev`.
+    private enum DeviceFile {
+        /// The guest controlling terminal.
+        TTY,
+
+        /// The guest console alias for the controlling terminal.
+        CONSOLE,
+
+        /// The byte sink and end-of-file source exposed as `/dev/null`.
+        NULL,
+
+        /// The process standard input descriptor.
+        STDIN,
+
+        /// The process standard output descriptor.
+        STDOUT,
+
+        /// The process standard error descriptor.
+        STDERR
+    }
+
+    /// Provides the built-in process-local `/dev` filesystem.
+    private static final class DevFileSystem implements GuestFileSystem.VirtualFileSystem {
+        /// Returns a device node at an absolute guest path, or null when absent.
+        @Override
+        public @Nullable VirtualNode node(String absoluteGuestPath) {
+            return devNode(absoluteGuestPath);
+        }
+
+        /// Returns the child device nodes for `/dev`.
+        @Override
+        public VirtualNode @Unmodifiable [] childNodes(String directoryGuestPath) {
+            if (!DEV_MOUNT_PATH.equals(directoryGuestPath)) {
+                return new VirtualNode[0];
+            }
+            return new VirtualNode[]{
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/console", DeviceFile.CONSOLE),
+                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/fd", PROC_MOUNT_PATH + "/self/fd"),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/null", DeviceFile.NULL),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/stderr", DeviceFile.STDERR),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/stdin", DeviceFile.STDIN),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/stdout", DeviceFile.STDOUT),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/tty", DeviceFile.TTY)
+            };
+        }
+
+        /// Returns empty bytes because `/dev` does not expose regular files.
+        @Override
+        public byte @Unmodifiable [] fileData(VirtualNode node) {
+            return new byte[0];
+        }
+
+        /// Returns the target of the `/dev/fd` symbolic link.
+        @Override
+        public String linkTarget(VirtualNode node) {
+            @Nullable String target = node.linkTarget();
+            return target == null ? "" : target;
+        }
+
+        /// Returns one built-in `/dev` node.
+        private static @Nullable VirtualNode devNode(String absoluteGuestPath) {
+            return switch (absoluteGuestPath) {
+                case DEV_MOUNT_PATH -> VirtualNode.directory(DEV_MOUNT_PATH);
+                case DEV_MOUNT_PATH + "/console" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.CONSOLE);
+                case DEV_MOUNT_PATH + "/fd" ->
+                        VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd");
+                case DEV_MOUNT_PATH + "/null" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.NULL);
+                case DEV_MOUNT_PATH + "/stderr" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.STDERR);
+                case DEV_MOUNT_PATH + "/stdin" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.STDIN);
+                case DEV_MOUNT_PATH + "/stdout" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.STDOUT);
+                case DEV_MOUNT_PATH + "/tty" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.TTY);
+                default -> null;
+            };
+        }
+    }
+
     /// Identifies proc regular files whose payload is generated on demand.
     private enum ProcFile {
         /// `/proc/cpuinfo`.
@@ -8555,6 +8881,12 @@ public final class GuestSyscalls implements AutoCloseable {
         /// The interest set backing an epoll descriptor.
         private final @Nullable EpollSet epollSet;
 
+        /// The terminal device backing this descriptor, or null for non-terminal entries.
+        private final @Nullable TerminalDevice terminalDevice;
+
+        /// Whether this descriptor is backed by `/dev/null`.
+        private final boolean nullDevice;
+
         /// Whether this descriptor refers to a directory.
         private final boolean directory;
 
@@ -8597,6 +8929,8 @@ public final class GuestSyscalls implements AutoCloseable {
                 @Nullable PipeBuffer pipe,
                 @Nullable EventCounter eventCounter,
                 @Nullable EpollSet epollSet,
+                @Nullable TerminalDevice terminalDevice,
+                boolean nullDevice,
                 boolean directory,
                 boolean pipeReader,
                 boolean pipeWriter,
@@ -8614,6 +8948,8 @@ public final class GuestSyscalls implements AutoCloseable {
             this.pipe = pipe;
             this.eventCounter = eventCounter;
             this.epollSet = epollSet;
+            this.terminalDevice = terminalDevice;
+            this.nullDevice = nullDevice;
             this.directory = directory;
             this.pipeReader = pipeReader;
             this.pipeWriter = pipeWriter;
@@ -8642,6 +8978,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
+                    false,
                     false,
                     false,
                     false,
@@ -8664,6 +9002,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
+                    false,
                     true,
                     false,
                     false,
@@ -8686,6 +9026,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
+                    false,
                     false,
                     false,
                     false,
@@ -8708,6 +9050,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
+                    false,
                     true,
                     false,
                     false,
@@ -8735,6 +9079,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
+                    false,
                     false,
                     false,
                     false,
@@ -8757,6 +9103,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
+                    false,
                     true,
                     false,
                     false,
@@ -8766,11 +9114,76 @@ public final class GuestSyscalls implements AutoCloseable {
                     false);
         }
 
+        /// Creates an entry backed by a virtual terminal character device.
+        static OpenFile terminalDevice(
+                VirtualNode node,
+                VirtualMount mount,
+                String guestPath,
+                TerminalDevice terminalDevice,
+                boolean readable,
+                boolean writable) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    guestPath,
+                    null,
+                    node,
+                    mount,
+                    null,
+                    null,
+                    null,
+                    null,
+                    terminalDevice,
+                    false,
+                    false,
+                    false,
+                    false,
+                    readable,
+                    writable,
+                    false,
+                    false);
+        }
+
+        /// Creates an entry backed by the virtual `/dev/null` character device.
+        static OpenFile nullDevice(
+                VirtualNode node,
+                VirtualMount mount,
+                String guestPath,
+                boolean readable,
+                boolean writable) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    guestPath,
+                    null,
+                    node,
+                    mount,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    false,
+                    false,
+                    false,
+                    readable,
+                    writable,
+                    false,
+                    false);
+        }
+
         /// Creates an entry that duplicates a standard stream descriptor.
         static OpenFile standardFileDescriptor(int fileDescriptor) {
+            return standardFileDescriptor(fileDescriptor, null);
+        }
+
+        /// Creates an entry that duplicates a standard stream descriptor with a guest-visible path.
+        static OpenFile standardFileDescriptor(int fileDescriptor, @Nullable String guestPath) {
             return new OpenFile(
                     fileDescriptor,
                     null,
+                    guestPath,
                     null,
                     null,
                     null,
@@ -8779,6 +9192,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    false,
                     false,
                     false,
                     false,
@@ -8801,6 +9215,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     pipe,
                     null,
                     null,
+                    null,
+                    false,
                     false,
                     true,
                     false,
@@ -8823,6 +9239,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     pipe,
                     null,
                     null,
+                    null,
+                    false,
                     false,
                     false,
                     true,
@@ -8845,6 +9263,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     eventCounter,
                     null,
+                    null,
+                    false,
                     false,
                     false,
                     false,
@@ -8867,6 +9287,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     epollSet,
+                    null,
+                    false,
                     false,
                     false,
                     false,
@@ -8904,6 +9326,16 @@ public final class GuestSyscalls implements AutoCloseable {
         /// Returns true when this entry is backed by an epoll interest set.
         boolean isEpollFile() {
             return epollSet != null;
+        }
+
+        /// Returns true when this entry is backed by a virtual terminal device.
+        boolean isTerminalDevice() {
+            return terminalDevice != null;
+        }
+
+        /// Returns true when this entry is backed by `/dev/null`.
+        boolean isNullDevice() {
+            return nullDevice;
         }
 
         /// Returns true when this entry refers to a directory.
@@ -8945,6 +9377,12 @@ public final class GuestSyscalls implements AutoCloseable {
             return epollSet;
         }
 
+        /// Returns the terminal device backing this descriptor.
+        TerminalDevice terminalDevice() {
+            assert terminalDevice != null;
+            return terminalDevice;
+        }
+
         /// Returns the host path backing this descriptor.
         @Nullable TruffleFile path() {
             return path;
@@ -8978,6 +9416,11 @@ public final class GuestSyscalls implements AutoCloseable {
         /// Returns true when this entry is backed by a virtual filesystem node.
         boolean isVirtualEntry() {
             return virtualNode != null;
+        }
+
+        /// Returns true when this entry is backed by a virtual character device node.
+        boolean isCharacterDevice() {
+            return virtualNode != null && virtualNode.isCharacterDevice();
         }
 
         /// Returns true when reads are permitted.

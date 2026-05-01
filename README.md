@@ -47,6 +47,7 @@ Options:
   --vector-vlen <bits>       Vector register length in bits. Default is 128.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
   --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
+  --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
   --debug-fixed-clock-nanos <nanos>
                               Fixed epoch nanoseconds for deterministic guest time.
   --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
@@ -61,6 +62,8 @@ host directories and tar archives visible to guest file syscalls. For example,
 the mounted root archive, and `--mount /data=dataset.tar` overlays `dataset.tar`
 at guest `/data`. If no `/` mount is provided for a host executable, the CLI
 mounts the directory containing that executable at `/`.
+By default, guest `/dev/tty` is backed by the configured process streams; pass
+`--use-host-tty` to try a real host controlling terminal when available.
 
 ## Supported ELF Inputs
 
@@ -76,8 +79,8 @@ The simulator implements enough Linux RISC-V user-mode behavior to run the
 bundled static musl examples, the static Go example, CoreMark, RVV examples, and
 dynamic programs such as `/usr/bin/true`, `/usr/bin/bash`, `/usr/bin/ls`, and
 `/usr/bin/cat` from the Ubuntu Base root tar. File access is sandboxed under
-configured `--mount` entries, with a built-in read-only `/proc` for process
-metadata.
+configured `--mount` entries, with built-in `/proc` and `/dev` virtual
+filesystems for process metadata and basic character devices.
 
 ## Examples
 
