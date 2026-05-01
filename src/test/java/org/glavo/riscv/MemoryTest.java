@@ -51,6 +51,20 @@ public final class MemoryTest {
         }
     }
 
+    /// Verifies pointer masking applies to instruction fetches in an active guest-thread scope.
+    @Test
+    public void pointerMaskingAppliesToInstructionFetches() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            memory.writeInt(Memory.DEFAULT_BASE_ADDRESS, 0x0000_0513);
+            long previousMask = memory.enterPointerMaskLength(7);
+            try {
+                assertEquals(0x0000_0513, memory.readInstructionInt(taggedAddress(Memory.DEFAULT_BASE_ADDRESS)));
+            } finally {
+                memory.restorePointerMask(previousMask);
+            }
+        }
+    }
+
     /// Verifies sparse mappings can be accessed after out-of-order insertion.
     @Test
     public void accessesMultipleSparseMappings() {
@@ -480,5 +494,10 @@ public final class MemoryTest {
                     Memory.PROTECTION_READ | Memory.PROTECTION_EXECUTE));
             assertEquals(0x0000_0513, memory.readInstructionInt(instructionAddress));
         }
+    }
+
+    /// Adds a high pointer tag that is removed when PMLEN is 7.
+    private static long taggedAddress(long address) {
+        return address | (1L << (Long.SIZE - 7));
     }
 }

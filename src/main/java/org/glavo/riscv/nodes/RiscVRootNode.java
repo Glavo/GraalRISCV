@@ -490,11 +490,16 @@ public final class RiscVRootNode extends RootNode {
         public boolean executeRepeating(VirtualFrame frame) {
             GuestLoopState loopState = (GuestLoopState) frame.getArguments()[0];
             MachineState state = loopState.state();
-            loopState.syscalls().checkProcessStatus();
-            loopState.refreshMemoryAccess();
-            long pc = dispatch.execute(loopState, state);
-            loopState.setPc(pc);
-            return true;
+            long previousMask = state.enterPointerMask();
+            try {
+                loopState.syscalls().checkProcessStatus();
+                loopState.refreshMemoryAccess();
+                long pc = dispatch.execute(loopState, state);
+                loopState.setPc(pc);
+                return true;
+            } finally {
+                state.restorePointerMask(previousMask);
+            }
         }
     }
 

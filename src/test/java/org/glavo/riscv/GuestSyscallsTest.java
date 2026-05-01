@@ -982,6 +982,21 @@ public final class GuestSyscallsTest {
     /// Linux `PR_GET_THP_DISABLE`.
     private static final long PR_GET_THP_DISABLE = 42;
 
+    /// Linux `PR_SET_TAGGED_ADDR_CTRL`.
+    private static final long PR_SET_TAGGED_ADDR_CTRL = 55;
+
+    /// Linux `PR_GET_TAGGED_ADDR_CTRL`.
+    private static final long PR_GET_TAGGED_ADDR_CTRL = 56;
+
+    /// Linux `PR_TAGGED_ADDR_ENABLE`.
+    private static final long PR_TAGGED_ADDR_ENABLE = 1;
+
+    /// Linux `PR_PMLEN_SHIFT`.
+    private static final long PR_PMLEN_SHIFT = 24;
+
+    /// Linux `PR_PMLEN_MASK`.
+    private static final long PR_PMLEN_MASK = 0x7fL << PR_PMLEN_SHIFT;
+
     /// Linux `PR_SET_VMA`.
     private static final long PR_SET_VMA = 0x53564d41L;
 
@@ -3645,6 +3660,53 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies Linux RISC-V tagged-address control state and syscall pointer masking.
+    @Test
+    public void prctlControlsRiscvPointerMasking() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long intAddress = memory.baseAddress() + 64;
+            long taggedIntAddress = taggedAddress(intAddress);
+
+            setSyscall(state, SYS_PRCTL, PR_GET_TAGGED_ADDR_CTRL, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_PRCTL,
+                    PR_SET_TAGGED_ADDR_CTRL,
+                    PR_TAGGED_ADDR_ENABLE | (1L << PR_PMLEN_SHIFT),
+                    0,
+                    0,
+                    0,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_TAGGED_ADDR_CTRL, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(PR_TAGGED_ADDR_ENABLE | (7L << PR_PMLEN_SHIFT), state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_PDEATHSIG, 15, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_GET_PDEATHSIG, taggedIntAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(15, memory.readInt(intAddress));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_TAGGED_ADDR_CTRL, 8L << PR_PMLEN_SHIFT, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PRCTL, PR_SET_TAGGED_ADDR_CTRL, PR_PMLEN_MASK | (1L << 8), 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies `prctl` no-op support and unsupported operation errors.
     @Test
     public void prctlAcceptsVirtualMemoryAreaNames() {
@@ -4778,6 +4840,11 @@ public final class GuestSyscallsTest {
     /// Reads a `struct riscv_hwprobe` value from guest memory.
     private static long readHwprobeValue(Memory memory, long pairsAddress, int index) {
         return memory.readLong(pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE + RISCV_HWPROBE_VALUE_OFFSET);
+    }
+
+    /// Adds a high pointer tag that is removed when PMLEN is 7.
+    private static long taggedAddress(long address) {
+        return address | (1L << (Long.SIZE - 7));
     }
 
     /// Writes a packed Linux generic `struct epoll_event` into guest memory.

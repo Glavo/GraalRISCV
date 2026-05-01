@@ -1097,6 +1097,27 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `PR_GET_THP_DISABLE`.
     private static final long PR_GET_THP_DISABLE = 42;
 
+    /// Linux `PR_SET_TAGGED_ADDR_CTRL`.
+    private static final long PR_SET_TAGGED_ADDR_CTRL = 55;
+
+    /// Linux `PR_GET_TAGGED_ADDR_CTRL`.
+    private static final long PR_GET_TAGGED_ADDR_CTRL = 56;
+
+    /// Linux `PR_TAGGED_ADDR_ENABLE`.
+    private static final long PR_TAGGED_ADDR_ENABLE = 1;
+
+    /// Linux `PR_PMLEN_SHIFT`.
+    private static final long PR_PMLEN_SHIFT = 24;
+
+    /// Linux `PR_PMLEN_MASK`.
+    private static final long PR_PMLEN_MASK = 0x7fL << PR_PMLEN_SHIFT;
+
+    /// The default disabled RISC-V userspace pointer mask length.
+    private static final int POINTER_MASK_LENGTH_DISABLED = 0;
+
+    /// The RISC-V userspace pointer mask length implemented by this simulator.
+    private static final int POINTER_MASK_LENGTH_7 = 7;
+
     /// Linux `PR_SET_VMA`.
     private static final long PR_SET_VMA = 0x53564d41L;
 
@@ -1591,8 +1612,10 @@ public final class GuestSyscalls implements AutoCloseable {
             throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
         }
 
-        switch ((int) callNumber) {
-            case SYS_GETCWD -> state.setRegister(10, getcwd(state.register(10), state.register(11)));
+        long previousMask = state.enterSyscallPointerMask();
+        try {
+            switch ((int) callNumber) {
+                case SYS_GETCWD -> state.setRegister(10, getcwd(state.register(10), state.register(11)));
             case SYS_EVENTFD2 -> state.setRegister(10, eventfd2(state.register(10), state.register(11)));
             case SYS_EPOLL_CREATE1 -> state.setRegister(10, epollCreate1(state.register(10)));
             case SYS_EPOLL_CTL -> state.setRegister(10, epollCtl(
@@ -1788,7 +1811,10 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            default -> throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
+                default -> throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
+            }
+        } finally {
+            state.restorePointerMask(previousMask);
         }
     }
 
@@ -3929,6 +3955,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 return ENOMEM;
             }
             childThread.setSignalMask(state.guestThread().signalMask());
+            childThread.inheritExecutionControlsFrom(state.guestThread());
         }
         long threadId = childThread.id();
 
@@ -4641,6 +4668,12 @@ public final class GuestSyscalls implements AutoCloseable {
         if (option == PR_GET_THP_DISABLE) {
             return noArguments(argument2, argument3, argument4, argument5) ? transparentHugePagesDisabled : EINVAL;
         }
+        if (option == PR_SET_TAGGED_ADDR_CTRL) {
+            return setTaggedAddressControl(state, argument2, argument3, argument4, argument5);
+        }
+        if (option == PR_GET_TAGGED_ADDR_CTRL) {
+            return getTaggedAddressControl(state, argument2, argument3, argument4, argument5);
+        }
         if (option == PR_SET_VMA) {
             return setVirtualMemoryAreaName(argument2, argument3, argument4, argument5);
         }
@@ -4757,6 +4790,54 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         transparentHugePagesDisabled = (int) value;
         return 0;
+    }
+
+    /// Stores the Linux RISC-V tagged-address control state for the current guest thread.
+    private static long setTaggedAddressControl(
+            MachineState state,
+            long control,
+            long argument3,
+            long argument4,
+            long argument5) {
+        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+        if ((control & ~(PR_TAGGED_ADDR_ENABLE | PR_PMLEN_MASK)) != 0) {
+            return EINVAL;
+        }
+
+        long requestedPointerMaskLength = (control & PR_PMLEN_MASK) >>> PR_PMLEN_SHIFT;
+        int pointerMaskLength;
+        if (requestedPointerMaskLength == POINTER_MASK_LENGTH_DISABLED) {
+            pointerMaskLength = POINTER_MASK_LENGTH_DISABLED;
+        } else if (requestedPointerMaskLength <= POINTER_MASK_LENGTH_7) {
+            pointerMaskLength = POINTER_MASK_LENGTH_7;
+        } else {
+            return EINVAL;
+        }
+
+        state.guestThread().setTaggedAddressControl(
+                pointerMaskLength,
+                (control & PR_TAGGED_ADDR_ENABLE) != 0);
+        return 0;
+    }
+
+    /// Returns the Linux RISC-V tagged-address control state for the current guest thread.
+    private static long getTaggedAddressControl(
+            MachineState state,
+            long argument2,
+            long argument3,
+            long argument4,
+            long argument5) {
+        if (!noArguments(argument2, argument3, argument4, argument5)) {
+            return EINVAL;
+        }
+
+        GuestThread thread = state.guestThread();
+        long control = (long) thread.pointerMaskLength() << PR_PMLEN_SHIFT;
+        return thread.taggedAddressAbiEnabled()
+                ? control | PR_TAGGED_ADDR_ENABLE
+                : control;
     }
 
     /// Accepts Linux memory-area naming requests as a no-op in the flat guest memory model.

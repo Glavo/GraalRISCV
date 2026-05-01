@@ -29,6 +29,15 @@ public final class RiscVInstructionSemanticsTest {
     /// The second source register used by standalone instruction tests.
     private static final int RIGHT_REGISTER = 6;
 
+    /// Linux RISC-V syscall number for `prctl`.
+    private static final long SYS_PRCTL = 167;
+
+    /// Linux `PR_SET_TAGGED_ADDR_CTRL`.
+    private static final long PR_SET_TAGGED_ADDR_CTRL = 55;
+
+    /// Linux `PR_PMLEN_SHIFT`.
+    private static final long PR_PMLEN_SHIFT = 24;
+
     /// Verifies the RV64M division-by-zero result rules.
     @Test
     public void divisionByZeroFollowsRv64mRules() {
@@ -206,6 +215,71 @@ public final class RiscVInstructionSemanticsTest {
         }
     }
 
+    /// Verifies Supm pointer masking applies to interpreted memory operations.
+    @Test
+    public void interpretedMemoryOperationsApplyPointerMasking() {
+        try (TestMachine machine = TestMachine.create()) {
+            long dataAddress = TEST_PC + 256;
+            long taggedDataAddress = taggedAddress(dataAddress);
+            machine.memory().writeLong(dataAddress, 0x0102_0304_0506_0708L);
+
+            setPointerMaskLength(machine.state(), 7);
+            machine.state().setRegister(LEFT_REGISTER, taggedDataAddress);
+
+            RiscVInstructionSemantics load = RiscVInstructionSemantics.create(
+                    TEST_PC,
+                    0,
+                    Integer.BYTES,
+                    RiscVOperation.LD,
+                    RESULT_REGISTER,
+                    LEFT_REGISTER,
+                    0,
+                    0,
+                    false);
+            load.execute(machine.state());
+            assertEquals(0x0102_0304_0506_0708L, machine.state().register(RESULT_REGISTER));
+
+            machine.state().setRegister(RIGHT_REGISTER, 0x1122_3344_5566_7788L);
+            RiscVInstructionSemantics store = RiscVInstructionSemantics.create(
+                    TEST_PC,
+                    0,
+                    Integer.BYTES,
+                    RiscVOperation.SD,
+                    0,
+                    LEFT_REGISTER,
+                    RIGHT_REGISTER,
+                    0,
+                    false);
+            store.execute(machine.state());
+            assertEquals(0x1122_3344_5566_7788L, machine.memory().readLong(dataAddress));
+        }
+    }
+
+    /// Verifies Supm pointer masking applies to jump targets before instruction fetch continues.
+    @Test
+    public void jumpTargetsApplyPointerMasking() {
+        try (TestMachine machine = TestMachine.create()) {
+            long targetAddress = TEST_PC + 512;
+            setPointerMaskLength(machine.state(), 7);
+            machine.state().setRegister(LEFT_REGISTER, taggedAddress(targetAddress));
+
+            RiscVInstructionSemantics jump = RiscVInstructionSemantics.create(
+                    TEST_PC,
+                    0,
+                    Integer.BYTES,
+                    RiscVOperation.JALR,
+                    RESULT_REGISTER,
+                    LEFT_REGISTER,
+                    0,
+                    0,
+                    true);
+            jump.execute(machine.state());
+
+            assertEquals(targetAddress, machine.state().pc());
+            assertEquals(TEST_PC + Integer.BYTES, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
     /// Executes one register-register instruction and returns its destination register value.
     private static long executeRegisterOperation(RiscVOperation operation, long leftValue, long rightValue) {
         return executeOperation(operation, leftValue, rightValue, 0);
@@ -255,6 +329,24 @@ public final class RiscVInstructionSemanticsTest {
                 syscalls.close();
             }
         }
+    }
+
+    /// Sets the current guest thread's RISC-V pointer mask length through Linux `prctl`.
+    private static void setPointerMaskLength(MachineState state, int length) {
+        state.setRegister(10, PR_SET_TAGGED_ADDR_CTRL);
+        state.setRegister(11, (long) length << PR_PMLEN_SHIFT);
+        state.setRegister(12, 0);
+        state.setRegister(13, 0);
+        state.setRegister(14, 0);
+        state.setRegister(15, 0);
+        state.setRegister(17, SYS_PRCTL);
+        state.syscalls().handle(state, TEST_PC);
+        assertEquals(0, state.register(10));
+    }
+
+    /// Adds a high pointer tag that is removed when PMLEN is 7.
+    private static long taggedAddress(long address) {
+        return address | (1L << (Long.SIZE - 7));
     }
 
     /// Owns a standalone instruction-test machine and its closeable resources.

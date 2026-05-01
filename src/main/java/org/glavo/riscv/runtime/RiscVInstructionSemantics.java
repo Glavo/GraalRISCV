@@ -456,11 +456,16 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes this instruction against the supplied architectural state.
     public final void execute(MachineState state) {
-        state.setPc(address);
-        state.beforeInstruction(address, raw);
-        executeInstruction(state, nextAddress);
-        if (!terminator && !writesProgramCounterInBody()) {
-            state.setPc(nextAddress);
+        long previousMask = state.enterPointerMask();
+        try {
+            state.setPc(address);
+            state.beforeInstruction(address, raw);
+            executeInstruction(state, nextAddress);
+            if (!terminator && !writesProgramCounterInBody()) {
+                state.setPc(nextAddress);
+            }
+        } finally {
+            state.restorePointerMask(previousMask);
         }
     }
 
@@ -2124,7 +2129,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Zeroes the 64-byte cache block containing the supplied base address.
     private void cacheBlockZero(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) & -RiscVExtensions.CACHE_BLOCK_SIZE;
+        long address = state.maskPointer(state.decodedRegister(rs1)) & -RiscVExtensions.CACHE_BLOCK_SIZE;
         for (long offset = 0; offset < RiscVExtensions.CACHE_BLOCK_SIZE; offset += Long.BYTES) {
             memory.writeLong(address + offset, 0);
         }
@@ -2195,7 +2200,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Stores a byte value.
     private void storeByte(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) + immediate;
+        long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeByte(address, (byte) state.decodedRegister(rs2));
         afterStore(state, address, Byte.BYTES);
         state.clearReservation();
@@ -2205,7 +2210,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Stores a 16-bit value.
     private void storeShort(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) + immediate;
+        long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeShort(address, (short) state.decodedRegister(rs2));
         afterStore(state, address, Short.BYTES);
         state.clearReservation();
@@ -2215,7 +2220,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Stores a 32-bit value.
     private void storeInt(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) + immediate;
+        long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeInt(address, (int) state.decodedRegister(rs2));
         afterStore(state, address, Integer.BYTES);
         state.clearReservation();
@@ -2225,7 +2230,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Stores a 64-bit value.
     private void storeLong(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) + immediate;
+        long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeLong(address, state.decodedRegister(rs2));
         afterStore(state, address, Long.BYTES);
         state.clearReservation();
@@ -2235,7 +2240,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Stores the low 16 bits of a floating-point register.
     private void storeFloatHalf(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) + immediate;
+        long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeShort(address, (short) state.decodedFloatingPointRegister(rs2));
         afterStore(state, address, Short.BYTES);
         state.clearReservation();
@@ -2245,7 +2250,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Stores the low 32 bits of a floating-point register.
     private void storeFloatWord(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) + immediate;
+        long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeInt(address, (int) state.decodedFloatingPointRegister(rs2));
         afterStore(state, address, Integer.BYTES);
         state.clearReservation();
@@ -2255,7 +2260,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Stores a 64-bit floating-point register as raw bits.
     private void storeFloatDouble(MachineState state, Memory memory, long nextPc) {
-        long address = state.decodedRegister(rs1) + immediate;
+        long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeLong(address, state.decodedFloatingPointRegister(rs2));
         afterStore(state, address, Long.BYTES);
         state.clearReservation();
@@ -2272,7 +2277,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Loads and reserves a 32-bit memory word.
     private void lrWord(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
-            long address = state.decodedRegister(rs1);
+            long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
             state.setDecodedRegister(rd, memory.readInt(address));
             state.reserve(address, Integer.BYTES);
@@ -2284,7 +2289,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Loads and reserves a 64-bit memory doubleword.
     private void lrDouble(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
-            long address = state.decodedRegister(rs1);
+            long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
             state.setDecodedRegister(rd, memory.readLong(address));
             state.reserve(address, Long.BYTES);
@@ -2296,7 +2301,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
     private void scWord(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
-            long address = state.decodedRegister(rs1);
+            long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
             if (state.hasReservation(address, Integer.BYTES)) {
                 memory.writeInt(address, (int) state.decodedRegister(rs2));
@@ -2314,7 +2319,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
     private void scDouble(MachineState state, Memory memory, long nextPc) {
         synchronized (memory) {
-            long address = state.decodedRegister(rs1);
+            long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
             if (state.hasReservation(address, Long.BYTES)) {
                 memory.writeLong(address, state.decodedRegister(rs2));
@@ -2332,7 +2337,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes a 32-bit AMO instruction.
     private void amoWord(MachineState state, Memory memory, long nextPc, AmoKind kind) {
         synchronized (memory) {
-            long address = state.decodedRegister(rs1);
+            long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
             int oldValue = memory.readInt(address);
             int source = (int) state.decodedRegister(rs2);
@@ -2363,7 +2368,7 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes a 64-bit AMO instruction.
     private void amoDouble(MachineState state, Memory memory, long nextPc, AmoKind kind) {
         synchronized (memory) {
-            long address = state.decodedRegister(rs1);
+            long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
             long oldValue = memory.readLong(address);
             long source = state.decodedRegister(rs2);

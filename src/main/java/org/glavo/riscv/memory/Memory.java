@@ -50,6 +50,12 @@ public final class Memory implements AutoCloseable {
     /// The supported guest page-protection bit mask.
     public static final long SUPPORTED_PROTECTION_MASK = PROTECTION_READ_WRITE_EXECUTE;
 
+    /// The pointer mask that leaves every guest address bit visible.
+    private static final long FULL_POINTER_MASK = -1L;
+
+    /// Active top-bit pointer mask for the current host thread while it executes one guest thread.
+    private final ThreadLocal<Long> activePointerMask = ThreadLocal.withInitial(() -> FULL_POINTER_MASK);
+
     /// The inclusive base address of the guest virtual address window.
     private final long baseAddress;
 
@@ -254,8 +260,26 @@ public final class Memory implements AutoCloseable {
         writeBytes(address, source, offset, length);
     }
 
+    /// Activates a RISC-V userspace pointer mask for the current host thread and returns the previous mask.
+    public long enterPointerMaskLength(int length) {
+        long previousMask = activePointerMask.get();
+        activePointerMask.set(pointerMaskForLength(length));
+        return previousMask;
+    }
+
+    /// Restores the current host thread's previously active pointer mask.
+    public void restorePointerMask(long previousMask) {
+        activePointerMask.set(previousMask);
+    }
+
+    /// Applies the current host thread's userspace pointer mask to a guest address.
+    public long maskPointer(long address) {
+        return address & activePointerMask.get();
+    }
+
     /// Fills a mapped guest memory range with zero bytes without committing absent pages.
     public void clear(long address, long length) {
+        address = maskPointer(address);
         if (length < 0) {
             throw new RiscVException("Negative memory clear length: " + length);
         }
@@ -288,6 +312,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed byte from guest memory.
     public byte readByte(long address) {
+        address = maskPointer(address);
         MemoryPage page = readPage(address, Byte.BYTES, false);
         return MemoryUnsafe.UNSAFE.getByte(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
     }
@@ -299,6 +324,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed little-endian 16-bit value from guest memory.
     public short readShort(long address) {
+        address = maskPointer(address);
         if (layout.isSinglePageShortAccess(address)) {
             MemoryPage page = readPage(address, Short.BYTES, false);
             return MemoryUnsafe.readShortLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
@@ -314,6 +340,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed little-endian 32-bit value from guest memory.
     public int readInt(long address) {
+        address = maskPointer(address);
         if (layout.isSinglePageIntAccess(address)) {
             MemoryPage page = readPage(address, Integer.BYTES, false);
             return MemoryUnsafe.readIntLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
@@ -329,6 +356,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a little-endian 32-bit instruction from a guest address.
     public int readInstructionInt(long address) {
+        address = maskPointer(address);
         if (layout.isSinglePageIntAccess(address)) {
             MemoryPage page = readPage(address, Integer.BYTES, true);
             return MemoryUnsafe.readIntLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
@@ -339,6 +367,7 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a signed little-endian 64-bit value from guest memory.
     public long readLong(long address) {
+        address = maskPointer(address);
         if (layout.isSinglePageLongAccess(address)) {
             MemoryPage page = readPage(address, Long.BYTES, false);
             return MemoryUnsafe.readLongLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)));
@@ -349,6 +378,7 @@ public final class Memory implements AutoCloseable {
 
     /// Copies guest memory bytes into a new host byte array.
     public byte[] readBytes(long address, long length) {
+        address = maskPointer(address);
         if (length > Integer.MAX_VALUE) {
             throw new RiscVException("Guest memory read range is too large: " + length);
         }
@@ -383,6 +413,7 @@ public final class Memory implements AutoCloseable {
 
     /// Copies host bytes into guest memory.
     public void writeBytes(long address, byte[] source, int offset, int length) {
+        address = maskPointer(address);
         if (offset < 0 || length < 0 || offset > source.length || length > source.length - offset) {
             throw new IndexOutOfBoundsException("Invalid source slice: offset=" + offset + ", length=" + length);
         }
@@ -407,12 +438,14 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a byte to guest memory.
     public void writeByte(long address, byte value) {
+        address = maskPointer(address);
         MemoryPage page = writePage(address, Byte.BYTES);
         MemoryUnsafe.UNSAFE.putByte(page.baseObject(), page.byteOffset(layout.pageOffset(address)), value);
     }
 
     /// Writes a little-endian 16-bit value to guest memory.
     public void writeShort(long address, short value) {
+        address = maskPointer(address);
         if (layout.isSinglePageShortAccess(address)) {
             MemoryPage page = writePage(address, Short.BYTES);
             MemoryUnsafe.writeShortLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)), value);
@@ -424,6 +457,7 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a little-endian 32-bit value to guest memory.
     public void writeInt(long address, int value) {
+        address = maskPointer(address);
         if (layout.isSinglePageIntAccess(address)) {
             MemoryPage page = writePage(address, Integer.BYTES);
             MemoryUnsafe.writeIntLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)), value);
@@ -435,6 +469,7 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a little-endian 64-bit value to guest memory.
     public void writeLong(long address, long value) {
+        address = maskPointer(address);
         if (layout.isSinglePageLongAccess(address)) {
             MemoryPage page = writePage(address, Long.BYTES);
             MemoryUnsafe.writeLongLE(page.baseObject(), page.byteOffset(layout.pageOffset(address)), value);
@@ -957,6 +992,17 @@ public final class Memory implements AutoCloseable {
                 && length >= 0
                 && address <= endAddress
                 && length <= endAddress - address;
+    }
+
+    /// Returns the low-bit mask for a RISC-V pointer mask length.
+    private static long pointerMaskForLength(int length) {
+        if (length < 0 || length >= Long.SIZE) {
+            throw new RiscVException("Unsupported pointer mask length: " + length);
+        }
+        if (length == 0) {
+            return FULL_POINTER_MASK;
+        }
+        return (1L << (Long.SIZE - length)) - 1L;
     }
 
     /// Returns true when two half-open address ranges overlap.

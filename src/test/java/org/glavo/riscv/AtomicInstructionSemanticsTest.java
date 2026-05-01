@@ -35,6 +35,15 @@ public final class AtomicInstructionSemanticsTest {
     /// The value source register used by atomic instruction tests.
     private static final int VALUE_REGISTER = 6;
 
+    /// Linux RISC-V syscall number for `prctl`.
+    private static final long SYS_PRCTL = 167;
+
+    /// Linux `PR_SET_TAGGED_ADDR_CTRL`.
+    private static final long PR_SET_TAGGED_ADDR_CTRL = 55;
+
+    /// Linux `PR_PMLEN_SHIFT`.
+    private static final long PR_PMLEN_SHIFT = 24;
+
     /// Verifies that word LR/SC succeeds once and then fails without a fresh reservation.
     @Test
     public void wordLoadReservedStoreConditionalSucceedsOnce() {
@@ -140,6 +149,26 @@ public final class AtomicInstructionSemanticsTest {
         }
     }
 
+    /// Verifies Supm pointer masking is applied before LR/SC reservation matching.
+    @Test
+    public void loadReservedStoreConditionalUsesMaskedAddress() {
+        try (TestMachine machine = TestMachine.create()) {
+            machine.memory().writeLong(DATA_ADDRESS, 41);
+            setPointerMaskLength(machine.state(), 7);
+
+            machine.state().setRegister(ADDRESS_REGISTER, taggedAddress(DATA_ADDRESS, 1));
+            execute(machine, RiscVOperation.LR_D, RESULT_REGISTER, ADDRESS_REGISTER, 0, 0);
+            assertEquals(41, machine.state().register(RESULT_REGISTER));
+
+            machine.state().setRegister(ADDRESS_REGISTER, taggedAddress(DATA_ADDRESS, 2));
+            machine.state().setRegister(VALUE_REGISTER, 42);
+            execute(machine, RiscVOperation.SC_D, RESULT_REGISTER, ADDRESS_REGISTER, VALUE_REGISTER, 0);
+
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+            assertEquals(42, machine.memory().readLong(DATA_ADDRESS));
+        }
+    }
+
     /// Executes one atomic test instruction against the supplied machine.
     private static void execute(
             TestMachine machine,
@@ -168,6 +197,24 @@ public final class AtomicInstructionSemanticsTest {
         RiscVException exception = assertThrows(RiscVException.class, () ->
                 execute(machine, operation, RESULT_REGISTER, ADDRESS_REGISTER, rs2, 0));
         assertTrue(exception.getMessage().contains("Misaligned atomic memory access"));
+    }
+
+    /// Sets the current guest thread's RISC-V pointer mask length through Linux `prctl`.
+    private static void setPointerMaskLength(MachineState state, int length) {
+        state.setRegister(10, PR_SET_TAGGED_ADDR_CTRL);
+        state.setRegister(11, (long) length << PR_PMLEN_SHIFT);
+        state.setRegister(12, 0);
+        state.setRegister(13, 0);
+        state.setRegister(14, 0);
+        state.setRegister(15, 0);
+        state.setRegister(17, SYS_PRCTL);
+        state.syscalls().handle(state, TEST_PC);
+        assertEquals(0, state.register(10));
+    }
+
+    /// Adds one high pointer-tag value that is removed when PMLEN is 7.
+    private static long taggedAddress(long address, long tag) {
+        return address | (tag << (Long.SIZE - 7));
     }
 
     /// Owns an atomic-instruction test machine and its closeable resources.

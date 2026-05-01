@@ -213,7 +213,7 @@ public final class MachineState {
 
     /// Updates the current guest program counter.
     public void setPc(long pc) {
-        this.pc = pc;
+        this.pc = memory.maskPointer(pc);
     }
 
     /// Returns an integer register value.
@@ -285,6 +285,31 @@ public final class MachineState {
     /// Returns the Linux user-mode thread state paired with this architectural state.
     GuestThread guestThread() {
         return thread;
+    }
+
+    /// Returns the active RISC-V userspace pointer mask length for this guest thread.
+    public int pointerMaskLength() {
+        return thread.pointerMaskLength();
+    }
+
+    /// Activates this guest thread's pointer mask for the current host thread.
+    public long enterPointerMask() {
+        return memory.enterPointerMaskLength(thread.pointerMaskLength());
+    }
+
+    /// Activates this guest thread's syscall pointer mask for the current host thread.
+    public long enterSyscallPointerMask() {
+        return memory.enterPointerMaskLength(thread.taggedAddressAbiEnabled() ? thread.pointerMaskLength() : 0);
+    }
+
+    /// Restores the current host thread's previous pointer mask.
+    public void restorePointerMask(long previousMask) {
+        memory.restorePointerMask(previousMask);
+    }
+
+    /// Applies the current host thread's active RISC-V userspace pointer mask to a guest address.
+    public long maskPointer(long address) {
+        return memory.maskPointer(address);
     }
 
     /// Creates the child architectural state produced by a Linux thread-style `clone`.

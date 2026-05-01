@@ -35,6 +35,12 @@ final class GuestThread {
     /// The Linux signal mask currently installed for this guest thread.
     private long signalMask;
 
+    /// The active RISC-V userspace pointer mask length for this thread.
+    private int pointerMaskLength;
+
+    /// Whether the Linux tagged-address syscall ABI flag is enabled for this thread.
+    private boolean taggedAddressAbiEnabled;
+
     /// Whether this thread has a registered restartable sequence area.
     private boolean restartableSequenceRegistered;
 
@@ -120,6 +126,28 @@ final class GuestThread {
     /// Updates the Linux signal mask currently installed for this thread.
     void setSignalMask(long signalMask) {
         this.signalMask = signalMask;
+    }
+
+    /// Returns the active RISC-V userspace pointer mask length for this thread.
+    int pointerMaskLength() {
+        return pointerMaskLength;
+    }
+
+    /// Returns true when the Linux tagged-address syscall ABI flag is enabled for this thread.
+    boolean taggedAddressAbiEnabled() {
+        return taggedAddressAbiEnabled;
+    }
+
+    /// Updates this thread's RISC-V userspace pointer masking state.
+    void setTaggedAddressControl(int pointerMaskLength, boolean taggedAddressAbiEnabled) {
+        this.pointerMaskLength = pointerMaskLength;
+        this.taggedAddressAbiEnabled = taggedAddressAbiEnabled;
+    }
+
+    /// Copies inherited per-thread execution controls from a parent guest thread.
+    void inheritExecutionControlsFrom(GuestThread parent) {
+        pointerMaskLength = parent.pointerMaskLength;
+        taggedAddressAbiEnabled = parent.taggedAddressAbiEnabled;
     }
 
     /// Returns true when this thread has a registered restartable sequence area.
