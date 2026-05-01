@@ -294,6 +294,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `setsid`.
     private static final long SYS_SETSID = 157;
 
+    /// The Linux RISC-V syscall number for `getgroups`.
+    private static final long SYS_GETGROUPS = 158;
+
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
 
@@ -3241,6 +3244,20 @@ public final class GuestSyscallsTest {
             assertEquals(1000, memory.readInt(realIdAddress));
             assertEquals(1000, memory.readInt(effectiveIdAddress));
             assertEquals(1000, memory.readInt(savedIdAddress));
+
+            long groupsAddress = memory.baseAddress() + 96;
+            setSyscall(state, SYS_GETGROUPS, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_GETGROUPS, 1, groupsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertEquals(1000, memory.readInt(groupsAddress));
+
+            setSyscall(state, SYS_GETGROUPS, 1, memory.endAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
 
             setSyscall(state, SYS_GETRESUID, memory.endAddress(), effectiveIdAddress, savedIdAddress);
             state.syscalls().handle(state, TEST_PC);

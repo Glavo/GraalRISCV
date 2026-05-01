@@ -236,6 +236,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `setsid`.
     private static final int SYS_SETSID = 157;
 
+    /// The Linux RISC-V syscall number for `getgroups`.
+    private static final int SYS_GETGROUPS = 158;
+
     /// The Linux RISC-V syscall number for `uname`.
     private static final int SYS_UNAME = 160;
 
@@ -1492,6 +1495,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The deterministic guest group id exposed by identity syscalls.
     private static final long GUEST_GROUP_ID = 1000;
 
+    /// The number of deterministic supplementary groups exposed by `getgroups`.
+    private static final int GUEST_SUPPLEMENTARY_GROUP_COUNT = 1;
+
     /// The non-cryptographic seed used for deterministic `getrandom` bytes.
     private static final long RANDOM_SEED = 0x4752_4953_4356_0001L;
 
@@ -2172,6 +2178,7 @@ public final class GuestSyscalls implements AutoCloseable {
             case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
             case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
             case SYS_SETSID -> state.setRegister(10, setsid());
+            case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
             case SYS_UNAME -> state.setRegister(10, uname(state.register(10)));
             case SYS_GETRUSAGE -> state.setRegister(10, getrusage(state.register(10), state.register(11)));
             case SYS_PRCTL -> state.setRegister(10, prctl(
@@ -6922,6 +6929,23 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeInt(effectiveIdAddress, (int) id);
         memory.writeInt(savedIdAddress, (int) id);
         return 0;
+    }
+
+    /// Writes the deterministic supplementary group list for identity queries.
+    private long getgroups(long size, long listAddress) {
+        if (size < 0 || size > Integer.MAX_VALUE) {
+            return EINVAL;
+        }
+
+        if (size == 0) {
+            return GUEST_SUPPLEMENTARY_GROUP_COUNT;
+        }
+        if (!memory.isBacked(listAddress, Integer.BYTES)) {
+            return EFAULT;
+        }
+
+        memory.writeInt(listAddress, (int) GUEST_GROUP_ID);
+        return GUEST_SUPPLEMENTARY_GROUP_COUNT;
     }
 
     /// Rejects socket creation for the current non-networked user-mode runtime.

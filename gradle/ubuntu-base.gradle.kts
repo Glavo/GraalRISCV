@@ -150,3 +150,17 @@ registerUbuntuBaseSmokeTest(
     listOf("--guest-program", "/usr/bin/cat", "/etc/issue"),
     "Ubuntu 26.04 LTS \\n \\l\n\n"
 )
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseId",
+    "Runs /usr/bin/id from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/id", "-u"),
+    "1000\n"
+)
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseUname",
+    "Runs /usr/bin/uname from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/uname", "-m"),
+    "riscv64\n"
+)
