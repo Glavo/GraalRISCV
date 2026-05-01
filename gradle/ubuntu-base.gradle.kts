@@ -166,6 +166,13 @@ registerUbuntuBaseSmokeTest(
 )
 
 registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseSha256sum",
+    "Runs /usr/bin/sha256sum from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/sha256sum", "/etc/issue"),
+    "547700963039ce6e3779f128ec369b54f8559db50e9d20fa39459f5b5b7434de  /etc/issue\n"
+)
+
+registerUbuntuBaseSmokeTest(
     "testUbuntuBaseGrep",
     "Runs /usr/bin/grep from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/grep", "Ubuntu", "/etc/issue"),

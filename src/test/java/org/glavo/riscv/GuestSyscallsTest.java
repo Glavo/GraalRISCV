@@ -1487,6 +1487,15 @@ public final class GuestSyscallsTest {
             assertEquals(0, state.register(10));
             assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
 
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, 0, statAddress, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, 0, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
             writeGuestString(memory, pathAddress, "missing.txt");
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -1634,6 +1643,23 @@ public final class GuestSyscallsTest {
             assertEquals(0, state.register(10));
             assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
 
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    AT_FDCWD,
+                    0,
+                    AT_EMPTY_PATH,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+
+            setSyscall(state, SYS_STATX, AT_FDCWD, 0, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
             setSyscall(state, SYS_STATX, 1, pathAddress, AT_EMPTY_PATH, STATX_BASIC_STATS_MASK, statxAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
@@ -1675,6 +1701,19 @@ public final class GuestSyscallsTest {
                     SYS_STATX,
                     fileDescriptor,
                     pathAddress,
+                    AT_EMPTY_PATH,
+                    STATX_BASIC_STATS_MASK,
+                    statxAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatx(memory, statxAddress, REGULAR_FILE_STAT_MODE, 9);
+
+            setSyscall(
+                    state,
+                    SYS_STATX,
+                    fileDescriptor,
+                    0,
                     AT_EMPTY_PATH,
                     STATX_BASIC_STATS_MASK,
                     statxAddress,

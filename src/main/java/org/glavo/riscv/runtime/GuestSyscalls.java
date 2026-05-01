@@ -4391,9 +4391,18 @@ public final class GuestSyscalls implements AutoCloseable {
             return EINVAL;
         }
 
-        @Nullable String guestPath = readGuestPath(pathAddress);
-        if (guestPath == null) {
-            return ENAMETOOLONG;
+        String guestPath;
+        if (pathAddress == 0) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return EFAULT;
+            }
+            guestPath = "";
+        } else {
+            @Nullable String path = readGuestPath(pathAddress);
+            if (path == null) {
+                return ENAMETOOLONG;
+            }
+            guestPath = path;
         }
 
         if (guestPath.isEmpty()) {
@@ -4565,9 +4574,18 @@ public final class GuestSyscalls implements AutoCloseable {
             return EINVAL;
         }
 
-        @Nullable String guestPath = readGuestPath(pathAddress);
-        if (guestPath == null) {
-            return ENAMETOOLONG;
+        String guestPath;
+        if (pathAddress == 0) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return EFAULT;
+            }
+            guestPath = "";
+        } else {
+            @Nullable String path = readGuestPath(pathAddress);
+            if (path == null) {
+                return ENAMETOOLONG;
+            }
+            guestPath = path;
         }
 
         if (guestPath.isEmpty()) {
