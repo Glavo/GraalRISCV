@@ -46,6 +46,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Set;
 
@@ -3485,6 +3486,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
         return switch (deviceFile) {
             case NULL -> addOpenFile(OpenFile.nullDevice(node, mount, guestPath, readable, writable));
+            case ZERO, RANDOM, URANDOM -> addOpenFile(OpenFile.characterDevice(
+                    node,
+                    mount,
+                    guestPath,
+                    readable,
+                    writable));
             case TTY, CONSOLE -> addOpenFile(OpenFile.terminalDevice(
                     node,
                     mount,
@@ -3555,8 +3562,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 memory.writeBytes(address, buffer, 0, count);
                 return count;
             }
-            if (openFile.isNullDevice()) {
-                return 0;
+            @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
+            if (deviceFile != null) {
+                return readDeviceFile(deviceFile, address, length);
             }
 
             byte[] buffer = new byte[(int) length];
@@ -3609,7 +3617,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     return EINVAL;
                 }
                 byte[] bytes = memory.readBytes(address, length);
-                if (openFile.isNullDevice()) {
+                if (isDiscardingDeviceFile(openFile)) {
                     return bytes.length;
                 }
                 long count = writeOpenFile(openFile, bytes);
@@ -3900,11 +3908,12 @@ public final class GuestSyscalls implements AutoCloseable {
             }
             return openFile.terminalDevice().read(buffer, length);
         }
-        if (openFile.isNullDevice()) {
+        @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
+        if (deviceFile != null) {
             if (offsetAddress != 0) {
                 return ESPIPE;
             }
-            return 0;
+            return readDeviceFile(deviceFile, buffer, length);
         }
         if (openFile.isPipeReader()) {
             if (offsetAddress != 0) {
@@ -3957,7 +3966,7 @@ public final class GuestSyscalls implements AutoCloseable {
             openFile.terminalDevice().write(buffer, length);
             return length;
         }
-        if (openFile.isNullDevice()) {
+        if (isDiscardingDeviceFile(openFile)) {
             if (offsetAddress != 0) {
                 return ESPIPE;
             }
@@ -4012,7 +4021,7 @@ public final class GuestSyscalls implements AutoCloseable {
             openFile.terminalDevice().write(bytes, bytes.length);
             return bytes.length;
         }
-        if (openFile.isNullDevice()) {
+        if (isDiscardingDeviceFile(openFile)) {
             return bytes.length;
         }
         if (openFile.isPipeWriter()) {
@@ -4027,6 +4036,54 @@ public final class GuestSyscalls implements AutoCloseable {
             openFile.channel().write(buffer);
         }
         return bytes.length;
+    }
+
+    /// Reads from one built-in virtual character device into guest memory.
+    private long readDeviceFile(DeviceFile deviceFile, long address, long length) {
+        return switch (deviceFile) {
+            case NULL -> 0;
+            case ZERO -> {
+                memory.clear(address, length);
+                yield length;
+            }
+            case RANDOM, URANDOM -> writeDeterministicRandomBytes(address, length);
+            case TTY, CONSOLE -> EBADF;
+        };
+    }
+
+    /// Reads from one built-in virtual character device into a host transfer buffer.
+    private long readDeviceFile(DeviceFile deviceFile, byte[] buffer, int length) {
+        return switch (deviceFile) {
+            case NULL -> 0;
+            case ZERO -> {
+                Arrays.fill(buffer, 0, length, (byte) 0);
+                yield length;
+            }
+            case RANDOM, URANDOM -> {
+                fillDeterministicRandomBytes(buffer, 0, length);
+                yield length;
+            }
+            case TTY, CONSOLE -> EBADF;
+        };
+    }
+
+    /// Returns true when writes to a built-in character device are accepted and discarded.
+    private static boolean isDiscardingDeviceFile(OpenFile openFile) {
+        @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
+        return deviceFile == DeviceFile.NULL
+                || deviceFile == DeviceFile.ZERO
+                || deviceFile == DeviceFile.RANDOM
+                || deviceFile == DeviceFile.URANDOM;
+    }
+
+    /// Returns the built-in virtual device file for an open descriptor entry.
+    private static @Nullable DeviceFile deviceFileFor(OpenFile openFile) {
+        @Nullable VirtualNode node = openFile.virtualNode();
+        if (node == null || !node.isCharacterDevice()) {
+            return null;
+        }
+        Object fileKey = node.fileKey();
+        return fileKey instanceof DeviceFile deviceFile ? deviceFile : null;
     }
 
     /// Reads one little-endian counter value from an `eventfd` descriptor.
@@ -4087,7 +4144,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if (openFile.isPipeWriter()) {
             return openFile.pipe().isReaderOpen() ? EPOLLOUT : EPOLLERR;
         }
-        if (openFile.isTerminalDevice() || openFile.isNullDevice()) {
+        if (openFile.isTerminalDevice() || openFile.isCharacterDevice()) {
             int events = 0;
             if (openFile.readable()) {
                 events |= EPOLLIN;
@@ -4415,7 +4472,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if (openFile.isEventFile() || openFile.isEpollFile()) {
             return EINVAL;
         }
-        if (openFile.isTerminalDevice() || openFile.isNullDevice()) {
+        if (openFile.isTerminalDevice() || openFile.isCharacterDevice()) {
             return EINVAL;
         }
         if (openFile.isDirectory()) {
@@ -7030,12 +7087,22 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
 
+        return writeDeterministicRandomBytes(address, length);
+    }
+
+    /// Fills a guest buffer with bytes from the deterministic random source.
+    private long writeDeterministicRandomBytes(long address, long length) {
         byte[] bytes = new byte[(int) length];
-        for (int index = 0; index < bytes.length; index++) {
-            bytes[index] = nextRandomByte();
-        }
+        fillDeterministicRandomBytes(bytes, 0, bytes.length);
         memory.writeBytes(address, bytes, 0, bytes.length);
         return bytes.length;
+    }
+
+    /// Fills a host byte array range from the deterministic random source.
+    private void fillDeterministicRandomBytes(byte[] bytes, int offset, int length) {
+        for (int index = 0; index < length; index++) {
+            bytes[offset + index] = nextRandomByte();
+        }
     }
 
     /// Reports no supported Linux `membarrier` commands for runtime capability probes.
@@ -7216,7 +7283,16 @@ public final class GuestSyscalls implements AutoCloseable {
         CONSOLE,
 
         /// The byte sink and end-of-file source exposed as `/dev/null`.
-        NULL
+        NULL,
+
+        /// The zero byte source exposed as `/dev/zero`.
+        ZERO,
+
+        /// The blocking random source exposed as `/dev/random`.
+        RANDOM,
+
+        /// The non-blocking random source exposed as `/dev/urandom`.
+        URANDOM
     }
 
     /// Provides the built-in process-local `/dev` filesystem.
@@ -7237,10 +7313,13 @@ public final class GuestSyscalls implements AutoCloseable {
                     VirtualNode.characterDevice(DEV_MOUNT_PATH + "/console", DeviceFile.CONSOLE),
                     VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/fd", PROC_MOUNT_PATH + "/self/fd"),
                     VirtualNode.characterDevice(DEV_MOUNT_PATH + "/null", DeviceFile.NULL),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/random", DeviceFile.RANDOM),
                     VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stderr", PROC_MOUNT_PATH + "/self/fd/2"),
                     VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdin", PROC_MOUNT_PATH + "/self/fd/0"),
                     VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdout", PROC_MOUNT_PATH + "/self/fd/1"),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/tty", DeviceFile.TTY)
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/tty", DeviceFile.TTY),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/urandom", DeviceFile.URANDOM),
+                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/zero", DeviceFile.ZERO)
             };
         }
 
@@ -7267,6 +7346,8 @@ public final class GuestSyscalls implements AutoCloseable {
                         VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd");
                 case DEV_MOUNT_PATH + "/null" ->
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.NULL);
+                case DEV_MOUNT_PATH + "/random" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.RANDOM);
                 case DEV_MOUNT_PATH + "/stderr" ->
                         VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd/2");
                 case DEV_MOUNT_PATH + "/stdin" ->
@@ -7275,6 +7356,10 @@ public final class GuestSyscalls implements AutoCloseable {
                         VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd/1");
                 case DEV_MOUNT_PATH + "/tty" ->
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.TTY);
+                case DEV_MOUNT_PATH + "/urandom" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.URANDOM);
+                case DEV_MOUNT_PATH + "/zero" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.ZERO);
                 default -> null;
             };
         }
@@ -9131,6 +9216,35 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     true,
+                    false,
+                    false,
+                    false,
+                    readable,
+                    writable,
+                    false,
+                    false);
+        }
+
+        /// Creates an entry backed by a non-terminal virtual character device.
+        static OpenFile characterDevice(
+                VirtualNode node,
+                VirtualMount mount,
+                String guestPath,
+                boolean readable,
+                boolean writable) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    guestPath,
+                    null,
+                    node,
+                    mount,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
                     false,
                     false,
                     false,

@@ -2988,6 +2988,63 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies common built-in random and zero character devices.
+    @Test
+    public void openatOpensDevZeroAndRandomDevices() {
+        byte[] randomBytes;
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pathAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 128;
+
+            writeGuestString(memory, pathAddress, "/dev/zero");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long zeroFileDescriptor = state.register(10);
+            assertEquals(3, zeroFileDescriptor);
+
+            memory.writeBytes(dataAddress, "xxxxxxxx".getBytes(StandardCharsets.UTF_8), 0, 8);
+            setSyscall(state, SYS_READ, zeroFileDescriptor, dataAddress, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(8, state.register(10));
+            assertArrayEquals(new byte[8], memory.readBytes(dataAddress, 8));
+
+            setSyscall(state, SYS_WRITE, zeroFileDescriptor, dataAddress, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(8, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/dev/urandom");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long urandomFileDescriptor = state.register(10);
+            assertEquals(4, urandomFileDescriptor);
+
+            setSyscall(state, SYS_READ, urandomFileDescriptor, dataAddress, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(8, state.register(10));
+            randomBytes = memory.readBytes(dataAddress, 8);
+
+            writeGuestString(memory, pathAddress, "/dev/random");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long randomFileDescriptor = state.register(10);
+            assertEquals(5, randomFileDescriptor);
+
+            setSyscall(state, SYS_WRITE, randomFileDescriptor, dataAddress, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(8, state.register(10));
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(8, state.register(10));
+            assertArrayEquals(randomBytes, memory.readBytes(memory.baseAddress(), 8));
+        }
+    }
+
     /// Verifies built-in `/dev` directory entries and standard descriptor aliases.
     @Test
     public void devFilesystemListsDevicesAndStandardAliases() {
@@ -3021,10 +3078,13 @@ public final class GuestSyscallsTest {
             nextAddress = assertDirectoryEntry(memory, nextAddress, "console", DIRECTORY_ENTRY_CHARACTER_DEVICE, 3);
             nextAddress = assertDirectoryEntry(memory, nextAddress, "fd", DIRECTORY_ENTRY_SYMBOLIC_LINK, 4);
             nextAddress = assertDirectoryEntry(memory, nextAddress, "null", DIRECTORY_ENTRY_CHARACTER_DEVICE, 5);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "stderr", DIRECTORY_ENTRY_SYMBOLIC_LINK, 6);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdin", DIRECTORY_ENTRY_SYMBOLIC_LINK, 7);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdout", DIRECTORY_ENTRY_SYMBOLIC_LINK, 8);
-            assertDirectoryEntry(memory, nextAddress, "tty", DIRECTORY_ENTRY_CHARACTER_DEVICE, 9);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "random", DIRECTORY_ENTRY_CHARACTER_DEVICE, 6);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stderr", DIRECTORY_ENTRY_SYMBOLIC_LINK, 7);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdin", DIRECTORY_ENTRY_SYMBOLIC_LINK, 8);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdout", DIRECTORY_ENTRY_SYMBOLIC_LINK, 9);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "tty", DIRECTORY_ENTRY_CHARACTER_DEVICE, 10);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "urandom", DIRECTORY_ENTRY_CHARACTER_DEVICE, 11);
+            assertDirectoryEntry(memory, nextAddress, "zero", DIRECTORY_ENTRY_CHARACTER_DEVICE, 12);
 
             writeGuestString(memory, pathAddress, "/dev/stdout");
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
