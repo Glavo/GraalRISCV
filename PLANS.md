@@ -16,6 +16,16 @@
 
 ## Remaining Work
 
+### Dynamic Linking And Ubuntu Root Image
+
+- Support dynamically linked Linux ELF programs while preserving the existing static ELF path.
+- Let the CLI load a guest executable from configured mounts when the program argument is an absolute guest path such as `/usr/bin/true`; keep host-file loading when the argument names an existing host file.
+- Accept dynamic ELF metadata in the loader, record interpreter and dynamic-program metadata, map `ET_EXEC` and `ET_DYN` images with correct load bias handling, and start `PT_INTERP` programs through the guest dynamic linker.
+- Build the initial Linux stack for dynamic programs with main-program auxv values, including `AT_BASE` for the interpreter and `AT_EXECFN` for the guest executable path.
+- Add file-backed `MAP_PRIVATE` support for regular files so the dynamic linker can map shared libraries from mounted directories or read-only tar archives.
+- Make tar mounts resolve symbolic links for normal path lookup, including Ubuntu Base paths such as `/bin`, `/lib`, interpreter symlinks, and relative links, while preserving `readlinkat` and no-follow behavior.
+- Add an Ubuntu Base acceptance task that runs at least `/usr/bin/true` from the downloaded root tar via `--mount /=build/downloads/ubuntu-base/26.04/ubuntu-base-26.04-base-riscv64.tar`.
+
 ### ISA And Profile Correctness
 
 - Keep `Rva22Profile`, `Rva23Profile`, Linux `riscv_hwprobe`, README, CI aggregation, and acceptance tests aligned whenever ISA or profile-reporting behavior changes.
@@ -24,7 +34,7 @@
 
 ### Linux Runtime Compatibility
 
-- Expand ELF, auxv, stack, `mmap`, syscall, and static-runtime behavior only when direct tests or real workloads require it.
+- Expand ELF, auxv, stack, `mmap`, syscall, and runtime behavior only when direct tests or real workloads require it.
 - Continue improving signal and clone semantics while keeping thread behavior deterministic.
 
 ### Memory And Mapping
