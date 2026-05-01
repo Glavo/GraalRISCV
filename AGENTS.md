@@ -27,9 +27,6 @@ These rules apply to code and workflow changes in this repository.
 
 ## Workflow
 
-- When IDEA MCP is available, use it first for project reads, searches, file discovery, project checks, and edited Java/Kotlin file problem inspection.
-- Use shell commands for Gradle behavior, generated artifacts, repository-local environment variables, test selection, Git status, Git diffs, and exact command output.
-- Use shell-based reads or searches only when IDEA MCP is unavailable, truncated, insufficient, unable to access the needed file, or exact shell output is required; briefly state the reason.
 - After completing a task, update `PLANS.md` only for work that is actually done, and preserve active or still-relevant plans.
 
 ## Commit Messages
