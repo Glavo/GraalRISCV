@@ -161,9 +161,9 @@ final class TerminalDevice implements AutoCloseable {
             if (hostBackend != null) {
                 return new TerminalDevice(hostBackend);
             }
-            return new TerminalDevice(new StreamBackend(in, out, PosixTerminalMode.openStandardInput()));
+            return new TerminalDevice(new StreamBackend(in, out, HostTerminalMode.openStandardInput()));
         }
-        return new TerminalDevice(new StreamBackend(in, out, null));
+        return new TerminalDevice(new StreamBackend(in, out, WindowsConsoleMode.openStandardInput()));
     }
 
     /// Adds one process-level reference to this shared terminal.
@@ -180,6 +180,11 @@ final class TerminalDevice implements AutoCloseable {
     /// Writes bytes to the terminal output backend.
     void write(byte[] buffer, int length) throws IOException {
         backend.write(buffer, length);
+    }
+
+    /// Returns true when the original standard descriptors should be visible as tty descriptors.
+    boolean supportsStandardFileDescriptors() {
+        return backend.supportsStandardFileDescriptors();
     }
 
     /// Writes the current guest-visible `struct termios`.
@@ -260,6 +265,16 @@ final class TerminalDevice implements AutoCloseable {
         buffer[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_SUSPEND_INDEX] = 26;
     }
 
+    /// Reads `c_lflag` from a Linux guest `struct termios` image.
+    private static int readLocalFlags(byte[] buffer) {
+        return ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).getInt(TERMIOS_LOCAL_FLAGS_OFFSET);
+    }
+
+    /// Writes `c_lflag` to a Linux guest `struct termios` image.
+    private static void writeLocalFlags(byte[] buffer, int localFlags) {
+        ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).putInt(TERMIOS_LOCAL_FLAGS_OFFSET, localFlags);
+    }
+
     /// Provides terminal I/O and optional host terminal metadata.
     private interface Backend extends AutoCloseable {
         /// Reads up to `length` bytes into the destination buffer.
@@ -277,6 +292,11 @@ final class TerminalDevice implements AutoCloseable {
 
         /// Applies a native terminal `struct termios` image when supported.
         default void writeTermios(byte[] buffer, long request) {
+        }
+
+        /// Returns true when this backend can safely expose original standard descriptors as a tty.
+        default boolean supportsStandardFileDescriptors() {
+            return false;
         }
 
         /// Closes any backend-owned resources.
@@ -299,7 +319,7 @@ final class TerminalDevice implements AutoCloseable {
     private record StreamBackend(
             InputStream in,
             OutputStream out,
-            @Nullable PosixTerminalMode terminalMode) implements Backend {
+            @Nullable HostTerminalMode terminalMode) implements Backend {
         /// Reads bytes from the configured input stream.
         @Override
         public int read(byte[] buffer, int length) throws IOException {
@@ -336,6 +356,12 @@ final class TerminalDevice implements AutoCloseable {
             }
         }
 
+        /// Returns true when a native terminal mode controller is available for host stdin.
+        @Override
+        public boolean supportsStandardFileDescriptors() {
+            return terminalMode != null;
+        }
+
         /// Restores host terminal mode and leaves externally owned streams open.
         @Override
         public void close() throws IOException {
@@ -345,11 +371,30 @@ final class TerminalDevice implements AutoCloseable {
         }
     }
 
+    /// Controls the host terminal mode used by stream-backed standard input.
+    private interface HostTerminalMode extends AutoCloseable {
+        /// Opens a native controller for host standard input, or null when unavailable.
+        static @Nullable HostTerminalMode openStandardInput() {
+            @Nullable HostTerminalMode windowsMode = WindowsConsoleMode.openStandardInput();
+            return windowsMode != null ? windowsMode : PosixTerminalMode.openStandardInput();
+        }
+
+        /// Reads a host terminal mode into the Linux guest `struct termios` image.
+        void readTermios(byte[] buffer);
+
+        /// Applies a Linux guest `struct termios` image to the host terminal mode.
+        void writeTermios(byte[] buffer, long request);
+
+        /// Restores the original host terminal mode.
+        @Override
+        void close() throws IOException;
+    }
+
     /// Applies guest termios updates to one host POSIX terminal file descriptor.
     ///
     /// @param fileDescriptor the host terminal file descriptor
     /// @param originalTermios the host terminal settings captured before guest changes
-    private record PosixTerminalMode(int fileDescriptor, byte[] originalTermios) implements AutoCloseable {
+    private record PosixTerminalMode(int fileDescriptor, byte[] originalTermios) implements HostTerminalMode {
         /// Opens a terminal-mode controller for host standard input, or null when unavailable.
         static @Nullable PosixTerminalMode openStandardInput() {
             byte @Nullable [] originalTermios = PosixBackend.nativeTermios(0);
@@ -357,7 +402,8 @@ final class TerminalDevice implements AutoCloseable {
         }
 
         /// Reads the current native terminal `struct termios` byte image.
-        void readTermios(byte[] buffer) {
+        @Override
+        public void readTermios(byte[] buffer) {
             byte @Nullable [] bytes = PosixBackend.nativeTermios(fileDescriptor);
             if (bytes == null) {
                 return;
@@ -366,7 +412,8 @@ final class TerminalDevice implements AutoCloseable {
         }
 
         /// Applies a native terminal `struct termios` byte image.
-        void writeTermios(byte[] buffer, long request) {
+        @Override
+        public void writeTermios(byte[] buffer, long request) {
             if (request != PosixBackend.TCSETS && request != PosixBackend.TCSETSW && request != PosixBackend.TCSETSF) {
                 return;
             }
@@ -378,6 +425,123 @@ final class TerminalDevice implements AutoCloseable {
         public void close() throws IOException {
             if (!PosixBackend.writeNativeTermios(fileDescriptor, PosixBackend.TCSETS, originalTermios)) {
                 throw new IOException("restore(stdin) failed");
+            }
+        }
+    }
+
+    /// Applies guest termios updates to a Windows console input handle.
+    ///
+    /// @param handle the host console input handle
+    /// @param originalMode the console mode captured before guest changes
+    private record WindowsConsoleMode(MemorySegment handle, int originalMode) implements HostTerminalMode {
+        /// Windows `STD_INPUT_HANDLE`.
+        private static final int STANDARD_INPUT_HANDLE = -10;
+
+        /// Windows `ENABLE_PROCESSED_INPUT`.
+        private static final int WINDOWS_ENABLE_PROCESSED_INPUT = 0x0001;
+
+        /// Windows `ENABLE_LINE_INPUT`.
+        private static final int WINDOWS_ENABLE_LINE_INPUT = 0x0002;
+
+        /// Windows `ENABLE_ECHO_INPUT`.
+        private static final int WINDOWS_ENABLE_ECHO_INPUT = 0x0004;
+
+        /// Opens a Windows console mode controller for host standard input.
+        static @Nullable HostTerminalMode openStandardInput() {
+            String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+            if (!osName.contains("win")) {
+                return null;
+            }
+            if (System.console() == null) {
+                return null;
+            }
+
+            try {
+                MemorySegment handle = (MemorySegment) WindowsConsoleHandles.GET_STD_HANDLE.invokeExact(
+                        STANDARD_INPUT_HANDLE);
+                if (handle.equals(MemorySegment.NULL)) {
+                    return null;
+                }
+                int mode = readConsoleMode(handle);
+                return mode < 0 ? null : new WindowsConsoleMode(handle, mode);
+            } catch (Throwable exception) {
+                return null;
+            }
+        }
+
+        /// Reads the current Windows console mode into the guest termios local flags.
+        @Override
+        public void readTermios(byte[] buffer) {
+            int mode = readConsoleMode(handle);
+            if (mode < 0) {
+                return;
+            }
+            int localFlags = readLocalFlags(buffer);
+            localFlags &= ~(TERMIOS_LOCAL_SIGNALS | TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO);
+            if ((mode & WINDOWS_ENABLE_PROCESSED_INPUT) != 0) {
+                localFlags |= TERMIOS_LOCAL_SIGNALS;
+            }
+            if ((mode & WINDOWS_ENABLE_LINE_INPUT) != 0) {
+                localFlags |= TERMIOS_LOCAL_CANONICAL;
+            }
+            if ((mode & WINDOWS_ENABLE_ECHO_INPUT) != 0) {
+                localFlags |= TERMIOS_LOCAL_ECHO;
+            }
+            writeLocalFlags(buffer, localFlags);
+        }
+
+        /// Applies guest local flags to the Windows console input mode.
+        @Override
+        public void writeTermios(byte[] buffer, long request) {
+            if (request != PosixBackend.TCSETS && request != PosixBackend.TCSETSW && request != PosixBackend.TCSETSF) {
+                return;
+            }
+
+            int mode = readConsoleMode(handle);
+            if (mode < 0) {
+                return;
+            }
+
+            int localFlags = readLocalFlags(buffer);
+            mode &= ~(WINDOWS_ENABLE_PROCESSED_INPUT | WINDOWS_ENABLE_LINE_INPUT | WINDOWS_ENABLE_ECHO_INPUT);
+            if ((localFlags & TERMIOS_LOCAL_SIGNALS) != 0) {
+                mode |= WINDOWS_ENABLE_PROCESSED_INPUT;
+            }
+            if ((localFlags & TERMIOS_LOCAL_CANONICAL) != 0) {
+                mode |= WINDOWS_ENABLE_LINE_INPUT;
+            }
+            if ((localFlags & TERMIOS_LOCAL_ECHO) != 0) {
+                mode |= WINDOWS_ENABLE_ECHO_INPUT;
+            }
+            writeConsoleMode(handle, mode);
+        }
+
+        /// Restores the original Windows console input mode.
+        @Override
+        public void close() throws IOException {
+            if (!writeConsoleMode(handle, originalMode)) {
+                throw new IOException("restore(console input) failed");
+            }
+        }
+
+        /// Reads a Windows console mode, or returns a negative value on failure.
+        private static int readConsoleMode(MemorySegment handle) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment mode = arena.allocate(ValueLayout.JAVA_INT);
+                int result = (int) WindowsConsoleHandles.GET_CONSOLE_MODE.invokeExact(handle, mode);
+                return result == 0 ? -1 : mode.get(ValueLayout.JAVA_INT, 0);
+            } catch (Throwable exception) {
+                return -1;
+            }
+        }
+
+        /// Writes a Windows console mode.
+        private static boolean writeConsoleMode(MemorySegment handle, int mode) {
+            try {
+                int result = (int) WindowsConsoleHandles.SET_CONSOLE_MODE.invokeExact(handle, mode);
+                return result != 0;
+            } catch (Throwable exception) {
+                return false;
             }
         }
     }
@@ -500,6 +664,12 @@ final class TerminalDevice implements AutoCloseable {
             writeNativeTermios(fileDescriptor, request, buffer);
         }
 
+        /// Returns true because `/dev/tty` supplies native terminal mode control.
+        @Override
+        public boolean supportsStandardFileDescriptors() {
+            return true;
+        }
+
         /// Closes the host terminal file descriptor.
         @Override
         public void close() throws IOException {
@@ -552,6 +722,40 @@ final class TerminalDevice implements AutoCloseable {
             } catch (Throwable exception) {
                 return false;
             }
+        }
+    }
+
+    /// Holds Windows console downcall handles.
+    private static final class WindowsConsoleHandles {
+        /// The native linker used for Windows console calls.
+        private static final Linker LINKER = Linker.nativeLinker();
+
+        /// The Windows Kernel32 symbol lookup.
+        private static final SymbolLookup LOOKUP = SymbolLookup.libraryLookup("kernel32", Arena.global());
+
+        /// Downcall handle for `GetStdHandle`.
+        private static final MethodHandle GET_STD_HANDLE = downcall(
+                "GetStdHandle",
+                FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+
+        /// Downcall handle for `GetConsoleMode`.
+        private static final MethodHandle GET_CONSOLE_MODE = downcall(
+                "GetConsoleMode",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+
+        /// Downcall handle for `SetConsoleMode`.
+        private static final MethodHandle SET_CONSOLE_MODE = downcall(
+                "SetConsoleMode",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+
+        /// Prevents construction.
+        private WindowsConsoleHandles() {
+        }
+
+        /// Creates a downcall handle for one Windows console symbol.
+        private static MethodHandle downcall(String name, FunctionDescriptor descriptor) {
+            MemorySegment symbol = LOOKUP.find(name).orElseThrow(() -> new UnsatisfiedLinkError(name));
+            return LINKER.downcallHandle(symbol, descriptor);
         }
     }
 

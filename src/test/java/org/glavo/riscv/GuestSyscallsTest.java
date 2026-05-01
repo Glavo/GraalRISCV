@@ -3172,43 +3172,21 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies tty ioctl support used by common `isatty` and stdio setup paths.
+    /// Verifies that plain standard streams are not reported as controllable tty descriptors.
     @Test
-    public void ioctlSupportsTerminalQueries() {
+    public void ioctlRejectsPlainStandardStreamTerminalQueries() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             memory.writeByte(memory.baseAddress(), (byte) 0x7f);
             setSyscall(state, SYS_IOCTL, 1, TCGETS, memory.baseAddress());
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
-            assertEquals(0, memory.readUnsignedByte(memory.baseAddress()));
-            int localFlags = memory.readInt(memory.baseAddress() + TERMIOS_LOCAL_FLAGS_OFFSET);
-            assertEquals(
-                    TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO,
-                    localFlags & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
-
-            memory.writeInt(
-                    memory.baseAddress() + TERMIOS_LOCAL_FLAGS_OFFSET,
-                    localFlags & ~TERMIOS_LOCAL_ECHO);
-            setSyscall(state, SYS_IOCTL, 0, TCSETS, memory.baseAddress());
-            state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
-
-            memory.clear(memory.baseAddress(), TERMIOS_SIZE);
-            setSyscall(state, SYS_IOCTL, 1, TCGETS, memory.baseAddress());
-            state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
-            assertEquals(
-                    TERMIOS_LOCAL_CANONICAL,
-                    memory.readInt(memory.baseAddress() + TERMIOS_LOCAL_FLAGS_OFFSET)
-                            & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
+            assertEquals(ENOTTY, state.register(10));
+            assertEquals(0x7f, memory.readUnsignedByte(memory.baseAddress()));
 
             setSyscall(state, SYS_IOCTL, 1, TIOCGWINSZ, memory.baseAddress());
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
-            assertEquals(24, memory.readUnsignedShort(memory.baseAddress()));
-            assertEquals(80, memory.readUnsignedShort(memory.baseAddress() + Short.BYTES));
+            assertEquals(ENOTTY, state.register(10));
 
             setSyscall(state, SYS_IOCTL, 1, 0x1234, memory.baseAddress());
             state.syscalls().handle(state, TEST_PC);
@@ -3253,6 +3231,30 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
             assertEquals('x', memory.readUnsignedByte(dataAddress));
+
+            memory.clear(ioctlAddress, TERMIOS_SIZE);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCGETS, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readUnsignedByte(ioctlAddress));
+            int localFlags = memory.readInt(ioctlAddress + TERMIOS_LOCAL_FLAGS_OFFSET);
+            assertEquals(
+                    TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO,
+                    localFlags & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
+
+            memory.writeInt(ioctlAddress + TERMIOS_LOCAL_FLAGS_OFFSET, localFlags & ~TERMIOS_LOCAL_ECHO);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCSETS, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.clear(ioctlAddress, TERMIOS_SIZE);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCGETS, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(
+                    TERMIOS_LOCAL_CANONICAL,
+                    memory.readInt(ioctlAddress + TERMIOS_LOCAL_FLAGS_OFFSET)
+                            & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
 
             memory.writeByte(ioctlAddress, (byte) 0x5a);
             setSyscall(state, SYS_IOCTL, fileDescriptor, TCSETS, ioctlAddress);

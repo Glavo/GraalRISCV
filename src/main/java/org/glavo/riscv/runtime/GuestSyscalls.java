@@ -5487,13 +5487,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns the terminal backing a descriptor that resolves to standard input.
     private @Nullable TerminalDevice terminalInputFor(int fileDescriptor) {
-        return standardFileDescriptorFor(fileDescriptor) == 0 ? terminalDevice : null;
+        return standardFileDescriptorFor(fileDescriptor) == 0 && terminalDevice.supportsStandardFileDescriptors()
+                ? terminalDevice
+                : null;
     }
 
     /// Returns the terminal backing a descriptor, or null when the descriptor is not terminal-like.
     private @Nullable TerminalDevice terminalDeviceFor(int fileDescriptor) {
         if (standardFileDescriptorFor(fileDescriptor) >= 0) {
-            return terminalDevice;
+            return terminalDevice.supportsStandardFileDescriptors() ? terminalDevice : null;
         }
         @Nullable OpenFile openFile = openFile(fileDescriptor);
         if (openFile == null || !openFile.isTerminalDevice()) {
