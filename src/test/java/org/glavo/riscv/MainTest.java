@@ -233,6 +233,25 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that the removed `--host-root` compatibility option is rejected.
+    @Test
+    public void rejectsRemovedHostRootOption() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--host-root", tempDirectory.toString(),
+                        tempDirectory.resolve("unused.elf").toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(2, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(err.toString(StandardCharsets.UTF_8).contains("Unknown option: --host-root"));
+    }
+
     /// Verifies that an explicit memory base above the ELF load address reports a useful layout error.
     @Test
     public void reportsElfSegmentBelowMemoryBase() throws Exception {

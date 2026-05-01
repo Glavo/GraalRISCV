@@ -41,7 +41,6 @@ public final class Main {
               --vector-vlen <bits>       Vector register length in bits. Default is 128.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
-              --host-root <path>         Alias for --mount /=<path>.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
               --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
@@ -150,7 +149,6 @@ public final class Main {
                     .option("engine.OSRCompilationThreshold", "10000")
                     .option("engine.TraceCompilation", "true");
         }
-        builder.option("riscv.hostRoot", options.rootMount().toString());
         builder.option("riscv.mounts", encodeMounts(options.mounts()));
         if (options.trace()) {
             builder.option("riscv.trace", "true");
@@ -177,7 +175,6 @@ public final class Main {
         @Nullable String vectorVlen = null;
         @Nullable String maxInstructions = null;
         @Nullable String debugFixedClockNanos = null;
-        @Nullable Path hostRoot = null;
         ArrayList<MountOption> mounts = new ArrayList<>();
         boolean debugTraceCompilation = false;
         boolean trace = false;
@@ -329,20 +326,6 @@ public final class Main {
                 }
                 continue;
             }
-            if (parseOptions && "--host-root".equals(argument)) {
-                index++;
-                if (index >= args.length) {
-                    err.println("Missing value for --host-root.");
-                    printUsage(err);
-                    return CliOptions.error();
-                }
-                hostRoot = parsePathOption("--host-root", args[index], err);
-                if (hostRoot == null) {
-                    printUsage(err);
-                    return CliOptions.error();
-                }
-                continue;
-            }
             if (parseOptions && "--mount".equals(argument)) {
                 index++;
                 if (index >= args.length) {
@@ -376,9 +359,8 @@ public final class Main {
             return CliOptions.error();
         }
 
-        Path resolvedRootMount = hostRoot != null ? hostRoot : defaultRootMount(programPath);
         if (mounts.stream().noneMatch(mount -> "/".equals(mount.guestPath()))) {
-            mounts.add(new MountOption("/", resolvedRootMount));
+            mounts.add(new MountOption("/", defaultRootMount(programPath)));
         }
         return CliOptions.execute(
                 programPath,
@@ -392,7 +374,6 @@ public final class Main {
                 vectorVlen,
                 maxInstructions,
                 debugFixedClockNanos,
-                resolvedRootMount,
                 mounts,
                 debugTraceCompilation,
                 trace);
@@ -532,7 +513,6 @@ public final class Main {
     /// @param vectorVlen the optional vector register length option value
     /// @param maxInstructions the optional maximum instruction count option value
     /// @param debugFixedClockNanos the optional fixed debug `clock_gettime` nanosecond option value
-    /// @param rootMount the host directory mounted at the guest root
     /// @param mounts the configured guest filesystem mounts
     /// @param debugTraceCompilation whether Truffle compilation diagnostics should be enabled
     /// @param trace whether instruction tracing is enabled
@@ -550,7 +530,6 @@ public final class Main {
             @Nullable String vectorVlen,
             @Nullable String maxInstructions,
             @Nullable String debugFixedClockNanos,
-            Path rootMount,
             MountOption @Unmodifiable [] mounts,
             boolean debugTraceCompilation,
             boolean trace) {
@@ -587,7 +566,6 @@ public final class Main {
                     null,
                     null,
                     null,
-                    Path.of("."),
                     new MountOption[0],
                     false,
                     false);
@@ -608,7 +586,6 @@ public final class Main {
                     null,
                     null,
                     null,
-                    Path.of("."),
                     new MountOption[0],
                     false,
                     false);
@@ -627,7 +604,6 @@ public final class Main {
                 @Nullable String vectorVlen,
                 @Nullable String maxInstructions,
                 @Nullable String debugFixedClockNanos,
-                Path rootMount,
                 List<MountOption> mounts,
                 boolean debugTraceCompilation,
                 boolean trace) {
@@ -644,7 +620,6 @@ public final class Main {
                     vectorVlen,
                     maxInstructions,
                     debugFixedClockNanos,
-                    rootMount,
                     mounts.toArray(MountOption[]::new),
                     debugTraceCompilation,
                     trace);

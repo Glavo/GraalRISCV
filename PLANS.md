@@ -12,7 +12,7 @@
 - RVA22U64 and RVA23U64 user-mode profile support is implemented, centrally reported, and covered by focused tests.
 - RVV 1.0, mandatory RVA23U64 vector additions, `Zkt`/`Zvkt`, and optional standard `Zvbc` are implemented; the CRC example exercises `Zvbc`.
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
-- The memory, filesystem sandboxing, read-only tar mounts, process/thread state, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
+- The memory, `--mount` filesystem sandboxing, read-only tar mounts, process/thread state, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 
 ## Remaining Work
 
