@@ -3,6 +3,7 @@
 
 package org.glavo.riscv.runtime;
 
+import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
 
 /// Stores Linux user-mode state that belongs to one guest thread rather than the whole process.
@@ -37,6 +38,9 @@ final class GuestThread {
 
     /// The active RISC-V userspace pointer mask length for this thread.
     private int pointerMaskLength;
+
+    /// The active RISC-V userspace pointer mask for this thread.
+    private long pointerMask = -1L;
 
     /// Whether the Linux tagged-address syscall ABI flag is enabled for this thread.
     private boolean taggedAddressAbiEnabled;
@@ -133,6 +137,11 @@ final class GuestThread {
         return pointerMaskLength;
     }
 
+    /// Returns the active RISC-V userspace pointer mask for this thread.
+    long pointerMask() {
+        return pointerMask;
+    }
+
     /// Returns true when the Linux tagged-address syscall ABI flag is enabled for this thread.
     boolean taggedAddressAbiEnabled() {
         return taggedAddressAbiEnabled;
@@ -141,13 +150,26 @@ final class GuestThread {
     /// Updates this thread's RISC-V userspace pointer masking state.
     void setTaggedAddressControl(int pointerMaskLength, boolean taggedAddressAbiEnabled) {
         this.pointerMaskLength = pointerMaskLength;
+        this.pointerMask = pointerMaskForLength(pointerMaskLength);
         this.taggedAddressAbiEnabled = taggedAddressAbiEnabled;
     }
 
     /// Copies inherited per-thread execution controls from a parent guest thread.
     void inheritExecutionControlsFrom(GuestThread parent) {
         pointerMaskLength = parent.pointerMaskLength;
+        pointerMask = parent.pointerMask;
         taggedAddressAbiEnabled = parent.taggedAddressAbiEnabled;
+    }
+
+    /// Returns the low-bit mask for a RISC-V pointer mask length.
+    private static long pointerMaskForLength(int length) {
+        if (length < 0 || length >= Long.SIZE) {
+            throw new RiscVException("Unsupported pointer mask length: " + length);
+        }
+        if (length == 0) {
+            return -1L;
+        }
+        return (1L << (Long.SIZE - length)) - 1L;
     }
 
     /// Returns true when this thread has a registered restartable sequence area.

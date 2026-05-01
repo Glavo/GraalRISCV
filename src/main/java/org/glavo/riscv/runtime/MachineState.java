@@ -213,7 +213,7 @@ public final class MachineState {
 
     /// Updates the current guest program counter.
     public void setPc(long pc) {
-        this.pc = memory.maskPointer(pc);
+        this.pc = pc & thread.pointerMask();
     }
 
     /// Returns an integer register value.
@@ -292,6 +292,11 @@ public final class MachineState {
         return thread.pointerMaskLength();
     }
 
+    /// Returns the active RISC-V userspace pointer mask for this guest thread.
+    public long pointerMask() {
+        return thread.pointerMask();
+    }
+
     /// Activates this guest thread's pointer mask for the current host thread.
     public long enterPointerMask() {
         return memory.enterPointerMaskLength(thread.pointerMaskLength());
@@ -309,7 +314,7 @@ public final class MachineState {
 
     /// Applies the current host thread's active RISC-V userspace pointer mask to a guest address.
     public long maskPointer(long address) {
-        return memory.maskPointer(address);
+        return address & thread.pointerMask();
     }
 
     /// Creates the child architectural state produced by a Linux thread-style `clone`.

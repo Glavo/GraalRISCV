@@ -35,7 +35,7 @@
 
 - `Rva23Profile` exists as the non-reported target definition for the full RVA23U64 profile; `riscv_hwprobe` and README still report only the completed RVA22U64 baseline.
 - Additional RVA23U64 scalar instructions are implemented and unit-tested in the decoder and interpreter: `Zicond`, `Zimop`, `Zcmop`, `Zcb`, and `Zawrs`.
-- `Supm` pointer masking is implemented through Linux `PR_SET_TAGGED_ADDR_CTRL` and `PR_GET_TAGGED_ADDR_CTRL`, with default PMLEN `0`, implemented PMLEN `7`, syscall tagged-address ABI gating through `PR_TAGGED_ADDR_ENABLE`, clone inheritance, and masking for instruction fetch, PC targets, memory accesses, atomics, CBO zeroing, and syscall guest pointers.
+- `Supm` pointer masking is implemented through Linux `PR_SET_TAGGED_ADDR_CTRL` and `PR_GET_TAGGED_ADDR_CTRL`, with default PMLEN `0`, implemented PMLEN `7`, syscall tagged-address ABI gating through `PR_TAGGED_ADDR_ENABLE`, clone inheritance, and masking for instruction fetch, PC targets, memory accesses, atomics, CBO zeroing, and syscall guest pointers. Micro-block hot memory paths use a precomputed mask and avoid `ThreadLocal` lookups.
 - `Zfa` and `Zihintntl` remain implemented compatibility features today and are listed as RVA23U64 mandatory target requirements.
 
 ## Remaining Work

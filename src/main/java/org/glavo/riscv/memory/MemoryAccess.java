@@ -79,7 +79,6 @@ public final class MemoryAccess {
 
     /// Reads a signed byte from guest memory using explicit page-layout constants.
     public byte readByte(long address, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         ensureReadableDataPage(address, Byte.BYTES, layout);
         return MemoryUnsafe.UNSAFE.getByte(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
@@ -92,7 +91,6 @@ public final class MemoryAccess {
 
     /// Reads a signed little-endian 16-bit value from guest memory using explicit page-layout constants.
     public short readShort(long address, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageShortOffset(pageOffset)) {
             ensureReadableDataPage(address, Short.BYTES, layout);
@@ -109,7 +107,6 @@ public final class MemoryAccess {
 
     /// Reads a signed little-endian 32-bit value from guest memory using explicit page-layout constants.
     public int readInt(long address, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageIntOffset(pageOffset)) {
             ensureReadableDataPage(address, Integer.BYTES, layout);
@@ -126,7 +123,6 @@ public final class MemoryAccess {
 
     /// Reads a signed little-endian 64-bit value from guest memory using explicit page-layout constants.
     public long readLong(long address, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageLongOffset(pageOffset)) {
             ensureReadableDataPage(address, Long.BYTES, layout);
@@ -138,7 +134,6 @@ public final class MemoryAccess {
 
     /// Writes a byte to guest memory using explicit page-layout constants.
     public void writeByte(long address, byte value, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         ensureWritableDataPage(address, Byte.BYTES, layout);
         MemoryUnsafe.UNSAFE.putByte(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
@@ -146,7 +141,6 @@ public final class MemoryAccess {
 
     /// Writes a little-endian 16-bit value to guest memory using explicit page-layout constants.
     public void writeShort(long address, short value, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageShortOffset(pageOffset)) {
             ensureWritableDataPage(address, Short.BYTES, layout);
@@ -159,7 +153,6 @@ public final class MemoryAccess {
 
     /// Writes a little-endian 32-bit value to guest memory using explicit page-layout constants.
     public void writeInt(long address, int value, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageIntOffset(pageOffset)) {
             ensureWritableDataPage(address, Integer.BYTES, layout);
@@ -172,7 +165,6 @@ public final class MemoryAccess {
 
     /// Writes a little-endian 64-bit value to guest memory using explicit page-layout constants.
     public void writeLong(long address, long value, MemoryLayout layout) {
-        address = memory.maskPointer(address);
         long pageOffset = layout.pageOffset(address);
         if (layout.isSinglePageLongOffset(pageOffset)) {
             ensureWritableDataPage(address, Long.BYTES, layout);
