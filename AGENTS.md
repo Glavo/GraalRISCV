@@ -56,8 +56,16 @@ These rules apply to all Java code written or modified in this repository.
 
 ## Project Workflow
 
-- When IDEA MCP is available, prefer IDEA MCP for reading project files, searching files or text, inspecting symbols, and checking file problems.
-- Use command-line tools for Gradle tasks, Git status/diff, and other workflows that require exact shell commands or repository-local environment variables.
+- When IDEA MCP is available, use IDEA MCP first for repository inspection and IDE-backed checks.
+  - For reading project files, use `mcp__idea__.read_file` for targeted slices or line ranges, and `mcp__idea__.get_file_text_by_path` when whole-file text is needed.
+  - For searching project text, use `mcp__idea__.search_in_files_by_text` for literal searches and `mcp__idea__.search_in_files_by_regex` for regex searches.
+  - For locating files, use `mcp__idea__.find_files_by_name_keyword` when searching by filename and `mcp__idea__.find_files_by_glob` when a glob pattern is needed.
+  - For checking edited Java/Kotlin/project files, use `mcp__idea__.get_file_problems` on the modified files before or alongside Gradle verification.
+  - For IDE compilation checks, use `mcp__idea__.build_project` when a normal IDE build or selected-file rebuild is sufficient.
+  - For Gradle task behavior, generated artifacts, repository-local environment variables, test task selection, Git status, and Git diffs, use command-line tools because exact shell commands and outputs matter.
+  - Do not default to `Get-Content`, `cat`, `type`, `rg`, `grep`, `find`, or similar shell commands for project file reads or searches when IDEA MCP can perform the same operation.
+- Shell-based reads or searches are acceptable only when IDEA MCP is unavailable, returns truncated or insufficient results, cannot access the needed generated/non-project file, or exact shell output is itself required.
+- If shell-based reads or searches are used while IDEA MCP is available, briefly state the reason before or with the command.
 - After completing a task, update `PLANS.md` to remove or revise only the work that is actually done.
 - Do not delete active or still-relevant plans from `PLANS.md`; preserve pending work and update it as needed.
 
