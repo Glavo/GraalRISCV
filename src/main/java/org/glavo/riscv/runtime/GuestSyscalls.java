@@ -143,6 +143,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `pwrite64`.
     private static final int SYS_PWRITE64 = 68;
 
+    /// The Linux RISC-V syscall number for `pselect6`.
+    private static final int SYS_PSELECT6 = 72;
+
     /// The Linux RISC-V syscall number for `ppoll`.
     private static final int SYS_PPOLL = 73;
 
@@ -241,6 +244,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `times`.
     private static final int SYS_TIMES = 153;
+
+    /// The Linux RISC-V syscall number for `setpgid`.
+    private static final int SYS_SETPGID = 154;
 
     /// The Linux RISC-V syscall number for `getpgid`.
     private static final int SYS_GETPGID = 155;
@@ -660,6 +666,18 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte offset of `revents` inside Linux RISC-V 64-bit `struct pollfd`.
     private static final int POLL_FD_REVENTS_OFFSET = Integer.BYTES + Short.BYTES;
+
+    /// The number of descriptor bits stored in one Linux RISC-V 64-bit `fd_set` word.
+    private static final int FD_SET_BITS_PER_WORD = Long.SIZE;
+
+    /// The byte offset of `ss` inside the Linux `pselect6` signal-mask argument.
+    private static final int PSELECT6_SIGNAL_MASK_ADDRESS_OFFSET = 0;
+
+    /// The byte offset of `ss_len` inside the Linux `pselect6` signal-mask argument.
+    private static final int PSELECT6_SIGNAL_SET_SIZE_OFFSET = Long.BYTES;
+
+    /// The byte size of the Linux `pselect6` signal-mask argument on RISC-V 64-bit.
+    private static final int PSELECT6_SIGNAL_ARGUMENT_SIZE = 2 * Long.BYTES;
 
     /// Linux flags accepted by `pipe2`.
     private static final long SUPPORTED_PIPE2_FLAGS = O_NONBLOCK | O_CLOEXEC;
@@ -2273,6 +2291,14 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_PSELECT6 -> state.setRegister(10, pselect6(
+                    state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
             case SYS_PPOLL -> state.setRegister(10, ppoll(
                     state,
                     state.register(10),
@@ -2380,6 +2406,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(10),
                     credentials.effectiveGroupId()));
             case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
+            case SYS_SETPGID -> state.setRegister(10, setpgid(state.register(10), state.register(11)));
             case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
             case SYS_SETSID -> state.setRegister(10, setsid());
             case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
@@ -2722,6 +2749,152 @@ public final class GuestSyscalls implements AutoCloseable {
                 thread.setSignalMask(savedSignalMask);
             }
         }
+    }
+
+    /// Reports descriptor readiness through Linux `pselect6` without blocking the host thread.
+    private long pselect6(
+            MachineState state,
+            long fileDescriptorLimit,
+            long readFileDescriptorsAddress,
+            long writeFileDescriptorsAddress,
+            long exceptionFileDescriptorsAddress,
+            long timeoutAddress,
+            long signalArgumentAddress) {
+        if (fileDescriptorLimit < 0 || fileDescriptorLimit > DEFAULT_OPEN_FILE_LIMIT) {
+            return EINVAL;
+        }
+
+        int descriptorLimit = (int) fileDescriptorLimit;
+        long fileDescriptorSetSize = fdSetByteSize(descriptorLimit);
+        if (!isBackedFdSet(readFileDescriptorsAddress, fileDescriptorSetSize)
+                || !isBackedFdSet(writeFileDescriptorsAddress, fileDescriptorSetSize)
+                || !isBackedFdSet(exceptionFileDescriptorsAddress, fileDescriptorSetSize)) {
+            return EFAULT;
+        }
+        if (timeoutAddress != 0) {
+            if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
+                return EFAULT;
+            }
+            long seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
+            long nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            if (seconds < 0 || nanoseconds < 0 || nanoseconds >= NANOSECONDS_PER_SECOND) {
+                return EINVAL;
+            }
+        }
+
+        long signalMaskAddress = 0;
+        if (signalArgumentAddress != 0) {
+            if (!memory.isBacked(signalArgumentAddress, PSELECT6_SIGNAL_ARGUMENT_SIZE)) {
+                return EFAULT;
+            }
+            signalMaskAddress = readLongUnaligned(signalArgumentAddress + PSELECT6_SIGNAL_MASK_ADDRESS_OFFSET);
+            long signalSetSize = readLongUnaligned(signalArgumentAddress + PSELECT6_SIGNAL_SET_SIZE_OFFSET);
+            if (signalMaskAddress != 0 && signalSetSize != KERNEL_SIGSET_SIZE) {
+                return EINVAL;
+            }
+            if (signalMaskAddress != 0 && !memory.isBacked(signalMaskAddress, KERNEL_SIGSET_SIZE)) {
+                return EFAULT;
+            }
+        }
+
+        boolean[] requestedReadFileDescriptors = readFdSet(readFileDescriptorsAddress, descriptorLimit);
+        boolean[] requestedWriteFileDescriptors = readFdSet(writeFileDescriptorsAddress, descriptorLimit);
+        boolean[] requestedExceptionFileDescriptors = readFdSet(exceptionFileDescriptorsAddress, descriptorLimit);
+        for (int fileDescriptor = 0; fileDescriptor < descriptorLimit; fileDescriptor++) {
+            if ((requestedReadFileDescriptors[fileDescriptor]
+                    || requestedWriteFileDescriptors[fileDescriptor]
+                    || requestedExceptionFileDescriptors[fileDescriptor])
+                    && !isOpenFileDescriptor(fileDescriptor)) {
+                return EBADF;
+            }
+        }
+
+        GuestThread thread = state.guestThread();
+        long savedSignalMask = thread.signalMask();
+        if (signalMaskAddress != 0) {
+            thread.setSignalMask(memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK);
+        }
+        try {
+            clearFdSet(readFileDescriptorsAddress, fileDescriptorSetSize);
+            clearFdSet(writeFileDescriptorsAddress, fileDescriptorSetSize);
+            clearFdSet(exceptionFileDescriptorsAddress, fileDescriptorSetSize);
+
+            int readyCount = 0;
+            for (int fileDescriptor = 0; fileDescriptor < descriptorLimit; fileDescriptor++) {
+                int readyEvents = readyEventsFor(fileDescriptor);
+                boolean descriptorReady = false;
+                if (requestedReadFileDescriptors[fileDescriptor]
+                        && (readyEvents & (EPOLLIN | EPOLLERR | EPOLLHUP)) != 0) {
+                    setFdSetBit(readFileDescriptorsAddress, fileDescriptor);
+                    descriptorReady = true;
+                }
+                if (requestedWriteFileDescriptors[fileDescriptor] && (readyEvents & (EPOLLOUT | EPOLLERR)) != 0) {
+                    setFdSetBit(writeFileDescriptorsAddress, fileDescriptor);
+                    descriptorReady = true;
+                }
+                if (descriptorReady) {
+                    readyCount++;
+                }
+            }
+            return readyCount;
+        } finally {
+            if (signalMaskAddress != 0) {
+                thread.setSignalMask(savedSignalMask);
+            }
+        }
+    }
+
+    /// Returns the byte width needed for a Linux `fd_set` covering descriptors below `descriptorLimit`.
+    private static long fdSetByteSize(int descriptorLimit) {
+        if (descriptorLimit == 0) {
+            return 0;
+        }
+        return ((long) descriptorLimit + FD_SET_BITS_PER_WORD - 1L) / FD_SET_BITS_PER_WORD * Long.BYTES;
+    }
+
+    /// Returns true when a nullable `fd_set` pointer is backed for the requested descriptor range.
+    private boolean isBackedFdSet(long fileDescriptorSetAddress, long byteSize) {
+        return fileDescriptorSetAddress == 0 || byteSize == 0 || memory.isBacked(fileDescriptorSetAddress, byteSize);
+    }
+
+    /// Reads one nullable Linux `fd_set` into a descriptor-indexed selection array.
+    private boolean[] readFdSet(long fileDescriptorSetAddress, int descriptorLimit) {
+        boolean[] selected = new boolean[descriptorLimit];
+        if (fileDescriptorSetAddress == 0) {
+            return selected;
+        }
+        for (int fileDescriptor = 0; fileDescriptor < descriptorLimit; fileDescriptor++) {
+            selected[fileDescriptor] = isFdSetBitSet(fileDescriptorSetAddress, fileDescriptor);
+        }
+        return selected;
+    }
+
+    /// Clears one nullable Linux `fd_set` over the descriptor range used by `pselect6`.
+    private void clearFdSet(long fileDescriptorSetAddress, long byteSize) {
+        if (fileDescriptorSetAddress != 0 && byteSize != 0) {
+            memory.clear(fileDescriptorSetAddress, byteSize);
+        }
+    }
+
+    /// Returns true when one descriptor bit is set in a Linux `fd_set`.
+    private boolean isFdSetBitSet(long fileDescriptorSetAddress, int fileDescriptor) {
+        long wordAddress = fileDescriptorSetAddress + (long) (fileDescriptor / FD_SET_BITS_PER_WORD) * Long.BYTES;
+        long word = readLongUnaligned(wordAddress);
+        return (word & fdSetBit(fileDescriptor)) != 0;
+    }
+
+    /// Sets one descriptor bit in a nullable Linux `fd_set`.
+    private void setFdSetBit(long fileDescriptorSetAddress, int fileDescriptor) {
+        if (fileDescriptorSetAddress == 0) {
+            return;
+        }
+        long wordAddress = fileDescriptorSetAddress + (long) (fileDescriptor / FD_SET_BITS_PER_WORD) * Long.BYTES;
+        writeLongUnaligned(wordAddress, readLongUnaligned(wordAddress) | fdSetBit(fileDescriptor));
+    }
+
+    /// Returns the word-local bit mask for one descriptor in a Linux `fd_set`.
+    private static long fdSetBit(int fileDescriptor) {
+        return 1L << (fileDescriptor % FD_SET_BITS_PER_WORD);
     }
 
     /// Reports descriptor readiness through Linux `ppoll` without blocking the host thread.
@@ -5514,13 +5687,18 @@ public final class GuestSyscalls implements AutoCloseable {
             return false;
         }
         synchronized (childProcessLock) {
-            for (ChildProcess child : childProcesses) {
-                if (child.processId() == (int) processId) {
-                    return true;
-                }
+            return childProcess((int) processId) != null;
+        }
+    }
+
+    /// Returns a tracked child process by process id while the child-process lock is held.
+    private @Nullable ChildProcess childProcess(int processId) {
+        for (ChildProcess child : childProcesses) {
+            if (child.processId() == processId) {
+                return child;
             }
         }
-        return false;
+        return null;
     }
 
     /// Joins the host thread that executed a child process.
@@ -6502,10 +6680,83 @@ public final class GuestSyscalls implements AutoCloseable {
         return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
     }
 
-    /// Returns the deterministic process group id for the guest process.
+    /// Updates the target process group when the target process and group are known to this runtime.
+    private long setpgid(long processId, long processGroupId) {
+        if (processId < 0
+                || processId != (int) processId
+                || processGroupId < 0
+                || processGroupId != (int) processGroupId) {
+            return EINVAL;
+        }
+
+        int targetProcessId = processId == 0 ? process.id() : (int) processId;
+        int targetProcessGroupId = processGroupId == 0 ? targetProcessId : (int) processGroupId;
+        if (targetProcessGroupId <= 0) {
+            return EINVAL;
+        }
+
+        synchronized (childProcessLock) {
+            if (targetProcessId == process.id()) {
+                if (!isKnownOrSelfProcessGroupId(targetProcessGroupId) && targetProcessGroupId != targetProcessId) {
+                    return EPERM;
+                }
+                process.setProcessGroupId(targetProcessGroupId);
+                updateParentChildProcessGroup(targetProcessGroupId);
+                return 0;
+            }
+
+            @Nullable ChildProcess child = childProcess(targetProcessId);
+            if (child == null) {
+                return ESRCH;
+            }
+            if (!isKnownOrSelfProcessGroupId(targetProcessGroupId) && targetProcessGroupId != targetProcessId) {
+                return EPERM;
+            }
+            child.setProcessGroupId(targetProcessGroupId);
+            child.syscalls().process.setProcessGroupId(targetProcessGroupId);
+            return 0;
+        }
+    }
+
+    /// Updates the parent process child record for this process when the parent is known.
+    private void updateParentChildProcessGroup(int processGroupId) {
+        if (parentProcess == null) {
+            return;
+        }
+        synchronized (parentProcess.childProcessLock) {
+            @Nullable ChildProcess child = parentProcess.childProcess(process.id());
+            if (child != null) {
+                child.setProcessGroupId(processGroupId);
+            }
+        }
+    }
+
+    /// Returns true when a process group id names the current process group or a tracked child group.
+    private boolean isKnownOrSelfProcessGroupId(int processGroupId) {
+        if (process.processGroupId() == processGroupId) {
+            return true;
+        }
+        for (ChildProcess child : childProcesses) {
+            if (child.processGroupId() == processGroupId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Returns the process group id for the current process or a tracked child process.
     private long getpgid(long processId) {
-        if (processId == 0 || processId == process.id() || isKnownChildProcessId(processId)) {
+        if (processId == 0 || processId == process.id()) {
             return process.processGroupId();
+        }
+        if (processId != (int) processId) {
+            return ESRCH;
+        }
+        synchronized (childProcessLock) {
+            @Nullable ChildProcess child = childProcess((int) processId);
+            if (child != null) {
+                return child.processGroupId();
+            }
         }
         return ESRCH;
     }
@@ -9129,7 +9380,7 @@ public final class GuestSyscalls implements AutoCloseable {
         private final int processId;
 
         /// The Linux process group id visible to wait selectors.
-        private final int processGroupId;
+        private int processGroupId;
 
         /// The syscall handler owned by the child process.
         private final GuestSyscalls syscalls;
@@ -9159,6 +9410,16 @@ public final class GuestSyscalls implements AutoCloseable {
         /// Returns the child process syscall handler.
         private GuestSyscalls syscalls() {
             return syscalls;
+        }
+
+        /// Returns the Linux process group id visible to wait selectors.
+        private int processGroupId() {
+            return processGroupId;
+        }
+
+        /// Updates the Linux process group id visible to wait selectors.
+        private void setProcessGroupId(int processGroupId) {
+            this.processGroupId = processGroupId;
         }
 
         /// Returns the host thread running the child process leader.

@@ -27,7 +27,7 @@ final class GuestProcess {
     private final int parentId;
 
     /// The Linux process group id represented by this process.
-    private final int processGroupId;
+    private int processGroupId;
 
     /// The process leader represented by the initial guest thread.
     private final GuestThread initialThread;
@@ -60,8 +60,13 @@ final class GuestProcess {
     }
 
     /// Returns the Linux process group id.
-    int processGroupId() {
+    synchronized int processGroupId() {
         return processGroupId;
+    }
+
+    /// Updates the Linux process group id represented by this process.
+    synchronized void setProcessGroupId(int processGroupId) {
+        this.processGroupId = processGroupId;
     }
 
     /// Returns the process leader thread state used by the initial architectural state.

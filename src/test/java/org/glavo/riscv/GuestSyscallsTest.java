@@ -210,6 +210,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `pwrite64`.
     private static final long SYS_PWRITE64 = 68;
 
+    /// The Linux RISC-V syscall number for `pselect6`.
+    private static final long SYS_PSELECT6 = 72;
+
     /// The Linux RISC-V syscall number for `ppoll`.
     private static final long SYS_PPOLL = 73;
 
@@ -299,6 +302,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `times`.
     private static final long SYS_TIMES = 153;
+
+    /// The Linux RISC-V syscall number for `setpgid`.
+    private static final long SYS_SETPGID = 154;
 
     /// The Linux RISC-V syscall number for `getpgid`.
     private static final long SYS_GETPGID = 155;
@@ -818,6 +824,15 @@ public final class GuestSyscallsTest {
 
     /// The byte offset of `revents` inside Linux RISC-V 64-bit `struct pollfd`.
     private static final int POLL_FD_REVENTS_OFFSET = Integer.BYTES + Short.BYTES;
+
+    /// The maximum byte width of a Linux RISC-V 64-bit `fd_set` used by tests.
+    private static final int TEST_FD_SET_SIZE = 128;
+
+    /// The byte offset of `ss` inside the Linux `pselect6` signal-mask argument.
+    private static final int PSELECT6_SIGNAL_MASK_ADDRESS_OFFSET = 0;
+
+    /// The byte offset of `ss_len` inside the Linux `pselect6` signal-mask argument.
+    private static final int PSELECT6_SIGNAL_SET_SIZE_OFFSET = Long.BYTES;
 
     /// The byte size of Linux RISC-V 64-bit `struct epoll_event`.
     private static final int EPOLL_EVENT_SIZE = 16;
@@ -2584,6 +2599,68 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies deterministic `pselect6` readiness for descriptor sets.
+    @Test
+    public void pselect6ReportsDescriptorReadiness() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long readFileDescriptorsAddress = memory.baseAddress() + 64;
+            long writeFileDescriptorsAddress = memory.baseAddress() + 256;
+            long exceptionFileDescriptorsAddress = memory.baseAddress() + 448;
+            long timeoutAddress = memory.baseAddress() + 640;
+            long signalArgumentAddress = memory.baseAddress() + 704;
+            long signalSetAddress = memory.baseAddress() + 768;
+
+            memory.writeLong(timeoutAddress, 0);
+            memory.writeLong(timeoutAddress + Long.BYTES, 0);
+            setFdSetBit(memory, readFileDescriptorsAddress, 0);
+            setFdSetBit(memory, readFileDescriptorsAddress, 1);
+            setFdSetBit(memory, writeFileDescriptorsAddress, 0);
+            setFdSetBit(memory, writeFileDescriptorsAddress, 1);
+            setFdSetBit(memory, exceptionFileDescriptorsAddress, 0);
+
+            setSyscall(
+                    state,
+                    SYS_PSELECT6,
+                    2,
+                    readFileDescriptorsAddress,
+                    writeFileDescriptorsAddress,
+                    exceptionFileDescriptorsAddress,
+                    timeoutAddress,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+
+            assertEquals(2, state.register(10));
+            assertTrue(isFdSetBitSet(memory, readFileDescriptorsAddress, 0));
+            assertTrue(!isFdSetBitSet(memory, readFileDescriptorsAddress, 1));
+            assertTrue(!isFdSetBitSet(memory, writeFileDescriptorsAddress, 0));
+            assertTrue(isFdSetBitSet(memory, writeFileDescriptorsAddress, 1));
+            assertTrue(!isFdSetBitSet(memory, exceptionFileDescriptorsAddress, 0));
+
+            memory.clear(readFileDescriptorsAddress, TEST_FD_SET_SIZE);
+            setFdSetBit(memory, readFileDescriptorsAddress, 99);
+            setSyscall(state, SYS_PSELECT6, 100, readFileDescriptorsAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            memory.writeLong(timeoutAddress + Long.BYTES, 1_000_000_000L);
+            setSyscall(state, SYS_PSELECT6, 0, 0, 0, 0, timeoutAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(signalSetAddress, signalMask(SIGUSR1));
+            memory.writeLong(signalArgumentAddress + PSELECT6_SIGNAL_MASK_ADDRESS_OFFSET, signalSetAddress);
+            memory.writeLong(signalArgumentAddress + PSELECT6_SIGNAL_SET_SIZE_OFFSET, KERNEL_SIGSET_SIZE - 1);
+            setSyscall(state, SYS_PSELECT6, 0, 0, 0, 0, 0, signalArgumentAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PSELECT6, 1, memory.endAddress(), 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+        }
+    }
+
     /// Verifies deterministic `ppoll` readiness for standard, invalid, and ignored descriptors.
     @Test
     public void ppollReportsDescriptorReadiness() {
@@ -3435,6 +3512,22 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
 
+            setSyscall(state, SYS_SETPGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETPGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_SETPGID, 0, 99, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            setSyscall(state, SYS_SETPGID, -1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
             setSyscall(state, SYS_SETSID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
@@ -3539,6 +3632,10 @@ public final class GuestSyscallsTest {
             assertEquals(EFAULT, state.register(10));
 
             setSyscall(state, SYS_GETPGID, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_SETPGID, 99, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ESRCH, state.register(10));
 
@@ -6212,6 +6309,28 @@ public final class GuestSyscallsTest {
     private static int pollRevents(Memory memory, long pollFileDescriptorsAddress, int index) {
         return memory.readUnsignedShort(
                 pollFileDescriptorsAddress + (long) index * POLL_FD_SIZE + POLL_FD_REVENTS_OFFSET);
+    }
+
+    /// Sets one descriptor bit in a Linux `fd_set`.
+    private static void setFdSetBit(Memory memory, long fileDescriptorSetAddress, int fileDescriptor) {
+        long wordAddress = fdSetWordAddress(fileDescriptorSetAddress, fileDescriptor);
+        memory.writeLong(wordAddress, memory.readLong(wordAddress) | fdSetBit(fileDescriptor));
+    }
+
+    /// Returns true when one descriptor bit is set in a Linux `fd_set`.
+    private static boolean isFdSetBitSet(Memory memory, long fileDescriptorSetAddress, int fileDescriptor) {
+        return (memory.readLong(fdSetWordAddress(fileDescriptorSetAddress, fileDescriptor))
+                & fdSetBit(fileDescriptor)) != 0;
+    }
+
+    /// Returns the word address containing one descriptor bit in a Linux `fd_set`.
+    private static long fdSetWordAddress(long fileDescriptorSetAddress, int fileDescriptor) {
+        return fileDescriptorSetAddress + (long) (fileDescriptor / Long.SIZE) * Long.BYTES;
+    }
+
+    /// Returns the word-local bit mask for one descriptor in a Linux `fd_set`.
+    private static long fdSetBit(int fileDescriptor) {
+        return 1L << (fileDescriptor % Long.SIZE);
     }
 
     /// Reads the `data` field from a packed Linux generic `struct epoll_event`.

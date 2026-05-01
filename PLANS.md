@@ -14,6 +14,7 @@
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
 - Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program` and `execve`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, `PR_GET_AUXV`, file-backed `MAP_PRIVATE`, tar symlink/hard-link lookup, virtual `/proc`, shell pipeline smoke coverage, and Ubuntu Base smoke coverage for common shell, coreutils, hashing, sorting, and findutils commands.
 - The memory, `--mount` filesystem namespace, customizable `GuestFileSystem` virtual mounts, read-only tar mounts, built-in `/proc` and Linux-like `/dev` with tty, null, zero, and deterministic random devices, configurable guest user credentials, Ubuntu Base image preparation, process/thread state, process-style `clone`/`wait4`, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
+- Ubuntu Base shell startup compatibility covers the currently required identity, process-group, and readiness syscalls, including `setfsuid`, `setfsgid`, `pselect6`, and `setpgid`.
 
 ## Remaining Work
 
