@@ -113,6 +113,7 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 | RVV softmax | Build and run the RVV softmax example. | `./gradlew runRvvSoftmaxExample` |
 | RVV polynomial basic | Build and run the RVV polynomial basic example. | `./gradlew runRvvPolynomialBasicExample` |
 | RVV micro-benchmark | Build and run the RVV micro-benchmark example. | `./gradlew runRvvUbenchExample` |
+| RVV CRC | Build and run the RVV CRC smoke example. | `./gradlew runRvvCrcExample` |
 | CoreMark | Build and run the downloaded CoreMark benchmark. | `./gradlew runCoreMarkExample` |
 
 Run the larger showcase workloads together:

@@ -1296,13 +1296,16 @@ val rvvReductionExampleElf = layout.buildDirectory.file("examples/linux-static/r
 val rvvSoftmaxExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-softmax.elf")
 val rvvPolynomialBasicExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-polynomial-basic.elf")
 val rvvUbenchExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-ubench.elf")
+val rvvCrcExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-crc.elf")
 val rvvMatrixTransposeSmokeSource = rvvExamplesGeneratedDirectory.map { it.file("matrix_transpose_smoke.c") }
 val rvvReductionSmokeSource = rvvExamplesGeneratedDirectory.map { it.file("reduction_smoke.c") }
+val rvvCrcSmokeSource = rvvExamplesGeneratedDirectory.map { it.file("crc_smoke.c") }
 val rvvNoArgumentBenchUtilsHeader = rvvExamplesGeneratedDirectory.map { it.file("no-argument-bench-utils/bench_utils.h") }
 val rvvUbenchGeneratedDataHeader = rvvExamplesGeneratedDirectory.map { it.file("ubench-generated-data/generated_data_2op_int.h") }
 val rvvBaseTargetFeatures = listOf("m", "a", "f", "d", "c", "v", "zicsr", "zifencei")
 val rvvZbaTargetFeatures = rvvBaseTargetFeatures + "zba"
 val rvvZbaZbbTargetFeatures = rvvZbaTargetFeatures + "zbb"
+val rvvZvbbZvbcTargetFeatures = rvvBaseTargetFeatures + listOf("zvbb", "zvbc")
 val rvvVectorAddSourcePaths = listOf(
     "src/vector_add/bench_vector_add.c",
     "src/vector_add/vector_add_intrinsics.c"
@@ -1333,6 +1336,12 @@ val rvvPolynomialBasicSourceFiles = listOf(
 }
 val rvvUbenchSourceFiles = listOf(
     rvvExamplesSourceDirectory.map { it.file("src/ubench/microbenchmarks.c") }
+)
+val rvvCrcSourceFiles = listOf(
+    rvvCrcSmokeSource,
+    rvvExamplesSourceDirectory.map { it.file("src/crc/crc32.c") },
+    rvvExamplesSourceDirectory.map { it.file("src/crc/vector_crc_be.c") },
+    rvvExamplesSourceDirectory.map { it.file("src/crc/vector_crc_le.c") }
 )
 
 fun registerRvvExampleRunTask(
@@ -1443,7 +1452,7 @@ tasks.register("extractRvvExamplesSources") {
             }
             into(rvvExamplesSourceDirectory)
         }
-        val expectedDirectories = listOf("src/vector_add", "src/matrix_transpose", "src/reduction", "src/softmax", "src/polynomial_mult", "src/ubench")
+        val expectedDirectories = listOf("src/vector_add", "src/matrix_transpose", "src/reduction", "src/softmax", "src/polynomial_mult", "src/ubench", "src/crc")
             .map { rvvExamplesSourceDirectory.get().dir(it).asFile }
             .filterNot { it.isDirectory }
         if (expectedDirectories.isNotEmpty()) {
@@ -1459,6 +1468,7 @@ tasks.register("generateRvvExamplesSupportSources") {
     outputs.files(
         rvvMatrixTransposeSmokeSource,
         rvvReductionSmokeSource,
+        rvvCrcSmokeSource,
         rvvNoArgumentBenchUtilsHeader,
         rvvUbenchGeneratedDataHeader
     )
@@ -1565,6 +1575,71 @@ tasks.register("generateRvvExamplesSupportSources") {
                   int error = 0;
                   error |= bench_int_reduction();
                   error |= synthetic_bench();
+                  return error;
+                }
+            """
+        )
+        writeGeneratedFile(
+            rvvCrcSmokeSource.get().asFile,
+            """
+                #include <stdint.h>
+                #include <stddef.h>
+                #include <stdio.h>
+
+                uint32_t crc32_le_generic(uint32_t crc, unsigned char const *p, size_t len, uint32_t polynomial);
+                uint32_t crc32_be_generic(uint32_t crc, unsigned char const *p, size_t len, uint32_t polynomial);
+                void crc32init_le(const uint32_t polynomial);
+                void crc32init_be(const uint32_t polynomial);
+
+                uint32_t crcEth32_be_vector(uint32_t crc, unsigned char const *p, size_t len);
+                uint32_t crcEth32_be_vector_opt(uint32_t crc, unsigned char const *p, size_t len);
+                uint32_t crcEth32_le_vector(uint32_t crc, unsigned char const *p, size_t len);
+
+                static const uint32_t ETH_CRC32_POLY = 0x04c11db7u;
+                static const uint32_t ETH_CRC32_POLY_INV = 0xedb88320u;
+
+                static uint32_t crcEth32_be_generic(uint32_t crc, unsigned char const *p, size_t len) {
+                  return crc32_be_generic(crc, p, len, ETH_CRC32_POLY);
+                }
+
+                static uint32_t crcEth32_le_generic(uint32_t crc, unsigned char const *p, size_t len) {
+                  return crc32_le_generic(crc, p, len, ETH_CRC32_POLY_INV);
+                }
+
+                static void fill_message(unsigned char *message, size_t length) {
+                  for (size_t index = 0; index < length; index++) {
+                    message[index] = (unsigned char) (index * 37u + 11u);
+                  }
+                }
+
+                static int check_crc(const char *label, uint32_t actual, uint32_t expected, size_t length) {
+                  if (actual != expected) {
+                    fprintf(stderr, "%s mismatch for %zu bytes: actual=%08x expected=%08x\n", label, length, actual, expected);
+                    return 1;
+                  }
+                  printf("%s ok for %zu bytes: %08x\n", label, length, actual);
+                  return 0;
+                }
+
+                int main(void) {
+                  static const size_t SIZES[] = {32, 64, 128, 512, 1024};
+                  unsigned char message[1024];
+                  int error = 0;
+
+                  crc32init_le(ETH_CRC32_POLY_INV);
+                  crc32init_be(ETH_CRC32_POLY);
+                  fill_message(message, sizeof(message));
+
+                  for (size_t index = 0; index < sizeof(SIZES) / sizeof(SIZES[0]); index++) {
+                    size_t length = SIZES[index];
+                    uint32_t expected_be = crcEth32_be_generic(0, message, length);
+                    uint32_t expected_le = crcEth32_le_generic(0, message, length);
+
+                    error |= check_crc("crcEth32_be_vector", crcEth32_be_vector(0, message, length), expected_be, length);
+                    error |= check_crc("crcEth32_be_vector_opt", crcEth32_be_vector_opt(0, message, length), expected_be, length);
+                    error |= check_crc("crcEth32_le_vector", crcEth32_le_vector(0, message, length), expected_le, length);
+                  }
+
                   return error;
                 }
             """
@@ -1730,6 +1805,30 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvUbenchExample") {
     )
 }
 
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvCrcExample") {
+    group = "verification"
+    description = "Builds the RVV CRC smoke example as a static RISC-V Linux executable."
+
+    dependsOn("extractRvvExamplesSources", "generateRvvExamplesSupportSources")
+    configureZigExecutable()
+    enabledTargetFeatures.set(rvvZvbbZvbcTargetFeatures)
+    sourceFiles.from(rvvCrcSourceFiles)
+    outputFile.set(rvvCrcExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        providers.provider {
+            listOf(
+                "-O2",
+                "-g0",
+                "-no-pie",
+                "-DHAS_ZVBB_SUPPORT=1",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/crc").asFile.absolutePath}"
+            )
+        }
+    )
+}
+
 registerRvvExampleRunTask(
     "runRvvVectorAddExample",
     "Runs the downloaded RVV vector-add example with the GraalRISCV CLI.",
@@ -1822,6 +1921,25 @@ registerRvvExampleTestTask(
     "buildRvvUbenchExample",
     rvvUbenchExampleElf,
     listOf("data div benchmark #0", "wide positive division")
+)
+
+registerRvvExampleRunTask(
+    "runRvvCrcExample",
+    "Runs the RVV CRC smoke example with the GraalRISCV CLI.",
+    "buildRvvCrcExample",
+    rvvCrcExampleElf
+)
+
+registerRvvExampleTestTask(
+    "testRvvCrcExample",
+    "Runs the RVV CRC smoke example and verifies its summary output.",
+    "buildRvvCrcExample",
+    rvvCrcExampleElf,
+    listOf(
+        "crcEth32_be_vector ok for 1024 bytes",
+        "crcEth32_be_vector_opt ok for 1024 bytes",
+        "crcEth32_le_vector ok for 1024 bytes"
+    )
 )
 
 // Downloaded static Linux CoreMark example.
@@ -1995,6 +2113,7 @@ tasks.register("checkShowcaseExamples") {
         "testRvvSoftmaxExample",
         "testRvvPolynomialBasicExample",
         "testRvvUbenchExample",
+        "testRvvCrcExample",
         "testCoreMarkExample"
     )
 }
