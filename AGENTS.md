@@ -56,6 +56,8 @@ These rules apply to all Java code written or modified in this repository.
 
 ## Project Workflow
 
+- When IDEA MCP is available, prefer IDEA MCP for reading project files, searching files or text, inspecting symbols, and checking file problems.
+- Use command-line tools for Gradle tasks, Git status/diff, and other workflows that require exact shell commands or repository-local environment variables.
 - After completing a task, update `PLANS.md` to remove or revise only the work that is actually done.
 - Do not delete active or still-relevant plans from `PLANS.md`; preserve pending work and update it as needed.
 
