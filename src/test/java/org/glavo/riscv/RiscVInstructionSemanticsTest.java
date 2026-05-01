@@ -161,6 +161,22 @@ public final class RiscVInstructionSemanticsTest {
         assertEquals(Long.MIN_VALUE, executeImmediateOperation(RiscVOperation.BSETI, 0, 0, 63));
     }
 
+    /// Verifies Zicond conditional-zero operations.
+    @Test
+    public void zicondConditionalZeroOperationsUseConditionRegister() {
+        assertEquals(0, executeRegisterOperation(RiscVOperation.CZERO_EQZ, 0x1234, 0));
+        assertEquals(0x1234, executeRegisterOperation(RiscVOperation.CZERO_EQZ, 0x1234, 1));
+        assertEquals(0x1234, executeRegisterOperation(RiscVOperation.CZERO_NEZ, 0x1234, 0));
+        assertEquals(0, executeRegisterOperation(RiscVOperation.CZERO_NEZ, 0x1234, -1));
+    }
+
+    /// Verifies Zimop may-be-operations write zero to the destination register.
+    @Test
+    public void zimopMayBeOperationsWriteZero() {
+        assertEquals(0, executeRegisterOperation(RiscVOperation.MOP_R, 0x1234, 0x5678));
+        assertEquals(0, executeRegisterOperation(RiscVOperation.MOP_RR, 0x1234, 0x5678));
+    }
+
     /// Verifies `cbo.zero` clears the containing 64-byte block and preserves adjacent bytes.
     @Test
     public void cacheBlockZeroClearsContainingCacheBlock() {

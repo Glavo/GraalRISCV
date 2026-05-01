@@ -239,7 +239,7 @@ public abstract sealed class RiscVInstructionSemantics {
             long immediate,
             boolean terminator) {
         return switch (operation) {
-            case NOP, FENCE ->
+            case NOP, FENCE, WRS_NTO, WRS_STO, C_MOP ->
                     new AdvancePcInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case LUI -> new LuiInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case AUIPC -> new AuipcInstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
@@ -308,6 +308,8 @@ public abstract sealed class RiscVInstructionSemantics {
                     BCLR, BCLRI, BEXT, BEXTI, BINV, BINVI, BSET, BSETI,
                     CBO_INVAL, CBO_CLEAN, CBO_FLUSH, CBO_ZERO ->
                     new Rva22InstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+            case CZERO_EQZ, CZERO_NEZ, MOP_R, MOP_RR ->
+                    new Rva23InstructionSemantics(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
             case FMADD, FMSUB, FNMSUB, FNMADD, FADD, FSUB, FMUL, FDIV, FSQRT, FSGNJ, FSGNJN, FSGNJX,
                     FMIN, FMAX, FMINM, FMAXM, FLI, FCVT_S_D, FCVT_S_H, FCVT_D_S, FCVT_D_H,
                     FCVT_H_S, FCVT_H_D, FROUND, FROUNDNX, FCVTMOD_W_D, FEQ, FLT, FLE, FLTQ, FLEQ,
@@ -1615,6 +1617,30 @@ public abstract sealed class RiscVInstructionSemantics {
 
     }
 
+    /// Executes additional RVA23U64 scalar operations that are not part of RVA22U64.
+    private static final class Rva23InstructionSemantics extends RiscVInstructionSemantics {
+        /// Creates a decoded RVA23U64 scalar instruction semantic helper.
+        private Rva23InstructionSemantics(
+                long address,
+                int raw,
+                int length,
+                RiscVOperation operation,
+                int rd,
+                int rs1,
+                int rs2,
+                long immediate,
+                boolean terminator) {
+            super(address, raw, length, operation, rd, rs1, rs2, immediate, terminator);
+        }
+
+        /// Executes the decoded RVA23U64 scalar instruction.
+        @Override
+        protected void executeInstruction(MachineState state, long nextPc) {
+            executeRva23(state, nextPc);
+        }
+
+    }
+
     /// Executes floating-point arithmetic and conversion operations as a specialized instruction semantic helper.
     private static final class FloatingPointInstructionSemantics extends RiscVInstructionSemantics {
         /// Creates a decoded floating-point arithmetic or conversion instruction semantic helper.
@@ -1868,6 +1894,28 @@ public abstract sealed class RiscVInstructionSemantics {
             case CBO_INVAL, CBO_CLEAN, CBO_FLUSH -> state.setPc(nextPc);
             case CBO_ZERO -> cacheBlockZero(state, memory, nextPc);
             default -> throw unexpectedOperationGroup("RVA22");
+        }
+    }
+
+    /// Executes additional RVA23U64 scalar operations that are not part of RVA22U64.
+    protected final void executeRva23(MachineState state, long nextPc) {
+        switch (operation) {
+            case CZERO_EQZ -> binaryRegister(
+                    state,
+                    nextPc,
+                    DataIndependent.select(
+                            DataIndependent.isZero(state.decodedRegister(rs2)),
+                            0,
+                            state.decodedRegister(rs1)));
+            case CZERO_NEZ -> binaryRegister(
+                    state,
+                    nextPc,
+                    DataIndependent.select(
+                            DataIndependent.isNonzero(state.decodedRegister(rs2)),
+                            0,
+                            state.decodedRegister(rs1)));
+            case MOP_R, MOP_RR -> binaryRegister(state, nextPc, 0);
+            default -> throw unexpectedOperationGroup("RVA23");
         }
     }
 

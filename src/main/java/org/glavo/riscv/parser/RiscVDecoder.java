@@ -16,6 +16,18 @@ public final class RiscVDecoder {
     /// The maximum number of straight-line instructions decoded into one block.
     private static final int MAX_BLOCK_INSTRUCTIONS = 64;
 
+    /// The fixed bits for all `mop.r.N` instructions.
+    private static final int ZIMOP_MOP_R_VALUE = 0x81c0_4073;
+
+    /// The bit mask used to recognize all `mop.r.N` instructions.
+    private static final int ZIMOP_MOP_R_MASK = 0xb3c0_707f;
+
+    /// The fixed bits for all `mop.rr.N` instructions.
+    private static final int ZIMOP_MOP_RR_VALUE = 0x8200_4073;
+
+    /// The bit mask used to recognize all `mop.rr.N` instructions.
+    private static final int ZIMOP_MOP_RR_MASK = 0xb200_707f;
+
     /// Prevents construction of this utility class.
     private RiscVDecoder() {
     }
@@ -550,6 +562,11 @@ public final class RiscVDecoder {
                 case 7 -> RiscVOperation.MAXU;
                 default -> throw illegalException(address, raw);
             };
+            case 0x07 -> switch (funct3) {
+                case 5 -> RiscVOperation.CZERO_EQZ;
+                case 7 -> RiscVOperation.CZERO_NEZ;
+                default -> throw illegalException(address, raw);
+            };
             case 0x10 -> switch (funct3) {
                 case 2 -> RiscVOperation.SH1ADD;
                 case 4 -> RiscVOperation.SH2ADD;
@@ -639,6 +656,18 @@ public final class RiscVDecoder {
         }
         if (raw == 0x3020_0073) {
             return instruction(address, raw, RiscVOperation.MRET, 0, 0, 0, 0, true);
+        }
+        if (raw == 0x00d0_0073) {
+            return instruction(address, raw, RiscVOperation.WRS_NTO, 0, 0, 0, 0, false);
+        }
+        if (raw == 0x01d0_0073) {
+            return instruction(address, raw, RiscVOperation.WRS_STO, 0, 0, 0, 0, false);
+        }
+        if ((raw & ZIMOP_MOP_R_MASK) == ZIMOP_MOP_R_VALUE) {
+            return instruction(address, raw, RiscVOperation.MOP_R, rd(raw), rs1(raw), 0, 0, false);
+        }
+        if ((raw & ZIMOP_MOP_RR_MASK) == ZIMOP_MOP_RR_VALUE) {
+            return instruction(address, raw, RiscVOperation.MOP_RR, rd(raw), rs1(raw), rs2(raw), 0, false);
         }
 
         RiscVOperation operation = switch (funct3(raw)) {
@@ -732,6 +761,7 @@ public final class RiscVDecoder {
             case 1 -> compressed(address, raw, RiscVOperation.FLD, rd, rs1, 0, cLdImmediate(raw), false);
             case 2 -> compressed(address, raw, RiscVOperation.LW, rd, rs1, 0, cLwImmediate(raw), false);
             case 3 -> compressed(address, raw, RiscVOperation.LD, rd, rs1, 0, cLdImmediate(raw), false);
+            case 4 -> decodeCompressedZcbMemory(address, raw, rd, rs1, rs2);
             case 5 -> compressed(address, raw, RiscVOperation.FSD, 0, rs1, rs2, cLdImmediate(raw), false);
             case 6 -> compressed(address, raw, RiscVOperation.SW, 0, rs1, rs2, cLwImmediate(raw), false);
             case 7 -> compressed(address, raw, RiscVOperation.SD, 0, rs1, rs2, cLdImmediate(raw), false);
@@ -809,6 +839,9 @@ public final class RiscVDecoder {
 
         long immediate = cLuiImmediate(raw);
         if (immediate == 0) {
+            if (isCompressedMopRegister(rd)) {
+                return compressed(address, raw, RiscVOperation.C_MOP, 0, 0, 0, 0, false);
+            }
             throw illegalException(address, raw);
         }
         return compressed(address, raw, RiscVOperation.LUI, rd, 0, 0, immediate, false);
@@ -831,6 +864,12 @@ public final class RiscVDecoder {
         int rs2 = compressedRegister(raw >>> 2);
         boolean word = ((raw >>> 12) & 1) != 0;
         int subop = (raw >>> 5) & 0x3;
+        if (word && subop == 2) {
+            return compressed(address, raw, RiscVOperation.MUL, rd, rd, rs2, 0, false);
+        }
+        if (word && subop == 3) {
+            return decodeCompressedZcbUnary(address, raw, rd);
+        }
         RiscVOperation operation = word
                 ? switch (subop) {
                     case 0 -> RiscVOperation.SUBW;
@@ -845,6 +884,40 @@ public final class RiscVDecoder {
                     default -> throw illegalException(address, raw);
                 };
         return compressed(address, raw, operation, rd, rd, rs2, 0, false);
+    }
+
+    /// Decodes Zcb compressed load and store instructions in quadrant 0.
+    private static DecodedInstruction decodeCompressedZcbMemory(long address, int raw, int rd, int rs1, int rs2) {
+        return switch ((raw >>> 10) & 0x7) {
+            case 0 -> compressed(address, raw, RiscVOperation.LBU, rd, rs1, 0, cZcbByteImmediate(raw), false);
+            case 1 -> {
+                int immediate = cZcbHalfImmediate(raw);
+                yield ((raw >>> 6) & 1) == 0
+                        ? compressed(address, raw, RiscVOperation.LHU, rd, rs1, 0, immediate, false)
+                        : compressed(address, raw, RiscVOperation.LH, rd, rs1, 0, immediate, false);
+            }
+            case 2 -> compressed(address, raw, RiscVOperation.SB, 0, rs1, rs2, cZcbByteImmediate(raw), false);
+            case 3 -> {
+                if (((raw >>> 6) & 1) != 0) {
+                    throw illegalException(address, raw);
+                }
+                yield compressed(address, raw, RiscVOperation.SH, 0, rs1, rs2, cZcbHalfImmediate(raw), false);
+            }
+            default -> throw illegalException(address, raw);
+        };
+    }
+
+    /// Decodes Zcb compressed unary arithmetic instructions.
+    private static DecodedInstruction decodeCompressedZcbUnary(long address, int raw, int rd) {
+        return switch ((raw >>> 2) & 0x7) {
+            case 0 -> compressed(address, raw, RiscVOperation.ANDI, rd, rd, 0, 0xff, false);
+            case 1 -> compressed(address, raw, RiscVOperation.SEXT_B, rd, rd, 0, 0, false);
+            case 2 -> compressed(address, raw, RiscVOperation.ZEXT_H, rd, rd, 0, 0, false);
+            case 3 -> compressed(address, raw, RiscVOperation.SEXT_H, rd, rd, 0, 0, false);
+            case 4 -> compressed(address, raw, RiscVOperation.ADD_UW, rd, rd, 0, 0, false);
+            case 5 -> compressed(address, raw, RiscVOperation.XNOR, rd, rd, 0, 0, false);
+            default -> throw illegalException(address, raw);
+        };
     }
 
     /// Decodes compressed JR, MV, EBREAK, JALR, and ADD instructions.
@@ -968,6 +1041,11 @@ public final class RiscVDecoder {
         return 8 + (shiftedRaw & 0x7);
     }
 
+    /// Returns true when a zero-immediate compressed LUI encoding is a Zcmop instruction.
+    private static boolean isCompressedMopRegister(int register) {
+        return register < 16 && (register & 1) != 0;
+    }
+
     /// Extracts and sign-extends an I-format immediate.
     private static long iImmediate(int raw) {
         return signExtend(raw >>> 20, 12);
@@ -1030,6 +1108,16 @@ public final class RiscVDecoder {
     /// Extracts a compressed LD or SD immediate.
     private static int cLdImmediate(int raw) {
         return (((raw >>> 10) & 0x7) << 3) | (((raw >>> 5) & 0x3) << 6);
+    }
+
+    /// Extracts a Zcb compressed byte load or store immediate.
+    private static int cZcbByteImmediate(int raw) {
+        return (((raw >>> 5) & 0x1) << 1) | ((raw >>> 6) & 0x1);
+    }
+
+    /// Extracts a Zcb compressed halfword load or store immediate.
+    private static int cZcbHalfImmediate(int raw) {
+        return ((raw >>> 5) & 0x1) << 1;
     }
 
     /// Extracts a compressed ADDI16SP immediate.

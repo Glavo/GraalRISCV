@@ -73,6 +73,116 @@ public final class RiscVDecoderEdgeTest {
         assertDecodedRegisterResult(1, rType(0x33, RESULT_REGISTER, 5, LEFT_REGISTER, RIGHT_REGISTER, 0x24), 0x80, 7);
     }
 
+    /// Verifies decoding for additional RVA23U64 scalar instructions.
+    @Test
+    public void decodedRva23ScalarInstructionsExecute() {
+        assertDecodedRegisterResult(0, czeroEqz(RESULT_REGISTER, LEFT_REGISTER, RIGHT_REGISTER), 0x1234, 0);
+        assertDecodedRegisterResult(0x1234, czeroEqz(RESULT_REGISTER, LEFT_REGISTER, RIGHT_REGISTER), 0x1234, 1);
+        assertDecodedRegisterResult(0x1234, czeroNez(RESULT_REGISTER, LEFT_REGISTER, RIGHT_REGISTER), 0x1234, 0);
+        assertDecodedRegisterResult(0, czeroNez(RESULT_REGISTER, LEFT_REGISTER, RIGHT_REGISTER), 0x1234, -1);
+
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(machine.memory(), mopR(RESULT_REGISTER, LEFT_REGISTER), ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(RESULT_REGISTER, 99);
+            machine.state().setRegister(LEFT_REGISTER, 123);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+        }
+
+        try (TestMachine machine = TestMachine.create()) {
+            loadInstructions(machine.memory(), mopRr(RESULT_REGISTER, LEFT_REGISTER, RIGHT_REGISTER), ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(RESULT_REGISTER, 99);
+            machine.state().setRegister(LEFT_REGISTER, 123);
+            machine.state().setRegister(RIGHT_REGISTER, 456);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+        }
+
+        try (TestMachine machine = TestMachine.create()) {
+            ByteBuffer code = ByteBuffer.allocate((4 * Integer.BYTES) + Short.BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            ElfTestImages.putInt(code, wrsNto());
+            ElfTestImages.putInt(code, wrsSto());
+            putCompressed(code, cMop(1));
+            ElfTestImages.putInt(code, ElfTestImages.addi(RESULT_REGISTER, 0, 7));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+            loadCode(machine.memory(), code.array());
+            prepareExit(machine.state());
+
+            runDecodedProgram(machine);
+
+            assertEquals(7, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
+    /// Verifies decoding for Zcb compressed load, store, and arithmetic instructions.
+    @Test
+    public void decodedZcbCompressedInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long base = TEST_PC + 256;
+            memoryWriteFixture(machine.memory(), base);
+            ByteBuffer code = ByteBuffer.allocate((5 * Short.BYTES) + Integer.BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            putCompressed(code, cLbu(10, 8, 1));
+            putCompressed(code, cLhu(11, 8, 2));
+            putCompressed(code, cLh(12, 8, 2));
+            putCompressed(code, cSb(9, 8, 1));
+            putCompressed(code, cSh(9, 8, 2));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+            loadCode(machine.memory(), code.array());
+            prepareExit(machine.state());
+            machine.state().setRegister(8, base);
+            machine.state().setRegister(9, 0x1122_3344_5566_7788L);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0x81, machine.state().register(10));
+            assertEquals(0x8001, machine.state().register(11));
+            assertEquals(-32767L, machine.state().register(12));
+            assertEquals(0x88, machine.memory().readUnsignedByte(base + 1));
+            assertEquals(0x7788, machine.memory().readUnsignedShort(base + 2));
+        }
+
+        try (TestMachine machine = TestMachine.create()) {
+            ByteBuffer code = ByteBuffer.allocate((7 * Short.BYTES) + Integer.BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            putCompressed(code, cZextB(10));
+            putCompressed(code, cSextB(11));
+            putCompressed(code, cZextH(12));
+            putCompressed(code, cSextH(13));
+            putCompressed(code, cZextW(14));
+            putCompressed(code, cNot(15));
+            putCompressed(code, cMul(8, 9));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+            loadCode(machine.memory(), code.array());
+            prepareExit(machine.state());
+            machine.state().setRegister(8, 7);
+            machine.state().setRegister(9, 6);
+            machine.state().setRegister(10, 0xffff_ffff_ffff_8081L);
+            machine.state().setRegister(11, 0x81);
+            machine.state().setRegister(12, 0xffff_ffff_ffff_8001L);
+            machine.state().setRegister(13, 0x8001);
+            machine.state().setRegister(14, 0xffff_ffff_8000_0001L);
+            machine.state().setRegister(15, 0x55);
+
+            runDecodedProgram(machine);
+
+            assertEquals(42, machine.state().register(8));
+            assertEquals(0x81, machine.state().register(10));
+            assertEquals(-127L, machine.state().register(11));
+            assertEquals(0x8001, machine.state().register(12));
+            assertEquals(-32767L, machine.state().register(13));
+            assertEquals(0x8000_0001L, machine.state().register(14));
+            assertEquals(~0x55L, machine.state().register(15));
+        }
+    }
+
     /// Verifies decoded cache-block management instructions and `pause` have the expected side effects.
     @Test
     public void decodedCacheBlockInstructionsExecute() {
@@ -373,9 +483,135 @@ public final class RiscVDecoderEdgeTest {
         return ElfTestImages.rType(opcode, rd, funct3, rs1, rs2, funct7);
     }
 
+    /// Encodes `czero.eqz`.
+    private static int czeroEqz(int rd, int rs1, int rs2) {
+        return rType(0x33, rd, 5, rs1, rs2, 0x07);
+    }
+
+    /// Encodes `czero.nez`.
+    private static int czeroNez(int rd, int rs1, int rs2) {
+        return rType(0x33, rd, 7, rs1, rs2, 0x07);
+    }
+
+    /// Encodes `wrs.nto`.
+    private static int wrsNto() {
+        return 0x00d0_0073;
+    }
+
+    /// Encodes `wrs.sto`.
+    private static int wrsSto() {
+        return 0x01d0_0073;
+    }
+
+    /// Encodes `mop.r.0`.
+    private static int mopR(int rd, int rs1) {
+        return 0x81c0_4073 | (rs1 << 15) | (rd << 7);
+    }
+
+    /// Encodes `mop.rr.0`.
+    private static int mopRr(int rd, int rs1, int rs2) {
+        return 0x8200_4073 | (rs2 << 20) | (rs1 << 15) | (rd << 7);
+    }
+
     /// Encodes a cache-block operation.
     private static int cbo(int function, int rs1) {
         return (function << 20) | (rs1 << 15) | (2 << 12) | 0x0f;
+    }
+
+    /// Encodes `c.mop.n`.
+    private static int cMop(int register) {
+        return (3 << 13) | (register << 7) | 1;
+    }
+
+    /// Encodes `c.lbu`.
+    private static int cLbu(int rd, int rs1, int immediate) {
+        return zcbMemory(0, rd, rs1, immediate);
+    }
+
+    /// Encodes `c.lhu`.
+    private static int cLhu(int rd, int rs1, int immediate) {
+        return zcbHalfMemory(1, rd, rs1, immediate, false);
+    }
+
+    /// Encodes `c.lh`.
+    private static int cLh(int rd, int rs1, int immediate) {
+        return zcbHalfMemory(1, rd, rs1, immediate, true);
+    }
+
+    /// Encodes `c.sb`.
+    private static int cSb(int rs2, int rs1, int immediate) {
+        return zcbMemory(2, rs2, rs1, immediate);
+    }
+
+    /// Encodes `c.sh`.
+    private static int cSh(int rs2, int rs1, int immediate) {
+        return zcbHalfMemory(3, rs2, rs1, immediate, false);
+    }
+
+    /// Encodes `c.zext.b`.
+    private static int cZextB(int register) {
+        return zcbUnary(register, 0);
+    }
+
+    /// Encodes `c.sext.b`.
+    private static int cSextB(int register) {
+        return zcbUnary(register, 1);
+    }
+
+    /// Encodes `c.zext.h`.
+    private static int cZextH(int register) {
+        return zcbUnary(register, 2);
+    }
+
+    /// Encodes `c.sext.h`.
+    private static int cSextH(int register) {
+        return zcbUnary(register, 3);
+    }
+
+    /// Encodes `c.zext.w`.
+    private static int cZextW(int register) {
+        return zcbUnary(register, 4);
+    }
+
+    /// Encodes `c.not`.
+    private static int cNot(int register) {
+        return zcbUnary(register, 5);
+    }
+
+    /// Encodes `c.mul`.
+    private static int cMul(int rd, int rs2) {
+        return (4 << 13) | (7 << 10) | ((rd - 8) << 7) | (2 << 5) | ((rs2 - 8) << 2) | 1;
+    }
+
+    /// Encodes a Zcb byte-width compressed memory operation.
+    private static int zcbMemory(int mode, int register, int rs1, int immediate) {
+        return (4 << 13)
+                | (mode << 10)
+                | ((rs1 - 8) << 7)
+                | ((immediate & 1) << 6)
+                | (((immediate >>> 1) & 1) << 5)
+                | ((register - 8) << 2);
+    }
+
+    /// Encodes a Zcb halfword-width compressed memory operation.
+    private static int zcbHalfMemory(int mode, int register, int rs1, int immediate, boolean signed) {
+        return (4 << 13)
+                | (mode << 10)
+                | ((rs1 - 8) << 7)
+                | (signed ? (1 << 6) : 0)
+                | (((immediate >>> 1) & 1) << 5)
+                | ((register - 8) << 2);
+    }
+
+    /// Encodes a Zcb compressed unary operation.
+    private static int zcbUnary(int register, int subop) {
+        return (4 << 13) | (7 << 10) | ((register - 8) << 7) | (3 << 5) | (subop << 2) | 1;
+    }
+
+    /// Writes memory values used by compressed memory decoder tests.
+    private static void memoryWriteFixture(Memory memory, long base) {
+        memory.writeByte(base + 1, (byte) 0x81);
+        memory.writeShort(base + 2, (short) 0x8001);
     }
 
     /// Encodes a non-temporal locality hint.

@@ -36,6 +36,16 @@ public final class DataIndependent {
         return (whenOne & mask) | (whenZero & ~mask);
     }
 
+    /// Returns `1` when `value` is zero, otherwise `0`.
+    public static long isZero(long value) {
+        return ((value | -value) >>> (Long.SIZE - 1)) ^ 1L;
+    }
+
+    /// Returns `1` when `value` is nonzero, otherwise `0`.
+    public static long isNonzero(long value) {
+        return (value | -value) >>> (Long.SIZE - 1);
+    }
+
     /// Returns the signed minimum of two 64-bit values.
     public static long signedMinimum(long left, long right) {
         return select(signedLessThan(left, right), left, right);

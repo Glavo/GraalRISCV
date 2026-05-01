@@ -306,6 +306,20 @@ public enum RiscVOperation {
     CBO_FLUSH,
     /// Cache-block zero.
     CBO_ZERO,
+    /// Conditional zero when the condition register is zero.
+    CZERO_EQZ,
+    /// Conditional zero when the condition register is nonzero.
+    CZERO_NEZ,
+    /// Wait on reservation set with no timeout.
+    WRS_NTO,
+    /// Wait on reservation set with a short timeout.
+    WRS_STO,
+    /// May-be-operation with one possible source register.
+    MOP_R,
+    /// May-be-operation with two possible source registers.
+    MOP_RR,
+    /// Compressed may-be-operation.
+    C_MOP,
     /// Memory fence no-op for the single-threaded MVP.
     FENCE,
     /// Instruction-fetch fence no-op for the single-threaded MVP.
