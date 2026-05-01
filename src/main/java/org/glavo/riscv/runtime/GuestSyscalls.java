@@ -224,8 +224,14 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getresuid`.
     private static final int SYS_GETRESUID = 148;
 
+    /// The Linux RISC-V syscall number for `setresuid`.
+    private static final int SYS_SETRESUID = 149;
+
     /// The Linux RISC-V syscall number for `getresgid`.
     private static final int SYS_GETRESGID = 150;
+
+    /// The Linux RISC-V syscall number for `setresgid`.
+    private static final int SYS_SETRESGID = 151;
 
     /// The Linux RISC-V syscall number for `times`.
     private static final int SYS_TIMES = 153;
@@ -2340,7 +2346,21 @@ public final class GuestSyscalls implements AutoCloseable {
                     credentials.realUserId(),
                     credentials.effectiveUserId(),
                     credentials.savedUserId()));
+            case SYS_SETRESUID -> state.setRegister(10, setresid(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    credentials.realUserId(),
+                    credentials.effectiveUserId(),
+                    credentials.savedUserId()));
             case SYS_GETRESGID -> state.setRegister(10, getresid(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    credentials.realGroupId(),
+                    credentials.effectiveGroupId(),
+                    credentials.savedGroupId()));
+            case SYS_SETRESGID -> state.setRegister(10, setresid(
                     state.register(10),
                     state.register(11),
                     state.register(12),
@@ -7278,6 +7298,42 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeInt(effectiveIdAddress, GuestCredentials.idToInt(effectiveId));
         memory.writeInt(savedIdAddress, GuestCredentials.idToInt(savedId));
         return 0;
+    }
+
+    /// Accepts no-op real, effective, and saved user or group id updates.
+    private static long setresid(
+            long requestedRealId,
+            long requestedEffectiveId,
+            long requestedSavedId,
+            long currentRealId,
+            long currentEffectiveId,
+            long currentSavedId) {
+        if (!isValidSetresidArgument(requestedRealId)
+                || !isValidSetresidArgument(requestedEffectiveId)
+                || !isValidSetresidArgument(requestedSavedId)) {
+            return EINVAL;
+        }
+        if (!isUnchangedOrCurrentId(requestedRealId, currentRealId)
+                || !isUnchangedOrCurrentId(requestedEffectiveId, currentEffectiveId)
+                || !isUnchangedOrCurrentId(requestedSavedId, currentSavedId)) {
+            return EPERM;
+        }
+        return 0;
+    }
+
+    /// Returns true when an id argument is valid for `setresuid` or `setresgid`.
+    private static boolean isValidSetresidArgument(long requestedId) {
+        return isSetresidUnchanged(requestedId) || requestedId >= 0 && requestedId < GuestCredentials.MAX_ID;
+    }
+
+    /// Returns true for the `(uid_t) -1` sentinel that leaves one id unchanged.
+    private static boolean isSetresidUnchanged(long requestedId) {
+        return requestedId == -1L || requestedId == GuestCredentials.MAX_ID;
+    }
+
+    /// Returns true when a requested id is the no-change sentinel or the current id.
+    private static boolean isUnchangedOrCurrentId(long requestedId, long currentId) {
+        return isSetresidUnchanged(requestedId) || requestedId == currentId;
     }
 
     /// Writes the configured supplementary group list for identity queries.
