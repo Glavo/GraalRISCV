@@ -145,6 +145,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `ppoll`.
     private static final int SYS_PPOLL = 73;
 
+    /// The Linux RISC-V syscall number for `splice`.
+    private static final int SYS_SPLICE = 76;
+
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final int SYS_READLINKAT = 78;
 
@@ -465,6 +468,25 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte offset of `iov_len` inside `struct iovec`.
     private static final int IOVEC_LENGTH_OFFSET = 8;
+
+    /// The maximum transient buffer size used by one `splice` copy step.
+    private static final int SPLICE_BUFFER_SIZE = 64 * 1024;
+
+    /// Linux `SPLICE_F_MOVE`.
+    private static final long SPLICE_F_MOVE = 1;
+
+    /// Linux `SPLICE_F_NONBLOCK`.
+    private static final long SPLICE_F_NONBLOCK = 2;
+
+    /// Linux `SPLICE_F_MORE`.
+    private static final long SPLICE_F_MORE = 4;
+
+    /// Linux `SPLICE_F_GIFT`.
+    private static final long SPLICE_F_GIFT = 8;
+
+    /// Linux `splice` flags accepted by this simulator.
+    private static final long SUPPORTED_SPLICE_FLAGS =
+            SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
 
     /// Linux `F_OK` access mode.
     private static final long F_OK = 0;
@@ -1994,6 +2016,13 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            case SYS_SPLICE -> state.setRegister(10, splice(
+                    (int) state.register(10),
+                    state.register(11),
+                    (int) state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
             case SYS_READLINKAT -> state.setRegister(10, readlinkat(
                     state.register(10),
                     state.register(11),
@@ -3609,6 +3638,213 @@ public final class GuestSyscalls implements AutoCloseable {
         } catch (IOException exception) {
             throw new RiscVException("Guest pwrite64 syscall failed", exception);
         }
+    }
+
+    /// Copies bytes between two descriptors for Linux `splice`.
+    private long splice(
+            int inputFileDescriptor,
+            long inputOffsetAddress,
+            int outputFileDescriptor,
+            long outputOffsetAddress,
+            long length,
+            long flags) {
+        if (length < 0 || (flags & ~SUPPORTED_SPLICE_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        long inputOffset = 0;
+        if (inputOffsetAddress != 0) {
+            if (!memory.isBacked(inputOffsetAddress, Long.BYTES)) {
+                return EFAULT;
+            }
+            inputOffset = memory.readLong(inputOffsetAddress);
+            if (inputOffset < 0) {
+                return EINVAL;
+            }
+        }
+
+        long outputOffset = 0;
+        if (outputOffsetAddress != 0) {
+            if (!memory.isBacked(outputOffsetAddress, Long.BYTES)) {
+                return EFAULT;
+            }
+            outputOffset = memory.readLong(outputOffsetAddress);
+            if (outputOffset < 0) {
+                return EINVAL;
+            }
+        }
+
+        byte[] buffer = new byte[(int) Math.min(length, SPLICE_BUFFER_SIZE)];
+        boolean nonblocking = (flags & SPLICE_F_NONBLOCK) != 0;
+        long total = 0;
+        try {
+            while (total < length) {
+                int requested = (int) Math.min(buffer.length, length - total);
+                long readCount = readSpliceInput(
+                        inputFileDescriptor,
+                        inputOffsetAddress,
+                        inputOffset,
+                        buffer,
+                        requested,
+                        nonblocking);
+                if (readCount < 0) {
+                    return total == 0 ? readCount : total;
+                }
+                if (readCount == 0) {
+                    return total;
+                }
+
+                long writeCount = writeSpliceOutput(
+                        outputFileDescriptor,
+                        outputOffsetAddress,
+                        outputOffset,
+                        buffer,
+                        (int) readCount);
+                if (writeCount < 0) {
+                    return total == 0 ? writeCount : total;
+                }
+                if (writeCount == 0) {
+                    return total;
+                }
+
+                if (inputOffsetAddress != 0) {
+                    inputOffset += readCount;
+                    memory.writeLong(inputOffsetAddress, inputOffset);
+                }
+                if (outputOffsetAddress != 0) {
+                    outputOffset += writeCount;
+                    memory.writeLong(outputOffsetAddress, outputOffset);
+                }
+
+                total += writeCount;
+                if (writeCount < readCount) {
+                    return total;
+                }
+                if (readCount < requested) {
+                    return total;
+                }
+            }
+            return total;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest splice syscall failed", exception);
+        }
+    }
+
+    /// Reads a `splice` chunk from a standard stream, pipe, or seekable guest file.
+    private long readSpliceInput(
+            int fileDescriptor,
+            long offsetAddress,
+            long offset,
+            byte[] buffer,
+            int length,
+            boolean nonblocking) throws IOException {
+        @Nullable InputStream stream = inputStreamFor(fileDescriptor);
+        if (stream != null) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            int count = stream.read(buffer, 0, length);
+            return count < 0 ? 0 : count;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.readable()) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (openFile.isEventFile() || openFile.isEpollFile()) {
+            return EINVAL;
+        }
+        if (openFile.isPipeReader()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return openFile.pipe().read(buffer, length, openFile.nonblocking() || nonblocking);
+        }
+        if (!openFile.isHostFile()) {
+            return EINVAL;
+        }
+
+        ByteBuffer byteBuffer = ByteBuffer.wrap(buffer, 0, length);
+        int count = offsetAddress == 0
+                ? openFile.channel().read(byteBuffer)
+                : readHostFileAt(openFile.channel(), offset, byteBuffer);
+        return count < 0 ? 0 : count;
+    }
+
+    /// Writes a `splice` chunk to a standard stream, pipe, or seekable guest file.
+    private long writeSpliceOutput(
+            int fileDescriptor,
+            long offsetAddress,
+            long offset,
+            byte[] buffer,
+            int length) throws IOException {
+        @Nullable OutputStream stream = outputStreamFor(fileDescriptor);
+        if (stream != null) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            stream.write(buffer, 0, length);
+            stream.flush();
+            return length;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.writable()) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (openFile.isEventFile() || openFile.isEpollFile()) {
+            return EINVAL;
+        }
+        if (openFile.isPipeWriter()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return openFile.pipe().write(copyBufferPrefix(buffer, length));
+        }
+        if (!openFile.isHostFile()) {
+            return EINVAL;
+        }
+
+        SeekableByteChannel channel = openFile.channel();
+        long position = channel.position();
+        try {
+            if (offsetAddress != 0) {
+                channel.position(openFile.append() ? channel.size() : offset);
+            } else if (openFile.append()) {
+                channel.position(channel.size());
+            }
+
+            ByteBuffer byteBuffer = ByteBuffer.wrap(buffer, 0, length);
+            long written = 0;
+            while (byteBuffer.hasRemaining()) {
+                int count = channel.write(byteBuffer);
+                if (count <= 0) {
+                    return written;
+                }
+                written += count;
+            }
+            return written;
+        } finally {
+            if (offsetAddress != 0) {
+                channel.position(position);
+            }
+        }
+    }
+
+    /// Copies the populated prefix of a reusable transfer buffer.
+    private static byte[] copyBufferPrefix(byte[] buffer, int length) {
+        byte[] copy = new byte[length];
+        System.arraycopy(buffer, 0, copy, 0, length);
+        return copy;
     }
 
     /// Writes all bytes to an open host file or pipe endpoint.

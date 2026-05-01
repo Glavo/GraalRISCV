@@ -143,3 +143,10 @@ registerUbuntuBaseSmokeTest(
     listOf("--guest-program", "/usr/bin/ls", "-1", "/usr/bin/bash"),
     "/usr/bin/bash\n"
 )
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseCat",
+    "Runs /usr/bin/cat from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/cat", "/etc/issue"),
+    "Ubuntu 26.04 LTS \\n \\l\n\n"
+)
