@@ -3,6 +3,8 @@
 
 package org.glavo.riscv;
 
+import kala.compress.archivers.tar.TarArchiveEntry;
+import kala.compress.archivers.tar.TarArchiveOutputStream;
 import org.glavo.riscv.exception.*;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
@@ -14,6 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -194,6 +197,31 @@ public final class MainTest {
                 new String[]{
                         "--max-instructions", "1000",
                         "--mount", "/data=" + mountedDirectory,
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that `--mount` exposes a tar archive as a read-only guest filesystem tree.
+    @Test
+    public void mountOptionExposesTarArchiveAtGuestPath() throws Exception {
+        Path elfPath = tempDirectory.resolve("mount-tar-read.elf");
+        Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
+        Path archive = tempDirectory.resolve("mounted.tar");
+        writeTarEntry(archive, "message.txt", "mounted-data".getBytes(StandardCharsets.UTF_8));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "/data=" + archive,
                         elfPath.toString()
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -807,6 +835,19 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put((byte) 0);
         return code.array();
+    }
+
+    /// Writes one regular-file entry to a tar archive.
+    private static void writeTarEntry(Path archive, String name, byte[] data) throws Exception {
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            TarArchiveEntry entry = new TarArchiveEntry(name);
+            entry.setSize(data.length);
+            tarOutput.putArchiveEntry(entry);
+            tarOutput.write(data, 0, data.length);
+            tarOutput.closeArchiveEntry();
+            tarOutput.finish();
+        }
     }
 
     /// Builds a freestanding program that reads `/data/message.txt` and writes it to stdout.

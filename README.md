@@ -44,7 +44,7 @@ Options:
   --huge-pages <n>           Guest HugeTLB page pool size.
   --vector-vlen <bits>       Vector register length in bits. Default is 128.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-  --mount <guest>=<path>     Mount a host directory at an absolute guest path.
+  --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
   --host-root <path>         Alias for --mount /=<path>.
   --debug-fixed-clock-nanos <nanos>
                               Fixed epoch nanoseconds for deterministic guest time.
@@ -53,9 +53,9 @@ Options:
   -h, --help                 Print this help message.
 ```
 
-`--mount` controls the host directories visible to guest file syscalls. For
-example, `--mount /=sandbox` exposes `sandbox` as the guest `/`, and
-`--mount /data=dataset` overlays `dataset` at guest `/data`. If no `/` mount is
+`--mount` controls the host directories and tar archives visible to guest file
+syscalls. For example, `--mount /=sandbox` exposes `sandbox` as the guest `/`,
+and `--mount /data=dataset.tar` overlays `dataset.tar` at guest `/data`. If no `/` mount is
 provided, the CLI mounts the directory containing the guest program at `/`.
 `--host-root` remains as a compatibility alias for `--mount /=<path>`.
 

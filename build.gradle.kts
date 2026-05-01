@@ -49,7 +49,10 @@ tasks.shadowJar {
 }
 
 dependencies {
+    val kalaCompressVersion = "1.27.1-3"
+
     implementation("org.graalvm.truffle:truffle-api:$graalVmVersion")
+    implementation("org.glavo.kala:kala-compress-archivers-tar:$kalaCompressVersion")
     implementation("net.fornwall:jelf:0.11.0")
     runtimeOnly("org.graalvm.truffle:truffle-runtime:$graalVmVersion")
 
