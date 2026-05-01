@@ -279,17 +279,23 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `setresuid`.
+    private static final long SYS_SETRESUID = 147;
+
     /// The Linux RISC-V syscall number for `getresuid`.
     private static final long SYS_GETRESUID = 148;
 
-    /// The Linux RISC-V syscall number for `setresuid`.
-    private static final long SYS_SETRESUID = 149;
+    /// The Linux RISC-V syscall number for `setresgid`.
+    private static final long SYS_SETRESGID = 149;
 
     /// The Linux RISC-V syscall number for `getresgid`.
     private static final long SYS_GETRESGID = 150;
 
-    /// The Linux RISC-V syscall number for `setresgid`.
-    private static final long SYS_SETRESGID = 151;
+    /// The Linux RISC-V syscall number for `setfsuid`.
+    private static final long SYS_SETFSUID = 151;
+
+    /// The Linux RISC-V syscall number for `setfsgid`.
+    private static final long SYS_SETFSGID = 152;
 
     /// The Linux RISC-V syscall number for `times`.
     private static final long SYS_TIMES = 153;
@@ -3497,6 +3503,22 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SETRESGID, 0, 1000, 1000);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EPERM, state.register(10));
+
+            setSyscall(state, SYS_SETFSUID, 1000, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
+
+            setSyscall(state, SYS_SETFSUID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
+
+            setSyscall(state, SYS_SETFSGID, 1000, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
+
+            setSyscall(state, SYS_SETFSGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1000, state.register(10));
 
             long groupsAddress = memory.baseAddress() + 96;
             setSyscall(state, SYS_GETGROUPS, 0, 0, 0);

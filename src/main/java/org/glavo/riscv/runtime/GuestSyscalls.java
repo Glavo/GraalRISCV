@@ -221,17 +221,23 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final int SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `setresuid`.
+    private static final int SYS_SETRESUID = 147;
+
     /// The Linux RISC-V syscall number for `getresuid`.
     private static final int SYS_GETRESUID = 148;
 
-    /// The Linux RISC-V syscall number for `setresuid`.
-    private static final int SYS_SETRESUID = 149;
+    /// The Linux RISC-V syscall number for `setresgid`.
+    private static final int SYS_SETRESGID = 149;
 
     /// The Linux RISC-V syscall number for `getresgid`.
     private static final int SYS_GETRESGID = 150;
 
-    /// The Linux RISC-V syscall number for `setresgid`.
-    private static final int SYS_SETRESGID = 151;
+    /// The Linux RISC-V syscall number for `setfsuid`.
+    private static final int SYS_SETFSUID = 151;
+
+    /// The Linux RISC-V syscall number for `setfsgid`.
+    private static final int SYS_SETFSGID = 152;
 
     /// The Linux RISC-V syscall number for `times`.
     private static final int SYS_TIMES = 153;
@@ -2367,6 +2373,12 @@ public final class GuestSyscalls implements AutoCloseable {
                     credentials.realGroupId(),
                     credentials.effectiveGroupId(),
                     credentials.savedGroupId()));
+            case SYS_SETFSUID -> state.setRegister(10, setfsid(
+                    state.register(10),
+                    credentials.effectiveUserId()));
+            case SYS_SETFSGID -> state.setRegister(10, setfsid(
+                    state.register(10),
+                    credentials.effectiveGroupId()));
             case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
             case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
             case SYS_SETSID -> state.setRegister(10, setsid());
@@ -7334,6 +7346,14 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns true when a requested id is the no-change sentinel or the current id.
     private static boolean isUnchangedOrCurrentId(long requestedId, long currentId) {
         return isSetresidUnchanged(requestedId) || requestedId == currentId;
+    }
+
+    /// Returns the unchanged filesystem user or group id.
+    private static long setfsid(long requestedId, long currentId) {
+        if (!isValidSetresidArgument(requestedId)) {
+            return currentId;
+        }
+        return currentId;
     }
 
     /// Writes the configured supplementary group list for identity queries.
