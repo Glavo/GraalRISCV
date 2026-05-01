@@ -1052,13 +1052,18 @@ public final class RiscVDecoder {
         return width == 0 || width == 5 || width == 6 || width == 7;
     }
 
-    /// Validates the vector memory subset implemented by the current decoder.
+    /// Validates vector memory encodings that can be checked without current `vtype`.
     private static void requireSupportedVectorMemory(long address, int raw) {
         int mop = (raw >>> 26) & 0x3;
         int mew = (raw >>> 28) & 0x1;
         int nf = (raw >>> 29) & 0x7;
         int lumopOrSumop = (raw >>> 20) & 0x1f;
-        if (mew != 0 || nf != 0 || mop == 0 && lumopOrSumop != 0) {
+        boolean unitStride = mop == 0 && lumopOrSumop == 0;
+        boolean faultOnlyFirstLoad = (raw & 0x7f) == 0x07 && mop == 0 && lumopOrSumop == 16;
+        boolean wholeRegister = mop == 0 && lumopOrSumop == 8 && (nf == 0 || nf == 1 || nf == 3 || nf == 7);
+        boolean maskTransfer = mop == 0 && lumopOrSumop == 11 && nf == 0 && funct3(raw) == 0;
+        boolean stridedOrIndexed = mop != 0;
+        if (mew != 0 || !(unitStride || faultOnlyFirstLoad || wholeRegister || maskTransfer || stridedOrIndexed)) {
             throw illegalException(address, raw);
         }
     }

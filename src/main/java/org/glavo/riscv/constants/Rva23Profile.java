@@ -81,7 +81,6 @@ public final class Rva23Profile {
 
     /// RVA23U64 mandatory areas that still block reporting the full profile.
     public static final @Unmodifiable List<String> PENDING_MANDATORY_AREAS = List.of(
-            "V",
             "Zvbb",
             "Zvfhmin",
             "Zvkb",

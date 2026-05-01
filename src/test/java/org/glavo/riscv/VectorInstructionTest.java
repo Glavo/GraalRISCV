@@ -21,7 +21,7 @@ import java.nio.ByteOrder;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.fail;
 
-/// Tests the implemented RVV 1.0 vector configuration, CSR, memory, and integer arithmetic behavior.
+/// Tests RVV 1.0 vector configuration, CSR, memory, integer, fixed-point, and floating-point behavior.
 @NotNullByDefault
 public final class VectorInstructionTest {
     /// The guest address used for vector instruction tests.
@@ -368,6 +368,105 @@ public final class VectorInstructionTest {
         }
     }
 
+    /// Verifies segment, mask, whole-register, and mixed-EEW vector memory operations.
+    @Test
+    public void vectorExtendedMemoryInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long segmentInput = TEST_PC + 256;
+            long segmentOutput = TEST_PC + 512;
+            long maskInput = TEST_PC + 768;
+            long maskOutput = TEST_PC + 800;
+            long wholeInput = TEST_PC + 1024;
+            long wholeOutput = TEST_PC + 1280;
+            byte[] segmentValues = {1, 10, 2, 20, 3, 30, 4, 40};
+            byte[] wholeValues = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+            for (int index = 0; index < segmentValues.length; index++) {
+                machine.memory().writeByte(segmentInput + index, segmentValues[index]);
+            }
+            for (int index = 0; index < wholeValues.length; index++) {
+                machine.memory().writeByte(wholeInput + index, wholeValues[index]);
+            }
+            machine.memory().writeByte(maskInput, (byte) 0b1010_1100);
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vlseg(8, 2, 6, 2),
+                    vaddVi(2, 2, 1),
+                    vsseg(8, 2, 7, 2),
+                    vlm(4, 12),
+                    vsm(4, 13),
+                    vlre(8, 8, 14, 1),
+                    vsre(8, 8, 15, 1),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 4);
+            machine.state().setRegister(6, segmentInput);
+            machine.state().setRegister(7, segmentOutput);
+            machine.state().setRegister(12, maskInput);
+            machine.state().setRegister(13, maskOutput);
+            machine.state().setRegister(14, wholeInput);
+            machine.state().setRegister(15, wholeOutput);
+
+            runDecodedProgram(machine);
+
+            byte[] expectedSegment = {2, 10, 3, 20, 4, 30, 5, 40};
+            for (int index = 0; index < expectedSegment.length; index++) {
+                assertEquals(expectedSegment[index] & 0xff, machine.memory().readUnsignedByte(segmentOutput + index));
+            }
+            assertEquals(0b1010_1100, machine.memory().readUnsignedByte(maskOutput));
+            for (int index = 0; index < wholeValues.length; index++) {
+                assertEquals(wholeValues[index] & 0xff, machine.memory().readUnsignedByte(wholeOutput + index));
+            }
+        }
+    }
+
+    /// Verifies widening, narrowing, fixed-point, and extension integer operations.
+    @Test
+    public void vectorMixedWidthAndFixedPointIntegerInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long narrowInput = TEST_PC + 256;
+            long extendedInput = TEST_PC + 512;
+            long output = TEST_PC + 768;
+            int[] narrowValues = {1, 2, 3, 4};
+            int[] byteValues = {250, 2, 3, 4};
+            for (int index = 0; index < narrowValues.length; index++) {
+                machine.memory().writeShort(narrowInput + (long) index * Short.BYTES, (short) narrowValues[index]);
+                machine.memory().writeByte(extendedInput + index, (byte) byteValues[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(16, 1)),
+                    vle(16, 1, 6),
+                    vwadduVx(2, 1, 11),
+                    vnsrlWi(3, 2, 1),
+                    vle(8, 4, 7),
+                    vsextVf2(5, 4),
+                    vse(16, 3, 8),
+                    vse(16, 5, 9),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vle(8, 6, 12),
+                    vsadduVi(7, 6, 10),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, 4);
+            machine.state().setRegister(6, narrowInput);
+            machine.state().setRegister(7, extendedInput);
+            machine.state().setRegister(8, output);
+            machine.state().setRegister(9, output + 32);
+            machine.state().setRegister(11, 9);
+            machine.state().setRegister(12, extendedInput);
+
+            runDecodedProgram(machine);
+
+            assertEquals(5, machine.memory().readUnsignedShort(output));
+            assertEquals(5, machine.memory().readUnsignedShort(output + Short.BYTES));
+            assertEquals(0xfffa, machine.memory().readUnsignedShort(output + 32));
+            assertEquals(2, machine.memory().readUnsignedShort(output + 34));
+            assertVectorBytes(machine.state(), 7, 255, 12, 13, 14);
+            assertEquals(1, machine.state().readControlStatusRegister(VCSR_CSR) & 1);
+        }
+    }
+
     /// Verifies integer reduction operations.
     @Test
     public void vectorReductionInstructionsExecute() {
@@ -579,6 +678,57 @@ public final class VectorInstructionTest {
         }
     }
 
+    /// Verifies advanced vector floating-point reduction, FMA, unary, and widening operations.
+    @Test
+    public void vectorAdvancedFloatingPointInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long left = TEST_PC + 256;
+            long right = TEST_PC + 512;
+            long accumulator = TEST_PC + 768;
+            long wideOutput = TEST_PC + 1024;
+            float[] leftValues = {1.0f, 2.0f, 3.0f, 4.0f};
+            float[] rightValues = {2.0f, 2.0f, 2.0f, 2.0f};
+            for (int index = 0; index < leftValues.length; index++) {
+                machine.memory().writeInt(left + (long) index * Integer.BYTES, Float.floatToRawIntBits(leftValues[index]));
+                machine.memory().writeInt(right + (long) index * Integer.BYTES, Float.floatToRawIntBits(rightValues[index]));
+                machine.memory().writeInt(accumulator + (long) index * Integer.BYTES, Float.floatToRawIntBits(1.0f));
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(32, 1)),
+                    vle(32, 1, 6),
+                    vle(32, 2, 7),
+                    vle(32, 3, 8),
+                    vfmaccVv(3, 1, 2),
+                    vfredusumVs(4, 1, 3),
+                    vfsqrtV(5, 3),
+                    vfclassV(6, 3),
+                    vfwaddVv(8, 1, 2),
+                    vfcvtXFV(9, 1),
+                    vse(64, 8, 12),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, leftValues.length);
+            machine.state().setRegister(6, left);
+            machine.state().setRegister(7, right);
+            machine.state().setRegister(8, accumulator);
+            machine.state().setRegister(12, wideOutput);
+
+            runDecodedProgram(machine);
+
+            assertVectorElements(machine.state(), 3,
+                    Float.floatToRawIntBits(3.0f),
+                    Float.floatToRawIntBits(5.0f),
+                    Float.floatToRawIntBits(7.0f),
+                    Float.floatToRawIntBits(9.0f));
+            assertEquals(Float.floatToRawIntBits(13.0f), machine.state().vectorUnit().readElement(4, 0));
+            assertEquals(Float.floatToRawIntBits((float) Math.sqrt(3.0f)), machine.state().vectorUnit().readElement(5, 0));
+            assertEquals(1 << 6, machine.state().vectorUnit().readElement(6, 0));
+            assertEquals(Double.doubleToRawLongBits(3.0d), machine.memory().readLong(wideOutput));
+            assertVectorElements(machine.state(), 9, 1, 2, 3, 4);
+        }
+    }
+
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
     private static void prepareExit(MachineState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
@@ -696,6 +846,48 @@ public final class VectorInstructionTest {
         return (1 << 26) | (1 << 25) | (vs2 << 20) | (rs1 << 15) | (width(sew) << 12) | (vs3 << 7) | 0x27;
     }
 
+    /// Encodes an unmasked unit-stride segment vector load.
+    private static int vlseg(int sew, int vd, int rs1, int fields) {
+        return vectorMemory(true, sew, vd, rs1, 0, 0, fields, true);
+    }
+
+    /// Encodes an unmasked unit-stride segment vector store.
+    private static int vsseg(int sew, int vs3, int rs1, int fields) {
+        return vectorMemory(false, sew, vs3, rs1, 0, 0, fields, true);
+    }
+
+    /// Encodes `vlm.v`.
+    private static int vlm(int vd, int rs1) {
+        return vectorMemory(true, 8, vd, rs1, 11, 0, 1, true);
+    }
+
+    /// Encodes `vsm.v`.
+    private static int vsm(int vs3, int rs1) {
+        return vectorMemory(false, 8, vs3, rs1, 11, 0, 1, true);
+    }
+
+    /// Encodes a whole-register vector load.
+    private static int vlre(int sew, int vd, int rs1, int registers) {
+        return vectorMemory(true, sew, vd, rs1, 8, 0, registers, true);
+    }
+
+    /// Encodes a whole-register vector store.
+    private static int vsre(int sew, int vs3, int rs1, int registers) {
+        return vectorMemory(false, sew, vs3, rs1, 8, 0, registers, true);
+    }
+
+    /// Encodes a vector memory instruction.
+    private static int vectorMemory(boolean load, int sew, int register, int rs1, int operand, int mop, int fields, boolean unmasked) {
+        return ((fields - 1) << 29)
+                | (mop << 26)
+                | ((unmasked ? 1 : 0) << 25)
+                | (operand << 20)
+                | (rs1 << 15)
+                | (width(sew) << 12)
+                | (register << 7)
+                | (load ? 0x07 : 0x27);
+    }
+
     /// Encodes `vadd.vi`.
     private static int vaddVi(int vd, int vs2, int immediate) {
         return vectorInteger(0x00, true, vd, immediate, vs2, 3);
@@ -794,6 +986,26 @@ public final class VectorInstructionTest {
     /// Encodes `vrem.vx`.
     private static int vremVx(int vd, int vs2, int rs1) {
         return vectorInteger(0x23, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vwaddu.vx`.
+    private static int vwadduVx(int vd, int vs2, int rs1) {
+        return vectorInteger(0x30, true, vd, rs1, vs2, 4);
+    }
+
+    /// Encodes `vnsrl.wi`.
+    private static int vnsrlWi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x2c, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vsext.vf2`.
+    private static int vsextVf2(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 7, vs2, 2);
+    }
+
+    /// Encodes `vsaddu.vi`.
+    private static int vsadduVi(int vd, int vs2, int immediate) {
+        return vectorInteger(0x20, true, vd, immediate, vs2, 3);
     }
 
     /// Encodes `vredsum.vs`.
@@ -904,6 +1116,36 @@ public final class VectorInstructionTest {
     /// Encodes `vmflt.vv`.
     private static int vmfltVv(int vd, int vs2, int vs1) {
         return vectorInteger(0x1b, true, vd, vs1, vs2, 1);
+    }
+
+    /// Encodes `vfmacc.vv`.
+    private static int vfmaccVv(int vd, int vs1, int vs2) {
+        return vectorInteger(0x2c, true, vd, vs1, vs2, 1);
+    }
+
+    /// Encodes `vfredusum.vs`.
+    private static int vfredusumVs(int vd, int vs2, int vs1) {
+        return vectorInteger(0x01, true, vd, vs1, vs2, 1);
+    }
+
+    /// Encodes `vfsqrt.v`.
+    private static int vfsqrtV(int vd, int vs2) {
+        return vectorInteger(0x13, true, vd, 0, vs2, 1);
+    }
+
+    /// Encodes `vfclass.v`.
+    private static int vfclassV(int vd, int vs2) {
+        return vectorInteger(0x13, true, vd, 16, vs2, 1);
+    }
+
+    /// Encodes `vfwadd.vv`.
+    private static int vfwaddVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x30, true, vd, vs1, vs2, 1);
+    }
+
+    /// Encodes `vfcvt.x.f.v`.
+    private static int vfcvtXFV(int vd, int vs2) {
+        return vectorInteger(0x12, true, vd, 1, vs2, 1);
     }
 
     /// Encodes a vector integer instruction.
