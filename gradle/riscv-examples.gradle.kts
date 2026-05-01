@@ -1284,18 +1284,120 @@ tasks.register<JavaExec>("runSQLiteShowcaseExample") {
     }
 }
 
-// Downloaded RVV vector-add example.
+// Downloaded RVV examples.
 val rvvExamplesRevision = "29b4973954799cdbc32ea354df22c4bab6b82b67"
 val rvvExamplesArchiveRoot = "rvv-examples-$rvvExamplesRevision"
 val rvvExamplesArchiveFile = layout.buildDirectory.file("downloads/rvv-examples/rvv-examples-$rvvExamplesRevision.zip")
 val rvvExamplesSourceDirectory = layout.buildDirectory.dir("downloads/rvv-examples/$rvvExamplesRevision")
+val rvvExamplesGeneratedDirectory = layout.buildDirectory.dir("generated/rvv-examples/$rvvExamplesRevision")
 val rvvVectorAddExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-vector-add.elf")
+val rvvMatrixTransposeExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-matrix-transpose.elf")
+val rvvReductionExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-reduction.elf")
+val rvvSoftmaxExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-softmax.elf")
+val rvvPolynomialBasicExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-polynomial-basic.elf")
+val rvvUbenchExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-ubench.elf")
+val rvvMatrixTransposeSmokeSource = rvvExamplesGeneratedDirectory.map { it.file("matrix_transpose_smoke.c") }
+val rvvReductionSmokeSource = rvvExamplesGeneratedDirectory.map { it.file("reduction_smoke.c") }
+val rvvNoArgumentBenchUtilsHeader = rvvExamplesGeneratedDirectory.map { it.file("no-argument-bench-utils/bench_utils.h") }
+val rvvUbenchGeneratedDataHeader = rvvExamplesGeneratedDirectory.map { it.file("ubench-generated-data/generated_data_2op_int.h") }
+val rvvBaseTargetFeatures = listOf("m", "a", "f", "d", "c", "v", "zicsr", "zifencei")
+val rvvZbaTargetFeatures = rvvBaseTargetFeatures + "zba"
+val rvvZbaZbbTargetFeatures = rvvZbaTargetFeatures + "zbb"
 val rvvVectorAddSourcePaths = listOf(
     "src/vector_add/bench_vector_add.c",
     "src/vector_add/vector_add_intrinsics.c"
 )
 val rvvVectorAddSourceFiles = rvvVectorAddSourcePaths.associateWith { sourcePath ->
     rvvExamplesSourceDirectory.map { directory -> directory.file(sourcePath) }
+}
+val rvvMatrixTransposeSourceFiles = listOf(
+    rvvMatrixTransposeSmokeSource,
+    rvvExamplesSourceDirectory.map { it.file("src/matrix_transpose/matrix_transpose_intrinsics.c") }
+)
+val rvvReductionSourceFiles = listOf(
+    rvvReductionSmokeSource
+)
+val rvvSoftmaxSourceFiles = listOf(
+    "src/softmax/bench_softmax.c",
+    "src/softmax/softmax_baseline.c",
+    "src/softmax/softmax_rvv.c"
+).map { sourcePath ->
+    rvvExamplesSourceDirectory.map { it.file(sourcePath) }
+}
+val rvvPolynomialBasicSourceFiles = listOf(
+    "src/polynomial_mult/basic_poly_test.c",
+    "src/polynomial_mult/poly_mult_baseline.c",
+    "src/polynomial_mult/ntt_scalar.c"
+).map { sourcePath ->
+    rvvExamplesSourceDirectory.map { it.file(sourcePath) }
+}
+val rvvUbenchSourceFiles = listOf(
+    rvvExamplesSourceDirectory.map { it.file("src/ubench/microbenchmarks.c") }
+)
+
+fun registerRvvExampleRunTask(
+    taskName: String,
+    descriptionText: String,
+    buildTaskName: String,
+    elfFile: Provider<RegularFile>
+) {
+    tasks.register<JavaExec>(taskName) {
+        group = "verification"
+        description = descriptionText
+
+        dependsOn("classes", buildTaskName)
+        classpath = sourceSets.named("main").get().runtimeClasspath
+        mainClass = mainClassName
+        jvmArgs(applicationDefaultJvmArgs)
+
+        doFirst {
+            setArgs(listOf(elfFile.get().asFile.absolutePath))
+        }
+    }
+}
+
+fun registerRvvExampleTestTask(
+    taskName: String,
+    descriptionText: String,
+    buildTaskName: String,
+    elfFile: Provider<RegularFile>,
+    expectedOutputSnippets: List<String>
+) {
+    tasks.register<JavaExec>(taskName) {
+        group = "verification"
+        description = descriptionText
+
+        dependsOn("classes", buildTaskName)
+        classpath = sourceSets.named("main").get().runtimeClasspath
+        mainClass = mainClassName
+        jvmArgs(applicationDefaultJvmArgs)
+
+        val stdout = ByteArrayOutputStream()
+        val stderr = ByteArrayOutputStream()
+        standardOutput = stdout
+        errorOutput = stderr
+
+        doFirst {
+            stdout.reset()
+            stderr.reset()
+            setArgs(listOf(elfFile.get().asFile.absolutePath))
+        }
+
+        doLast {
+            val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+            val missingSnippets = expectedOutputSnippets.filterNot { actualOutput.contains(it) }
+            if (missingSnippets.isNotEmpty()) {
+                throw GradleException(
+                    "Unexpected RVV example output; missing ${missingSnippets.joinToString()}: ${actualOutput.trim()}"
+                )
+            }
+
+            val actualError = stderr.toString(StandardCharsets.UTF_8)
+            if (actualError.isNotEmpty()) {
+                throw GradleException("RVV example wrote to stderr: $actualError")
+            }
+        }
+    }
 }
 
 val downloadRvvExamplesArchive by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
@@ -1324,18 +1426,16 @@ val downloadRvvExamplesArchive by tasks.registering(de.undercouch.gradle.tasks.d
 
 tasks.register("extractRvvExamplesSources") {
     group = "build setup"
-    description = "Extracts the selected nibrunie/rvv-examples sources used by the vector-add example."
+    description = "Extracts the selected nibrunie/rvv-examples sources used by the RVV examples."
 
     dependsOn(downloadRvvExamplesArchive)
     inputs.file(rvvExamplesArchiveFile)
-    outputs.files(rvvVectorAddSourceFiles.values)
+    outputs.dir(rvvExamplesSourceDirectory)
 
     doLast {
         copy {
             from(zipTree(rvvExamplesArchiveFile.get().asFile)) {
-                rvvVectorAddSourcePaths.forEach { sourcePath ->
-                    include("$rvvExamplesArchiveRoot/$sourcePath")
-                }
+                include("$rvvExamplesArchiveRoot/src/**")
                 eachFile {
                     relativePath = RelativePath(true, *relativePath.segments.drop(1).toTypedArray())
                 }
@@ -1343,12 +1443,132 @@ tasks.register("extractRvvExamplesSources") {
             }
             into(rvvExamplesSourceDirectory)
         }
-        val missingFiles = rvvVectorAddSourceFiles.values
-            .map { it.get().asFile }
-            .filterNot { it.isFile }
-        if (missingFiles.isNotEmpty()) {
-            throw GradleException("rvv-examples archive did not contain expected files: ${missingFiles.joinToString()}")
+        val expectedDirectories = listOf("src/vector_add", "src/matrix_transpose", "src/reduction", "src/softmax", "src/polynomial_mult", "src/ubench")
+            .map { rvvExamplesSourceDirectory.get().dir(it).asFile }
+            .filterNot { it.isDirectory }
+        if (expectedDirectories.isNotEmpty()) {
+            throw GradleException("rvv-examples archive did not contain expected directories: ${expectedDirectories.joinToString()}")
         }
+    }
+}
+
+tasks.register("generateRvvExamplesSupportSources") {
+    group = "build setup"
+    description = "Generates small support sources used to run selected rvv-examples as standalone Linux binaries."
+
+    outputs.files(
+        rvvMatrixTransposeSmokeSource,
+        rvvReductionSmokeSource,
+        rvvNoArgumentBenchUtilsHeader,
+        rvvUbenchGeneratedDataHeader
+    )
+
+    fun writeGeneratedFile(file: File, content: String) {
+        val parent = file.parentFile
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            throw GradleException("Failed to create generated rvv-examples directory: $parent")
+        }
+        file.writeText(content.trimIndent() + "\n", StandardCharsets.UTF_8)
+    }
+
+    doLast {
+        writeGeneratedFile(
+            rvvNoArgumentBenchUtilsHeader.get().asFile,
+            """
+                #ifndef RVV_EXAMPLES_NO_ARGUMENT_BENCH_UTILS_H
+                #define RVV_EXAMPLES_NO_ARGUMENT_BENCH_UTILS_H
+
+                static unsigned long read_perf_counter(void) {
+                  unsigned long counter_value;
+                #if defined(COUNT_CYCLE)
+                #define PERF_METRIC "cycle"
+                  __asm__ volatile ("rdcycle %0" : "=r" (counter_value));
+                #else
+                #define PERF_METRIC "instruction"
+                  __asm__ volatile ("rdinstret %0" : "=r" (counter_value));
+                #endif
+                  return counter_value;
+                }
+
+                #endif
+            """
+        )
+        writeGeneratedFile(
+            rvvUbenchGeneratedDataHeader.get().asFile,
+            """
+                generated_data_t data_2op_int[] = {
+                  {.v={0x0000000000000100ull, 0x0000000000000003ull}, .label="small positive division"},
+                  {.v={0x0000000010000000ull, 0x000000000000001full}, .label="wide positive division"},
+                };
+            """
+        )
+        writeGeneratedFile(
+            rvvMatrixTransposeSmokeSource.get().asFile,
+            """
+                #include <assert.h>
+                #include <stdio.h>
+                #include <string.h>
+                #include <bench_matrix_utils.h>
+
+                void matrix_transpose(float *dst, float *src, size_t n);
+                void matrix_transpose_intrinsics(float *dst, float *src, size_t n);
+                void matrix_transpose_intrinsics_loads(float *dst, float *src, size_t n);
+                void matrix_transpose_intrinsics_4x4(float *dst, float *src);
+
+                static void fill(float *matrix, size_t n) {
+                  for (size_t i = 0; i < n * n; i++) {
+                    matrix[i] = (float) (i + 1);
+                  }
+                }
+
+                static void check(float *actual, float *expected, size_t n, const char *label) {
+                  if (memcmp(actual, expected, n * n * sizeof(float)) != 0) {
+                    fprintf(stderr, "matrix transpose mismatch: %s\n", label);
+                    assert(0);
+                  }
+                  printf("%s ok for %zux%zu\n", label, n, n);
+                }
+
+                int main(void) {
+                  enum { N = 4 };
+                  float src[N * N];
+                  float expected[N * N];
+                  float actual[N * N];
+
+                  fill(src, N);
+                  matrix_transpose(expected, src, N);
+
+                  memset(actual, 0, sizeof(actual));
+                  matrix_transpose_intrinsics_4x4(actual, src);
+                  check(actual, expected, N, "matrix_transpose_intrinsics_4x4");
+
+                  memset(actual, 0, sizeof(actual));
+                  matrix_transpose_intrinsics(actual, src, N);
+                  check(actual, expected, N, "matrix_transpose_intrinsics_nxn");
+
+                  memset(actual, 0, sizeof(actual));
+                  matrix_transpose_intrinsics_loads(actual, src, N);
+                  check(actual, expected, N, "matrix_transpose_intrinsics_loads_nxn");
+
+                  return 0;
+                }
+            """
+        )
+        writeGeneratedFile(
+            rvvReductionSmokeSource.get().asFile,
+            """
+                #define main rvv_reduction_upstream_main
+                #include "reduction_bench.c"
+                #undef main
+
+                int main(void) {
+                  int error = 0;
+                  error |= bench_int_reduction();
+                  error |= synthetic_bench();
+                  return error;
+                }
+            """
+        )
     }
 }
 
@@ -1358,7 +1578,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvVectorAddExample") {
 
     dependsOn("extractRvvExamplesSources")
     configureZigExecutable()
-    enabledTargetFeatures.set(listOf("m", "a", "f", "d", "c", "v", "zicsr", "zifencei"))
+    enabledTargetFeatures.set(rvvBaseTargetFeatures)
     sourceFiles.from(
         rvvVectorAddSourceFiles.getValue("src/vector_add/bench_vector_add.c"),
         rvvVectorAddSourceFiles.getValue("src/vector_add/vector_add_intrinsics.c")
@@ -1377,53 +1597,232 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvVectorAddExample") {
     )
 }
 
-tasks.register<JavaExec>("runRvvVectorAddExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvMatrixTransposeExample") {
     group = "verification"
-    description = "Runs the downloaded RVV vector-add example with the GraalRISCV CLI."
+    description = "Builds the RVV matrix-transpose smoke example as a static RISC-V Linux executable."
 
-    dependsOn("classes", "buildRvvVectorAddExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    doFirst {
-        setArgs(listOf(rvvVectorAddExampleElf.get().asFile.absolutePath))
-    }
+    dependsOn("extractRvvExamplesSources", "generateRvvExamplesSupportSources")
+    configureZigExecutable()
+    enabledTargetFeatures.set(rvvBaseTargetFeatures)
+    sourceFiles.from(rvvMatrixTransposeSourceFiles)
+    outputFile.set(rvvMatrixTransposeExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        providers.provider {
+            listOf(
+                "-O2",
+                "-g0",
+                "-no-pie",
+                "-DCOUNT_INSTRET",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/matrix_transpose").asFile.absolutePath}",
+            )
+        }
+    )
 }
 
-tasks.register<JavaExec>("testRvvVectorAddExample") {
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvReductionExample") {
     group = "verification"
-    description = "Runs the downloaded RVV vector-add example and verifies its summary output."
+    description = "Builds the RVV reduction smoke example as a static RISC-V Linux executable."
 
-    dependsOn("classes", "buildRvvVectorAddExample")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = mainClassName
-    jvmArgs(applicationDefaultJvmArgs)
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(rvvVectorAddExampleElf.get().asFile.absolutePath))
-    }
-
-    doLast {
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (!actualOutput.contains("vector_add_intrinsics used ")
-            || !actualOutput.contains(" to evaluate 16 element(s).")) {
-            throw GradleException("Unexpected RVV vector-add output: ${actualOutput.trim()}")
+    dependsOn("extractRvvExamplesSources", "generateRvvExamplesSupportSources")
+    configureZigExecutable()
+    enabledTargetFeatures.set(rvvZbaTargetFeatures)
+    sourceFiles.from(rvvReductionSourceFiles)
+    outputFile.set(rvvReductionExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        providers.provider {
+            listOf(
+                "-O2",
+                "-g0",
+                "-no-pie",
+                "-DCOUNT_INSTRET",
+                "-DVECTOR_SIZE=256",
+                "-I${rvvNoArgumentBenchUtilsHeader.get().asFile.parentFile.absolutePath}",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/reduction").asFile.absolutePath}",
+            )
         }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (actualError.isNotEmpty()) {
-            throw GradleException("RVV vector-add example wrote to stderr: $actualError")
-        }
-    }
+    )
 }
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvSoftmaxExample") {
+    group = "verification"
+    description = "Builds the RVV softmax example as a static RISC-V Linux executable."
+
+    dependsOn("extractRvvExamplesSources")
+    configureZigExecutable()
+    enabledTargetFeatures.set(rvvBaseTargetFeatures)
+    sourceFiles.from(rvvSoftmaxSourceFiles)
+    outputFile.set(rvvSoftmaxExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        providers.provider {
+            listOf(
+                "-O2",
+                "-g0",
+                "-no-pie",
+                "-DCOUNT_INSTRET",
+                "-DNUM_TESTS=1",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/softmax").asFile.absolutePath}",
+                "-lm"
+            )
+        }
+    )
+}
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvPolynomialBasicExample") {
+    group = "verification"
+    description = "Builds the RVV polynomial basic example as a static RISC-V Linux executable."
+
+    dependsOn("extractRvvExamplesSources", "generateRvvExamplesSupportSources")
+    configureZigExecutable()
+    enabledTargetFeatures.set(rvvBaseTargetFeatures)
+    sourceFiles.from(rvvPolynomialBasicSourceFiles)
+    outputFile.set(rvvPolynomialBasicExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        providers.provider {
+            listOf(
+                "-O2",
+                "-g0",
+                "-no-pie",
+                "-DCOUNT_INSTRET",
+                "-I${rvvNoArgumentBenchUtilsHeader.get().asFile.parentFile.absolutePath}",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/polynomial_mult").asFile.absolutePath}",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/utils").asFile.absolutePath}",
+                "-lm"
+            )
+        }
+    )
+}
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvUbenchExample") {
+    group = "verification"
+    description = "Builds the RVV micro-benchmark example as a static RISC-V Linux executable."
+
+    dependsOn("extractRvvExamplesSources", "generateRvvExamplesSupportSources")
+    configureZigExecutable()
+    enabledTargetFeatures.set(rvvZbaZbbTargetFeatures)
+    sourceFiles.from(rvvUbenchSourceFiles)
+    outputFile.set(rvvUbenchExampleElf)
+    localCacheDirectory.set(layout.buildDirectory.dir("zig-local-cache"))
+    globalCacheDirectory.set(layout.buildDirectory.dir("zig-global-cache"))
+    additionalCompilerArguments.set(
+        providers.provider {
+            listOf(
+                "-O2",
+                "-g0",
+                "-no-pie",
+                "-DCOUNT_INSTRET",
+                "-DNUM_TESTS=1",
+                "-DTEST_SIZE=64",
+                "-DNDEBUG",
+                "-I${rvvUbenchGeneratedDataHeader.get().asFile.parentFile.absolutePath}",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/ubench").asFile.absolutePath}",
+                "-I${rvvExamplesSourceDirectory.get().dir("src/utils").asFile.absolutePath}",
+                "-lm"
+            )
+        }
+    )
+}
+
+registerRvvExampleRunTask(
+    "runRvvVectorAddExample",
+    "Runs the downloaded RVV vector-add example with the GraalRISCV CLI.",
+    "buildRvvVectorAddExample",
+    rvvVectorAddExampleElf
+)
+
+registerRvvExampleTestTask(
+    "testRvvVectorAddExample",
+    "Runs the downloaded RVV vector-add example and verifies its summary output.",
+    "buildRvvVectorAddExample",
+    rvvVectorAddExampleElf,
+    listOf("vector_add_intrinsics used ", " to evaluate 16 element(s).")
+)
+
+registerRvvExampleRunTask(
+    "runRvvMatrixTransposeExample",
+    "Runs the RVV matrix-transpose smoke example with the GraalRISCV CLI.",
+    "buildRvvMatrixTransposeExample",
+    rvvMatrixTransposeExampleElf
+)
+
+registerRvvExampleTestTask(
+    "testRvvMatrixTransposeExample",
+    "Runs the RVV matrix-transpose smoke example and verifies its summary output.",
+    "buildRvvMatrixTransposeExample",
+    rvvMatrixTransposeExampleElf,
+    listOf(
+        "matrix_transpose_intrinsics_4x4 ok for 4x4",
+        "matrix_transpose_intrinsics_nxn ok for 4x4",
+        "matrix_transpose_intrinsics_loads_nxn ok for 4x4"
+    )
+)
+
+registerRvvExampleRunTask(
+    "runRvvReductionExample",
+    "Runs the RVV reduction smoke example with the GraalRISCV CLI.",
+    "buildRvvReductionExample",
+    rvvReductionExampleElf
+)
+
+registerRvvExampleTestTask(
+    "testRvvReductionExample",
+    "Runs the RVV reduction smoke example and verifies its summary output.",
+    "buildRvvReductionExample",
+    rvvReductionExampleElf,
+    listOf("RVV based vector min reduction", "vredmin.vs;lmul=m8")
+)
+
+registerRvvExampleRunTask(
+    "runRvvSoftmaxExample",
+    "Runs the RVV softmax example with the GraalRISCV CLI.",
+    "buildRvvSoftmaxExample",
+    rvvSoftmaxExampleElf
+)
+
+registerRvvExampleTestTask(
+    "testRvvSoftmaxExample",
+    "Runs the RVV softmax example and verifies its summary output.",
+    "buildRvvSoftmaxExample",
+    rvvSoftmaxExampleElf,
+    listOf("baseline n-element softmax", "rvv-based n-element stable softmax")
+)
+
+registerRvvExampleRunTask(
+    "runRvvPolynomialBasicExample",
+    "Runs the RVV polynomial basic example with the GraalRISCV CLI.",
+    "buildRvvPolynomialBasicExample",
+    rvvPolynomialBasicExampleElf
+)
+
+registerRvvExampleTestTask(
+    "testRvvPolynomialBasicExample",
+    "Runs the RVV polynomial basic example and verifies its summary output.",
+    "buildRvvPolynomialBasicExample",
+    rvvPolynomialBasicExampleElf,
+    listOf("NTT example:", "(pa * pb)'s inv NTT")
+)
+
+registerRvvExampleRunTask(
+    "runRvvUbenchExample",
+    "Runs the RVV micro-benchmark example with the GraalRISCV CLI.",
+    "buildRvvUbenchExample",
+    rvvUbenchExampleElf
+)
+
+registerRvvExampleTestTask(
+    "testRvvUbenchExample",
+    "Runs the RVV micro-benchmark example and verifies its summary output.",
+    "buildRvvUbenchExample",
+    rvvUbenchExampleElf,
+    listOf("data div benchmark #0", "wide positive division")
+)
 
 // Downloaded static Linux CoreMark example.
 val coreMarkRevision = "1f483d5b8316753a742cbf5590caf5bd0a4e4777"
@@ -1591,6 +1990,11 @@ tasks.register("checkShowcaseExamples") {
         "testHotLoopExample",
         "testSQLiteShowcaseExample",
         "testRvvVectorAddExample",
+        "testRvvMatrixTransposeExample",
+        "testRvvReductionExample",
+        "testRvvSoftmaxExample",
+        "testRvvPolynomialBasicExample",
+        "testRvvUbenchExample",
         "testCoreMarkExample"
     )
 }

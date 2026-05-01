@@ -108,6 +108,11 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 | Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
 | SQLite showcase | Download SQLite, build a static RISC-V file-database demo, and run transactions and queries. | `./gradlew runSQLiteShowcaseExample` |
 | RVV vector add | Build and run the RVV vector-add example. | `./gradlew runRvvVectorAddExample` |
+| RVV matrix transpose | Build and run the RVV matrix-transpose smoke example. | `./gradlew runRvvMatrixTransposeExample` |
+| RVV reduction | Build and run the RVV reduction smoke example. | `./gradlew runRvvReductionExample` |
+| RVV softmax | Build and run the RVV softmax example. | `./gradlew runRvvSoftmaxExample` |
+| RVV polynomial basic | Build and run the RVV polynomial basic example. | `./gradlew runRvvPolynomialBasicExample` |
+| RVV micro-benchmark | Build and run the RVV micro-benchmark example. | `./gradlew runRvvUbenchExample` |
 | CoreMark | Build and run the downloaded CoreMark benchmark. | `./gradlew runCoreMarkExample` |
 
 Run the larger showcase workloads together:
