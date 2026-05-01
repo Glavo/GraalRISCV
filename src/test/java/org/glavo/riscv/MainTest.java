@@ -94,6 +94,9 @@ public final class MainTest {
     /// The Linux RISC-V syscall number for `clone`.
     private static final int SYS_CLONE = 220;
 
+    /// The Linux RISC-V syscall number for `execve`.
+    private static final int SYS_EXECVE = 221;
+
     /// The Linux RISC-V syscall number for `wait4`.
     private static final int SYS_WAIT4 = 260;
 
@@ -260,6 +263,29 @@ public final class MainTest {
 
         assertEquals(0, exitCode);
         assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that `execve` replaces the current image with a mounted guest executable.
+    @Test
+    public void execveReplacesProcessImageFromGuestMount() throws Exception {
+        Files.write(tempDirectory.resolve("parent.elf"), ElfTestImages.executable(execveChildProgramCode()));
+        Files.write(tempDirectory.resolve("child.elf"), ElfTestImages.executable(exitWithCode(7)));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "/=" + tempDirectory,
+                        "--guest-program", "/parent.elf"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(7, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
@@ -1115,6 +1141,46 @@ public final class MainTest {
         tarOutput.putArchiveEntry(entry);
         tarOutput.write(data, 0, data.length);
         tarOutput.closeArchiveEntry();
+    }
+
+    /// Builds a freestanding program that replaces itself with `/child.elf`.
+    private static byte[] execveChildProgramCode() {
+        byte[] path = "/child.elf\0".getBytes(StandardCharsets.UTF_8);
+        byte[] environment = "EXEC_TEST=1\0".getBytes(StandardCharsets.UTF_8);
+        int pathOffset = 64;
+        int environmentOffset = 80;
+        int argvOffset = 96;
+        int envpOffset = 112;
+        ByteBuffer code = ByteBuffer.allocate(128).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadAddress(code, 10, pathOffset);
+        putLoadAddress(code, 11, argvOffset);
+        putLoadAddress(code, 12, envpOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXECVE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 90));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        code.position(pathOffset);
+        code.put(path);
+        code.position(environmentOffset);
+        code.put(environment);
+        code.position(argvOffset);
+        code.putLong(ElfTestImages.BASE_ADDRESS + pathOffset);
+        code.putLong(0);
+        code.position(envpOffset);
+        code.putLong(ElfTestImages.BASE_ADDRESS + environmentOffset);
+        code.putLong(0);
+        return code.array();
+    }
+
+    /// Builds a freestanding program that exits with the supplied status.
+    private static byte[] exitWithCode(int exitCode) {
+        return rawCode(
+                ElfTestImages.addi(10, 0, exitCode),
+                ElfTestImages.addi(17, 0, SYS_EXIT),
+                ElfTestImages.ecall());
     }
 
     /// Builds a freestanding program that reads `/data/message.txt` and writes it to stdout.

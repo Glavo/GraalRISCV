@@ -161,6 +161,15 @@ final class GuestThread {
         taggedAddressAbiEnabled = parent.taggedAddressAbiEnabled;
     }
 
+    /// Clears per-thread registrations that do not survive a successful `execve`.
+    void resetForExec() {
+        clearChildTidAddress = 0;
+        robustListHeadAddress = 0;
+        robustListLength = 0;
+        disableAlternateSignalStack();
+        clearRestartableSequence();
+    }
+
     /// Returns the low-bit mask for a RISC-V pointer mask length.
     private static long pointerMaskForLength(int length) {
         if (length < 0 || length >= Long.SIZE) {

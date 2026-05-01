@@ -11,9 +11,11 @@ import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.constants.Rva22Profile;
 import org.glavo.riscv.constants.Rva23Profile;
 import org.glavo.riscv.exception.ProgramExitException;
+import org.glavo.riscv.exception.ProcessImageReplacedException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.runtime.GuestFileSystem.ByteArraySeekableByteChannel;
 import org.glavo.riscv.runtime.GuestFileSystem.DirectoryEntry;
 import org.glavo.riscv.runtime.GuestFileSystem.HostMount;
@@ -287,6 +289,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `clone`.
     private static final int SYS_CLONE = 220;
 
+    /// The Linux RISC-V syscall number for `execve`.
+    private static final int SYS_EXECVE = 221;
+
     /// The Linux RISC-V syscall number for `mmap`.
     private static final int SYS_MMAP = 222;
 
@@ -334,6 +339,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `ENOENT` as a raw negative syscall result.
     private static final long ENOENT = -2;
+
+    /// Linux `E2BIG` as a raw negative syscall result.
+    private static final long E2BIG = -7;
+
+    /// Linux `ENOEXEC` as a raw negative syscall result.
+    private static final long ENOEXEC = -8;
 
     /// Linux `ESRCH` as a raw negative syscall result.
     private static final long ESRCH = -3;
@@ -638,6 +649,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The maximum guest path length accepted by `openat`, including the terminator.
     private static final int PATH_MAX = 4096;
+
+    /// The maximum number of argument or environment pointers accepted by `execve`.
+    private static final int EXECVE_MAX_VECTOR_ENTRIES = 131_072;
+
+    /// The maximum bytes accepted for one `execve` argument or environment string, including the terminator.
+    private static final int EXECVE_MAX_STRING_BYTES = 128 * 1024;
+
+    /// The maximum aggregate bytes accepted for `execve` argument and environment strings.
+    private static final int EXECVE_MAX_TOTAL_STRING_BYTES = 2 * 1024 * 1024;
 
     /// The maximum number of symbolic links followed while resolving one guest path.
     private static final int SYMBOLIC_LINK_LIMIT = 40;
@@ -1483,7 +1503,7 @@ public final class GuestSyscalls implements AutoCloseable {
     private String procExecutablePath = "/";
 
     /// The lowest program break accepted by the `brk` syscall.
-    private final long initialProgramBreak;
+    private long initialProgramBreak;
 
     /// The current guest program break returned by `brk`.
     private long programBreak;
@@ -2071,6 +2091,11 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            case SYS_EXECVE -> state.setRegister(10, execve(
+                    state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_BRK -> state.setRegister(10, brk(state.register(10)));
             case SYS_MUNMAP -> state.setRegister(10, munmap(state.register(10), state.register(11)));
             case SYS_MREMAP -> state.setRegister(10, mremap(
@@ -4930,6 +4955,151 @@ public final class GuestSyscalls implements AutoCloseable {
         return env != null && guestThreadRunner != null;
     }
 
+    /// Replaces the current process image with a mounted guest executable.
+    private long execve(MachineState state, long pathAddress, long argvAddress, long envpAddress) {
+        String rawPath;
+        String[] arguments;
+        String[] environment;
+        try {
+            @Nullable String path = readGuestPath(pathAddress);
+            if (path == null) {
+                return ENAMETOOLONG;
+            }
+            rawPath = path;
+            @Nullable String[] readArguments = readGuestStringVector(argvAddress);
+            @Nullable String[] readEnvironment = readGuestStringVector(envpAddress);
+            if (readArguments == null || readEnvironment == null) {
+                return E2BIG;
+            }
+            arguments = readArguments.length == 0 ? new String[]{rawPath} : readArguments;
+            environment = readEnvironment;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+
+        if (rawPath.isEmpty()) {
+            return ENOENT;
+        }
+        @Nullable String executablePath = absoluteGuestPath(AT_FDCWD, rawPath);
+        if (executablePath == null) {
+            return EACCES;
+        }
+        if (!canReplaceCurrentProcessImage(state)) {
+            return EAGAIN;
+        }
+
+        LinuxProgramLoader.LoadedProgram program;
+        try {
+            byte[] executableBytes = fileSystem.readFile(executablePath);
+            program = LinuxProgramLoader.load(executableBytes, executablePath, fileSystem, pageSize);
+        } catch (RiscVException exception) {
+            return execveLoadError(exception);
+        }
+        if (!loadedProgramFitsMemory(program)) {
+            return ENOMEM;
+        }
+
+        replaceCurrentProcessImage(state, program, arguments, environment);
+        throw new ProcessImageReplacedException();
+    }
+
+    /// Returns true when this process is in a state that can be replaced without racing another guest thread.
+    private boolean canReplaceCurrentProcessImage(MachineState state) {
+        synchronized (threadLock) {
+            return liveThreadCount == 1
+                    && process.threadCount() == 1
+                    && state.guestThread() == process.initialThread()
+                    && !processExitRequested
+                    && threadFailure == null;
+        }
+    }
+
+    /// Returns true when every loadable segment in a program fits the current guest memory window.
+    private boolean loadedProgramFitsMemory(LinuxProgramLoader.LoadedProgram program) {
+        for (LinuxProgramLoader.LoadedImage loadedImage : program.images()) {
+            for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
+                if (segment.memorySize() == 0) {
+                    continue;
+                }
+                long runtimeAddress = loadedImage.runtimeAddress(segment.virtualAddress());
+                if (runtimeAddress > Long.MAX_VALUE - segment.memorySize()) {
+                    return false;
+                }
+                long pageStart = alignDown(runtimeAddress, pageSize);
+                long pageEnd = alignUp(runtimeAddress + segment.memorySize(), pageSize);
+                if (pageEnd < 0 || pageStart < memory.baseAddress() || pageEnd > memory.endAddress()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /// Installs an already loaded executable into the current process state.
+    private void replaceCurrentProcessImage(
+            MachineState state,
+            LinuxProgramLoader.LoadedProgram program,
+            String @Unmodifiable [] arguments,
+            String @Unmodifiable [] environment) {
+        memory.resetAddressSpace();
+        LinuxProgramLoader.LoadedProcess loadedProcess =
+                LinuxProgramLoader.initialize(memory, program, arguments, environment, pageSize);
+        resetForExec(state, loadedProcess.initialProgramBreak(), program.executablePath());
+        recordInitialAuxiliaryVector(loadedProcess.stackPointer());
+        state.resetForExec(
+                program.entryPoint(),
+                loadedProcess.stackPointer(),
+                program.executable().runtimeOptionalAddress(program.executable().image().tohostAddress()),
+                program.executable().runtimeOptionalAddress(program.executable().image().fromhostAddress()));
+    }
+
+    /// Resets syscall-owned process metadata after a successful `execve`.
+    private void resetForExec(MachineState state, long newInitialProgramBreak, @Nullable String executablePath) {
+        initialProgramBreak = newInitialProgramBreak;
+        programBreak = newInitialProgramBreak;
+        programBreakBackingEnd = newInitialProgramBreak;
+        memoryMappings.clear();
+        auxiliaryVectorBytes = encodeAuxiliaryVector(new long[]{0, 0});
+        procCommandLineBytes = new byte[0];
+        procEnvironmentBytes = new byte[0];
+        procExecutablePath = executablePath == null ? "/" : executablePath;
+        futexWaiters.clear();
+        state.guestThread().resetForExec();
+        setProcessNameFromExecutablePath(executablePath);
+    }
+
+    /// Updates the Linux task command name from an executable path.
+    private void setProcessNameFromExecutablePath(@Nullable String executablePath) {
+        for (int index = 0; index < processName.length; index++) {
+            processName[index] = 0;
+        }
+        if (executablePath == null || executablePath.isEmpty()) {
+            return;
+        }
+
+        String leaf = GuestFileSystem.leafName(executablePath);
+        byte[] bytes = leaf.getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(bytes, 0, processName, 0, Math.min(bytes.length, TASK_COMMAND_LENGTH - 1));
+    }
+
+    /// Converts loader diagnostics into Linux `execve` errno values.
+    private static long execveLoadError(RiscVException exception) {
+        @Nullable String message = exception.getMessage();
+        if (message == null) {
+            return ENOEXEC;
+        }
+        if (message.contains("does not exist")) {
+            return ENOENT;
+        }
+        if (message.contains("not a regular file")
+                || message.contains("outside configured mounts")
+                || message.contains("escapes configured mount")
+                || message.contains("not covered by a configured mount")) {
+            return EACCES;
+        }
+        return ENOEXEC;
+    }
+
     /// Handles the parent return path for Linux `clone` requests.
     private long clone(
             MachineState state,
@@ -6505,6 +6675,33 @@ public final class GuestSyscalls implements AutoCloseable {
         return null;
     }
 
+    /// Reads a null-terminated guest pointer vector containing UTF-8 strings for `execve`.
+    private String @Nullable @Unmodifiable [] readGuestStringVector(long vectorAddress) {
+        if (vectorAddress == 0) {
+            return new String[0];
+        }
+
+        long totalBytes = 0;
+        ArrayList<String> strings = new ArrayList<>();
+        for (int index = 0; index < EXECVE_MAX_VECTOR_ENTRIES; index++) {
+            long pointer = memory.readLong(vectorAddress + (long) index * Long.BYTES);
+            if (pointer == 0) {
+                return strings.toArray(String[]::new);
+            }
+
+            byte[] bytes = readGuestCStringBytes(pointer, EXECVE_MAX_STRING_BYTES);
+            if (bytes.length >= EXECVE_MAX_STRING_BYTES) {
+                return null;
+            }
+            totalBytes += bytes.length + 1L;
+            if (totalBytes > EXECVE_MAX_TOTAL_STRING_BYTES) {
+                return null;
+            }
+            strings.add(new String(bytes, StandardCharsets.UTF_8));
+        }
+        return null;
+    }
+
     /// Resolves a guest path below a configured virtual filesystem.
     private @Nullable VirtualPath resolveVirtualPath(long directoryFileDescriptor, String guestPath) {
         return resolveVirtualPath(directoryFileDescriptor, guestPath, true);
@@ -7651,6 +7848,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return -1;
         }
         return (value + mask) & ~mask;
+    }
+
+    /// Rounds a non-negative guest address down to a power-of-two alignment.
+    private static long alignDown(long value, long alignment) {
+        return value & -alignment;
     }
 
     /// Returns true when the supplied range is non-negative and does not overflow.

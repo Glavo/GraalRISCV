@@ -278,6 +278,22 @@ public final class Memory implements AutoCloseable {
         return copy;
     }
 
+    /// Drops all committed pages and restores the address-space mapping state for a fresh process image.
+    public synchronized void resetAddressSpace() {
+        pages.closeAndClear();
+        committedPages = 0;
+        reservedHugePages = 0;
+        vmas = initialWindowMapped
+                ? VmaTable.single(
+                        baseAddress,
+                        baseAddress + size,
+                        false,
+                        Vma.HUGE_PAGE_PREFERENCE_DEFAULT,
+                        PROTECTION_READ_WRITE_EXECUTE)
+                : VmaTable.empty();
+        invalidateSoftwareTlb();
+    }
+
     /// Activates a RISC-V userspace pointer mask for the current host thread and returns the previous mask.
     public long enterPointerMaskLength(int length) {
         long previousMask = activePointerMask.get();

@@ -107,6 +107,39 @@ public final class LinuxInitialStack {
             long interpreterBase,
             @Nullable String executablePath,
             long pageSize) {
+        return initialize(
+                memory,
+                stackTop,
+                arguments,
+                DEFAULT_ENVIRONMENT,
+                image,
+                loadBias,
+                interpreterBase,
+                executablePath,
+                pageSize);
+    }
+
+    /// Writes the initial stack with explicit environment and load-bias metadata.
+    ///
+    /// @param memory the guest address space receiving the stack
+    /// @param stackTop the exclusive top address of the stack
+    /// @param arguments the guest argument vector
+    /// @param environment the guest environment vector
+    /// @param image the main executable image
+    /// @param loadBias the main executable load bias
+    /// @param interpreterBase the dynamic interpreter load base, or `ABSENT_ADDRESS` for static programs
+    /// @param executablePath the guest executable path used for `AT_EXECFN`, or null to derive it from `argv`
+    /// @param pageSize the guest base page size exposed through `AT_PAGESZ`
+    public static long initialize(
+            Memory memory,
+            long stackTop,
+            String @Unmodifiable [] arguments,
+            String @Unmodifiable [] environment,
+            ElfImage image,
+            long loadBias,
+            long interpreterBase,
+            @Nullable String executablePath,
+            long pageSize) {
         long cursor = stackTop & ~0xfL;
         String[] argv = arguments.clone();
         long[] argumentPointers = new long[argv.length];
@@ -115,9 +148,10 @@ public final class LinuxInitialStack {
             argumentPointers[index] = cursor;
         }
 
-        long[] environmentPointers = new long[DEFAULT_ENVIRONMENT.length];
-        for (int index = DEFAULT_ENVIRONMENT.length - 1; index >= 0; index--) {
-            cursor = writeString(memory, cursor, DEFAULT_ENVIRONMENT[index]);
+        String[] envp = environment.clone();
+        long[] environmentPointers = new long[envp.length];
+        for (int index = envp.length - 1; index >= 0; index--) {
+            cursor = writeString(memory, cursor, envp[index]);
             environmentPointers[index] = cursor;
         }
 

@@ -18,6 +18,7 @@ import com.oracle.truffle.api.nodes.RootNode;
 import org.glavo.riscv.RiscVContext;
 import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.exception.ProgramExitException;
+import org.glavo.riscv.exception.ProcessImageReplacedException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
 import org.glavo.riscv.memory.Memory;
@@ -102,11 +103,15 @@ public final class RiscVRootNode extends RootNode {
 
     /// Runs the decoded-block dispatch loop for an initialized guest state.
     private int executeGuestLoop(Memory memory, MachineState state) {
-        try {
-            guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
-            throw new AssertionError("Guest loop returned without an exit signal");
-        } catch (ThreadExitException exit) {
-            return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
+        while (true) {
+            try {
+                guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
+                throw new AssertionError("Guest loop returned without an exit signal");
+            } catch (ProcessImageReplacedException ignored) {
+                continue;
+            } catch (ThreadExitException exit) {
+                return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
+            }
         }
     }
 
@@ -127,7 +132,14 @@ public final class RiscVRootNode extends RootNode {
 
     /// Runs the decoded-block dispatch loop for a clone-created guest thread.
     private void executeGuestThreadLoop(Memory memory, MachineState state) {
-        guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
+        while (true) {
+            try {
+                guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
+                throw new AssertionError("Guest loop returned without an exit signal");
+            } catch (ProcessImageReplacedException ignored) {
+                continue;
+            }
+        }
     }
 
     /// Loads the main executable and its optional dynamic interpreter before guest memory is created.

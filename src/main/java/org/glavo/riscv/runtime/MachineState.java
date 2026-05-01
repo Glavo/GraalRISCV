@@ -12,6 +12,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.util.Arrays;
 
 /// Stores mutable architectural state for one guest execution.
 @NotNullByDefault
@@ -137,13 +138,13 @@ public final class MachineState {
     private final PrintStream traceStream;
 
     /// The optional `tohost` symbol guest address.
-    private final long tohostAddress;
+    private long tohostAddress;
 
     /// The optional `fromhost` symbol guest address.
-    private final long fromhostAddress;
+    private long fromhostAddress;
 
     /// Whether guest memory stores can trigger simulator side effects.
-    private final boolean storeSideEffectsEnabled;
+    private boolean storeSideEffectsEnabled;
 
     /// The syscall handler for guest environment calls.
     private final GuestSyscalls syscalls;
@@ -236,7 +237,7 @@ public final class MachineState {
         this.traceStream = traceStream;
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
-        this.storeSideEffectsEnabled = tohostAddress != ElfImage.ABSENT_ADDRESS;
+        this.storeSideEffectsEnabled = hasTohostSideEffects(tohostAddress);
         this.syscalls = syscalls;
         this.thread = thread;
     }
@@ -429,6 +430,23 @@ public final class MachineState {
         child.registers[10] = 0;
     }
 
+    /// Replaces architectural state after a successful Linux `execve`.
+    void resetForExec(long entryPoint, long stackPointer, long tohostAddress, long fromhostAddress) {
+        Arrays.fill(registers, 0);
+        Arrays.fill(floatingPointRegisters, 0);
+        vectorUnit.reset();
+        this.pc = entryPoint & thread.pointerMask();
+        this.tohostAddress = tohostAddress;
+        this.fromhostAddress = fromhostAddress;
+        this.storeSideEffectsEnabled = hasTohostSideEffects(tohostAddress);
+        registers[2] = stackPointer;
+        machineExceptionProgramCounter = 0;
+        floatingPointControlStatus = 0;
+        reservationAddress = ElfImage.ABSENT_ADDRESS;
+        reservationLength = 0;
+        instructionFetchGeneration++;
+    }
+
     /// Returns the guest clear-child-TID address for this thread.
     long clearChildTidAddress() {
         return thread.clearChildTidAddress();
@@ -607,6 +625,11 @@ public final class MachineState {
     /// Adapts an output stream to a print stream without double-wrapping existing print streams.
     private static PrintStream asPrintStream(OutputStream stream) {
         return stream instanceof PrintStream printStream ? printStream : new PrintStream(stream, true);
+    }
+
+    /// Returns true when stores must check for a test-harness `tohost` word.
+    private static boolean hasTohostSideEffects(long tohostAddress) {
+        return tohostAddress != ElfImage.ABSENT_ADDRESS;
     }
 
     /// Returns true when the CSR is a base user counter from `Zicntr`.

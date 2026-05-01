@@ -8,6 +8,7 @@ import org.glavo.riscv.memory.Memory;
 import org.jetbrains.annotations.NotNullByDefault;
 
 import java.math.BigInteger;
+import java.util.Arrays;
 
 /// Stores and executes the RVV 1.0 vector architectural state implemented by the user-mode runtime.
 @NotNullByDefault
@@ -140,6 +141,18 @@ public final class VectorUnit {
         target.vectorStart = vectorStart;
         target.fixedPointSaturate = fixedPointSaturate;
         target.fixedPointRoundingMode = fixedPointRoundingMode;
+    }
+
+    /// Clears vector registers and writable vector CSRs for a fresh process image.
+    public void reset() {
+        for (byte[] register : registers) {
+            Arrays.fill(register, (byte) 0);
+        }
+        vectorLength = 0;
+        vectorType = 0;
+        vectorStart = 0;
+        fixedPointSaturate = 0;
+        fixedPointRoundingMode = 0;
     }
 
     /// Returns the raw `vl` CSR value.
