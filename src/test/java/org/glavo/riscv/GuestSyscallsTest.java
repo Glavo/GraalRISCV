@@ -13,6 +13,8 @@ import org.graalvm.polyglot.io.FileSystem;
 import org.glavo.riscv.constants.Rva22Profile;
 import org.glavo.riscv.constants.Rva23Profile;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -3898,6 +3900,107 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies callers can mount a custom virtual filesystem provider.
+    @Test
+    public void customVirtualFilesystemMountCanServeFiles() {
+        GuestFileSystem.VirtualFileSystem virtualFileSystem = new GuestFileSystem.VirtualFileSystem() {
+            /// Returns a small virtual tree rooted at `/virtual`.
+            @Override
+            public @Nullable GuestFileSystem.VirtualNode node(String absoluteGuestPath) {
+                return switch (absoluteGuestPath) {
+                    case "/virtual" -> GuestFileSystem.VirtualNode.directory(absoluteGuestPath);
+                    case "/virtual/data.txt" -> GuestFileSystem.VirtualNode.file(absoluteGuestPath, "data");
+                    case "/virtual/link.txt" -> GuestFileSystem.VirtualNode.symbolicLink(absoluteGuestPath, "data.txt");
+                    default -> null;
+                };
+            }
+
+            /// Returns the fixed virtual root children.
+            @Override
+            public GuestFileSystem.VirtualNode @Unmodifiable [] childNodes(String directoryGuestPath) {
+                if (!"/virtual".equals(directoryGuestPath)) {
+                    return new GuestFileSystem.VirtualNode[0];
+                }
+                return new GuestFileSystem.VirtualNode[]{
+                        GuestFileSystem.VirtualNode.file("/virtual/data.txt", "data"),
+                        GuestFileSystem.VirtualNode.symbolicLink("/virtual/link.txt", "data.txt")
+                };
+            }
+
+            /// Returns bytes for the single virtual regular file.
+            @Override
+            public byte @Unmodifiable [] fileData(GuestFileSystem.VirtualNode node) {
+                return "virtual-data".getBytes(StandardCharsets.UTF_8);
+            }
+
+            /// Returns the target stored in virtual symbolic-link nodes.
+            @Override
+            public String linkTarget(GuestFileSystem.VirtualNode node) {
+                @Nullable String target = node.linkTarget();
+                return target == null ? "" : target;
+            }
+        };
+        GuestFileSystem fileSystem = GuestFileSystem.empty().withVirtualMount("/virtual", virtualFileSystem);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "/virtual/data.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, "virtual-data".length());
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("virtual-data".length(), state.register(10));
+            assertArrayEquals(
+                    "virtual-data".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(bufferAddress, "virtual-data".length()));
+
+            writeGuestString(memory, pathAddress, "/virtual/link.txt");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 32);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("data.txt".length(), state.register(10));
+            assertArrayEquals("data.txt".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(bufferAddress, "data.txt".length()));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int linkedFileDescriptor = (int) state.register(10);
+            assertEquals(4, linkedFileDescriptor);
+
+            setSyscall(state, SYS_READ, linkedFileDescriptor, bufferAddress, "virtual-data".length());
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("virtual-data".length(), state.register(10));
+            assertArrayEquals(
+                    "virtual-data".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(bufferAddress, "virtual-data".length()));
+
+            writeGuestString(memory, pathAddress, "/virtual");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(5, directoryFileDescriptor);
+
+            setSyscall(state, SYS_GETDENTS64, directoryFileDescriptor, bufferAddress, 256);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            long nextEntry = assertDirectoryEntry(memory, bufferAddress, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "data.txt", DIRECTORY_ENTRY_REGULAR_FILE, 3);
+            assertDirectoryEntry(memory, nextEntry, "link.txt", DIRECTORY_ENTRY_SYMBOLIC_LINK, 4);
+        }
+    }
+
     /// Verifies `prctl` state tracked by the single-process simulator.
     @Test
     public void prctlTracksSingleProcessState() {
@@ -5049,6 +5152,31 @@ public final class GuestSyscallsTest {
             long initialProgramBreak,
             Path hostRoot) {
         return state(memory, in, out, err, initialProgramBreak, hostRoot, TimeSource.system());
+    }
+
+    /// Creates test machine state with a syscall handler and custom filesystem namespace.
+    private static MachineState state(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            GuestFileSystem fileSystem) {
+        GuestSyscalls syscalls = new GuestSyscalls(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                fileSystem,
+                TimeSource.system());
+        return new MachineState(
+                memory,
+                0,
+                false,
+                ElfImage.ABSENT_ADDRESS,
+                ElfImage.ABSENT_ADDRESS,
+                syscalls);
     }
 
     /// Creates test machine state with a syscall handler, root mount, and guest time source.

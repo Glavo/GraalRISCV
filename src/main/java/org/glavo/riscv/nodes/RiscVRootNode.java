@@ -29,6 +29,7 @@ import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.ElfLoader;
 import org.glavo.riscv.parser.RiscVDecoder;
 import org.glavo.riscv.parser.RiscVOperation;
+import org.glavo.riscv.runtime.GuestFileSystem;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxInitialStack;
 import org.glavo.riscv.runtime.MachineState;
@@ -136,7 +137,10 @@ public final class RiscVRootNode extends RootNode {
         @Nullable LoadedImage loadedInterpreter = null;
         @Nullable String interpreterPath = executable.interpreterPath();
         if (interpreterPath != null) {
-            byte[] interpreterBytes = GuestSyscalls.readMountedFile(context.env(), context.filesystemMounts(), interpreterPath);
+            byte[] interpreterBytes = GuestFileSystem.readMountedFile(
+                    context.env(),
+                    context.filesystemMounts(),
+                    interpreterPath);
             ElfImage interpreter = ElfLoader.load(interpreterBytes);
             if (interpreter.hasInterpreter()) {
                 throw new RiscVException("ELF interpreter must not request another interpreter: " + interpreterPath);
@@ -157,7 +161,7 @@ public final class RiscVRootNode extends RootNode {
         if (guestProgramPath == null) {
             return sourceBytes.clone();
         }
-        return GuestSyscalls.readMountedFile(context.env(), context.filesystemMounts(), guestProgramPath);
+        return GuestFileSystem.readMountedFile(context.env(), context.filesystemMounts(), guestProgramPath);
     }
 
     /// Assigns a load bias to an ELF image.

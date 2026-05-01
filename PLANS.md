@@ -13,7 +13,7 @@
 - RVV 1.0, mandatory RVA23U64 vector additions, `Zkt`/`Zvkt`, and optional standard `Zvbc` are implemented; the CRC example exercises `Zvbc`.
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
 - Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, `PR_GET_AUXV`, file-backed `MAP_PRIVATE`, tar symlink/hard-link lookup, virtual `/proc`, and Ubuntu Base `/usr/bin/true`, `/usr/bin/bash`, and `/usr/bin/ls` smoke tests.
-- The memory, `--mount` filesystem sandboxing, read-only tar mounts, Ubuntu Base image preparation, process/thread state, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
+- The memory, `--mount` filesystem namespace, customizable `GuestFileSystem` virtual mounts, read-only tar mounts, Ubuntu Base image preparation, process/thread state, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 
 ## Remaining Work
 
@@ -27,6 +27,7 @@
 
 - Expand ELF, auxv, stack, `mmap`, syscall, dynamic-linking, and runtime behavior only when direct tests or real workloads require it.
 - Continue improving signal and clone semantics while keeping thread behavior deterministic.
+- Keep filesystem simulation behind `GuestFileSystem`; add richer process/thread-scoped filesystem state only when workloads require it.
 
 ### Memory And Mapping
 
