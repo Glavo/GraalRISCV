@@ -59,6 +59,11 @@ final class GuestProcess {
         threads.remove(thread);
     }
 
+    /// Returns the number of currently live guest threads in this process.
+    int threadCount() {
+        return threads.size();
+    }
+
     /// Returns the live guest thread with the supplied id, or null when none is known.
     @Nullable GuestThread thread(long threadId) {
         if (threadId != (int) threadId) {

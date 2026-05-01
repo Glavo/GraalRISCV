@@ -76,7 +76,7 @@ The simulator implements enough Linux RISC-V user-mode behavior to run the
 bundled static musl examples, the static Go example, CoreMark, RVV examples, and
 dynamic programs such as `/usr/bin/true`, `/usr/bin/bash`, and `/usr/bin/ls`
 from the Ubuntu Base root tar. File access is sandboxed under configured
-`--mount` entries.
+`--mount` entries, with a built-in read-only `/proc` for process metadata.
 
 ## Examples
 

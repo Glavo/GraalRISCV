@@ -436,6 +436,9 @@ public final class GuestSyscallsTest {
     /// Linux `DT_REG` directory entry type.
     private static final int DIRECTORY_ENTRY_REGULAR_FILE = 8;
 
+    /// Linux `DT_LNK` directory entry type.
+    private static final int DIRECTORY_ENTRY_SYMBOLIC_LINK = 10;
+
     /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
     private static final int STAT_SIZE_OFFSET = 48;
 
@@ -519,6 +522,9 @@ public final class GuestSyscallsTest {
 
     /// The synthetic filesystem magic returned by `statfs`.
     private static final long STATFS_MAGIC = 0x0102_1994L;
+
+    /// Linux `PROC_SUPER_MAGIC`.
+    private static final long PROC_SUPER_MAGIC = 0x9fa0L;
 
     /// The synthetic filesystem block size returned by `statfs`.
     private static final long STATFS_BLOCK_SIZE = 4096;
@@ -1054,6 +1060,9 @@ public final class GuestSyscallsTest {
 
     /// Linux auxv page-size type.
     private static final long AT_PAGESZ = 6;
+
+    /// Linux auxv executable filename pointer type.
+    private static final long AT_EXECFN = 31;
 
     /// Verifies that stdin EOF is reported as a zero-byte read.
     @Test
@@ -3762,6 +3771,133 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies the virtual proc filesystem exposes deterministic process metadata.
+    @Test
+    public void procfsExposesVirtualProcessMetadata() throws Exception {
+        Files.writeString(tempDirectory.resolve("program"), "exe", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long stackPointer = memory.baseAddress() + 64;
+            long pathAddress = memory.baseAddress() + 1024;
+            long bufferAddress = memory.baseAddress() + 2048;
+            long statfsAddress = memory.baseAddress() + 4096;
+            long executableAddress = memory.baseAddress() + 6144;
+            long argumentAddress = memory.baseAddress() + 6208;
+            long environmentAddress = memory.baseAddress() + 6272;
+
+            writeGuestString(memory, executableAddress, "/program");
+            writeGuestString(memory, argumentAddress, "--flag");
+            writeGuestString(memory, environmentAddress, "KEY=value");
+            memory.writeLong(stackPointer, 2);
+            memory.writeLong(stackPointer + Long.BYTES, executableAddress);
+            memory.writeLong(stackPointer + 2L * Long.BYTES, argumentAddress);
+            memory.writeLong(stackPointer + 3L * Long.BYTES, 0);
+            memory.writeLong(stackPointer + 4L * Long.BYTES, environmentAddress);
+            memory.writeLong(stackPointer + 5L * Long.BYTES, 0);
+            memory.writeLong(stackPointer + 6L * Long.BYTES, AT_PAGESZ);
+            memory.writeLong(stackPointer + 7L * Long.BYTES, PAGE_SIZE);
+            memory.writeLong(stackPointer + 8L * Long.BYTES, AT_EXECFN);
+            memory.writeLong(stackPointer + 9L * Long.BYTES, executableAddress);
+            memory.writeLong(stackPointer + 10L * Long.BYTES, AT_NULL);
+            memory.writeLong(stackPointer + 11L * Long.BYTES, 0);
+            state.syscalls().recordInitialAuxiliaryVector(stackPointer);
+
+            writeGuestString(memory, pathAddress, "/proc/self/cmdline");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int commandLineFileDescriptor = (int) state.register(10);
+            assertEquals(3, commandLineFileDescriptor);
+
+            byte[] commandLine = "/program\0--flag\0".getBytes(StandardCharsets.UTF_8);
+            setSyscall(state, SYS_READ, commandLineFileDescriptor, bufferAddress, commandLine.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(commandLine.length, state.register(10));
+            assertArrayEquals(commandLine, memory.readBytes(bufferAddress, commandLine.length));
+
+            writeGuestString(memory, pathAddress, "/proc/self/environ");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int environmentFileDescriptor = (int) state.register(10);
+            assertEquals(4, environmentFileDescriptor);
+
+            byte[] environment = "KEY=value\0".getBytes(StandardCharsets.UTF_8);
+            setSyscall(state, SYS_READ, environmentFileDescriptor, bufferAddress, environment.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(environment.length, state.register(10));
+            assertArrayEquals(environment, memory.readBytes(bufferAddress, environment.length));
+
+            writeGuestString(memory, pathAddress, "/proc/self");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertArrayEquals("1".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 1));
+
+            writeGuestString(memory, pathAddress, "/proc/self/exe");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("/program".length(), state.register(10));
+            assertArrayEquals(
+                    "/program".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(bufferAddress, "/program".length()));
+
+            writeGuestString(memory, pathAddress, "/proc/self/fd/3");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("/proc/1/cmdline".length(), state.register(10));
+            assertArrayEquals(
+                    "/proc/1/cmdline".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(bufferAddress, "/proc/1/cmdline".length()));
+
+            writeGuestString(memory, pathAddress, "/proc/self/exe");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int executableFileDescriptor = (int) state.register(10);
+            assertEquals(5, executableFileDescriptor);
+
+            setSyscall(state, SYS_READ, executableFileDescriptor, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertArrayEquals("exe".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 3));
+
+            setSyscall(state, SYS_CLOSE, executableFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/proc");
+            setSyscall(state, SYS_STATFS, pathAddress, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertProcStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int procDirectoryFileDescriptor = (int) state.register(10);
+            assertEquals(5, procDirectoryFileDescriptor);
+
+            setSyscall(state, SYS_FSTATFS, procDirectoryFileDescriptor, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertProcStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_GETDENTS64, procDirectoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            long nextEntry = assertDirectoryEntry(memory, bufferAddress, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "1", DIRECTORY_ENTRY_DIRECTORY, 3);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "cpuinfo", DIRECTORY_ENTRY_REGULAR_FILE, 4);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "meminfo", DIRECTORY_ENTRY_REGULAR_FILE, 5);
+            assertDirectoryEntry(memory, nextEntry, "self", DIRECTORY_ENTRY_SYMBOLIC_LINK, 6);
+        }
+    }
+
     /// Verifies `prctl` state tracked by the single-process simulator.
     @Test
     public void prctlTracksSingleProcessState() {
@@ -5003,6 +5139,20 @@ public final class GuestSyscallsTest {
         assertEquals(STATFS_BLOCK_COUNT, memory.readLong(address + STATFS_BLOCKS_OFFSET));
         assertEquals(STATFS_BLOCK_COUNT, memory.readLong(address + STATFS_BLOCKS_FREE_OFFSET));
         assertEquals(STATFS_BLOCK_COUNT, memory.readLong(address + STATFS_BLOCKS_AVAILABLE_OFFSET));
+        assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_OFFSET));
+        assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_FREE_OFFSET));
+        assertEquals(STATFS_NAME_MAX, memory.readLong(address + STATFS_NAME_LENGTH_OFFSET));
+        assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_FRAGMENT_SIZE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_FLAGS_OFFSET));
+    }
+
+    /// Verifies the deterministic `struct statfs` values exposed by the virtual proc filesystem.
+    private static void assertProcStatfs(Memory memory, long address) {
+        assertEquals(PROC_SUPER_MAGIC, memory.readLong(address + STATFS_TYPE_OFFSET));
+        assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_BLOCK_SIZE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_BLOCKS_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_BLOCKS_FREE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_BLOCKS_AVAILABLE_OFFSET));
         assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_OFFSET));
         assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_FREE_OFFSET));
         assertEquals(STATFS_NAME_MAX, memory.readLong(address + STATFS_NAME_LENGTH_OFFSET));

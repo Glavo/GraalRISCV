@@ -39,6 +39,7 @@ import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Map;
 import java.util.Set;
@@ -1177,6 +1178,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `PR_GET_AUXV`.
     private static final long PR_GET_AUXV = 0x4155_5856L;
 
+    /// Linux auxv executable filename pointer type.
+    private static final long AT_EXECFN = 31;
+
     /// Linux `PR_TAGGED_ADDR_ENABLE`.
     private static final long PR_TAGGED_ADDR_ENABLE = 1;
 
@@ -1375,6 +1379,15 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The maximum guest filename length returned by `statfs`.
     private static final long STATFS_NAME_MAX = 255;
 
+    /// Linux `PROC_SUPER_MAGIC`.
+    private static final long PROC_SUPER_MAGIC = 0x9fa0L;
+
+    /// The guest path where the built-in virtual proc filesystem is mounted.
+    private static final String PROC_MOUNT_PATH = "/proc";
+
+    /// Synthetic inode base used for virtual proc entries.
+    private static final long PROC_INODE_BASE = 0x7000_0000L;
+
     /// The fixed guest process id returned by process identity syscalls.
     private static final long GUEST_PROCESS_ID = GuestProcess.PROCESS_ID;
 
@@ -1431,6 +1444,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The serialized Linux auxiliary vector returned by `PR_GET_AUXV`.
     private byte @Unmodifiable [] auxiliaryVectorBytes = encodeAuxiliaryVector(new long[]{0, 0});
+
+    /// The process command line exposed through `/proc/self/cmdline`.
+    private byte @Unmodifiable [] procCommandLineBytes = new byte[0];
+
+    /// The process environment exposed through `/proc/self/environ`.
+    private byte @Unmodifiable [] procEnvironmentBytes = new byte[0];
+
+    /// The executable path exposed through `/proc/self/exe`.
+    private String procExecutablePath = "/";
 
     /// The lowest program break accepted by the `brk` syscall.
     private final long initialProgramBreak;
@@ -1688,8 +1710,22 @@ public final class GuestSyscalls implements AutoCloseable {
         if (argumentCount < 0 || argumentCount > 65536) {
             throw new RiscVException("Initial Linux stack contains invalid argc: " + argumentCount);
         }
-        address += Long.BYTES + (argumentCount + 1L) * Long.BYTES;
+        address += Long.BYTES;
 
+        ArrayList<Long> argumentPointers = new ArrayList<>();
+        for (long index = 0; index < argumentCount; index++) {
+            if (!memory.isBacked(address, Long.BYTES)) {
+                throw new RiscVException("Initial Linux stack has a truncated argument vector");
+            }
+            argumentPointers.add(memory.readLong(address));
+            address += Long.BYTES;
+        }
+        if (!memory.isBacked(address, Long.BYTES) || memory.readLong(address) != 0) {
+            throw new RiscVException("Initial Linux stack has an unterminated argument vector");
+        }
+        address += Long.BYTES;
+
+        ArrayList<Long> environmentPointers = new ArrayList<>();
         for (int index = 0; index < 65536; index++) {
             if (!memory.isBacked(address, Long.BYTES)) {
                 throw new RiscVException("Initial Linux stack has an unterminated environment vector");
@@ -1699,10 +1735,14 @@ public final class GuestSyscalls implements AutoCloseable {
             if (environmentPointer == 0) {
                 break;
             }
+            environmentPointers.add(environmentPointer);
             if (index == 65535) {
                 throw new RiscVException("Initial Linux stack environment vector is too long");
             }
         }
+
+        procCommandLineBytes = encodeNullSeparatedStrings(argumentPointers);
+        procEnvironmentBytes = encodeNullSeparatedStrings(environmentPointers);
 
         ArrayList<Long> words = new ArrayList<>();
         for (int index = 0; index < 256; index++) {
@@ -1716,6 +1756,7 @@ public final class GuestSyscalls implements AutoCloseable {
             address += 2L * Long.BYTES;
             if (type == 0) {
                 auxiliaryVectorBytes = encodeAuxiliaryVector(words);
+                procExecutablePath = executablePathFromAuxiliaryVector(words);
                 return;
             }
         }
@@ -2350,6 +2391,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
         @Nullable TruffleFile path = openFile.path();
         @Nullable TarNode tarNode = openFile.tarNode();
+        @Nullable ProcNode procNode = openFile.procNode();
+        if (procNode != null) {
+            DirectoryEntry[] result = procDirectoryEntries(procNode);
+            openFile.setDirectoryEntries(result);
+            return result;
+        }
         if (tarNode != null) {
             DirectoryEntry[] result = tarDirectoryEntries(openFile, tarNode);
             openFile.setDirectoryEntries(result);
@@ -2386,6 +2433,23 @@ public final class GuestSyscalls implements AutoCloseable {
         entries.add(new DirectoryEntry(".", directory.inode(), DIRECTORY_ENTRY_DIRECTORY));
         entries.add(new DirectoryEntry("..", directory.parentInode(), DIRECTORY_ENTRY_DIRECTORY));
         for (TarNode child : directory.children().values()) {
+            entries.add(new DirectoryEntry(child.name(), child.inode(), child.directoryEntryType()));
+        }
+        return entries.toArray(DirectoryEntry[]::new);
+    }
+
+    /// Returns deterministic directory entries for an open proc directory.
+    private DirectoryEntry[] procDirectoryEntries(ProcNode directory) {
+        ArrayList<DirectoryEntry> entries = new ArrayList<>();
+        entries.add(new DirectoryEntry(".", directory.inode(), DIRECTORY_ENTRY_DIRECTORY));
+        ProcNode parent = procNode(procParentPath(directory.guestPath()));
+        entries.add(new DirectoryEntry(
+                "..",
+                parent == null ? directory.inode() : parent.inode(),
+                DIRECTORY_ENTRY_DIRECTORY));
+
+        ArrayList<ProcNode> childNodes = procChildNodes(directory.guestPath());
+        for (ProcNode child : childNodes) {
             entries.add(new DirectoryEntry(child.name(), child.inode(), child.directoryEntryType()));
         }
         return entries.toArray(DirectoryEntry[]::new);
@@ -2473,6 +2537,14 @@ public final class GuestSyscalls implements AutoCloseable {
             return accessTarNode(tarPath.node(), mode);
         }
 
+        @Nullable ProcPath procPath = resolveProcPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
+        if (procPath != null) {
+            return accessProcNode(procPath.node(), mode);
+        }
+
         @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
@@ -2506,7 +2578,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((mode & X_OK) != 0 && !openFile.isDirectory()) {
             return EACCES;
         }
-        if ((mode & W_OK) != 0 && openFile.isTarEntry()) {
+        if ((mode & W_OK) != 0 && (openFile.isTarEntry() || openFile.isProcEntry())) {
             return EACCES;
         }
         return 0;
@@ -2551,6 +2623,9 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         if (resolveTarPath(directoryFileDescriptor, guestPath) != null) {
+            return EROFS;
+        }
+        if (resolveProcPath(directoryFileDescriptor, guestPath) != null) {
             return EROFS;
         }
 
@@ -2600,6 +2675,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 guestPath,
                 false);
         if (tarPath != null) {
+            return EROFS;
+        }
+        if (resolveProcPath(directoryFileDescriptor, guestPath, false) != null) {
             return EROFS;
         }
 
@@ -2663,6 +2741,10 @@ public final class GuestSyscalls implements AutoCloseable {
 
         if (resolveTarPath(oldDirectoryFileDescriptor, oldGuestPath) != null
                 || resolveTarPath(newDirectoryFileDescriptor, newGuestPath) != null) {
+            return EROFS;
+        }
+        if (resolveProcPath(oldDirectoryFileDescriptor, oldGuestPath) != null
+                || resolveProcPath(newDirectoryFileDescriptor, newGuestPath) != null) {
             return EROFS;
         }
 
@@ -2740,6 +2822,9 @@ public final class GuestSyscalls implements AutoCloseable {
         if (resolveTarPath(AT_FDCWD, guestPath) != null) {
             return EROFS;
         }
+        if (resolveProcPath(AT_FDCWD, guestPath) != null) {
+            return EROFS;
+        }
 
         @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
@@ -2814,6 +2899,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return changeWorkingDirectory(tarPath);
         }
 
+        @Nullable ProcPath procPath = resolveProcPath(AT_FDCWD, guestPath);
+        if (procPath != null) {
+            return changeWorkingDirectory(procPath);
+        }
+
         @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
@@ -2833,6 +2923,14 @@ public final class GuestSyscalls implements AutoCloseable {
 
         @Nullable TarNode tarNode = openFile.tarNode();
         if (tarNode != null) {
+            @Nullable String guestPath = openFile.guestPath();
+            if (guestPath == null) {
+                return EBADF;
+            }
+            guestWorkingDirectory = guestPath;
+            return 0;
+        }
+        if (openFile.procNode() != null) {
             @Nullable String guestPath = openFile.guestPath();
             if (guestPath == null) {
                 return EBADF;
@@ -2885,6 +2983,19 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Applies a proc directory as the guest-visible current working directory.
+    private long changeWorkingDirectory(ProcPath procPath) {
+        @Nullable ProcNode node = procPath.node();
+        if (node == null) {
+            return ENOENT;
+        }
+        if (!node.isDirectory()) {
+            return ENOTDIR;
+        }
+        guestWorkingDirectory = procPath.guestPath();
+        return 0;
+    }
+
     /// Opens a host file or directory below a configured filesystem mount.
     private long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
         long accessMode = flags & O_ACCMODE;
@@ -2909,23 +3020,40 @@ public final class GuestSyscalls implements AutoCloseable {
             return EACCES;
         }
 
+        boolean create = (flags & O_CREAT) != 0;
+        boolean directoryOnly = (flags & O_DIRECTORY) != 0;
+        if (directoryOnly && create) {
+            return EINVAL;
+        }
+
+        return openMountedPath(absoluteGuestPath, flags);
+    }
+
+    /// Opens an absolute guest path below its selected filesystem mount.
+    private long openMountedPath(String absoluteGuestPath, long flags) {
+        @Nullable FilesystemMount filesystemMount = mountForGuestPath(absoluteGuestPath);
+        if (filesystemMount instanceof TarMount tarMount) {
+            return openTarPath(tarMount, absoluteGuestPath, flags);
+        }
+        if (filesystemMount instanceof ProcMount procMount) {
+            return openProcPath(procMount, absoluteGuestPath, flags);
+        }
+        if (!(filesystemMount instanceof HostMount hostMount)) {
+            return EACCES;
+        }
+
+        return openHostPath(hostMount, absoluteGuestPath, flags);
+    }
+
+    /// Opens a host file or directory below a configured host filesystem mount.
+    private long openHostPath(HostMount hostMount, String absoluteGuestPath, long flags) {
+        long accessMode = flags & O_ACCMODE;
         boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
         boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
         boolean create = (flags & O_CREAT) != 0;
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
         boolean directoryOnly = (flags & O_DIRECTORY) != 0;
-        if (directoryOnly && create) {
-            return EINVAL;
-        }
-
-        @Nullable FilesystemMount filesystemMount = mountForGuestPath(absoluteGuestPath);
-        if (filesystemMount instanceof TarMount tarMount) {
-            return openTarPath(tarMount, absoluteGuestPath, flags);
-        }
-        if (!(filesystemMount instanceof HostMount hostMount)) {
-            return EACCES;
-        }
 
         @Nullable TruffleFile hostFile = resolveHostFile(absoluteGuestPath, hostMount);
         if (hostFile == null) {
@@ -3052,6 +3180,65 @@ public final class GuestSyscalls implements AutoCloseable {
                 absoluteGuestPath,
                 new ByteArraySeekableByteChannel(node.data()),
                 true));
+    }
+
+    /// Opens a read-only file or directory from the virtual proc filesystem.
+    private long openProcPath(ProcMount mount, String absoluteGuestPath, long flags) {
+        long accessMode = flags & O_ACCMODE;
+        boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
+        boolean create = (flags & O_CREAT) != 0;
+        boolean truncate = (flags & O_TRUNC) != 0;
+        boolean append = (flags & O_APPEND) != 0;
+        boolean directoryOnly = (flags & O_DIRECTORY) != 0;
+
+        @Nullable ProcPath procPath = resolveProcPath(mount, absoluteGuestPath, true);
+        @Nullable ProcNode node = procPath == null ? null : procPath.node();
+        if (node == null) {
+            return create ? EROFS : ENOENT;
+        }
+        if (create && (flags & O_EXCL) != 0) {
+            return EEXIST;
+        }
+        if (writable || truncate || append) {
+            return EROFS;
+        }
+        if (node.isDirectory()) {
+            if (!directoryOnly) {
+                return EISDIR;
+            }
+            return addOpenFile(OpenFile.procDirectory(node, procPath.guestPath()));
+        }
+        if (node.isSymbolicLink()) {
+            return openProcLinkTarget(node, flags);
+        }
+        if (directoryOnly) {
+            return ENOTDIR;
+        }
+        if (!node.isFile()) {
+            return ENODEV;
+        }
+
+        return addOpenFile(OpenFile.procFile(
+                node,
+                procPath.guestPath(),
+                new ByteArraySeekableByteChannel(procFileData(node)),
+                true));
+    }
+
+    /// Opens the target of a proc symbolic link through normal guest path resolution.
+    private long openProcLinkTarget(ProcNode node, long flags) {
+        String target = procLinkTarget(node);
+        String targetPath = target.startsWith("/")
+                ? target
+                : appendGuestPath(procParentPath(node.guestPath()), target);
+        @Nullable String normalizedTargetPath = normalizeAbsoluteGuestPath(targetPath);
+        if (normalizedTargetPath == null) {
+            return ENOENT;
+        }
+        if (normalizedTargetPath.equals(node.guestPath())) {
+            return ELOOP;
+        }
+        return openMountedPath(normalizedTargetPath, flags);
     }
 
     /// Reads bytes from guest stdin, an open host file, or a pipe endpoint into guest memory.
@@ -3515,6 +3702,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return readlinkTarPath(tarPath.node(), bufferAddress, bufferSize);
         }
 
+        @Nullable ProcPath procPath = resolveProcPath(directoryFileDescriptor, guestPath, false);
+        if (procPath != null) {
+            return readlinkProcPath(procPath.node(), bufferAddress, bufferSize);
+        }
+
         @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
@@ -3575,6 +3767,14 @@ public final class GuestSyscalls implements AutoCloseable {
             return statTarNode(tarPath.node(), statAddress);
         }
 
+        @Nullable ProcPath procPath = resolveProcPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
+        if (procPath != null) {
+            return statProcNode(procPath.node(), statAddress);
+        }
+
         @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
@@ -3606,12 +3806,22 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
         if (openFile.isDirectory()) {
+            @Nullable ProcNode procNode = openFile.procNode();
+            if (procNode != null) {
+                writeProcStat(procNode, statAddress);
+                return 0;
+            }
             @Nullable TarNode tarNode = openFile.tarNode();
             if (tarNode != null) {
                 writeTarStat(tarNode, statAddress);
             } else {
                 writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_DIRECTORY | STAT_MODE_READ_EXECUTE_ALL, 0);
             }
+            return 0;
+        }
+        @Nullable ProcNode procNode = openFile.procNode();
+        if (procNode != null) {
+            writeProcStat(procNode, statAddress);
             return 0;
         }
         @Nullable TarNode tarNode = openFile.tarNode();
@@ -3728,6 +3938,14 @@ public final class GuestSyscalls implements AutoCloseable {
             return statxTarNode(tarPath.node(), statxAddress, flags, requestedMask);
         }
 
+        @Nullable ProcPath procPath = resolveProcPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
+        if (procPath != null) {
+            return statxProcNode(procPath.node(), statxAddress, requestedMask);
+        }
+
         @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
@@ -3759,6 +3977,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
         if (openFile.isDirectory()) {
+            @Nullable ProcNode procNode = openFile.procNode();
+            if (procNode != null) {
+                writeProcStatx(procNode, statxAddress, requestedMask);
+                return 0;
+            }
             @Nullable TarNode tarNode = openFile.tarNode();
             if (tarNode != null) {
                 writeTarStatx(tarNode, statxAddress, requestedMask);
@@ -3770,6 +3993,11 @@ public final class GuestSyscalls implements AutoCloseable {
                     STAT_MODE_DIRECTORY | STAT_MODE_READ_EXECUTE_ALL,
                     0,
                     requestedMask);
+            return 0;
+        }
+        @Nullable ProcNode procNode = openFile.procNode();
+        if (procNode != null) {
+            writeProcStatx(procNode, statxAddress, requestedMask);
             return 0;
         }
         @Nullable TarNode tarNode = openFile.tarNode();
@@ -3804,6 +4032,11 @@ public final class GuestSyscalls implements AutoCloseable {
             return tarPath.node() == null ? ENOENT : writeStatfsResult(statfsAddress);
         }
 
+        @Nullable ProcPath procPath = resolveProcPath(AT_FDCWD, guestPath);
+        if (procPath != null) {
+            return procPath.node() == null ? ENOENT : writeProcStatfsResult(statfsAddress);
+        }
+
         @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
@@ -3830,6 +4063,10 @@ public final class GuestSyscalls implements AutoCloseable {
             writeStatfs(statfsAddress);
             return 0;
         }
+        if (openFile.isProcEntry()) {
+            writeProcStatfs(statfsAddress);
+            return 0;
+        }
 
         @Nullable TruffleFile path = openFile.path();
         return path == null ? EACCES : statfsHostFile(path, statfsAddress);
@@ -3838,6 +4075,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Writes `statfs` metadata and returns a successful syscall result.
     private long writeStatfsResult(long statfsAddress) {
         writeStatfs(statfsAddress);
+        return 0;
+    }
+
+    /// Writes proc `statfs` metadata and returns a successful syscall result.
+    private long writeProcStatfsResult(long statfsAddress) {
+        writeProcStatfs(statfsAddress);
         return 0;
     }
 
@@ -3955,6 +4198,24 @@ public final class GuestSyscalls implements AutoCloseable {
         return 0;
     }
 
+    /// Checks access bits on a virtual proc filesystem node.
+    private static long accessProcNode(@Nullable ProcNode node, long mode) {
+        if (node == null) {
+            return ENOENT;
+        }
+        int permissions = node.statMode() & STAT_MODE_ALL;
+        if ((mode & R_OK) != 0 && (permissions & STAT_MODE_READ_ALL) == 0) {
+            return EACCES;
+        }
+        if ((mode & W_OK) != 0) {
+            return EACCES;
+        }
+        if ((mode & X_OK) != 0 && (permissions & 0111) == 0) {
+            return EACCES;
+        }
+        return 0;
+    }
+
     /// Reads a tar symbolic link target into guest memory.
     private long readlinkTarPath(@Nullable TarNode node, long bufferAddress, long bufferSize) {
         if (node == null) {
@@ -3965,6 +4226,22 @@ public final class GuestSyscalls implements AutoCloseable {
         }
 
         String target = node.linkTarget();
+        byte[] targetBytes = target.getBytes(StandardCharsets.UTF_8);
+        int length = Math.min(targetBytes.length, (int) bufferSize);
+        memory.writeBytes(bufferAddress, targetBytes, 0, length);
+        return length;
+    }
+
+    /// Reads a proc symbolic link target into guest memory.
+    private long readlinkProcPath(@Nullable ProcNode node, long bufferAddress, long bufferSize) {
+        if (node == null) {
+            return ENOENT;
+        }
+        if (!node.isSymbolicLink()) {
+            return EINVAL;
+        }
+
+        String target = procLinkTarget(node);
         byte[] targetBytes = target.getBytes(StandardCharsets.UTF_8);
         int length = Math.min(targetBytes.length, (int) bufferSize);
         memory.writeBytes(bufferAddress, targetBytes, 0, length);
@@ -3985,6 +4262,20 @@ public final class GuestSyscalls implements AutoCloseable {
         writeStat(statAddress, node.inode(), node.statMode(), node.size());
     }
 
+    /// Writes proc metadata for a path selected by `newfstatat`.
+    private long statProcNode(@Nullable ProcNode node, long statAddress) {
+        if (node == null) {
+            return ENOENT;
+        }
+        writeProcStat(node, statAddress);
+        return 0;
+    }
+
+    /// Writes a Linux generic 64-bit `struct stat` for a proc node.
+    private void writeProcStat(ProcNode node, long statAddress) {
+        writeStat(statAddress, node.inode(), node.statMode(), procNodeSize(node));
+    }
+
     /// Writes tar metadata for a path selected by `statx`.
     private long statxTarNode(@Nullable TarNode node, long statxAddress, long flags, long requestedMask) {
         if (node == null) {
@@ -4000,6 +4291,20 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Writes a Linux generic `struct statx` for a tar node.
     private void writeTarStatx(TarNode node, long statxAddress, long requestedMask) {
         writeStatx(statxAddress, node.inode(), node.statMode(), node.size(), requestedMask);
+    }
+
+    /// Writes proc metadata for a path selected by `statx`.
+    private long statxProcNode(@Nullable ProcNode node, long statxAddress, long requestedMask) {
+        if (node == null) {
+            return ENOENT;
+        }
+        writeProcStatx(node, statxAddress, requestedMask);
+        return 0;
+    }
+
+    /// Writes a Linux generic `struct statx` for a proc node.
+    private void writeProcStatx(ProcNode node, long statxAddress, long requestedMask) {
+        writeStatx(statxAddress, node.inode(), node.statMode(), procNodeSize(node), requestedMask);
     }
 
     /// Writes the shared subset of Linux generic 64-bit `struct stat` fields.
@@ -4044,6 +4349,21 @@ public final class GuestSyscalls implements AutoCloseable {
         memory.writeLong(statfsAddress + STATFS_BLOCKS_OFFSET, STATFS_BLOCK_COUNT);
         memory.writeLong(statfsAddress + STATFS_BLOCKS_FREE_OFFSET, STATFS_BLOCK_COUNT);
         memory.writeLong(statfsAddress + STATFS_BLOCKS_AVAILABLE_OFFSET, STATFS_BLOCK_COUNT);
+        memory.writeLong(statfsAddress + STATFS_FILES_OFFSET, STATFS_FILE_COUNT);
+        memory.writeLong(statfsAddress + STATFS_FILES_FREE_OFFSET, STATFS_FILE_COUNT);
+        memory.writeLong(statfsAddress + STATFS_NAME_LENGTH_OFFSET, STATFS_NAME_MAX);
+        memory.writeLong(statfsAddress + STATFS_FRAGMENT_SIZE_OFFSET, STATFS_BLOCK_SIZE);
+        memory.writeLong(statfsAddress + STATFS_FLAGS_OFFSET, 0);
+    }
+
+    /// Writes deterministic procfs Linux generic 64-bit `struct statfs` fields.
+    private void writeProcStatfs(long statfsAddress) {
+        memory.clear(statfsAddress, STATFS_SIZE);
+        memory.writeLong(statfsAddress + STATFS_TYPE_OFFSET, PROC_SUPER_MAGIC);
+        memory.writeLong(statfsAddress + STATFS_BLOCK_SIZE_OFFSET, STATFS_BLOCK_SIZE);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_OFFSET, 0);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_FREE_OFFSET, 0);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_AVAILABLE_OFFSET, 0);
         memory.writeLong(statfsAddress + STATFS_FILES_OFFSET, STATFS_FILE_COUNT);
         memory.writeLong(statfsAddress + STATFS_FILES_FREE_OFFSET, STATFS_FILE_COUNT);
         memory.writeLong(statfsAddress + STATFS_NAME_LENGTH_OFFSET, STATFS_NAME_MAX);
@@ -5839,6 +6159,110 @@ public final class GuestSyscalls implements AutoCloseable {
         return null;
     }
 
+    /// Resolves a guest path below the built-in virtual proc filesystem.
+    private @Nullable ProcPath resolveProcPath(long directoryFileDescriptor, String guestPath) {
+        return resolveProcPath(directoryFileDescriptor, guestPath, true);
+    }
+
+    /// Resolves a guest path below the built-in virtual proc filesystem.
+    private @Nullable ProcPath resolveProcPath(
+            long directoryFileDescriptor,
+            String guestPath,
+            boolean followFinalSymbolicLink) {
+        @Nullable String absoluteGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
+        if (absoluteGuestPath == null) {
+            return null;
+        }
+
+        @Nullable FilesystemMount mount = mountForGuestPath(absoluteGuestPath);
+        if (!(mount instanceof ProcMount procMount)) {
+            return null;
+        }
+
+        return resolveProcPath(procMount, absoluteGuestPath, followFinalSymbolicLink);
+    }
+
+    /// Resolves an absolute guest path below the built-in virtual proc filesystem.
+    private @Nullable ProcPath resolveProcPath(
+            ProcMount procMount,
+            String absoluteGuestPath,
+            boolean followFinalSymbolicLink) {
+        @Nullable String currentGuestPath = normalizeAbsoluteGuestPath(absoluteGuestPath);
+        if (currentGuestPath == null) {
+            return null;
+        }
+
+        int symbolicLinks = 0;
+        while (true) {
+            @Nullable FilesystemMount mount = mountForGuestPath(currentGuestPath);
+            if (!(mount instanceof ProcMount currentMount)) {
+                return null;
+            }
+
+            String relativePath = relativeGuestPath(currentGuestPath, currentMount.guestPath());
+            ProcNode currentNode = procNode(currentMount.guestPath());
+            assert currentNode != null;
+            String currentDirectoryGuestPath = currentMount.guestPath();
+            if (relativePath.isEmpty()) {
+                return new ProcPath(currentGuestPath, currentMount, currentNode);
+            }
+
+            String[] segments = relativePath.split("/");
+            for (int index = 0; index < segments.length; index++) {
+                if (!currentNode.isDirectory()) {
+                    return new ProcPath(currentGuestPath, procMount, null);
+                }
+
+                String segment = segments[index];
+                @Nullable String childGuestPath = normalizeAbsoluteGuestPath(
+                        "/".equals(currentDirectoryGuestPath)
+                                ? "/" + segment
+                                : currentDirectoryGuestPath + "/" + segment);
+                if (childGuestPath == null) {
+                    return new ProcPath(currentGuestPath, procMount, null);
+                }
+
+                @Nullable ProcNode child = procNode(childGuestPath);
+                if (child == null) {
+                    return new ProcPath(currentGuestPath, procMount, null);
+                }
+
+                boolean finalSegment = index == segments.length - 1;
+                if (child.isSymbolicLink() && (!finalSegment || followFinalSymbolicLink)) {
+                    symbolicLinks++;
+                    if (symbolicLinks > SYMBOLIC_LINK_LIMIT) {
+                        return new ProcPath(currentGuestPath, procMount, null);
+                    }
+
+                    String target = procLinkTarget(child);
+                    String targetPath = target.startsWith("/")
+                            ? target
+                            : appendGuestPath(currentDirectoryGuestPath, target);
+                    String remainingPath = joinRemainingSegments(segments, index + 1);
+                    if (!remainingPath.isEmpty()) {
+                        targetPath = appendGuestPath(targetPath, remainingPath);
+                    }
+                    @Nullable String normalizedTargetPath = normalizeAbsoluteGuestPath(targetPath);
+                    if (normalizedTargetPath == null) {
+                        return new ProcPath(absoluteGuestPath, procMount, null);
+                    }
+                    if (finalSegment && !(mountForGuestPath(normalizedTargetPath) instanceof ProcMount)) {
+                        return new ProcPath(childGuestPath, currentMount, child);
+                    }
+                    currentGuestPath = normalizedTargetPath;
+                    break;
+                }
+
+                currentNode = child;
+                if (!finalSegment) {
+                    currentDirectoryGuestPath = childGuestPath;
+                } else {
+                    return new ProcPath(currentGuestPath, currentMount, currentNode);
+                }
+            }
+        }
+    }
+
     /// Reads a little-endian 64-bit value without requiring guest alignment.
     private long readLongUnaligned(long address) {
         long value = 0;
@@ -5855,6 +6279,347 @@ public final class GuestSyscalls implements AutoCloseable {
             bytes[index] = (byte) (value >>> (index * Byte.SIZE));
         }
         memory.writeBytes(address, bytes, 0, bytes.length);
+    }
+
+    /// Returns the proc node at an absolute guest path, or null when it is absent.
+    private @Nullable ProcNode procNode(String absoluteGuestPath) {
+        @Nullable String path = normalizeAbsoluteGuestPath(absoluteGuestPath);
+        if (path == null || !guestPathMatchesMount(path, PROC_MOUNT_PATH)) {
+            return null;
+        }
+
+        if (PROC_MOUNT_PATH.equals(path)) {
+            return ProcNode.directory(path);
+        }
+        if ((PROC_MOUNT_PATH + "/self").equals(path)) {
+            return ProcNode.symbolicLink(path, Long.toString(GUEST_PROCESS_ID));
+        }
+        if ((PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID).equals(path)) {
+            return ProcNode.directory(path);
+        }
+        if ((PROC_MOUNT_PATH + "/cpuinfo").equals(path)) {
+            return ProcNode.file(path, ProcFile.CPUINFO);
+        }
+        if ((PROC_MOUNT_PATH + "/meminfo").equals(path)) {
+            return ProcNode.file(path, ProcFile.MEMINFO);
+        }
+        if ((PROC_MOUNT_PATH + "/stat").equals(path)) {
+            return ProcNode.file(path, ProcFile.STAT);
+        }
+        if ((PROC_MOUNT_PATH + "/uptime").equals(path)) {
+            return ProcNode.file(path, ProcFile.UPTIME);
+        }
+        if ((PROC_MOUNT_PATH + "/version").equals(path)) {
+            return ProcNode.file(path, ProcFile.VERSION);
+        }
+
+        String processPrefix = PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID;
+        if ((processPrefix + "/auxv").equals(path)) {
+            return ProcNode.file(path, ProcFile.AUXV);
+        }
+        if ((processPrefix + "/cmdline").equals(path)) {
+            return ProcNode.file(path, ProcFile.CMDLINE);
+        }
+        if ((processPrefix + "/cwd").equals(path)) {
+            return ProcNode.symbolicLink(path, guestWorkingDirectory);
+        }
+        if ((processPrefix + "/environ").equals(path)) {
+            return ProcNode.file(path, ProcFile.ENVIRON);
+        }
+        if ((processPrefix + "/exe").equals(path)) {
+            return ProcNode.symbolicLink(path, procExecutablePath);
+        }
+        if ((processPrefix + "/fd").equals(path)) {
+            return ProcNode.directory(path);
+        }
+        if (path.startsWith(processPrefix + "/fd/")) {
+            @Nullable Integer fileDescriptor = parseProcFileDescriptor(path.substring((processPrefix + "/fd/").length()));
+            if (fileDescriptor == null || !isOpenFileDescriptor(fileDescriptor)) {
+                return null;
+            }
+            return ProcNode.symbolicLink(path, procFileDescriptorTarget(fileDescriptor));
+        }
+        if ((processPrefix + "/maps").equals(path)) {
+            return ProcNode.file(path, ProcFile.MAPS);
+        }
+        if ((processPrefix + "/root").equals(path)) {
+            return ProcNode.symbolicLink(path, "/");
+        }
+        if ((processPrefix + "/stat").equals(path)) {
+            return ProcNode.file(path, ProcFile.PROCESS_STAT);
+        }
+        if ((processPrefix + "/status").equals(path)) {
+            return ProcNode.file(path, ProcFile.STATUS);
+        }
+
+        return null;
+    }
+
+    /// Returns child proc nodes for a directory.
+    private ArrayList<ProcNode> procChildNodes(String directoryGuestPath) {
+        ArrayList<ProcNode> children = new ArrayList<>();
+        if (PROC_MOUNT_PATH.equals(directoryGuestPath)) {
+            addProcChild(children, PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID);
+            addProcChild(children, PROC_MOUNT_PATH + "/cpuinfo");
+            addProcChild(children, PROC_MOUNT_PATH + "/meminfo");
+            addProcChild(children, PROC_MOUNT_PATH + "/self");
+            addProcChild(children, PROC_MOUNT_PATH + "/stat");
+            addProcChild(children, PROC_MOUNT_PATH + "/uptime");
+            addProcChild(children, PROC_MOUNT_PATH + "/version");
+            return children;
+        }
+
+        String processPrefix = PROC_MOUNT_PATH + "/" + GUEST_PROCESS_ID;
+        if (processPrefix.equals(directoryGuestPath)) {
+            addProcChild(children, processPrefix + "/auxv");
+            addProcChild(children, processPrefix + "/cmdline");
+            addProcChild(children, processPrefix + "/cwd");
+            addProcChild(children, processPrefix + "/environ");
+            addProcChild(children, processPrefix + "/exe");
+            addProcChild(children, processPrefix + "/fd");
+            addProcChild(children, processPrefix + "/maps");
+            addProcChild(children, processPrefix + "/root");
+            addProcChild(children, processPrefix + "/stat");
+            addProcChild(children, processPrefix + "/status");
+            return children;
+        }
+
+        if ((processPrefix + "/fd").equals(directoryGuestPath)) {
+            for (int fileDescriptor = 0; fileDescriptor <= 2; fileDescriptor++) {
+                addProcChild(children, directoryGuestPath + "/" + fileDescriptor);
+            }
+            for (int index = 0; index < openFiles.size(); index++) {
+                if (openFiles.get(index) != null) {
+                    addProcChild(children, directoryGuestPath + "/" + (index + 3));
+                }
+            }
+        }
+        return children;
+    }
+
+    /// Adds an existing proc child to a directory listing.
+    private void addProcChild(ArrayList<ProcNode> children, String guestPath) {
+        @Nullable ProcNode node = procNode(guestPath);
+        if (node != null) {
+            children.add(node);
+        }
+    }
+
+    /// Returns generated file bytes for a proc regular file.
+    private byte @Unmodifiable [] procFileData(ProcNode node) {
+        ProcFile file = node.file();
+        if (file == null) {
+            return new byte[0];
+        }
+
+        return switch (file) {
+            case AUXV -> auxiliaryVectorBytes.clone();
+            case CMDLINE -> procCommandLineBytes.clone();
+            case CPUINFO -> asciiBytes(procCpuinfo());
+            case ENVIRON -> procEnvironmentBytes.clone();
+            case MAPS -> asciiBytes(procMaps());
+            case MEMINFO -> asciiBytes(procMeminfo());
+            case PROCESS_STAT -> asciiBytes(procProcessStat());
+            case STAT -> asciiBytes(procStat());
+            case STATUS -> asciiBytes(procStatus());
+            case UPTIME -> asciiBytes(procUptime());
+            case VERSION -> asciiBytes("Linux version 6.12.0 (graalriscv) #1 SMP riscv64\n");
+        };
+    }
+
+    /// Returns the byte size exposed for a proc node.
+    private long procNodeSize(ProcNode node) {
+        if (node.isFile()) {
+            return procFileData(node).length;
+        }
+        if (node.isSymbolicLink()) {
+            return procLinkTarget(node).getBytes(StandardCharsets.UTF_8).length;
+        }
+        return 0;
+    }
+
+    /// Returns the symbolic-link target for a proc node.
+    private String procLinkTarget(ProcNode node) {
+        @Nullable String target = node.linkTarget();
+        return target == null ? "" : target;
+    }
+
+    /// Returns the target exposed by `/proc/self/fd/<n>`.
+    private String procFileDescriptorTarget(int fileDescriptor) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        if (standardFileDescriptor == 0) {
+            return "/dev/stdin";
+        }
+        if (standardFileDescriptor == 1) {
+            return "/dev/stdout";
+        }
+        if (standardFileDescriptor == 2) {
+            return "/dev/stderr";
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return "/dev/null";
+        }
+        @Nullable String guestPath = openFile.guestPath();
+        if (guestPath != null) {
+            return guestPath;
+        }
+        if (openFile.isPipe()) {
+            return "pipe:[" + fileDescriptor + "]";
+        }
+        if (openFile.isEventFile()) {
+            return "anon_inode:[eventfd]";
+        }
+        if (openFile.isEpollFile()) {
+            return "anon_inode:[eventpoll]";
+        }
+        return "anon_inode:[graalriscv]";
+    }
+
+    /// Parses a decimal file descriptor from a proc path segment.
+    private static @Nullable Integer parseProcFileDescriptor(String value) {
+        if (value.isEmpty()) {
+            return null;
+        }
+        int result = 0;
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
+            if (ch < '0' || ch > '9') {
+                return null;
+            }
+            int digit = ch - '0';
+            if (result > (Integer.MAX_VALUE - digit) / 10) {
+                return null;
+            }
+            result = result * 10 + digit;
+        }
+        return result;
+    }
+
+    /// Returns the final segment for a proc path.
+    private static String procLeafName(String guestPath) {
+        int separator = guestPath.lastIndexOf('/');
+        return separator < 0 ? guestPath : guestPath.substring(separator + 1);
+    }
+
+    /// Returns the parent path for a proc path without escaping `/proc`.
+    private static String procParentPath(String guestPath) {
+        if (PROC_MOUNT_PATH.equals(guestPath)) {
+            return PROC_MOUNT_PATH;
+        }
+        int separator = guestPath.lastIndexOf('/');
+        if (separator <= PROC_MOUNT_PATH.length()) {
+            return PROC_MOUNT_PATH;
+        }
+        return guestPath.substring(0, separator);
+    }
+
+    /// Encodes US-ASCII proc text.
+    private static byte @Unmodifiable [] asciiBytes(String value) {
+        return value.getBytes(StandardCharsets.US_ASCII);
+    }
+
+    /// Returns `/proc/cpuinfo` content.
+    private static String procCpuinfo() {
+        return "processor\t: 0\n"
+                + "hart\t\t: 0\n"
+                + "isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"
+                + "mmu\t\t: sv57\n"
+                + "uarch\t\t: graalriscv\n";
+    }
+
+    /// Returns `/proc/meminfo` content.
+    private String procMeminfo() {
+        long totalKiB = Math.max(1L, memory.size() / 1024L);
+        long freeKiB = Math.max(1L, (memory.endAddress() - programBreak) / 1024L);
+        return "MemTotal:       " + totalKiB + " kB\n"
+                + "MemFree:        " + freeKiB + " kB\n"
+                + "MemAvailable:   " + freeKiB + " kB\n"
+                + "Buffers:        0 kB\n"
+                + "Cached:         0 kB\n";
+    }
+
+    /// Returns `/proc/stat` content.
+    private String procStat() {
+        long ticks = elapsedClockTicks();
+        return "cpu  " + ticks + " 0 0 0 0 0 0 0 0 0\n"
+                + "cpu0 " + ticks + " 0 0 0 0 0 0 0 0 0\n"
+                + "intr 0\n"
+                + "ctxt 0\n"
+                + "btime 0\n"
+                + "processes 1\n"
+                + "procs_running 1\n"
+                + "procs_blocked 0\n";
+    }
+
+    /// Returns `/proc/uptime` content.
+    private String procUptime() {
+        long nanoseconds = Math.max(0L, elapsedDuration().toNanos());
+        long seconds = nanoseconds / NANOSECONDS_PER_SECOND;
+        long centiseconds = nanoseconds % NANOSECONDS_PER_SECOND / 10_000_000L;
+        return seconds + "." + twoDigits(centiseconds) + " " + seconds + "." + twoDigits(centiseconds) + "\n";
+    }
+
+    /// Returns `/proc/self/maps` content for tracked anonymous mappings.
+    private String procMaps() {
+        StringBuilder builder = new StringBuilder();
+        for (MemoryMapping mapping : memoryMappings) {
+            builder.append(Long.toUnsignedString(mapping.address(), 16))
+                    .append('-')
+                    .append(Long.toUnsignedString(mapping.endAddress(), 16))
+                    .append(' ')
+                    .append(memoryProtectionString(mapping.protection()))
+                    .append(" 00000000 00:00 0\n");
+        }
+        return builder.toString();
+    }
+
+    /// Returns `/proc/self/stat` content.
+    private String procProcessStat() {
+        long ticks = elapsedClockTicks();
+        return GUEST_PROCESS_ID + " (" + processNameString() + ") R "
+                + GUEST_PARENT_PROCESS_ID + ' '
+                + GUEST_PROCESS_GROUP_ID + ' '
+                + GUEST_PROCESS_GROUP_ID
+                + " 0 -1 0 0 0 0 0 "
+                + ticks + ' ' + ticks
+                + " 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n";
+    }
+
+    /// Returns `/proc/self/status` content.
+    private String procStatus() {
+        return "Name:\t" + processNameString() + "\n"
+                + "State:\tR (running)\n"
+                + "Tgid:\t" + GUEST_PROCESS_ID + "\n"
+                + "Pid:\t" + GUEST_PROCESS_ID + "\n"
+                + "PPid:\t" + GUEST_PARENT_PROCESS_ID + "\n"
+                + "TracerPid:\t0\n"
+                + "Uid:\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\t" + GUEST_USER_ID + "\n"
+                + "Gid:\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\t" + GUEST_GROUP_ID + "\n"
+                + "Threads:\t" + process.threadCount() + "\n";
+    }
+
+    /// Returns the current process name without trailing nul bytes.
+    private String processNameString() {
+        int length = 0;
+        while (length < processName.length && processName[length] != 0) {
+            length++;
+        }
+        return length == 0 ? "graalriscv" : new String(processName, 0, length, StandardCharsets.US_ASCII);
+    }
+
+    /// Formats a two-digit non-negative decimal number below 100.
+    private static String twoDigits(long value) {
+        return value < 10 ? "0" + value : Long.toString(value);
+    }
+
+    /// Returns Linux `maps` permission text for a memory protection mask.
+    private static String memoryProtectionString(long protection) {
+        return ((protection & Memory.PROTECTION_READ) != 0 ? "r" : "-")
+                + ((protection & Memory.PROTECTION_WRITE) != 0 ? "w" : "-")
+                + ((protection & Memory.PROTECTION_EXECUTE) != 0 ? "x" : "-")
+                + "p";
     }
 
     /// Returns true when a non-empty guest path can be resolved from the supplied directory descriptor.
@@ -6185,6 +6950,41 @@ public final class GuestSyscalls implements AutoCloseable {
         return bytes;
     }
 
+    /// Encodes guest strings referenced by pointers as nul-separated procfs bytes.
+    private byte @Unmodifiable [] encodeNullSeparatedStrings(ArrayList<Long> pointers) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        for (long pointer : pointers) {
+            byte[] stringBytes = readGuestCStringBytes(pointer, 64 * 1024);
+            output.writeBytes(stringBytes);
+            output.write(0);
+        }
+        return output.toByteArray();
+    }
+
+    /// Reads the executable path pointer from a captured auxiliary vector.
+    private String executablePathFromAuxiliaryVector(ArrayList<Long> words) {
+        for (int index = 0; index + 1 < words.size(); index += 2) {
+            if (words.get(index) == AT_EXECFN) {
+                byte[] bytes = readGuestCStringBytes(words.get(index + 1), PATH_MAX);
+                return bytes.length == 0 ? "/" : new String(bytes, StandardCharsets.UTF_8);
+            }
+        }
+        return "/";
+    }
+
+    /// Reads a nul-terminated guest string as raw bytes with a defensive maximum length.
+    private byte @Unmodifiable [] readGuestCStringBytes(long address, int maximumLength) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        for (int index = 0; index < maximumLength; index++) {
+            int value = memory.readUnsignedByte(address + index);
+            if (value == 0) {
+                return output.toByteArray();
+            }
+            output.write(value);
+        }
+        return output.toByteArray();
+    }
+
     /// Writes one little-endian 64-bit value into a host byte array.
     private static void writeLittleEndianLong(byte[] bytes, int offset, long value) {
         for (int index = 0; index < Long.BYTES; index++) {
@@ -6264,10 +7064,15 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns resolved filesystem mounts, resolving lazy Truffle files when needed.
     private FilesystemMount @Unmodifiable [] currentFilesystemMounts() {
         if (filesystemMounts != null) {
+            if (!hasMountAt(filesystemMounts, PROC_MOUNT_PATH)) {
+                FilesystemMount[] mounts = Arrays.copyOf(filesystemMounts, filesystemMounts.length + 1);
+                mounts[filesystemMounts.length] = new ProcMount(PROC_MOUNT_PATH);
+                filesystemMounts = mounts;
+            }
             return filesystemMounts;
         }
         if (env == null) {
-            filesystemMounts = new FilesystemMount[0];
+            filesystemMounts = new FilesystemMount[]{new ProcMount(PROC_MOUNT_PATH)};
             return filesystemMounts;
         }
 
@@ -6278,8 +7083,31 @@ public final class GuestSyscalls implements AutoCloseable {
                 mounts.add(mount);
             }
         }
+        if (!hasMountAt(mounts, PROC_MOUNT_PATH)) {
+            mounts.add(new ProcMount(PROC_MOUNT_PATH));
+        }
         filesystemMounts = mounts.toArray(FilesystemMount[]::new);
         return filesystemMounts;
+    }
+
+    /// Returns true when a mount array contains a mount exactly at the supplied guest path.
+    private static boolean hasMountAt(FilesystemMount @Unmodifiable [] mounts, String guestPath) {
+        for (FilesystemMount mount : mounts) {
+            if (mount.guestPath().equals(guestPath)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Returns true when a mount exists exactly at the supplied guest path.
+    private static boolean hasMountAt(ArrayList<FilesystemMount> mounts, String guestPath) {
+        for (FilesystemMount mount : mounts) {
+            if (mount.guestPath().equals(guestPath)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Resolves all configured filesystem mount specs.
@@ -7179,6 +8007,138 @@ public final class GuestSyscalls implements AutoCloseable {
     private record TarPath(String guestPath, TarMount mount, @Nullable TarNode node) {
     }
 
+    /// Describes the built-in virtual proc filesystem mount.
+    ///
+    /// @param guestPath the absolute guest-visible mount point
+    @NotNullByDefault
+    private record ProcMount(String guestPath) implements FilesystemMount {
+    }
+
+    /// Stores a guest path resolved against the virtual proc filesystem.
+    ///
+    /// @param guestPath the absolute guest path that was resolved
+    /// @param mount the proc mount selected for the path
+    /// @param node the proc node selected for the path, or null when the path is absent
+    @NotNullByDefault
+    private record ProcPath(String guestPath, ProcMount mount, @Nullable ProcNode node) {
+    }
+
+    /// Identifies proc regular files whose payload is generated on demand.
+    private enum ProcFile {
+        /// `/proc/cpuinfo`.
+        CPUINFO,
+
+        /// `/proc/meminfo`.
+        MEMINFO,
+
+        /// `/proc/stat`.
+        STAT,
+
+        /// `/proc/uptime`.
+        UPTIME,
+
+        /// `/proc/version`.
+        VERSION,
+
+        /// `/proc/self/auxv`.
+        AUXV,
+
+        /// `/proc/self/cmdline`.
+        CMDLINE,
+
+        /// `/proc/self/environ`.
+        ENVIRON,
+
+        /// `/proc/self/maps`.
+        MAPS,
+
+        /// `/proc/self/stat`.
+        PROCESS_STAT,
+
+        /// `/proc/self/status`.
+        STATUS
+    }
+
+    /// Stores one virtual proc filesystem node.
+    ///
+    /// @param name the node name without path separators
+    /// @param guestPath the absolute guest-visible path for this node
+    /// @param directoryEntryType the Linux directory entry type exposed for this node
+    /// @param statType the file-type bits exposed through metadata syscalls
+    /// @param permissions the Linux permission bits for this node
+    /// @param file the generated file payload kind, or null for non-file nodes
+    /// @param linkTarget the symbolic link target, or null for non-link nodes
+    @NotNullByDefault
+    private record ProcNode(
+            String name,
+            String guestPath,
+            byte directoryEntryType,
+            int statType,
+            int permissions,
+            @Nullable ProcFile file,
+            @Nullable String linkTarget) {
+        /// Creates a proc directory node.
+        static ProcNode directory(String guestPath) {
+            return new ProcNode(
+                    procLeafName(guestPath),
+                    guestPath,
+                    DIRECTORY_ENTRY_DIRECTORY,
+                    STAT_MODE_DIRECTORY,
+                    STAT_MODE_READ_EXECUTE_ALL,
+                    null,
+                    null);
+        }
+
+        /// Creates a proc regular-file node.
+        static ProcNode file(String guestPath, ProcFile file) {
+            return new ProcNode(
+                    procLeafName(guestPath),
+                    guestPath,
+                    DIRECTORY_ENTRY_REGULAR_FILE,
+                    STAT_MODE_REGULAR_FILE,
+                    STAT_MODE_READ_ALL,
+                    file,
+                    null);
+        }
+
+        /// Creates a proc symbolic-link node.
+        static ProcNode symbolicLink(String guestPath, String linkTarget) {
+            return new ProcNode(
+                    procLeafName(guestPath),
+                    guestPath,
+                    DIRECTORY_ENTRY_SYMBOLIC_LINK,
+                    STAT_MODE_SYMBOLIC_LINK,
+                    STAT_MODE_ALL,
+                    null,
+                    linkTarget);
+        }
+
+        /// Returns true when this node is a directory.
+        boolean isDirectory() {
+            return directoryEntryType == DIRECTORY_ENTRY_DIRECTORY;
+        }
+
+        /// Returns true when this node is a regular file.
+        boolean isFile() {
+            return directoryEntryType == DIRECTORY_ENTRY_REGULAR_FILE;
+        }
+
+        /// Returns true when this node is a symbolic link.
+        boolean isSymbolicLink() {
+            return directoryEntryType == DIRECTORY_ENTRY_SYMBOLIC_LINK;
+        }
+
+        /// Returns the Linux `st_mode` value for this node.
+        int statMode() {
+            return statType | permissions;
+        }
+
+        /// Returns a deterministic synthetic inode for this node.
+        long inode() {
+            return PROC_INODE_BASE + Integer.toUnsignedLong(guestPath.hashCode());
+        }
+    }
+
     /// Stores an in-memory read-only filesystem built from a tar archive.
     @NotNullByDefault
     private static final class TarFileSystem {
@@ -7642,6 +8602,9 @@ public final class GuestSyscalls implements AutoCloseable {
         /// The tar node backing this descriptor, or null for non-tar entries.
         private final @Nullable TarNode tarNode;
 
+        /// The proc node backing this descriptor, or null for non-proc entries.
+        private final @Nullable ProcNode procNode;
+
         /// The host file channel backing a regular host or tar file descriptor.
         private final @Nullable SeekableByteChannel channel;
 
@@ -7690,6 +8653,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 @Nullable TruffleFile path,
                 @Nullable String guestPath,
                 @Nullable TarNode tarNode,
+                @Nullable ProcNode procNode,
                 @Nullable SeekableByteChannel channel,
                 @Nullable PipeBuffer pipe,
                 @Nullable EventCounter eventCounter,
@@ -7705,6 +8669,7 @@ public final class GuestSyscalls implements AutoCloseable {
             this.path = path;
             this.guestPath = guestPath;
             this.tarNode = tarNode;
+            this.procNode = procNode;
             this.channel = channel;
             this.pipe = pipe;
             this.eventCounter = eventCounter;
@@ -7731,6 +8696,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     path,
                     guestPath,
                     null,
+                    null,
                     channel,
                     null,
                     null,
@@ -7755,6 +8721,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
                     true,
                     false,
                     false,
@@ -7771,6 +8738,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     guestPath,
                     node,
+                    null,
                     channel,
                     null,
                     null,
@@ -7790,6 +8758,49 @@ public final class GuestSyscalls implements AutoCloseable {
                     -1,
                     null,
                     guestPath,
+                    node,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    true,
+                    false,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false);
+        }
+
+        /// Creates an entry backed by a read-only proc file.
+        static OpenFile procFile(ProcNode node, String guestPath, SeekableByteChannel channel, boolean readable) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    guestPath,
+                    null,
+                    node,
+                    channel,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    false,
+                    readable,
+                    false,
+                    false,
+                    false);
+        }
+
+        /// Creates an entry backed by a proc directory.
+        static OpenFile procDirectory(ProcNode node, String guestPath) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    guestPath,
+                    null,
                     node,
                     null,
                     null,
@@ -7815,6 +8826,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
                     false,
                     false,
                     false,
@@ -7828,6 +8840,7 @@ public final class GuestSyscalls implements AutoCloseable {
         static OpenFile pipeReader(PipeBuffer pipe, boolean nonblocking) {
             return new OpenFile(
                     -1,
+                    null,
                     null,
                     null,
                     null,
@@ -7848,6 +8861,7 @@ public final class GuestSyscalls implements AutoCloseable {
         static OpenFile pipeWriter(PipeBuffer pipe, boolean nonblocking) {
             return new OpenFile(
                     -1,
+                    null,
                     null,
                     null,
                     null,
@@ -7873,6 +8887,7 @@ public final class GuestSyscalls implements AutoCloseable {
                     null,
                     null,
                     null,
+                    null,
                     eventCounter,
                     null,
                     false,
@@ -7888,6 +8903,7 @@ public final class GuestSyscalls implements AutoCloseable {
         static OpenFile epollFile(EpollSet epollSet) {
             return new OpenFile(
                     -1,
+                    null,
                     null,
                     null,
                     null,
@@ -7988,9 +9004,19 @@ public final class GuestSyscalls implements AutoCloseable {
             return tarNode;
         }
 
+        /// Returns the proc node backing this descriptor.
+        @Nullable ProcNode procNode() {
+            return procNode;
+        }
+
         /// Returns true when this entry is backed by a tar filesystem node.
         boolean isTarEntry() {
             return tarNode != null;
+        }
+
+        /// Returns true when this entry is backed by a proc filesystem node.
+        boolean isProcEntry() {
+            return procNode != null;
         }
 
         /// Returns true when reads are permitted.
