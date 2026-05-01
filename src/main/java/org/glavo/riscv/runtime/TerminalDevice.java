@@ -60,6 +60,7 @@ final class TerminalDevice implements AutoCloseable {
     /// Creates a terminal device backed by the supplied backend.
     private TerminalDevice(Backend backend) {
         this.backend = backend;
+        backend.readTermios(termios);
     }
 
     /// Creates a terminal device using a host tty when requested and available.
@@ -91,13 +92,15 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Writes the current guest-visible `struct termios`.
     void writeTermios(Memory memory, long address) {
+        backend.readTermios(termios);
         memory.writeBytes(address, termios, 0, termios.length);
     }
 
     /// Replaces the current guest-visible `struct termios`.
-    void readTermios(Memory memory, long address) {
+    void readTermios(Memory memory, long address, long request) {
         byte[] bytes = memory.readBytes(address, TERMIOS_SIZE);
         System.arraycopy(bytes, 0, termios, 0, termios.length);
+        backend.writeTermios(termios, request);
     }
 
     /// Writes the current guest-visible `struct winsize`.
@@ -141,6 +144,14 @@ final class TerminalDevice implements AutoCloseable {
 
         /// Returns the host terminal window size, or null when unavailable.
         @Nullable WindowSize windowSize();
+
+        /// Reads a native terminal `struct termios` image into `buffer` when supported.
+        default void readTermios(byte[] buffer) {
+        }
+
+        /// Applies a native terminal `struct termios` image when supported.
+        default void writeTermios(byte[] buffer, long request) {
+        }
 
         /// Closes any backend-owned resources.
         @Override
@@ -188,7 +199,20 @@ final class TerminalDevice implements AutoCloseable {
     /// Implements terminal I/O by calling POSIX terminal functions through the foreign-function API.
     ///
     /// @param fileDescriptor the host file descriptor for `/dev/tty`
-    private record PosixBackend(int fileDescriptor) implements Backend {
+    /// @param originalTermios the host terminal settings captured before guest changes
+    private record PosixBackend(int fileDescriptor, byte @Nullable [] originalTermios) implements Backend {
+        /// The Linux generic tty `TCGETS` ioctl request.
+        private static final long TCGETS = 0x5401;
+
+        /// The Linux generic tty `TCSETS` ioctl request.
+        private static final long TCSETS = 0x5402;
+
+        /// The Linux generic tty `TCSETSW` ioctl request.
+        private static final long TCSETSW = 0x5403;
+
+        /// The Linux generic tty `TCSETSF` ioctl request.
+        private static final long TCSETSF = 0x5404;
+
         /// The Linux `TIOCGWINSZ` ioctl request.
         private static final long TIOCGWINSZ = 0x5413;
 
@@ -204,7 +228,10 @@ final class TerminalDevice implements AutoCloseable {
                 int fileDescriptor = (int) PosixHandles.OPEN.invokeExact(
                         path,
                         POSIX_OPEN_READ_WRITE | POSIX_OPEN_NO_CONTROL_TTY);
-                return fileDescriptor < 0 ? null : new PosixBackend(fileDescriptor);
+                if (fileDescriptor < 0) {
+                    return null;
+                }
+                return new PosixBackend(fileDescriptor, nativeTermios(fileDescriptor));
             } catch (Throwable exception) {
                 return null;
             }
@@ -268,18 +295,76 @@ final class TerminalDevice implements AutoCloseable {
             }
         }
 
+        /// Reads the host terminal `struct termios` byte image.
+        @Override
+        public void readTermios(byte[] buffer) {
+            byte @Nullable [] bytes = nativeTermios(fileDescriptor);
+            if (bytes == null) {
+                return;
+            }
+            System.arraycopy(bytes, 0, buffer, 0, Math.min(bytes.length, buffer.length));
+        }
+
+        /// Applies the supplied `struct termios` byte image to the host terminal.
+        @Override
+        public void writeTermios(byte[] buffer, long request) {
+            if (request != TCSETS && request != TCSETSW && request != TCSETSF) {
+                return;
+            }
+            writeNativeTermios(fileDescriptor, request, buffer);
+        }
+
         /// Closes the host terminal file descriptor.
         @Override
         public void close() throws IOException {
+            @Nullable IOException failure = null;
+            if (originalTermios != null && !writeNativeTermios(fileDescriptor, TCSETS, originalTermios)) {
+                failure = new IOException("restore(/dev/tty) failed");
+            }
             try {
                 int result = (int) PosixHandles.CLOSE.invokeExact(fileDescriptor);
                 if (result != 0) {
-                    throw new IOException("close(/dev/tty) failed");
+                    IOException closeFailure = new IOException("close(/dev/tty) failed");
+                    if (failure != null) {
+                        closeFailure.addSuppressed(failure);
+                    }
+                    throw closeFailure;
                 }
             } catch (IOException exception) {
                 throw exception;
             } catch (Throwable exception) {
                 throw new IOException("close(/dev/tty) failed", exception);
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        /// Reads a native `struct termios` byte image from a host terminal descriptor.
+        private static byte @Nullable [] nativeTermios(int fileDescriptor) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment segment = arena.allocate(TERMIOS_SIZE);
+                int result = (int) PosixHandles.IOCTL.invokeExact(fileDescriptor, TCGETS, segment);
+                if (result != 0) {
+                    return null;
+                }
+                byte[] bytes = new byte[TERMIOS_SIZE];
+                segment.asByteBuffer().get(bytes);
+                return bytes;
+            } catch (Throwable exception) {
+                return null;
+            }
+        }
+
+        /// Writes a native `struct termios` byte image to a host terminal descriptor.
+        private static boolean writeNativeTermios(int fileDescriptor, long request, byte[] bytes) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment segment = arena.allocate(TERMIOS_SIZE);
+                segment.asByteBuffer().put(bytes, 0, Math.min(bytes.length, TERMIOS_SIZE));
+                int result = (int) PosixHandles.IOCTL.invokeExact(fileDescriptor, request, segment);
+                return result == 0;
+            } catch (Throwable exception) {
+                return false;
             }
         }
     }

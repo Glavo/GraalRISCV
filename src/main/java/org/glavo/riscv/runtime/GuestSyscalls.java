@@ -3492,24 +3492,6 @@ public final class GuestSyscalls implements AutoCloseable {
                     terminalDevice,
                     readable,
                     writable));
-            case STDIN -> {
-                if (writable) {
-                    yield EACCES;
-                }
-                yield addOpenFile(OpenFile.standardFileDescriptor(0, guestPath));
-            }
-            case STDOUT -> {
-                if (readable) {
-                    yield EACCES;
-                }
-                yield addOpenFile(OpenFile.standardFileDescriptor(1, guestPath));
-            }
-            case STDERR -> {
-                if (readable) {
-                    yield EACCES;
-                }
-                yield addOpenFile(OpenFile.standardFileDescriptor(2, guestPath));
-            }
         };
     }
 
@@ -4960,7 +4942,7 @@ public final class GuestSyscalls implements AutoCloseable {
             if (!memory.isBacked(argument, TERMIOS_SIZE)) {
                 return EFAULT;
             }
-            terminal.readTermios(memory, argument);
+            terminal.readTermios(memory, argument, request);
             return 0;
         }
         if (request == TIOCGWINSZ) {
@@ -7234,16 +7216,7 @@ public final class GuestSyscalls implements AutoCloseable {
         CONSOLE,
 
         /// The byte sink and end-of-file source exposed as `/dev/null`.
-        NULL,
-
-        /// The process standard input descriptor.
-        STDIN,
-
-        /// The process standard output descriptor.
-        STDOUT,
-
-        /// The process standard error descriptor.
-        STDERR
+        NULL
     }
 
     /// Provides the built-in process-local `/dev` filesystem.
@@ -7264,9 +7237,9 @@ public final class GuestSyscalls implements AutoCloseable {
                     VirtualNode.characterDevice(DEV_MOUNT_PATH + "/console", DeviceFile.CONSOLE),
                     VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/fd", PROC_MOUNT_PATH + "/self/fd"),
                     VirtualNode.characterDevice(DEV_MOUNT_PATH + "/null", DeviceFile.NULL),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/stderr", DeviceFile.STDERR),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/stdin", DeviceFile.STDIN),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/stdout", DeviceFile.STDOUT),
+                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stderr", PROC_MOUNT_PATH + "/self/fd/2"),
+                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdin", PROC_MOUNT_PATH + "/self/fd/0"),
+                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdout", PROC_MOUNT_PATH + "/self/fd/1"),
                     VirtualNode.characterDevice(DEV_MOUNT_PATH + "/tty", DeviceFile.TTY)
             };
         }
@@ -7295,11 +7268,11 @@ public final class GuestSyscalls implements AutoCloseable {
                 case DEV_MOUNT_PATH + "/null" ->
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.NULL);
                 case DEV_MOUNT_PATH + "/stderr" ->
-                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.STDERR);
+                        VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd/2");
                 case DEV_MOUNT_PATH + "/stdin" ->
-                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.STDIN);
+                        VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd/0");
                 case DEV_MOUNT_PATH + "/stdout" ->
-                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.STDOUT);
+                        VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd/1");
                 case DEV_MOUNT_PATH + "/tty" ->
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.TTY);
                 default -> null;
@@ -7536,14 +7509,8 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns the target exposed by `/proc/self/fd/<n>`.
     private String procFileDescriptorTarget(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
-        if (standardFileDescriptor == 0) {
-            return "/dev/stdin";
-        }
-        if (standardFileDescriptor == 1) {
-            return "/dev/stdout";
-        }
-        if (standardFileDescriptor == 2) {
-            return "/dev/stderr";
+        if (standardFileDescriptor >= 0) {
+            return "/dev/tty";
         }
 
         @Nullable OpenFile openFile = openFile(fileDescriptor);

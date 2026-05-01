@@ -3018,7 +3018,13 @@ public final class GuestSyscallsTest {
                     DIRECTORY_ENTRY_DIRECTORY,
                     1);
             nextAddress = assertDirectoryEntry(memory, nextAddress, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
-            assertDirectoryEntry(memory, nextAddress, "console", DIRECTORY_ENTRY_CHARACTER_DEVICE, 3);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "console", DIRECTORY_ENTRY_CHARACTER_DEVICE, 3);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "fd", DIRECTORY_ENTRY_SYMBOLIC_LINK, 4);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "null", DIRECTORY_ENTRY_CHARACTER_DEVICE, 5);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stderr", DIRECTORY_ENTRY_SYMBOLIC_LINK, 6);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdin", DIRECTORY_ENTRY_SYMBOLIC_LINK, 7);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdout", DIRECTORY_ENTRY_SYMBOLIC_LINK, 8);
+            assertDirectoryEntry(memory, nextAddress, "tty", DIRECTORY_ENTRY_CHARACTER_DEVICE, 9);
 
             writeGuestString(memory, pathAddress, "/dev/stdout");
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
@@ -3038,6 +3044,18 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals("/proc/self/fd".length(), state.register(10));
             assertEquals("/proc/self/fd", readGuestString(memory, bufferAddress, (int) state.register(10)));
+
+            writeGuestString(memory, pathAddress, "/dev/stdout");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("/proc/self/fd/1".length(), state.register(10));
+            assertEquals("/proc/self/fd/1", readGuestString(memory, bufferAddress, (int) state.register(10)));
+
+            writeGuestString(memory, pathAddress, "/proc/self/fd/1");
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("/dev/tty".length(), state.register(10));
+            assertEquals("/dev/tty", readGuestString(memory, bufferAddress, (int) state.register(10)));
         }
     }
 
