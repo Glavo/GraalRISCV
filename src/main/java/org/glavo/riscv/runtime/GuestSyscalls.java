@@ -296,6 +296,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `clone`.
     private static final int SYS_CLONE = 220;
 
+    /// The Linux RISC-V syscall number for `clone3`.
+    private static final int SYS_CLONE3 = 435;
+
     /// The Linux RISC-V syscall number for `execve`.
     private static final int SYS_EXECVE = 221;
 
@@ -976,6 +979,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `CLONE_SIGHAND`.
     private static final long CLONE_SIGHAND = 0x00000800L;
 
+    /// Linux `CLONE_PIDFD`.
+    private static final long CLONE_PIDFD = 0x00001000L;
+
     /// Linux `CLONE_THREAD`.
     private static final long CLONE_THREAD = 0x00010000L;
 
@@ -1023,6 +1029,42 @@ public final class GuestSyscalls implements AutoCloseable {
                     | CLONE_PARENT_SETTID
                     | CLONE_CHILD_CLEARTID
                     | CLONE_CHILD_SETTID;
+
+    /// The minimum supported Linux `struct clone_args` byte size.
+    private static final long CLONE_ARGS_MINIMUM_SIZE = 64;
+
+    /// The known Linux `struct clone_args` byte size.
+    private static final long CLONE_ARGS_KNOWN_SIZE = 88;
+
+    /// The byte offset of `flags` inside `struct clone_args`.
+    private static final long CLONE_ARGS_FLAGS_OFFSET = 0;
+
+    /// The byte offset of `child_tid` inside `struct clone_args`.
+    private static final long CLONE_ARGS_CHILD_TID_OFFSET = 16;
+
+    /// The byte offset of `parent_tid` inside `struct clone_args`.
+    private static final long CLONE_ARGS_PARENT_TID_OFFSET = 24;
+
+    /// The byte offset of `exit_signal` inside `struct clone_args`.
+    private static final long CLONE_ARGS_EXIT_SIGNAL_OFFSET = 32;
+
+    /// The byte offset of `stack` inside `struct clone_args`.
+    private static final long CLONE_ARGS_STACK_OFFSET = 40;
+
+    /// The byte offset of `stack_size` inside `struct clone_args`.
+    private static final long CLONE_ARGS_STACK_SIZE_OFFSET = 48;
+
+    /// The byte offset of `tls` inside `struct clone_args`.
+    private static final long CLONE_ARGS_TLS_OFFSET = 56;
+
+    /// The byte offset of `set_tid` inside `struct clone_args`.
+    private static final long CLONE_ARGS_SET_TID_OFFSET = 64;
+
+    /// The byte offset of `set_tid_size` inside `struct clone_args`.
+    private static final long CLONE_ARGS_SET_TID_SIZE_OFFSET = 72;
+
+    /// The byte offset of `cgroup` inside `struct clone_args`.
+    private static final long CLONE_ARGS_CGROUP_OFFSET = 80;
 
     /// Linux `WNOHANG`.
     private static final long WAIT_NO_HANG = 0x00000001L;
@@ -2205,6 +2247,11 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            case SYS_CLONE3 -> state.setRegister(10, clone3(
+                    state,
+                    pc,
+                    state.register(10),
+                    state.register(11)));
             case SYS_EXECVE -> state.setRegister(10, execve(
                     state,
                     state.register(10),
@@ -2279,7 +2326,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Returns true when a syscall may need a full architectural register snapshot.
     static boolean needsFullRegisterSnapshot(long callNumber) {
-        return callNumber == SYS_CLONE;
+        return callNumber == SYS_CLONE || callNumber == SYS_CLONE3;
     }
 
     /// Closes all host files opened by guest file descriptors.
@@ -5644,6 +5691,78 @@ public final class GuestSyscalls implements AutoCloseable {
             return cloneThread(state, pc, controlFlags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
         }
         return cloneProcess(state, pc, flags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
+    }
+
+    /// Handles Linux `clone3` by translating `struct clone_args` to the existing clone implementation.
+    private long clone3(MachineState state, long pc, long argumentsAddress, long size) {
+        if (size < CLONE_ARGS_MINIMUM_SIZE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(argumentsAddress, Math.min(size, CLONE_ARGS_KNOWN_SIZE))) {
+            return EFAULT;
+        }
+        if (size > CLONE_ARGS_KNOWN_SIZE) {
+            long extraSize = size - CLONE_ARGS_KNOWN_SIZE;
+            if (extraSize > Integer.MAX_VALUE) {
+                return E2BIG;
+            }
+            if (!memory.isBacked(argumentsAddress + CLONE_ARGS_KNOWN_SIZE, extraSize)) {
+                return EFAULT;
+            }
+            byte[] extraBytes = memory.readBytes(argumentsAddress + CLONE_ARGS_KNOWN_SIZE, extraSize);
+            for (byte extraByte : extraBytes) {
+                if (extraByte != 0) {
+                    return E2BIG;
+                }
+            }
+        }
+
+        long flags = memory.readLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET);
+        long exitSignal = memory.readLong(argumentsAddress + CLONE_ARGS_EXIT_SIGNAL_OFFSET);
+        if ((flags & CLONE_EXIT_SIGNAL_MASK) != 0 || (exitSignal & ~CLONE_EXIT_SIGNAL_MASK) != 0) {
+            return EINVAL;
+        }
+
+        long childTidAddress = memory.readLong(argumentsAddress + CLONE_ARGS_CHILD_TID_OFFSET);
+        long parentTidAddress = memory.readLong(argumentsAddress + CLONE_ARGS_PARENT_TID_OFFSET);
+        long stackAddress = memory.readLong(argumentsAddress + CLONE_ARGS_STACK_OFFSET);
+        long stackSize = memory.readLong(argumentsAddress + CLONE_ARGS_STACK_SIZE_OFFSET);
+        long tlsAddress = memory.readLong(argumentsAddress + CLONE_ARGS_TLS_OFFSET);
+        long setTidAddress = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_SET_TID_OFFSET);
+        long setTidSize = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_SET_TID_SIZE_OFFSET);
+        long cgroup = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_CGROUP_OFFSET);
+        if ((flags & CLONE_PIDFD) != 0 || setTidAddress != 0 || setTidSize != 0 || cgroup != 0) {
+            return EINVAL;
+        }
+
+        long childStackAddress = clone3ChildStackAddress(stackAddress, stackSize);
+        if (childStackAddress < 0) {
+            return EINVAL;
+        }
+        return clone(
+                state,
+                pc,
+                flags | exitSignal,
+                childStackAddress,
+                parentTidAddress,
+                tlsAddress,
+                childTidAddress);
+    }
+
+    /// Reads an optional 64-bit `struct clone_args` field when it is present in the supplied size.
+    private long cloneArgumentLong(long argumentsAddress, long size, long offset) {
+        return size >= offset + Long.BYTES ? memory.readLong(argumentsAddress + offset) : 0;
+    }
+
+    /// Converts a `clone3` stack base and size to the child stack pointer expected by `clone`.
+    private static long clone3ChildStackAddress(long stackAddress, long stackSize) {
+        if (stackAddress == 0) {
+            return stackSize == 0 ? 0 : -1;
+        }
+        if (stackSize < 0 || Long.MAX_VALUE - stackAddress < stackSize) {
+            return -1;
+        }
+        return stackSize == 0 ? stackAddress : stackAddress + stackSize;
     }
 
     /// Handles the parent return path for Linux thread-style `clone` requests.

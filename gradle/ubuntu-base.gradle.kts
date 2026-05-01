@@ -164,3 +164,10 @@ registerUbuntuBaseSmokeTest(
     listOf("--guest-program", "/usr/bin/uname", "-m"),
     "riscv64\n"
 )
+
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseDu",
+    "Runs /usr/bin/du from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/du", "-s", "/usr/bin/bash"),
+    "1288\t/usr/bin/bash\n"
+)

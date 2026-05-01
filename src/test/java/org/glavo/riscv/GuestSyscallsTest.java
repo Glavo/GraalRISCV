@@ -354,6 +354,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `clone`.
     private static final long SYS_CLONE = 220;
 
+    /// The Linux RISC-V syscall number for `clone3`.
+    private static final long SYS_CLONE3 = 435;
+
     /// The Linux RISC-V syscall number for `mmap`.
     private static final long SYS_MMAP = 222;
 
@@ -930,6 +933,9 @@ public final class GuestSyscallsTest {
     /// Linux `CLONE_SIGHAND`.
     private static final long CLONE_SIGHAND = 0x00000800L;
 
+    /// Linux `CLONE_PIDFD`.
+    private static final long CLONE_PIDFD = 0x00001000L;
+
     /// Linux `CLONE_THREAD`.
     private static final long CLONE_THREAD = 0x00010000L;
 
@@ -966,6 +972,33 @@ public final class GuestSyscallsTest {
                     | CLONE_CHILD_CLEARTID
                     | CLONE_DETACHED
                     | CLONE_CHILD_SETTID;
+
+    /// The known Linux `struct clone_args` byte size.
+    private static final long CLONE_ARGS_SIZE = 88;
+
+    /// The byte offset of `flags` inside `struct clone_args`.
+    private static final long CLONE_ARGS_FLAGS_OFFSET = 0;
+
+    /// The byte offset of `pidfd` inside `struct clone_args`.
+    private static final long CLONE_ARGS_PIDFD_OFFSET = 8;
+
+    /// The byte offset of `child_tid` inside `struct clone_args`.
+    private static final long CLONE_ARGS_CHILD_TID_OFFSET = 16;
+
+    /// The byte offset of `parent_tid` inside `struct clone_args`.
+    private static final long CLONE_ARGS_PARENT_TID_OFFSET = 24;
+
+    /// The byte offset of `exit_signal` inside `struct clone_args`.
+    private static final long CLONE_ARGS_EXIT_SIGNAL_OFFSET = 32;
+
+    /// The byte offset of `stack` inside `struct clone_args`.
+    private static final long CLONE_ARGS_STACK_OFFSET = 40;
+
+    /// The byte offset of `stack_size` inside `struct clone_args`.
+    private static final long CLONE_ARGS_STACK_SIZE_OFFSET = 48;
+
+    /// The byte offset of `tls` inside `struct clone_args`.
+    private static final long CLONE_ARGS_TLS_OFFSET = 56;
 
     /// Linux `MADV_DONTNEED`.
     private static final long MADV_DONTNEED = 4;
@@ -3379,6 +3412,42 @@ public final class GuestSyscallsTest {
             assertEquals(EINVAL, state.register(10));
 
             setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `clone3` argument translation for the existing clone implementation.
+    @Test
+    public void clone3TranslatesCloneArguments() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long argumentsAddress = memory.baseAddress() + 128;
+            long stackBaseAddress = memory.baseAddress() + 512;
+            long stackSize = 256;
+            long parentTidAddress = memory.baseAddress() + 32;
+            long childTidAddress = memory.baseAddress() + 40;
+            long tlsAddress = memory.baseAddress() + 96;
+
+            memory.writeLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET, THREAD_CLONE_FLAGS);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_PIDFD_OFFSET, parentTidAddress);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_CHILD_TID_OFFSET, childTidAddress);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_PARENT_TID_OFFSET, parentTidAddress);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_EXIT_SIGNAL_OFFSET, 0);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_STACK_OFFSET, stackBaseAddress);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_STACK_SIZE_OFFSET, stackSize);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_TLS_OFFSET, tlsAddress);
+            setSyscall(state, SYS_CLONE3, argumentsAddress, CLONE_ARGS_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            memory.writeLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET, CLONE_PIDFD);
+            setSyscall(state, SYS_CLONE3, argumentsAddress, CLONE_ARGS_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET, 0);
+            setSyscall(state, SYS_CLONE3, argumentsAddress, 63, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
         }
