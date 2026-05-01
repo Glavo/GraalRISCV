@@ -80,6 +80,10 @@ entries.
 Each `run...Example` task builds the required RISC-V program before executing
 it.
 
+The `decompressUbuntuBaseImage` task downloads Ubuntu Base 26.04 for RISC-V and
+produces a `.tar` root filesystem under `build/downloads/ubuntu-base/26.04`
+without unpacking the tar entries.
+
 The C and CoreMark examples use Zig CC. Gradle downloads the configured Zig
 release when needed. To use an existing Zig executable, set one of
 `ZIG_EXECUTABLE`, `zigExecutable`, or `graalriscv.zigExecutable`:
