@@ -74,8 +74,8 @@ available through configured guest mounts.
 
 The simulator implements enough Linux RISC-V user-mode behavior to run the
 bundled static musl examples, the static Go example, CoreMark, RVV examples, and
-dynamic programs such as `/usr/bin/true` from the Ubuntu Base root tar. File
-access is sandboxed under configured `--mount` entries.
+dynamic programs such as `/usr/bin/true` and `/usr/bin/bash` from the Ubuntu
+Base root tar. File access is sandboxed under configured `--mount` entries.
 
 ## Examples
 
@@ -86,10 +86,11 @@ The `decompressUbuntuBaseImage` task downloads Ubuntu Base 26.04 for RISC-V and
 produces a `.tar` root filesystem under `build/downloads/ubuntu-base/26.04`
 without unpacking the tar entries.
 
-Run the Ubuntu Base dynamic-linking smoke test:
+Run the Ubuntu Base dynamic-linking smoke tests:
 
 ```text
 ./gradlew testUbuntuBaseTrue
+./gradlew testUbuntuBaseBash
 ```
 
 The C and CoreMark examples use Zig CC. Gradle downloads the configured Zig

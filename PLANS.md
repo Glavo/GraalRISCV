@@ -5,14 +5,14 @@
 - GraalRISCV is a user-mode RV64 emulator for 64-bit little-endian RISC-V ELF programs on a Linux-like runtime.
 - The implemented profile is RVA23U64 when the configured VLEN is profile-valid; shorter vector configurations expose the RVA22U64 capability surface.
 - Privileged mode, guest page tables, interrupts, devices, and Linux kernel boot are out of scope unless a later plan explicitly adds them.
-- The build covers unit tests, package smoke tests, example workloads, pinned `riscv-tests`, repository-owned RVA22U64/RVA23U64 acceptance tests, and an Ubuntu Base dynamic-linking smoke test.
+- The build covers unit tests, package smoke tests, example workloads, pinned `riscv-tests`, repository-owned RVA22U64/RVA23U64 acceptance tests, and Ubuntu Base dynamic-linking smoke tests.
 
 ## Completed
 
 - RVA22U64 and RVA23U64 user-mode profile support is implemented, centrally reported, and covered by focused tests.
 - RVV 1.0, mandatory RVA23U64 vector additions, `Zkt`/`Zvkt`, and optional standard `Zvbc` are implemented; the CRC example exercises `Zvbc`.
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
-- Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, file-backed `MAP_PRIVATE`, tar symlink lookup, and the Ubuntu Base `/usr/bin/true` smoke test.
+- Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, file-backed `MAP_PRIVATE`, tar symlink lookup, and Ubuntu Base `/usr/bin/true` plus `/usr/bin/bash` smoke tests.
 - The memory, `--mount` filesystem sandboxing, read-only tar mounts, Ubuntu Base image preparation, process/thread state, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 
 ## Remaining Work

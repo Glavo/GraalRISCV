@@ -209,6 +209,12 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final int SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `getresuid`.
+    private static final int SYS_GETRESUID = 148;
+
+    /// The Linux RISC-V syscall number for `getresgid`.
+    private static final int SYS_GETRESGID = 150;
+
     /// The Linux RISC-V syscall number for `times`.
     private static final int SYS_TIMES = 153;
 
@@ -253,6 +259,15 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The Linux RISC-V syscall number for `gettid`.
     private static final int SYS_GETTID = 178;
+
+    /// The Linux RISC-V syscall number for `socket`.
+    private static final int SYS_SOCKET = 198;
+
+    /// The Linux RISC-V syscall number for `getsockname`.
+    private static final int SYS_GETSOCKNAME = 204;
+
+    /// The Linux RISC-V syscall number for `getpeername`.
+    private static final int SYS_GETPEERNAME = 205;
 
     /// The Linux RISC-V syscall number for `brk`.
     private static final int SYS_BRK = 214;
@@ -364,6 +379,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `ENOTSUP` as a raw negative syscall result.
     private static final long ENOTSUP = -95;
+
+    /// Linux `ENOTSOCK` as a raw negative syscall result.
+    private static final long ENOTSOCK = -88;
+
+    /// Linux `EAFNOSUPPORT` as a raw negative syscall result.
+    private static final long EAFNOSUPPORT = -97;
 
     /// Linux `ENOTEMPTY` as a raw negative syscall result.
     private static final long ENOTEMPTY = -39;
@@ -1791,6 +1812,16 @@ public final class GuestSyscalls implements AutoCloseable {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_GETRESUID -> state.setRegister(10, getresid(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    GUEST_USER_ID));
+            case SYS_GETRESGID -> state.setRegister(10, getresid(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    GUEST_GROUP_ID));
             case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
             case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
             case SYS_SETSID -> state.setRegister(10, setsid());
@@ -1810,6 +1841,8 @@ public final class GuestSyscalls implements AutoCloseable {
             case SYS_GETPPID -> state.setRegister(10, GUEST_PARENT_PROCESS_ID);
             case SYS_GETUID, SYS_GETEUID -> state.setRegister(10, GUEST_USER_ID);
             case SYS_GETGID, SYS_GETEGID -> state.setRegister(10, GUEST_GROUP_ID);
+            case SYS_SOCKET -> state.setRegister(10, socket(state.register(10), state.register(11), state.register(12)));
+            case SYS_GETSOCKNAME, SYS_GETPEERNAME -> state.setRegister(10, ENOTSOCK);
             case SYS_CLONE -> state.setRegister(10, clone(
                     state,
                     pc,
@@ -5340,6 +5373,24 @@ public final class GuestSyscalls implements AutoCloseable {
 
         removeMemoryMappings(address, alignedLength);
         return 0;
+    }
+
+    /// Writes the deterministic real, effective, and saved user or group id values.
+    private long getresid(long realIdAddress, long effectiveIdAddress, long savedIdAddress, long id) {
+        if (!memory.isBacked(realIdAddress, Integer.BYTES)
+                || !memory.isBacked(effectiveIdAddress, Integer.BYTES)
+                || !memory.isBacked(savedIdAddress, Integer.BYTES)) {
+            return EFAULT;
+        }
+        memory.writeInt(realIdAddress, (int) id);
+        memory.writeInt(effectiveIdAddress, (int) id);
+        memory.writeInt(savedIdAddress, (int) id);
+        return 0;
+    }
+
+    /// Rejects socket creation for the current non-networked user-mode runtime.
+    private static long socket(long domain, long type, long protocol) {
+        return EAFNOSUPPORT;
     }
 
     /// Implements Linux `mremap` for tracked anonymous mappings.

@@ -100,6 +100,12 @@ public final class GuestSyscallsTest {
     /// Linux `ENOTSUP` as a raw negative syscall result.
     private static final long ENOTSUP = -95;
 
+    /// Linux `ENOTSOCK` as a raw negative syscall result.
+    private static final long ENOTSOCK = -88;
+
+    /// Linux `EAFNOSUPPORT` as a raw negative syscall result.
+    private static final long EAFNOSUPPORT = -97;
+
     /// Linux `ENOTEMPTY` as a raw negative syscall result.
     private static final long ENOTEMPTY = -39;
 
@@ -265,6 +271,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `getresuid`.
+    private static final long SYS_GETRESUID = 148;
+
+    /// The Linux RISC-V syscall number for `getresgid`.
+    private static final long SYS_GETRESGID = 150;
+
     /// The Linux RISC-V syscall number for `times`.
     private static final long SYS_TIMES = 153;
 
@@ -309,6 +321,15 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `gettid`.
     private static final long SYS_GETTID = 178;
+
+    /// The Linux RISC-V syscall number for `socket`.
+    private static final long SYS_SOCKET = 198;
+
+    /// The Linux RISC-V syscall number for `getsockname`.
+    private static final long SYS_GETSOCKNAME = 204;
+
+    /// The Linux RISC-V syscall number for `getpeername`.
+    private static final long SYS_GETPEERNAME = 205;
 
     /// The Linux RISC-V syscall number for `brk`.
     private static final long SYS_BRK = 214;
@@ -2851,9 +2872,42 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1000, state.register(10));
 
+            long realIdAddress = memory.baseAddress() + 64;
+            long effectiveIdAddress = memory.baseAddress() + 68;
+            long savedIdAddress = memory.baseAddress() + 72;
+            setSyscall(state, SYS_GETRESUID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1000, memory.readInt(realIdAddress));
+            assertEquals(1000, memory.readInt(effectiveIdAddress));
+            assertEquals(1000, memory.readInt(savedIdAddress));
+
+            setSyscall(state, SYS_GETRESGID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1000, memory.readInt(realIdAddress));
+            assertEquals(1000, memory.readInt(effectiveIdAddress));
+            assertEquals(1000, memory.readInt(savedIdAddress));
+
+            setSyscall(state, SYS_GETRESUID, memory.endAddress(), effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
             setSyscall(state, SYS_GETPGID, 99, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_SOCKET, 1, 0x80801, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAFNOSUPPORT, state.register(10));
+
+            setSyscall(state, SYS_GETSOCKNAME, 0, memory.baseAddress() + 96, memory.baseAddress() + 112);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSOCK, state.register(10));
+
+            setSyscall(state, SYS_GETPEERNAME, 0, memory.baseAddress() + 96, memory.baseAddress() + 112);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSOCK, state.register(10));
         }
     }
 

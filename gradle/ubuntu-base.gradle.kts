@@ -18,6 +18,52 @@ val ubuntuBaseTarName = ubuntuBaseArchiveName.removeSuffix(".gz")
 val ubuntuBaseArchiveFile = layout.buildDirectory.file("downloads/ubuntu-base/$ubuntuBaseVersion/$ubuntuBaseArchiveName")
 val ubuntuBaseTarFile = layout.buildDirectory.file("downloads/ubuntu-base/$ubuntuBaseVersion/$ubuntuBaseTarName")
 
+fun registerUbuntuBaseSmokeTest(
+    taskName: String,
+    descriptionText: String,
+    guestArguments: List<String>,
+    expectedStdout: String
+) {
+    tasks.register<JavaExec>(taskName) {
+        group = "verification"
+        description = descriptionText
+
+        dependsOn("classes", "decompressUbuntuBaseImage")
+        classpath = sourceSets.named("main").get().runtimeClasspath
+        mainClass = ubuntuBaseMainClassName
+        jvmArgs(ubuntuBaseApplicationDefaultJvmArgs)
+        isIgnoreExitValue = true
+
+        val stdout = ByteArrayOutputStream()
+        val stderr = ByteArrayOutputStream()
+        standardOutput = stdout
+        errorOutput = stderr
+
+        doFirst {
+            stdout.reset()
+            stderr.reset()
+            setArgs(listOf(
+                "--mount", "/=${ubuntuBaseTarFile.get().asFile.absolutePath}"
+            ) + guestArguments)
+        }
+
+        doLast {
+            val exitCode = executionResult.get().exitValue
+            val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+            val actualError = stderr.toString(StandardCharsets.UTF_8)
+            if (exitCode != 0) {
+                throw GradleException("$name exited with $exitCode. stderr: $actualError")
+            }
+            if (actualOutput != expectedStdout) {
+                throw GradleException("$name wrote unexpected stdout: $actualOutput")
+            }
+            if (actualError.isNotEmpty()) {
+                throw GradleException("$name wrote to stderr: $actualError")
+            }
+        }
+    }
+}
+
 val downloadUbuntuBaseImage by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
     group = "build setup"
     description = "Downloads Ubuntu Base $ubuntuBaseVersion for $ubuntuBaseArchitecture."
@@ -77,43 +123,16 @@ tasks.register("decompressUbuntuBaseImage") {
     }
 }
 
-tasks.register<JavaExec>("testUbuntuBaseTrue") {
-    group = "verification"
-    description = "Runs /usr/bin/true from the downloaded Ubuntu Base RISC-V root tar."
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseTrue",
+    "Runs /usr/bin/true from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/true"),
+    ""
+)
 
-    dependsOn("classes", "decompressUbuntuBaseImage")
-    classpath = sourceSets.named("main").get().runtimeClasspath
-    mainClass = ubuntuBaseMainClassName
-    jvmArgs(ubuntuBaseApplicationDefaultJvmArgs)
-    isIgnoreExitValue = true
-
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    standardOutput = stdout
-    errorOutput = stderr
-
-    doFirst {
-        stdout.reset()
-        stderr.reset()
-        setArgs(listOf(
-            "--mount", "/=${ubuntuBaseTarFile.get().asFile.absolutePath}",
-            "--guest-program", "/usr/bin/true"
-        ))
-    }
-
-    doLast {
-        val exitCode = executionResult.get().exitValue
-        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        if (actualOutput.isNotEmpty()) {
-            throw GradleException("Ubuntu Base true wrote to stdout: $actualOutput")
-        }
-
-        val actualError = stderr.toString(StandardCharsets.UTF_8)
-        if (exitCode != 0) {
-            throw GradleException("Ubuntu Base true exited with $exitCode. stderr: $actualError")
-        }
-        if (actualError.isNotEmpty()) {
-            throw GradleException("Ubuntu Base true wrote to stderr: $actualError")
-        }
-    }
-}
+registerUbuntuBaseSmokeTest(
+    "testUbuntuBaseBash",
+    "Runs /usr/bin/bash from the downloaded Ubuntu Base RISC-V root tar.",
+    listOf("--guest-program", "/usr/bin/bash", "-c", "echo bash-ok"),
+    "bash-ok\n"
+)
