@@ -469,6 +469,73 @@ public final class VectorInstructionTest {
         }
     }
 
+    /// Verifies mask population, first-set, and scalar/vector move operations.
+    @Test
+    public void vectorMaskScalarAndMoveInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            int[] values = {0xfe, 2, 3, 4, 5, 6, 7, 8};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeByte(input + index, (byte) values[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vle(8, 1, 6),
+                    vmsgtVi(2, 1, 3),
+                    vcpopM(12, 2),
+                    vfirstM(13, 2),
+                    vmvXs(14, 1),
+                    vmvSx(3, 11),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(6, input);
+            machine.state().setRegister(11, 0x7f);
+
+            runDecodedProgram(machine);
+
+            assertEquals(5, machine.state().register(12));
+            assertEquals(3, machine.state().register(13));
+            assertEquals(-2L, machine.state().register(14));
+            assertEquals(0x7f, machine.state().vectorUnit().readElement(3, 0));
+        }
+    }
+
+    /// Verifies mask prefix, iota, and vector index operations.
+    @Test
+    public void vectorMaskUnaryInstructionsExecute() {
+        try (TestMachine machine = TestMachine.create()) {
+            long input = TEST_PC + 256;
+            int[] values = {0xfe, 2, 3, 4, 5, 6, 7, 8};
+            for (int index = 0; index < values.length; index++) {
+                machine.memory().writeByte(input + index, (byte) values[index]);
+            }
+            loadInstructions(
+                    machine.memory(),
+                    vsetvli(5, 10, vtype(8, 1)),
+                    vle(8, 1, 6),
+                    vmsgtVi(2, 1, 3),
+                    vmsbfM(3, 2),
+                    vmsifM(4, 2),
+                    vmsofM(5, 2),
+                    viotaM(6, 2),
+                    vidV(7),
+                    ElfTestImages.ecall());
+            prepareExit(machine.state());
+            machine.state().setRegister(10, values.length);
+            machine.state().setRegister(6, input);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0b0000_0111, machine.state().vectorUnit().readElement(3, 0));
+            assertEquals(0b0000_1111, machine.state().vectorUnit().readElement(4, 0));
+            assertEquals(0b0000_1000, machine.state().vectorUnit().readElement(5, 0));
+            assertVectorBytes(machine.state(), 6, 0, 0, 0, 0, 1, 2, 3, 4);
+            assertVectorBytes(machine.state(), 7, 0, 1, 2, 3, 4, 5, 6, 7);
+        }
+    }
+
     /// Verifies basic vector floating-point arithmetic and comparison operations.
     @Test
     public void vectorFloatingPointInstructionsExecute() {
@@ -777,6 +844,51 @@ public final class VectorInstructionTest {
     /// Encodes `vcompress.vm`.
     private static int vcompressVm(int vd, int vs2, int vs1) {
         return vectorInteger(0x17, true, vd, vs1, vs2, 2);
+    }
+
+    /// Encodes `vcpop.m`.
+    private static int vcpopM(int rd, int vs2) {
+        return vectorInteger(0x10, true, rd, 16, vs2, 2);
+    }
+
+    /// Encodes `vfirst.m`.
+    private static int vfirstM(int rd, int vs2) {
+        return vectorInteger(0x10, true, rd, 17, vs2, 2);
+    }
+
+    /// Encodes `vmv.x.s`.
+    private static int vmvXs(int rd, int vs2) {
+        return vectorInteger(0x10, true, rd, 0, vs2, 2);
+    }
+
+    /// Encodes `vmv.s.x`.
+    private static int vmvSx(int vd, int rs1) {
+        return vectorInteger(0x10, true, vd, rs1, 0, 6);
+    }
+
+    /// Encodes `vmsbf.m`.
+    private static int vmsbfM(int vd, int vs2) {
+        return vectorInteger(0x14, true, vd, 1, vs2, 2);
+    }
+
+    /// Encodes `vmsof.m`.
+    private static int vmsofM(int vd, int vs2) {
+        return vectorInteger(0x14, true, vd, 2, vs2, 2);
+    }
+
+    /// Encodes `vmsif.m`.
+    private static int vmsifM(int vd, int vs2) {
+        return vectorInteger(0x14, true, vd, 3, vs2, 2);
+    }
+
+    /// Encodes `viota.m`.
+    private static int viotaM(int vd, int vs2) {
+        return vectorInteger(0x14, true, vd, 16, vs2, 2);
+    }
+
+    /// Encodes `vid.v`.
+    private static int vidV(int vd) {
+        return vectorInteger(0x14, true, vd, 17, 0, 2);
     }
 
     /// Encodes `vfadd.vv`.

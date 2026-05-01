@@ -280,6 +280,14 @@ public final class VectorUnit {
             executeMaskLogical(raw, vd, vs1, vs2, nextPc, state);
             return;
         }
+        if (isMaskScalarOrMove(funct3, funct6, vs1, vs2)) {
+            executeMaskScalarOrMove(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
+        if (isMaskUnary(funct3, funct6, vs1, vs2)) {
+            executeMaskUnary(raw, vd, vs1, vs2, nextPc, state);
+            return;
+        }
         if (isCarryBorrow(funct6)) {
             executeCarryBorrow(raw, vd, vs1, vs2, nextPc, state);
             return;
@@ -1033,6 +1041,100 @@ public final class VectorUnit {
         state.setPc(nextPc);
     }
 
+    /// Executes vector mask scalar operations and scalar/vector moves.
+    private void executeMaskScalarOrMove(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        int funct3 = (raw >>> 12) & 0x7;
+        boolean unmasked = ((raw >>> 25) & 0x1) != 0;
+        if (funct3 == OPMVV && vs1 == 0 && unmasked) {
+            requireRegisterGroup(vs2);
+            state.setDecodedRegister(vd, signedElement(readElement(vs2, 0)));
+        } else if (funct3 == OPMVV && (vs1 == 16 || vs1 == 17)) {
+            executeMaskScalar(raw, vd, vs1, vs2, state);
+        } else if (funct3 == OPMVX && vs2 == 0 && unmasked) {
+            requireRegisterGroup(vd);
+            if (vectorStart == 0 && vectorLength > 0) {
+                writeElement(vd, 0, state.decodedRegister(vs1));
+            }
+        } else {
+            throw unsupportedVectorIntegerFormat((raw >>> 26) & 0x3f, funct3);
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
+    /// Executes `vcpop.m` and `vfirst.m`.
+    private void executeMaskScalar(int raw, int vd, int vs1, int vs2, MachineState state) {
+        long start = vectorStart;
+        long length = vectorLength;
+        if (vs1 == 16) {
+            long count = 0;
+            for (long element = start; element < length; element++) {
+                if (isActive(raw, element) && readMaskBit(vs2, element)) {
+                    count++;
+                }
+            }
+            state.setDecodedRegister(vd, count);
+        } else {
+            long first = -1;
+            for (long element = start; element < length; element++) {
+                if (isActive(raw, element) && readMaskBit(vs2, element)) {
+                    first = element;
+                    break;
+                }
+            }
+            state.setDecodedRegister(vd, first);
+        }
+    }
+
+    /// Executes vector mask prefix, iota, and index-generation operations.
+    private void executeMaskUnary(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+        if (vectorStart != 0) {
+            throw new RiscVException("Unsupported vector mask unary instruction with non-zero vstart");
+        }
+        long length = vectorLength;
+        if (vs1 == 17 && vs2 == 0) {
+            requireRegisterGroup(vd);
+            for (long element = 0; element < length; element++) {
+                if (isActive(raw, element)) {
+                    writeElement(vd, element, element);
+                }
+            }
+        } else if (vs1 == 16) {
+            requireRegisterGroup(vd);
+            long count = 0;
+            for (long element = 0; element < length; element++) {
+                boolean active = isActive(raw, element);
+                if (active) {
+                    writeElement(vd, element, count);
+                }
+                if (active && readMaskBit(vs2, element)) {
+                    count++;
+                }
+            }
+        } else if (vs1 >= 1 && vs1 <= 3) {
+            boolean found = false;
+            for (long element = 0; element < length; element++) {
+                if (isActive(raw, element)) {
+                    boolean source = readMaskBit(vs2, element);
+                    boolean result = switch (vs1) {
+                        case 1 -> !found && !source;
+                        case 2 -> !found && source;
+                        case 3 -> !found;
+                        default -> throw new AssertionError("Unexpected mask prefix operation: " + vs1);
+                    };
+                    writeMaskBit(vd, element, result);
+                    if (source) {
+                        found = true;
+                    }
+                }
+            }
+        } else {
+            throw unsupportedVectorIntegerFormat((raw >>> 26) & 0x3f, (raw >>> 12) & 0x7);
+        }
+        vectorStart = 0;
+        state.setPc(nextPc);
+    }
+
     /// Requires an integer vector operation to use an implemented operand format.
     private static void requireSupportedIntegerFormat(int funct6, int funct3, int raw) {
         switch (funct6) {
@@ -1100,6 +1202,18 @@ public final class VectorUnit {
     /// Returns whether the operation is a mask logical instruction.
     private static boolean isMaskLogical(int funct3, int funct6) {
         return funct3 == OPMVV && funct6 >= 0x18 && funct6 <= 0x1f;
+    }
+
+    /// Returns whether the operation is a mask scalar operation or scalar/vector move.
+    private static boolean isMaskScalarOrMove(int funct3, int funct6, int vs1, int vs2) {
+        return funct6 == 0x10
+                && (funct3 == OPMVV && (vs1 == 0 || vs1 == 16 || vs1 == 17)
+                || funct3 == OPMVX && vs2 == 0);
+    }
+
+    /// Returns whether the operation is a mask prefix, iota, or index-generation instruction.
+    private static boolean isMaskUnary(int funct3, int funct6, int vs1, int vs2) {
+        return funct3 == OPMVV && funct6 == 0x14 && (vs1 >= 1 && vs1 <= 3 || vs1 == 16 || vs1 == 17 && vs2 == 0);
     }
 
     /// Returns whether the operation is an add-with-carry or subtract-with-borrow instruction.
