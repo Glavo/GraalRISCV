@@ -15,6 +15,7 @@
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
 - FreeBSD ELF OS ABI detection selects a FreeBSD RISC-V syscall handler for static user-mode programs.
 - Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program` and `execve`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, `PR_GET_AUXV`, file-backed `MAP_PRIVATE`, tar symlink/hard-link lookup, virtual `/proc`, shell pipeline smoke coverage, and Ubuntu Base smoke coverage for common shell, coreutils, hashing, sorting, and findutils commands.
+- Standard descriptor duplication preserves current stdin/stdout/stderr redirects, including redirects to pipes and other standard descriptors used by child process setup.
 - `--mount` accepts Docker-like bind/tar mount specs, rejects the removed `guest=host` form, supports read-only bind mounts, lazy non-memory tar mounts, and writable process-local memory tar mounts.
 - Fastfetch Linux RISC-V release downloads are wired into Gradle, including gzip-to-tar preparation and a version smoke task.
 - Virtual `/proc/cpuinfo` reports stable RISC-V CPU metadata plus sanitized `graalriscv_` Java runtime summary fields.

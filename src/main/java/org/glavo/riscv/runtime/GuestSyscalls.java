@@ -9755,16 +9755,12 @@ public abstract class GuestSyscalls implements AutoCloseable {
 
     /// Returns a new descriptor entry that duplicates the supplied file descriptor.
     private @Nullable OpenFile duplicateOpenFile(int fileDescriptor) {
-        if (isStandardFileDescriptor(fileDescriptor)) {
-            return OpenFile.standardFileDescriptor(fileDescriptor);
-        }
-
         @Nullable OpenFile openFile = openFile(fileDescriptor);
-        if (openFile == null) {
-            return null;
+        if (openFile != null) {
+            openFile.retain();
+            return openFile;
         }
-        openFile.retain();
-        return openFile;
+        return isStandardFileDescriptor(fileDescriptor) ? OpenFile.standardFileDescriptor(fileDescriptor) : null;
     }
 
     /// Releases a descriptor table entry and closes its backing object when it was the last reference.
@@ -10236,10 +10232,6 @@ public abstract class GuestSyscalls implements AutoCloseable {
 
     /// Returns the host output stream mapped to a guest file descriptor.
     private @Nullable OutputStream outputStreamFor(int fileDescriptor) {
-        if (isStandardFileDescriptor(fileDescriptor) && standardFiles[fileDescriptor] != null) {
-            return null;
-        }
-
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor == 1) {
             return out;
@@ -10252,10 +10244,6 @@ public abstract class GuestSyscalls implements AutoCloseable {
 
     /// Returns the host input stream mapped to a guest file descriptor.
     private @Nullable InputStream inputStreamFor(int fileDescriptor) {
-        if (isStandardFileDescriptor(fileDescriptor) && standardFiles[fileDescriptor] != null) {
-            return null;
-        }
-
         return standardFileDescriptorFor(fileDescriptor) == 0 ? in : null;
     }
 

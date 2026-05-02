@@ -2530,6 +2530,21 @@ public final class GuestSyscallsTest {
             assertEquals(3, state.register(10));
             assertArrayEquals("abc".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 3));
 
+            setSyscall(state, SYS_DUP, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicateOutput = (int) state.register(10);
+            assertEquals(5, duplicateOutput);
+
+            memory.writeBytes(bufferAddress, "def".getBytes(StandardCharsets.UTF_8), 0, 3);
+            setSyscall(state, SYS_WRITE, duplicateOutput, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+
+            setSyscall(state, SYS_READ, readFileDescriptor, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertArrayEquals("def".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 3));
+
             memory.writeBytes(bufferAddress, "xy".getBytes(StandardCharsets.UTF_8), 0, 2);
             setSyscall(state, SYS_WRITE, writeFileDescriptor, bufferAddress, 2);
             state.syscalls().handle(state, TEST_PC);
@@ -2543,6 +2558,46 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(2, state.register(10));
             assertArrayEquals("xy".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 2));
+        }
+    }
+
+    /// Verifies that standard descriptor redirects can target other standard descriptors.
+    @Test
+    public void dup3CanReplaceStandardOutputWithStandardError() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    out,
+                    err,
+                    memory.baseAddress(),
+                    tempDirectory);
+            long bufferAddress = memory.baseAddress();
+
+            setSyscall(state, SYS_DUP3, 2, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            memory.writeBytes(bufferAddress, "err".getBytes(StandardCharsets.UTF_8), 0, 3);
+            setSyscall(state, SYS_WRITE, 1, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertEquals("", out.toString(StandardCharsets.UTF_8));
+            assertEquals("err", err.toString(StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_DUP, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicateOutput = (int) state.register(10);
+            assertEquals(3, duplicateOutput);
+
+            memory.writeBytes(bufferAddress, "dup".getBytes(StandardCharsets.UTF_8), 0, 3);
+            setSyscall(state, SYS_WRITE, duplicateOutput, bufferAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertEquals("", out.toString(StandardCharsets.UTF_8));
+            assertEquals("errdup", err.toString(StandardCharsets.UTF_8));
         }
     }
 
