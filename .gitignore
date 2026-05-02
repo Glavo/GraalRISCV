@@ -8,6 +8,7 @@ build/
 .kotlin
 /external/
 /playground/
+/tools/
 /.codex/
 AGENTS.override.md
 
