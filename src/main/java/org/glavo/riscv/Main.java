@@ -4,6 +4,8 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.runtime.FilesystemMountSpec;
+import org.glavo.riscv.runtime.FilesystemMountSpec.Type;
 import org.glavo.riscv.runtime.GuestCredentials;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
@@ -43,7 +45,8 @@ public final class Main {
               --huge-pages <n>           Guest HugeTLB page pool size.
               --vector-vlen <bits>       Vector register length in bits. Default is 128.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-              --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
+              --mount <spec>             Mount a host path. Accepts <guest>=<path> or
+                                          type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
               --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
               --user <name>              Guest login name. Default is user.
@@ -526,7 +529,7 @@ public final class Main {
         }
 
         if (hostProgramPath != null && mounts.stream().noneMatch(mount -> "/".equals(mount.guestPath()))) {
-            mounts.add(new MountOption("/", defaultRootMount(hostProgramPath)));
+            mounts.add(new MountOption("/", defaultRootMount(hostProgramPath), Type.BIND, null, false));
         }
         return CliOptions.execute(
                 programPath,
@@ -610,21 +613,20 @@ public final class Main {
         }
     }
 
-    /// Parses a mount option of the form `guest=host`.
+    /// Parses a filesystem mount option.
     private static @Nullable MountOption parseMountOption(String value, PrintStream err) {
-        int separator = value.indexOf('=');
-        if (separator <= 0 || separator == value.length() - 1) {
+        try {
+            FilesystemMountSpec spec = FilesystemMountSpec.parse(value);
+            @Nullable Path hostPath = parsePathOption("--mount", spec.hostPath(), err);
+            return hostPath == null
+                    ? null
+                    : new MountOption(spec.guestPath(), hostPath, spec.type(), spec.readOnly(), spec.memory());
+        } catch (RiscVException exception) {
             err.println("Invalid value for --mount: " + value);
-            err.println("Expected --mount <guest-path>=<host-path>.");
+            err.println(exception.getMessage());
+            err.println("Expected --mount <guest-path>=<host-path> or Docker-like key-value syntax.");
             return null;
         }
-
-        @Nullable String guestPath = normalizeGuestPath("Mount guest path", value.substring(0, separator), err);
-        if (guestPath == null) {
-            return null;
-        }
-        @Nullable Path hostPath = parsePathOption("--mount", value.substring(separator + 1), err);
-        return hostPath == null ? null : new MountOption(guestPath, hostPath);
     }
 
     /// Normalizes an absolute Linux guest path.
@@ -663,7 +665,12 @@ public final class Main {
             if (!builder.isEmpty()) {
                 builder.append('\n');
             }
-            builder.append(mount.guestPath()).append('=').append(mount.hostPath());
+            builder.append(new FilesystemMountSpec(
+                    mount.guestPath(),
+                    mount.hostPath().toString(),
+                    mount.type(),
+                    mount.readOnly(),
+                    mount.memory()).encode());
         }
         return builder.toString();
     }
@@ -897,8 +904,16 @@ public final class Main {
     /// Stores one command-line filesystem mount.
     ///
     /// @param guestPath the absolute guest-visible mount point
-    /// @param hostPath the host directory backing the mount point
+    /// @param hostPath the host path backing the mount point
+    /// @param type the requested mount type, or `AUTO` to infer it from the host path
+    /// @param readOnly the explicit read-only setting, or null to use the mount-type default
+    /// @param memory whether a tar mount should be loaded into process memory
     @NotNullByDefault
-    private record MountOption(String guestPath, Path hostPath) {
+    private record MountOption(
+            String guestPath,
+            Path hostPath,
+            Type type,
+            @Nullable Boolean readOnly,
+            boolean memory) {
     }
 }

@@ -7,6 +7,7 @@ import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import kala.compress.archivers.tar.TarArchiveEntry;
 import kala.compress.archivers.tar.TarArchiveInputStream;
+import kala.compress.archivers.tar.TarArchiveReader;
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
@@ -22,9 +23,11 @@ import java.nio.channels.NonWritableChannelException;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.InvalidPathException;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -69,6 +72,9 @@ public final class GuestFileSystem {
     /// Linux read and execute permission bits for user, group, and other.
     public static final int STAT_MODE_READ_EXECUTE_ALL = STAT_MODE_READ_ALL | STAT_MODE_EXECUTE_ALL;
 
+    /// Linux read and write permission bits for user, group, and other.
+    public static final int STAT_MODE_READ_WRITE_ALL = 0666;
+
     /// Linux permission bits for user, group, and other.
     public static final int STAT_MODE_ALL = 0777;
 
@@ -111,7 +117,7 @@ public final class GuestFileSystem {
     public static GuestFileSystem forHostRoot(@Nullable TruffleFile hostRoot) {
         Mount @Nullable [] mounts = hostRoot == null
                 ? null
-                : new Mount[]{new HostMount("/", hostRoot.getAbsoluteFile().normalize())};
+                : new Mount[]{new HostMount("/", hostRoot.getAbsoluteFile().normalize(), false)};
         return new GuestFileSystem(mounts, null, new String[0], new VirtualMount[0]);
     }
 
@@ -167,7 +173,11 @@ public final class GuestFileSystem {
             if (!tarPath.node().isFile()) {
                 throw new RiscVException("Guest path is not a regular file: " + absoluteGuestPath);
             }
-            return tarPath.node().data().clone();
+            try {
+                return tarPath.mount().fileSystem().readFileData(tarPath.node());
+            } catch (IOException exception) {
+                throw new RiscVException("Failed to read guest file: " + absoluteGuestPath, exception);
+            }
         }
         if (mount instanceof VirtualMount) {
             @Nullable VirtualPath virtualPath = resolveVirtualPath(absoluteGuestPath, true);
@@ -583,12 +593,7 @@ public final class GuestFileSystem {
             }
         }
         for (String spec : mountSpecs) {
-            int separator = spec.indexOf('=');
-            if (separator <= 0) {
-                continue;
-            }
-            @Nullable String specGuestPath = normalizeAbsoluteGuestPath(spec.substring(0, separator));
-            if (guestPath.equals(specGuestPath)) {
+            if (guestPath.equals(FilesystemMountSpec.parse(spec).guestPath())) {
                 return true;
             }
         }
@@ -597,24 +602,38 @@ public final class GuestFileSystem {
 
     /// Resolves one configured filesystem mount spec.
     private static @Nullable Mount resolveMountSpec(@Nullable TruffleLanguage.Env env, String spec) {
-        int separator = spec.indexOf('=');
-        if (separator <= 0 || separator == spec.length() - 1 || env == null) {
+        if (env == null) {
             return null;
         }
 
-        @Nullable String guestPath = normalizeAbsoluteGuestPath(spec.substring(0, separator));
-        if (guestPath == null) {
-            return null;
-        }
+        FilesystemMountSpec mountSpec = FilesystemMountSpec.parse(spec);
 
         try {
-            TruffleFile root = env.getPublicTruffleFile(spec.substring(separator + 1)).getAbsoluteFile().normalize();
-            if (root.isRegularFile()) {
-                return new TarMount(guestPath, TarFileSystem.read(root));
+            TruffleFile root = env.getPublicTruffleFile(mountSpec.hostPath()).getAbsoluteFile().normalize();
+            FilesystemMountSpec.Type type = mountSpec.type();
+            if (type == FilesystemMountSpec.Type.AUTO) {
+                type = root.isRegularFile() ? FilesystemMountSpec.Type.TAR : FilesystemMountSpec.Type.BIND;
             }
-            return new HostMount(guestPath, root);
+
+            if (type == FilesystemMountSpec.Type.BIND) {
+                if (mountSpec.memory()) {
+                    throw new RiscVException("Filesystem mount memory option is only valid for tar mounts");
+                }
+                return new HostMount(mountSpec.guestPath(), root, mountSpec.bindReadOnly());
+            }
+
+            if (!root.isRegularFile()) {
+                throw new RiscVException("Tar filesystem mount source is not a regular file: " + mountSpec.hostPath());
+            }
+            if (!mountSpec.memory() && Boolean.FALSE.equals(mountSpec.readOnly())) {
+                throw new RiscVException("Writable tar mounts require memory=true");
+            }
+            TarFileSystem fileSystem = mountSpec.memory()
+                    ? TarFileSystem.readMemory(root)
+                    : TarFileSystem.readLazy(root);
+            return new TarMount(mountSpec.guestPath(), fileSystem, mountSpec.tarReadOnly());
         } catch (IOException exception) {
-            throw new RiscVException("Failed to read tar filesystem mount: " + spec.substring(separator + 1), exception);
+            throw new RiscVException("Failed to read tar filesystem mount: " + mountSpec.hostPath(), exception);
         } catch (IllegalArgumentException | SecurityException exception) {
             return null;
         }
@@ -661,15 +680,17 @@ public final class GuestFileSystem {
     /// Describes one resolved host-directory filesystem mount.
     ///
     /// @param guestPath the absolute guest-visible mount point
-    /// @param root the resolved host directory backing the mount point
-    public record HostMount(String guestPath, TruffleFile root) implements Mount {
+    /// @param root the resolved host path backing the mount point
+    /// @param readOnly whether guest writes through this mount are rejected
+    public record HostMount(String guestPath, TruffleFile root, boolean readOnly) implements Mount {
     }
 
-    /// Describes one resolved read-only tar filesystem mount.
+    /// Describes one resolved tar filesystem mount.
     ///
     /// @param guestPath the absolute guest-visible mount point
-    /// @param fileSystem the in-memory tar filesystem tree backing the mount point
-    public record TarMount(String guestPath, TarFileSystem fileSystem) implements Mount {
+    /// @param fileSystem the tar filesystem tree backing the mount point
+    /// @param readOnly whether guest writes through this mount are rejected
+    public record TarMount(String guestPath, TarFileSystem fileSystem, boolean readOnly) implements Mount {
     }
 
     /// Describes one mounted virtual filesystem provider.
@@ -799,10 +820,18 @@ public final class GuestFileSystem {
         }
     }
 
-    /// Stores an in-memory read-only filesystem built from a tar archive.
+    /// Stores a filesystem built from a tar archive.
     public static final class TarFileSystem {
         /// The synthetic root directory of the archive.
         private final TarNode root = TarNode.directory("", "", null, STAT_MODE_READ_EXECUTE_ALL);
+
+        /// The seekable tar reader used by lazy mounts, or null for memory mounts.
+        private final @Nullable TarArchiveReader reader;
+
+        /// Creates a tar filesystem.
+        private TarFileSystem(@Nullable TarArchiveReader reader) {
+            this.reader = reader;
+        }
 
         /// Returns the synthetic root directory of the archive.
         public TarNode root() {
@@ -810,8 +839,8 @@ public final class GuestFileSystem {
         }
 
         /// Reads a tar archive into an in-memory filesystem tree.
-        static TarFileSystem read(TruffleFile archive) throws IOException {
-            TarFileSystem fileSystem = new TarFileSystem();
+        static TarFileSystem readMemory(TruffleFile archive) throws IOException {
+            TarFileSystem fileSystem = new TarFileSystem(null);
             ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();
             try (InputStream input = archive.newInputStream();
                  TarArchiveInputStream tarInput = new TarArchiveInputStream(input)) {
@@ -835,7 +864,7 @@ public final class GuestFileSystem {
                             hardLinks.add(new PendingTarHardLink(relativePath, targetPath, mode));
                         }
                     } else if (entry.isFile()) {
-                        fileSystem.addFile(relativePath, readEntryData(tarInput, entry), mode);
+                        fileSystem.addFile(relativePath, new TarFileData(readEntryData(tarInput, entry), null), mode);
                     }
                 }
             }
@@ -846,6 +875,67 @@ public final class GuestFileSystem {
             return fileSystem;
         }
 
+        /// Reads tar metadata while leaving regular file contents in the archive.
+        static TarFileSystem readLazy(TruffleFile archive) throws IOException {
+            TarArchiveReader reader = new TarArchiveReader(archive.newByteChannel(EnumSet.of(StandardOpenOption.READ)));
+            TarFileSystem fileSystem = new TarFileSystem(reader);
+            ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();
+            for (TarArchiveEntry entry : reader.getEntries()) {
+                String relativePath = normalizeTarEntryName(entry.getName());
+                if (relativePath.isEmpty()) {
+                    continue;
+                }
+
+                int mode = entry.getMode() & STAT_MODE_ALL;
+                if (entry.isDirectory()) {
+                    fileSystem.addDirectory(relativePath, mode);
+                } else if (entry.isSymbolicLink()) {
+                    @Nullable String target = entry.getLinkName();
+                    fileSystem.addSymbolicLink(relativePath, target == null ? "" : target, mode);
+                } else if (entry.isLink()) {
+                    @Nullable String target = entry.getLinkName();
+                    String targetPath = normalizeTarEntryName(target == null ? "" : target);
+                    if (!targetPath.isEmpty()) {
+                        hardLinks.add(new PendingTarHardLink(relativePath, targetPath, mode));
+                    }
+                } else if (entry.isFile()) {
+                    fileSystem.addFile(relativePath, new TarFileData(null, entry), mode);
+                }
+            }
+
+            for (PendingTarHardLink hardLink : hardLinks) {
+                fileSystem.addHardLink(hardLink.path(), hardLink.targetPath(), hardLink.mode());
+            }
+            return fileSystem;
+        }
+
+        /// Reads a regular file node payload.
+        public byte @Unmodifiable [] readFileData(TarNode node) throws IOException {
+            if (!node.isFile()) {
+                throw new IOException("Tar node is not a regular file: " + node.path());
+            }
+
+            TarFileData fileData = node.fileData();
+            if (fileData.data != null) {
+                return fileData.data.clone();
+            }
+            if (fileData.archiveEntry == null || reader == null) {
+                return new byte[0];
+            }
+            synchronized (reader) {
+                try (InputStream input = reader.getInputStream(fileData.archiveEntry)) {
+                    return readEntryData(input, fileData.archiveEntry);
+                }
+            }
+        }
+
+        /// Opens a regular file node through a seekable channel.
+        public SeekableByteChannel openFileChannel(TarNode node, boolean writable) throws IOException {
+            return writable
+                    ? new MutableTarSeekableByteChannel(node)
+                    : new ByteArraySeekableByteChannel(readFileData(node));
+        }
+
         /// Normalizes one tar entry name into a relative Linux guest path.
         private static String normalizeTarEntryName(String name) {
             @Nullable String normalized = normalizeAbsoluteGuestPath("/" + name);
@@ -854,7 +944,7 @@ public final class GuestFileSystem {
 
         /// Reads the current tar entry payload into memory.
         private static byte @Unmodifiable [] readEntryData(
-                TarArchiveInputStream tarInput,
+                InputStream input,
                 TarArchiveEntry entry) throws IOException {
             long size = entry.getSize();
             if (size < 0 || size > Integer.MAX_VALUE) {
@@ -865,7 +955,7 @@ public final class GuestFileSystem {
             byte[] buffer = new byte[8192];
             long remaining = size;
             while (remaining > 0) {
-                int count = tarInput.read(buffer, 0, (int) Math.min(buffer.length, remaining));
+                int count = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
                 if (count < 0) {
                     throw new IOException("Truncated tar entry: " + entry.getName());
                 }
@@ -906,8 +996,55 @@ public final class GuestFileSystem {
             parent.children.put(name, TarNode.directory(name, path, parent, mode));
         }
 
+        /// Creates a regular file below an existing directory.
+        public @Nullable TarNode createFile(String path, int mode) {
+            @Nullable TarNode parent = existingParentDirectory(path);
+            if (parent == null) {
+                return null;
+            }
+            TarNode node = TarNode.file(
+                    leafName(path),
+                    path,
+                    parent,
+                    new TarFileData(new byte[0], null),
+                    mode == 0 ? STAT_MODE_READ_WRITE_ALL : mode);
+            parent.children.put(leafName(path), node);
+            return node;
+        }
+
+        /// Creates a directory below an existing directory.
+        public @Nullable TarNode createDirectory(String path, int mode) {
+            @Nullable TarNode parent = existingParentDirectory(path);
+            if (parent == null) {
+                return null;
+            }
+            TarNode node = TarNode.directory(leafName(path), path, parent, mode);
+            parent.children.put(leafName(path), node);
+            return node;
+        }
+
+        /// Removes a node from its parent directory.
+        public boolean removeNode(TarNode node) {
+            @Nullable TarNode parent = node.parent();
+            return parent != null && parent.children.remove(node.name()) != null;
+        }
+
+        /// Moves a node below another existing directory and returns the moved replacement node.
+        public @Nullable TarNode moveNode(TarNode node, String path) {
+            @Nullable TarNode parent = existingParentDirectory(path);
+            @Nullable TarNode oldParent = node.parent();
+            if (parent == null || oldParent == null) {
+                return null;
+            }
+
+            TarNode moved = cloneNode(node, leafName(path), path, parent);
+            oldParent.children.remove(node.name());
+            parent.children.put(moved.name(), moved);
+            return moved;
+        }
+
         /// Adds or replaces a regular file entry and any missing parents.
-        private void addFile(String path, byte @Unmodifiable [] data, int mode) {
+        private void addFile(String path, TarFileData data, int mode) {
             TarNode parent = ensureParentDirectory(path);
             parent.children.put(leafName(path), TarNode.file(leafName(path), path, parent, data, mode));
         }
@@ -927,7 +1064,30 @@ public final class GuestFileSystem {
 
             int permissions = mode == 0 ? target.permissions() : mode;
             TarNode parent = ensureParentDirectory(path);
-            parent.children.put(leafName(path), TarNode.file(leafName(path), path, parent, target.data(), permissions));
+            parent.children.put(leafName(path), TarNode.file(leafName(path), path, parent, target.fileData(), permissions));
+        }
+
+        /// Returns the existing parent directory for a relative path.
+        private @Nullable TarNode existingParentDirectory(String path) {
+            int separator = path.lastIndexOf('/');
+            TarNode parent = separator < 0 ? root : node(path.substring(0, separator));
+            return parent != null && parent.isDirectory() ? parent : null;
+        }
+
+        /// Clones a node and any children under a new parent and relative path.
+        private static TarNode cloneNode(TarNode node, String name, String path, TarNode parent) {
+            if (node.isDirectory()) {
+                TarNode copy = TarNode.directory(name, path, parent, node.permissions());
+                for (TarNode child : node.children.values()) {
+                    String childPath = path.isEmpty() ? child.name() : path + "/" + child.name();
+                    copy.children.put(child.name(), cloneNode(child, child.name(), childPath, copy));
+                }
+                return copy;
+            }
+            if (node.isFile()) {
+                return TarNode.file(name, path, parent, node.fileData(), node.permissions());
+            }
+            return TarNode.symbolicLink(name, path, parent, node.linkTarget(), node.permissions());
         }
 
         /// Ensures that all parent directories for a relative path exist.
@@ -967,6 +1127,29 @@ public final class GuestFileSystem {
     private record PendingTarHardLink(String path, String targetPath, int mode) {
     }
 
+    /// Stores regular-file payload state for one or more tar nodes.
+    private static final class TarFileData {
+        /// The in-memory regular-file payload, or null when the payload is lazy.
+        private byte @Nullable [] data;
+
+        /// The source archive entry for lazy payloads, or null for new memory-only files.
+        private final @Nullable TarArchiveEntry archiveEntry;
+
+        /// Creates regular-file payload state.
+        private TarFileData(byte @Nullable [] data, @Nullable TarArchiveEntry archiveEntry) {
+            this.data = data;
+            this.archiveEntry = archiveEntry;
+        }
+
+        /// Returns the file size exposed through metadata syscalls.
+        private long size() {
+            if (data != null) {
+                return data.length;
+            }
+            return archiveEntry == null ? 0 : archiveEntry.getSize();
+        }
+    }
+
     /// Stores one in-memory tar filesystem node.
     public static final class TarNode {
         /// The node name without path separators.
@@ -987,8 +1170,8 @@ public final class GuestFileSystem {
         /// The file-type bits exposed through `stat` and `statx`.
         private final int statType;
 
-        /// The regular-file payload, or an empty array for non-file nodes.
-        private final byte @Unmodifiable [] data;
+        /// The regular-file payload metadata, or null for non-file nodes.
+        private final @Nullable TarFileData fileData;
 
         /// The symbolic link target, or null for non-link nodes.
         private final @Nullable String linkTarget;
@@ -1004,7 +1187,7 @@ public final class GuestFileSystem {
                 int permissions,
                 byte directoryEntryType,
                 int statType,
-                byte @Unmodifiable [] data,
+                @Nullable TarFileData fileData,
                 @Nullable String linkTarget,
                 Map<String, TarNode> children) {
             this.name = name;
@@ -1013,7 +1196,7 @@ public final class GuestFileSystem {
             this.permissions = permissions;
             this.directoryEntryType = directoryEntryType;
             this.statType = statType;
-            this.data = data;
+            this.fileData = fileData;
             this.linkTarget = linkTarget;
             this.children = children;
         }
@@ -1027,7 +1210,7 @@ public final class GuestFileSystem {
                     permissionsOrDefault(mode, STAT_MODE_READ_EXECUTE_ALL),
                     DIRECTORY_ENTRY_DIRECTORY,
                     STAT_MODE_DIRECTORY,
-                    new byte[0],
+                    null,
                     null,
                     new TreeMap<>());
         }
@@ -1037,7 +1220,7 @@ public final class GuestFileSystem {
                 String name,
                 String path,
                 TarNode parent,
-                byte @Unmodifiable [] data,
+                TarFileData fileData,
                 int mode) {
             return new TarNode(
                     name,
@@ -1046,7 +1229,7 @@ public final class GuestFileSystem {
                     permissionsOrDefault(mode, STAT_MODE_READ_ALL),
                     DIRECTORY_ENTRY_REGULAR_FILE,
                     STAT_MODE_REGULAR_FILE,
-                    data,
+                    fileData,
                     null,
                     new TreeMap<>());
         }
@@ -1060,7 +1243,7 @@ public final class GuestFileSystem {
                     permissionsOrDefault(mode, STAT_MODE_ALL),
                     DIRECTORY_ENTRY_SYMBOLIC_LINK,
                     STAT_MODE_SYMBOLIC_LINK,
-                    new byte[0],
+                    null,
                     target,
                     new TreeMap<>());
         }
@@ -1074,6 +1257,16 @@ public final class GuestFileSystem {
         /// Returns the node name without path separators.
         public String name() {
             return name;
+        }
+
+        /// Returns the archive-relative path for this node.
+        public String path() {
+            return path;
+        }
+
+        /// Returns the parent directory node, or null for the root.
+        public @Nullable TarNode parent() {
+            return parent;
         }
 
         /// Returns true when this node is a directory.
@@ -1099,7 +1292,7 @@ public final class GuestFileSystem {
         /// Returns the byte size exposed through metadata syscalls.
         public long size() {
             if (isFile()) {
-                return data.length;
+                return fileData().size();
             }
             if (isSymbolicLink()) {
                 assert linkTarget != null;
@@ -1108,9 +1301,10 @@ public final class GuestFileSystem {
             return 0;
         }
 
-        /// Returns the regular-file payload.
-        public byte @Unmodifiable [] data() {
-            return data;
+        /// Returns the regular-file payload metadata.
+        private TarFileData fileData() {
+            assert fileData != null;
+            return fileData;
         }
 
         /// Returns the symbolic link target.
@@ -1227,6 +1421,133 @@ public final class GuestFileSystem {
         @Override
         public void close() {
             open = false;
+        }
+
+        /// Throws when the channel is already closed.
+        private void ensureOpen() throws ClosedChannelException {
+            if (!open) {
+                throw new ClosedChannelException();
+            }
+        }
+    }
+
+    /// Implements a writable `SeekableByteChannel` over a memory tar node.
+    private static final class MutableTarSeekableByteChannel implements SeekableByteChannel {
+        /// The tar regular-file node whose payload is mutated by this channel.
+        private final TarNode node;
+
+        /// The current channel position.
+        private int position;
+
+        /// Whether the channel is open.
+        private boolean open = true;
+
+        /// Creates a writable channel over a tar regular-file node.
+        private MutableTarSeekableByteChannel(TarNode node) {
+            this.node = node;
+            TarFileData fileData = node.fileData();
+            if (fileData.data == null) {
+                fileData.data = new byte[0];
+            }
+        }
+
+        /// Reads bytes from the current position into the destination buffer.
+        @Override
+        public int read(ByteBuffer destination) throws IOException {
+            ensureOpen();
+            byte[] data = data();
+            if (position >= data.length) {
+                return -1;
+            }
+
+            int count = Math.min(destination.remaining(), data.length - position);
+            destination.put(data, position, count);
+            position += count;
+            return count;
+        }
+
+        /// Writes bytes from the source buffer into the node payload.
+        @Override
+        public int write(ByteBuffer source) throws IOException {
+            ensureOpen();
+            int count = source.remaining();
+            long end = (long) position + count;
+            if (end > Integer.MAX_VALUE) {
+                throw new IOException("Memory tar file is too large: " + end);
+            }
+
+            TarFileData fileData = node.fileData();
+            byte[] data = data();
+            if (end > data.length) {
+                data = Arrays.copyOf(data, (int) end);
+                fileData.data = data;
+            }
+            source.get(data, position, count);
+            position += count;
+            return count;
+        }
+
+        /// Returns the current channel position.
+        @Override
+        public long position() throws IOException {
+            ensureOpen();
+            return position;
+        }
+
+        /// Sets the current channel position.
+        @Override
+        public SeekableByteChannel position(long newPosition) throws IOException {
+            ensureOpen();
+            if (newPosition < 0 || newPosition > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Invalid memory tar channel position: " + newPosition);
+            }
+            position = (int) newPosition;
+            return this;
+        }
+
+        /// Returns the current payload size.
+        @Override
+        public long size() throws IOException {
+            ensureOpen();
+            return data().length;
+        }
+
+        /// Truncates the node payload when the requested size is smaller.
+        @Override
+        public SeekableByteChannel truncate(long size) throws IOException {
+            ensureOpen();
+            if (size < 0 || size > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Invalid memory tar channel size: " + size);
+            }
+
+            TarFileData fileData = node.fileData();
+            byte[] data = data();
+            if (size < data.length) {
+                fileData.data = Arrays.copyOf(data, (int) size);
+            }
+            if (position > size) {
+                position = (int) size;
+            }
+            return this;
+        }
+
+        /// Returns true while the channel is open.
+        @Override
+        public boolean isOpen() {
+            return open;
+        }
+
+        /// Closes this channel.
+        @Override
+        public void close() {
+            open = false;
+        }
+
+        /// Returns the current node payload.
+        private byte[] data() {
+            byte @Nullable [] data = node.fileData().data;
+            assert data != null;
+            return data;
         }
 
         /// Throws when the channel is already closed.

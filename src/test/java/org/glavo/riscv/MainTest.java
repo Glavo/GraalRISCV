@@ -79,6 +79,15 @@ public final class MainTest {
     /// Linux `AT_FDCWD`.
     private static final int AT_FDCWD = -100;
 
+    /// Linux `O_WRONLY`.
+    private static final int O_WRONLY = 1;
+
+    /// Linux `O_CREAT`.
+    private static final int O_CREAT = 00000100;
+
+    /// Linux `O_TRUNC`.
+    private static final int O_TRUNC = 00001000;
+
     /// The Linux RISC-V syscall number for `openat`.
     private static final int SYS_OPENAT = 56;
 
@@ -301,6 +310,136 @@ public final class MainTest {
         assertEquals(0, exitCode);
         assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that Docker-like `--mount` syntax exposes a host directory.
+    @Test
+    public void dockerMountOptionExposesHostDirectoryAtGuestPath() throws Exception {
+        Path elfPath = tempDirectory.resolve("docker-mount-read.elf");
+        Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
+        Path mountedDirectory = tempDirectory.resolve("docker-mounted");
+        Files.createDirectories(mountedDirectory);
+        Files.writeString(mountedDirectory.resolve("message.txt"), "mounted-data", StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "type=bind,src=" + mountedDirectory + ",dst=/data",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that Docker-like `--mount` syntax can infer a tar archive.
+    @Test
+    public void dockerMountOptionInfersTarArchiveAtGuestPath() throws Exception {
+        Path elfPath = tempDirectory.resolve("docker-mount-auto-tar-read.elf");
+        Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
+        Path archive = tempDirectory.resolve("auto-mounted.tar");
+        writeTarEntry(archive, "message.txt", "mounted-data".getBytes(StandardCharsets.UTF_8));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "src=" + archive + ",dst=/data",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that a read-only bind mount rejects guest writes.
+    @Test
+    public void readOnlyBindMountRejectsGuestWrite() throws Exception {
+        Path elfPath = tempDirectory.resolve("readonly-bind-write.elf");
+        Files.write(elfPath, ElfTestImages.executable(expectWriteOpenReadOnlyFilesystemCode()));
+        Path mountedDirectory = tempDirectory.resolve("readonly-bind");
+        Files.createDirectories(mountedDirectory);
+        Files.writeString(mountedDirectory.resolve("message.txt"), "original", StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "type=bind,src=" + mountedDirectory + ",dst=/data,readonly",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("original", Files.readString(mountedDirectory.resolve("message.txt"), StandardCharsets.UTF_8));
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that a memory tar mount is read-only unless `rw` is requested.
+    @Test
+    public void memoryTarMountDefaultsToReadOnly() throws Exception {
+        Path elfPath = tempDirectory.resolve("readonly-memory-tar-write.elf");
+        Files.write(elfPath, ElfTestImages.executable(expectWriteOpenReadOnlyFilesystemCode()));
+        Path archive = tempDirectory.resolve("readonly-memory.tar");
+        writeTarEntry(archive, "message.txt", "original".getBytes(StandardCharsets.UTF_8));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "type=tar,src=" + archive + ",dst=/data,memory",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that a writable memory tar mount stores changes only in process memory.
+    @Test
+    public void writableMemoryTarMountStoresGuestWritesInMemory() throws Exception {
+        Path elfPath = tempDirectory.resolve("writable-memory-tar.elf");
+        Files.write(elfPath, ElfTestImages.executable(createAndReadMemoryTarFileCode()));
+        Path archive = tempDirectory.resolve("writable-memory.tar");
+        writeTarEntry(archive, "message.txt", "original".getBytes(StandardCharsets.UTF_8));
+        byte[] originalArchiveBytes = Files.readAllBytes(archive);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "2000",
+                        "--mount", "type=tar,src=" + archive + ",dst=/data,memory,rw",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("changed", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+        assertTrue(Arrays.equals(originalArchiveBytes, Files.readAllBytes(archive)));
     }
 
     /// Verifies that `--guest-program` loads the executable from configured guest mounts.
@@ -1277,6 +1416,107 @@ public final class MainTest {
         code.position(bufferOffset);
         code.put(new byte[byteCount]);
         return code.array();
+    }
+
+    /// Builds a program that succeeds only when opening `/data/message.txt` for writing returns `EROFS`.
+    private static byte[] expectWriteOpenReadOnlyFilesystemCode() {
+        byte[] path = "/data/message.txt\0".getBytes(StandardCharsets.UTF_8);
+        int pathOffset = Integer.BYTES * 24;
+        ByteBuffer code = ByteBuffer.allocate(pathOffset + path.length).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadImmediate(code, 10, AT_FDCWD);
+        putLoadAddress(code, 11, pathOffset);
+        putLoadImmediate(code, 12, O_WRONLY | O_TRUNC);
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_OPENAT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, -30));
+        int mismatchBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int failurePosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, mismatchBranchPosition, bne(10, 5, failurePosition - mismatchBranchPosition));
+        code.position(pathOffset);
+        code.put(path);
+        return Arrays.copyOf(code.array(), code.position());
+    }
+
+    /// Builds a program that creates a file in `/data`, reads it back, and writes it to stdout.
+    private static byte[] createAndReadMemoryTarFileCode() {
+        byte[] path = "/data/new.txt\0".getBytes(StandardCharsets.UTF_8);
+        byte[] message = "changed".getBytes(StandardCharsets.UTF_8);
+        int pathOffset = Integer.BYTES * 64;
+        int messageOffset = pathOffset + path.length;
+        int bufferOffset = messageOffset + message.length;
+        ByteBuffer code = ByteBuffer.allocate(bufferOffset + message.length).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadImmediate(code, 10, AT_FDCWD);
+        putLoadAddress(code, 11, pathOffset);
+        putLoadImmediate(code, 12, O_CREAT | O_WRONLY | O_TRUNC);
+        putLoadImmediate(code, 13, 0666);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_OPENAT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 10, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 3));
+        int createFailBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        putLoadAddress(code, 11, messageOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, message.length));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_WRITE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, message.length));
+        int writeFailBranchPosition = reserveInstruction(code);
+
+        putLoadImmediate(code, 10, AT_FDCWD);
+        putLoadAddress(code, 11, pathOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_OPENAT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 10, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, 4));
+        int openFailBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        putLoadAddress(code, 11, bufferOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, message.length));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_READ));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 0, message.length));
+        int readFailBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        putLoadAddress(code, 11, bufferOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, message.length));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_WRITE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int failurePosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, createFailBranchPosition, bne(5, 6, failurePosition - createFailBranchPosition));
+        patchInstruction(code, writeFailBranchPosition, bne(10, 6, failurePosition - writeFailBranchPosition));
+        patchInstruction(code, openFailBranchPosition, bne(5, 6, failurePosition - openFailBranchPosition));
+        patchInstruction(code, readFailBranchPosition, bne(10, 6, failurePosition - readFailBranchPosition));
+
+        code.position(pathOffset);
+        code.put(path);
+        code.position(messageOffset);
+        code.put(message);
+        code.position(bufferOffset);
+        code.put(new byte[message.length]);
+        return Arrays.copyOf(code.array(), code.position());
     }
 
     /// Builds a program that exits successfully only when `getuid` returns the expected value.

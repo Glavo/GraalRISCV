@@ -398,6 +398,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Linux `EEXIST` as a raw negative syscall result.
     private static final long EEXIST = -17;
 
+    /// Linux `EXDEV` as a raw negative syscall result.
+    private static final long EXDEV = -18;
+
     /// Linux `EINTR` as a raw negative syscall result.
     private static final long EINTR = -4;
 
@@ -3177,7 +3180,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 guestPath,
                 (flags & AT_SYMLINK_NOFOLLOW) == 0);
         if (tarPath != null) {
-            return accessTarNode(tarPath.node(), mode);
+            return accessTarNode(tarPath, mode);
         }
 
         @Nullable VirtualPath procPath = resolveVirtualPath(
@@ -3221,8 +3224,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((mode & X_OK) != 0 && !openFile.isDirectory()) {
             return EACCES;
         }
-        if ((mode & W_OK) != 0
-                && (openFile.isTarEntry() || (openFile.isVirtualEntry() && !openFile.isCharacterDevice()))) {
+        if ((mode & W_OK) != 0 && openFile.isVirtualEntry() && !openFile.isCharacterDevice()) {
             return EACCES;
         }
         return 0;
@@ -3240,7 +3242,7 @@ public final class GuestSyscalls implements AutoCloseable {
             if ((mode & R_OK) != 0 && !hostFile.isReadable()) {
                 return EACCES;
             }
-            if ((mode & W_OK) != 0 && !hostFile.isWritable()) {
+            if ((mode & W_OK) != 0 && (hostFileOnReadOnlyMount(hostFile) || !hostFile.isWritable())) {
                 return EACCES;
             }
             if ((mode & X_OK) != 0 && !hostFile.isExecutable()) {
@@ -3266,8 +3268,9 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        if (resolveTarPath(directoryFileDescriptor, guestPath) != null) {
-            return EROFS;
+        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath);
+        if (tarPath != null) {
+            return mkdirTarPath(tarPath, mode);
         }
         if (resolveVirtualPath(directoryFileDescriptor, guestPath) != null) {
             return EROFS;
@@ -3282,6 +3285,9 @@ public final class GuestSyscalls implements AutoCloseable {
         if (parentError != 0) {
             return parentError;
         }
+        if (hostFileOnReadOnlyMount(hostFile)) {
+            return EROFS;
+        }
 
         try {
             if (pathEntryExists(hostFile)) {
@@ -3294,6 +3300,21 @@ public final class GuestSyscalls implements AutoCloseable {
         } catch (IOException | UnsupportedOperationException | SecurityException exception) {
             return EACCES;
         }
+    }
+
+    /// Creates a directory in a writable memory tar mount.
+    private long mkdirTarPath(TarPath tarPath, long mode) {
+        TarMount mount = tarPath.mount();
+        if (mount.readOnly()) {
+            return EROFS;
+        }
+        if (tarPath.node() != null) {
+            return EEXIST;
+        }
+
+        String relativePath = GuestFileSystem.relativeGuestPath(tarPath.guestPath(), mount.guestPath());
+        @Nullable TarNode directory = mount.fileSystem().createDirectory(relativePath, (int) (mode & STAT_MODE_ALL));
+        return directory == null ? ENOENT : 0;
     }
 
     /// Removes a file or empty directory below a configured filesystem mount.
@@ -3319,7 +3340,7 @@ public final class GuestSyscalls implements AutoCloseable {
                 guestPath,
                 false);
         if (tarPath != null) {
-            return EROFS;
+            return unlinkTarPath(tarPath, (flags & AT_REMOVEDIR) != 0);
         }
         if (resolveVirtualPath(directoryFileDescriptor, guestPath, false) != null) {
             return EROFS;
@@ -3333,6 +3354,9 @@ public final class GuestSyscalls implements AutoCloseable {
         long parentError = validateSandboxedParent(hostFile);
         if (parentError != 0) {
             return parentError;
+        }
+        if (hostFileOnReadOnlyMount(hostFile)) {
+            return EROFS;
         }
 
         boolean removeDirectory = (flags & AT_REMOVEDIR) != 0;
@@ -3360,6 +3384,30 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
+    /// Removes a file or empty directory from a writable memory tar mount.
+    private long unlinkTarPath(TarPath tarPath, boolean removeDirectory) {
+        TarMount mount = tarPath.mount();
+        if (mount.readOnly()) {
+            return EROFS;
+        }
+
+        @Nullable TarNode node = tarPath.node();
+        if (node == null) {
+            return ENOENT;
+        }
+        if (removeDirectory) {
+            if (!node.isDirectory()) {
+                return ENOTDIR;
+            }
+            if (!node.children().isEmpty()) {
+                return ENOTEMPTY;
+            }
+        } else if (node.isDirectory()) {
+            return EISDIR;
+        }
+        return mount.fileSystem().removeNode(node) ? 0 : EACCES;
+    }
+
     /// Renames a sandboxed host path to another sandboxed host path.
     private long renameat(
             long oldDirectoryFileDescriptor,
@@ -3383,9 +3431,19 @@ public final class GuestSyscalls implements AutoCloseable {
             return EBADF;
         }
 
-        if (resolveTarPath(oldDirectoryFileDescriptor, oldGuestPath) != null
-                || resolveTarPath(newDirectoryFileDescriptor, newGuestPath) != null) {
-            return EROFS;
+        @Nullable String oldAbsoluteGuestPath = absoluteGuestPath(oldDirectoryFileDescriptor, oldGuestPath);
+        @Nullable String newAbsoluteGuestPath = absoluteGuestPath(newDirectoryFileDescriptor, newGuestPath);
+        if (oldAbsoluteGuestPath == null || newAbsoluteGuestPath == null) {
+            return EACCES;
+        }
+
+        @Nullable TarPath oldTarPath = fileSystem.resolveTarPath(oldAbsoluteGuestPath, false);
+        @Nullable TarPath newTarPath = fileSystem.resolveTarPath(newAbsoluteGuestPath, false);
+        if (oldTarPath != null || newTarPath != null) {
+            if (oldTarPath == null || newTarPath == null) {
+                return EXDEV;
+            }
+            return renameTarPath(oldTarPath, newTarPath);
         }
         if (resolveVirtualPath(oldDirectoryFileDescriptor, oldGuestPath) != null
                 || resolveVirtualPath(newDirectoryFileDescriptor, newGuestPath) != null) {
@@ -3405,6 +3463,9 @@ public final class GuestSyscalls implements AutoCloseable {
         long newParentError = validateSandboxedParent(newHostFile);
         if (newParentError != 0) {
             return newParentError;
+        }
+        if (hostFileOnReadOnlyMount(oldHostFile) || hostFileOnReadOnlyMount(newHostFile)) {
+            return EROFS;
         }
 
         try {
@@ -3436,6 +3497,47 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
+    /// Renames a node inside a writable memory tar mount.
+    private long renameTarPath(TarPath oldTarPath, TarPath newTarPath) {
+        TarMount mount = oldTarPath.mount();
+        if (mount != newTarPath.mount()) {
+            return EXDEV;
+        }
+        if (mount.readOnly()) {
+            return EROFS;
+        }
+
+        @Nullable TarNode oldNode = oldTarPath.node();
+        if (oldNode == null) {
+            return ENOENT;
+        }
+
+        @Nullable TarNode newNode = newTarPath.node();
+        if (oldNode == newNode) {
+            return 0;
+        }
+        if (oldNode.isDirectory() && guestPathMatchesMount(newTarPath.guestPath(), oldTarPath.guestPath())) {
+            return EINVAL;
+        }
+        if (newNode != null) {
+            if (oldNode.isDirectory() && !newNode.isDirectory()) {
+                return ENOTDIR;
+            }
+            if (!oldNode.isDirectory() && newNode.isDirectory()) {
+                return EISDIR;
+            }
+            if (newNode.isDirectory() && !newNode.children().isEmpty()) {
+                return ENOTEMPTY;
+            }
+            if (!mount.fileSystem().removeNode(newNode)) {
+                return EACCES;
+            }
+        }
+
+        String relativePath = GuestFileSystem.relativeGuestPath(newTarPath.guestPath(), mount.guestPath());
+        return mount.fileSystem().moveNode(oldNode, relativePath) == null ? ENOENT : 0;
+    }
+
     /// Handles `renameat2` without Linux-specific nonzero rename flags.
     private long renameat2(
             long oldDirectoryFileDescriptor,
@@ -3463,8 +3565,9 @@ public final class GuestSyscalls implements AutoCloseable {
             return ENOENT;
         }
 
-        if (resolveTarPath(AT_FDCWD, guestPath) != null) {
-            return EROFS;
+        @Nullable TarPath tarPath = resolveTarPath(AT_FDCWD, guestPath);
+        if (tarPath != null) {
+            return truncateTarPath(tarPath, length);
         }
         if (resolveVirtualPath(AT_FDCWD, guestPath) != null) {
             return EROFS;
@@ -3491,6 +3594,9 @@ public final class GuestSyscalls implements AutoCloseable {
             if (!hostFile.isWritable()) {
                 return EACCES;
             }
+            if (hostFileOnReadOnlyMount(hostFile)) {
+                return EROFS;
+            }
 
             try (SeekableByteChannel channel = hostFile.newByteChannel(EnumSet.of(StandardOpenOption.WRITE))) {
                 resizeHostChannel(channel, length);
@@ -3500,6 +3606,31 @@ public final class GuestSyscalls implements AutoCloseable {
             return ENOENT;
         } catch (IOException | UnsupportedOperationException | SecurityException exception) {
             return EACCES;
+        }
+    }
+
+    /// Truncates a regular file in a writable memory tar mount.
+    private long truncateTarPath(TarPath tarPath, long length) {
+        TarMount mount = tarPath.mount();
+        if (mount.readOnly()) {
+            return EROFS;
+        }
+        @Nullable TarNode node = tarPath.node();
+        if (node == null) {
+            return ENOENT;
+        }
+        if (node.isDirectory()) {
+            return EISDIR;
+        }
+        if (!node.isFile()) {
+            return ENODEV;
+        }
+
+        try (SeekableByteChannel channel = mount.fileSystem().openFileChannel(node, true)) {
+            resizeHostChannel(channel, length);
+            return 0;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest tar truncate syscall failed", exception);
         }
     }
 
@@ -3670,14 +3801,14 @@ public final class GuestSyscalls implements AutoCloseable {
             return EINVAL;
         }
 
-        return openMountedPath(absoluteGuestPath, flags);
+        return openMountedPath(absoluteGuestPath, flags, mode);
     }
 
     /// Opens an absolute guest path below its selected filesystem mount.
-    private long openMountedPath(String absoluteGuestPath, long flags) {
+    private long openMountedPath(String absoluteGuestPath, long flags, long mode) {
         @Nullable Mount filesystemMount = mountForGuestPath(absoluteGuestPath);
         if (filesystemMount instanceof TarMount tarMount) {
-            return openTarPath(tarMount, absoluteGuestPath, flags);
+            return openTarPath(tarMount, absoluteGuestPath, flags, mode);
         }
         if (filesystemMount instanceof VirtualMount virtualMount) {
             return openVirtualPath(virtualMount, absoluteGuestPath, flags);
@@ -3698,6 +3829,11 @@ public final class GuestSyscalls implements AutoCloseable {
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
         boolean directoryOnly = (flags & O_DIRECTORY) != 0;
+        boolean writeIntent = writable || create || truncate || append;
+
+        if (hostMount.readOnly() && writeIntent) {
+            return EROFS;
+        }
 
         @Nullable TruffleFile hostFile = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
         if (hostFile == null) {
@@ -3786,24 +3922,44 @@ public final class GuestSyscalls implements AutoCloseable {
         }
     }
 
-    /// Opens a read-only file or directory from a tar filesystem mount.
-    private long openTarPath(TarMount mount, String absoluteGuestPath, long flags) {
+    /// Opens a file or directory from a tar filesystem mount.
+    private long openTarPath(TarMount mount, String absoluteGuestPath, long flags, long mode) {
         long accessMode = flags & O_ACCMODE;
+        boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
         boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
         boolean create = (flags & O_CREAT) != 0;
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
         boolean directoryOnly = (flags & O_DIRECTORY) != 0;
 
+        if ((truncate || append) && !writable) {
+            return EACCES;
+        }
+
         @Nullable TarPath tarPath = fileSystem.resolveTarPath(absoluteGuestPath, true);
         @Nullable TarNode node = tarPath == null ? null : tarPath.node();
         if (node == null) {
+            if (create && !mount.readOnly()) {
+                String relativePath = GuestFileSystem.relativeGuestPath(tarPath == null
+                        ? absoluteGuestPath
+                        : tarPath.guestPath(), mount.guestPath());
+                @Nullable TarNode created = mount.fileSystem().createFile(relativePath, (int) (mode & STAT_MODE_ALL));
+                if (created == null) {
+                    return ENOENT;
+                }
+                try {
+                    SeekableByteChannel channel = mount.fileSystem().openFileChannel(created, writable || truncate || append);
+                    return addOpenFile(OpenFile.tarFile(created, absoluteGuestPath, channel, readable, writable, append));
+                } catch (IOException exception) {
+                    throw new RiscVException("Guest tar open syscall failed", exception);
+                }
+            }
             return create ? EROFS : ENOENT;
         }
         if (create && (flags & O_EXCL) != 0) {
             return EEXIST;
         }
-        if (writable || truncate || append) {
+        if (mount.readOnly() && (writable || truncate || append)) {
             return EROFS;
         }
         if (node.isDirectory()) {
@@ -3819,11 +3975,18 @@ public final class GuestSyscalls implements AutoCloseable {
             return ENODEV;
         }
 
-        return addOpenFile(OpenFile.tarFile(
-                node,
-                absoluteGuestPath,
-                new ByteArraySeekableByteChannel(node.data()),
-                true));
+        try {
+            SeekableByteChannel channel = mount.fileSystem().openFileChannel(node, writable || truncate || append);
+            if (truncate) {
+                resizeHostChannel(channel, 0);
+            }
+            if (append) {
+                channel.position(channel.size());
+            }
+            return addOpenFile(OpenFile.tarFile(node, absoluteGuestPath, channel, readable, writable, append));
+        } catch (IOException exception) {
+            throw new RiscVException("Guest tar open syscall failed", exception);
+        }
     }
 
     /// Opens a read-only file or directory from a virtual filesystem.
@@ -3928,7 +4091,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if (normalizedTargetPath.equals(node.guestPath())) {
             return ELOOP;
         }
-        return openMountedPath(normalizedTargetPath, flags);
+        return openMountedPath(normalizedTargetPath, flags, 0);
     }
 
     /// Reads bytes from guest stdin, an open host file, or a pipe endpoint into guest memory.
@@ -5175,15 +5338,12 @@ public final class GuestSyscalls implements AutoCloseable {
             }
 
             if (hostFile.isDirectory()) {
-                int permissions = hostFile.isReadable() ? STAT_MODE_READ_EXECUTE_ALL : 0;
-                writeStat(statAddress, syntheticInode(hostFile), STAT_MODE_DIRECTORY | permissions, 0);
+                writeStat(statAddress, syntheticInode(hostFile), STAT_MODE_DIRECTORY | hostFilePermissions(hostFile, true), 0);
                 return 0;
             }
             if (hostFile.isRegularFile()) {
                 long size = hostFile.size();
-                int permissions = (hostFile.isReadable() ? STAT_MODE_READ_ALL : 0)
-                        | (hostFile.isWritable() ? 0222 : 0);
-                writeStat(statAddress, syntheticInode(hostFile), STAT_MODE_REGULAR_FILE | permissions, size);
+                writeStat(statAddress, syntheticInode(hostFile), STAT_MODE_REGULAR_FILE | hostFilePermissions(hostFile, false), size);
                 return 0;
             }
             return ENODEV;
@@ -5217,23 +5377,20 @@ public final class GuestSyscalls implements AutoCloseable {
             }
 
             if (hostFile.isDirectory()) {
-                int permissions = hostFile.isReadable() ? STAT_MODE_READ_EXECUTE_ALL : 0;
                 writeStatx(
                         statxAddress,
                         syntheticInode(hostFile),
-                        STAT_MODE_DIRECTORY | permissions,
+                        STAT_MODE_DIRECTORY | hostFilePermissions(hostFile, true),
                         0,
                         requestedMask);
                 return 0;
             }
             if (hostFile.isRegularFile()) {
                 long size = hostFile.size();
-                int permissions = (hostFile.isReadable() ? STAT_MODE_READ_ALL : 0)
-                        | (hostFile.isWritable() ? 0222 : 0);
                 writeStatx(
                         statxAddress,
                         syntheticInode(hostFile),
-                        STAT_MODE_REGULAR_FILE | permissions,
+                        STAT_MODE_REGULAR_FILE | hostFilePermissions(hostFile, false),
                         size,
                         requestedMask);
                 return 0;
@@ -5245,7 +5402,8 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Checks access bits on a tar filesystem node.
-    private static long accessTarNode(@Nullable TarNode node, long mode) {
+    private static long accessTarNode(TarPath tarPath, long mode) {
+        @Nullable TarNode node = tarPath.node();
         if (node == null) {
             return ENOENT;
         }
@@ -5253,7 +5411,7 @@ public final class GuestSyscalls implements AutoCloseable {
         if ((mode & R_OK) != 0 && (permissions & STAT_MODE_READ_ALL) == 0) {
             return EACCES;
         }
-        if ((mode & W_OK) != 0) {
+        if ((mode & W_OK) != 0 && (tarPath.mount().readOnly() || (permissions & 0222) == 0)) {
             return EACCES;
         }
         if ((mode & X_OK) != 0 && (permissions & 0111) == 0) {
@@ -8492,11 +8650,11 @@ public final class GuestSyscalls implements AutoCloseable {
                 + "hart\t\t: 0\n"
                 + "isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"
                 + "mmu\t\t: sv57\n"
-                + "uarch\t\t: glavo,graalriscv\n"
-                + "java_version\t: " + procCpuinfoProperty("java.version") + "\n"
-                + "java_vm_name\t: " + procCpuinfoProperty("java.vm.name") + "\n"
-                + "java_vm_version\t: " + procCpuinfoProperty("java.vm.version") + "\n"
-                + "java_vendor\t: " + procCpuinfoProperty("java.vendor") + "\n";
+                + "uarch\t\t: graalriscv\n"
+                + "graalriscv_java_version\t: " + procCpuinfoProperty("java.version") + "\n"
+                + "graalriscv_java_vm_name\t: " + procCpuinfoProperty("java.vm.name") + "\n"
+                + "graalriscv_java_vm_version\t: " + procCpuinfoProperty("java.vm.version") + "\n"
+                + "graalriscv_java_vendor\t: " + procCpuinfoProperty("java.vendor") + "\n";
     }
 
     /// Returns a host Java system property sanitized for `/proc/cpuinfo`.
@@ -8719,6 +8877,24 @@ public final class GuestSyscalls implements AutoCloseable {
             return false;
         }
         return hostFile.getCanonicalFile().startsWith(mount.root().getCanonicalFile());
+    }
+
+    /// Returns true when a host file is selected by a read-only bind mount.
+    private boolean hostFileOnReadOnlyMount(TruffleFile hostFile) {
+        @Nullable HostMount mount = mountForHostFile(hostFile);
+        return mount != null && mount.readOnly();
+    }
+
+    /// Returns the guest-visible permission bits for a host file.
+    private int hostFilePermissions(TruffleFile hostFile, boolean directory) {
+        int permissions = 0;
+        if (hostFile.isReadable()) {
+            permissions |= directory ? STAT_MODE_READ_EXECUTE_ALL : STAT_MODE_READ_ALL;
+        }
+        if (!directory && !hostFileOnReadOnlyMount(hostFile) && hostFile.isWritable()) {
+            permissions |= 0222;
+        }
+        return permissions;
     }
 
     /// Returns the sandboxed host directory backing the guest-visible current working directory.
@@ -10025,8 +10201,14 @@ public final class GuestSyscalls implements AutoCloseable {
                     false);
         }
 
-        /// Creates an entry backed by a read-only tar file.
-        static OpenFile tarFile(TarNode node, String guestPath, SeekableByteChannel channel, boolean readable) {
+        /// Creates an entry backed by a tar file.
+        static OpenFile tarFile(
+                TarNode node,
+                String guestPath,
+                SeekableByteChannel channel,
+                boolean readable,
+                boolean writable,
+                boolean append) {
             return new OpenFile(
                     -1,
                     null,
@@ -10044,8 +10226,8 @@ public final class GuestSyscalls implements AutoCloseable {
                     false,
                     false,
                     readable,
-                    false,
-                    false,
+                    writable,
+                    append,
                     false);
         }
 

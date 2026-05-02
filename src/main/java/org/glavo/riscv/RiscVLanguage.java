@@ -158,7 +158,7 @@ public final class RiscVLanguage extends TruffleLanguage<RiscVContext> {
     /// The `riscv.mounts` language option.
     @Option(
             name = "mounts",
-            help = "Newline-separated guest=host filesystem mounts. Default: use riscv.hostRoot as `/`.",
+            help = "Newline-separated filesystem mounts in guest=host or Docker-like key-value form. Default: use riscv.hostRoot as `/`.",
             category = OptionCategory.USER,
             stability = OptionStability.STABLE)
     static final OptionKey<String> MOUNTS = new OptionKey<>("");

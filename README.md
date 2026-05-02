@@ -46,7 +46,8 @@ Options:
   --huge-pages <n>           Guest HugeTLB page pool size.
   --vector-vlen <bits>       Vector register length in bits. Default is 128.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-  --mount <guest>=<path>     Mount a host directory or tar archive at an absolute guest path.
+  --mount <spec>             Mount a host path. Accepts <guest>=<path> or
+                              type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
   --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
   --user <name>              Guest login name. Default is user.
   --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
@@ -63,11 +64,16 @@ Options:
 
 `<program.elf>` is interpreted as a host path. Use `--guest-program` when the
 executable should be loaded from the guest filesystem. `--mount` controls the
-host directories and tar archives visible to guest file syscalls. For example,
-`--mount /=ubuntu-base.tar --guest-program /usr/bin/true` runs a guest path from
-the mounted root archive, and `--mount /data=dataset.tar` overlays `dataset.tar`
-at guest `/data`. If no `/` mount is provided for a host executable, the CLI
-mounts the directory containing that executable at `/`.
+host directories and tar archives visible to guest file syscalls. Legacy
+`--mount /data=dataset.tar` syntax is still accepted. Docker-like syntax also
+works, for example `--mount type=bind,src=./root,dst=/,readonly` or
+`--mount type=tar,src=ubuntu-base.tar,dst=/`. When `type` is omitted, regular
+host files are inferred as tar mounts and other host paths are inferred as bind
+mounts. Non-memory tar mounts are lazy and read file payloads from the archive
+only when opened. `memory` is valid only for tar mounts; `memory,rw` loads the
+archive into process memory and allows guest writes that are discarded when the
+process exits. If no `/` mount is provided for a host executable, the CLI mounts
+the directory containing that executable at `/`.
 By default, guest `/dev/tty` is backed by the configured process streams; pass
 `--use-host-tty` to try a real host controlling terminal when available.
 

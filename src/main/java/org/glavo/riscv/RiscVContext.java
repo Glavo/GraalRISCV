@@ -8,6 +8,7 @@ import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.runtime.FilesystemMountSpec;
 import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.TimeSource;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -269,17 +270,17 @@ public final class RiscVContext {
     /// Parses newline-separated mount entries, defaulting to `riscv.hostRoot` as `/`.
     private static String @Unmodifiable [] parseFilesystemMounts(String hostRoot, String filesystemMounts) {
         if (filesystemMounts.isEmpty()) {
-            return new String[]{"/=" + hostRoot};
+            return new String[]{FilesystemMountSpec.legacy("/", hostRoot).encode()};
         }
 
         ArrayList<String> result = new ArrayList<>();
         for (String mount : filesystemMounts.split("\\R")) {
             if (!mount.isEmpty()) {
-                result.add(normalizeMountSpec(mount));
+                result.add(FilesystemMountSpec.parse(mount).encode());
             }
         }
         if (result.isEmpty()) {
-            return new String[]{"/=" + hostRoot};
+            return new String[]{FilesystemMountSpec.legacy("/", hostRoot).encode()};
         }
         return result.toArray(String[]::new);
     }
@@ -289,26 +290,14 @@ public final class RiscVContext {
             TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMounts) {
         for (String mount : filesystemMounts) {
-            int separator = mount.indexOf('=');
-            String guestPath = mount.substring(0, separator);
-            String hostPath = mount.substring(separator + 1);
+            FilesystemMountSpec spec = FilesystemMountSpec.parse(mount);
             try {
-                env.getPublicTruffleFile(hostPath);
+                env.getPublicTruffleFile(spec.hostPath());
             } catch (IllegalArgumentException exception) {
-                throw new RiscVException("Filesystem mount target is invalid for " + guestPath + ": " + hostPath, exception);
+                throw new RiscVException("Filesystem mount source is invalid for "
+                        + spec.guestPath() + ": " + spec.hostPath(), exception);
             }
         }
-    }
-
-    /// Validates and normalizes a single `guest=host` mount entry.
-    private static String normalizeMountSpec(String mount) {
-        int separator = mount.indexOf('=');
-        if (separator <= 0 || separator == mount.length() - 1) {
-            throw new RiscVException("Invalid riscv.mounts entry: " + mount);
-        }
-        String guestPath = mount.substring(0, separator);
-        String hostPath = mount.substring(separator + 1);
-        return normalizeMountGuestPath(guestPath) + "=" + hostPath;
     }
 
     /// Normalizes an absolute Linux guest mount point.
