@@ -745,6 +745,18 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux generic tty `TCSETSF` ioctl request number.
     private static final long TCSETSF = 0x5404;
 
+    /// The Linux generic tty `TCGETS2` ioctl request number.
+    private static final long TCGETS2 = 0x802c542aL;
+
+    /// The Linux generic tty `TCSETS2` ioctl request number.
+    private static final long TCSETS2 = 0x402c542bL;
+
+    /// The Linux generic tty `TCSETSW2` ioctl request number.
+    private static final long TCSETSW2 = 0x402c542cL;
+
+    /// The Linux generic tty `TCSETSF2` ioctl request number.
+    private static final long TCSETSF2 = 0x402c542dL;
+
     /// The Linux generic tty `TIOCSCTTY` ioctl request number.
     private static final long TIOCSCTTY = 0x540E;
 
@@ -762,6 +774,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// The byte size of Linux generic `struct termios`.
     private static final int TERMIOS_SIZE = 36;
+
+    /// The byte size of Linux generic `struct termios2`.
+    private static final int TERMIOS2_SIZE = 44;
 
     /// The byte size of Linux generic `struct winsize`.
     private static final int WINSIZE_SIZE = 8;
@@ -5444,11 +5459,25 @@ public final class GuestSyscalls implements AutoCloseable {
             terminal.writeTermios(memory, argument);
             return 0;
         }
+        if (request == TCGETS2) {
+            if (!memory.isBacked(argument, TERMIOS2_SIZE)) {
+                return EFAULT;
+            }
+            terminal.writeTermios2(memory, argument);
+            return 0;
+        }
         if (request == TCSETS || request == TCSETSW || request == TCSETSF) {
             if (!memory.isBacked(argument, TERMIOS_SIZE)) {
                 return EFAULT;
             }
             terminal.readTermios(memory, argument, request);
+            return 0;
+        }
+        if (request == TCSETS2 || request == TCSETSW2 || request == TCSETSF2) {
+            if (!memory.isBacked(argument, TERMIOS2_SIZE)) {
+                return EFAULT;
+            }
+            terminal.readTermios(memory, argument, legacyTermiosRequest(request));
             return 0;
         }
         if (request == TIOCGWINSZ) {
@@ -5483,6 +5512,20 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
         return ENOTTY;
+    }
+
+    /// Maps a Linux `termios2` set request to the matching legacy `termios` set request.
+    private static long legacyTermiosRequest(long request) {
+        if (request == TCSETS2) {
+            return TCSETS;
+        }
+        if (request == TCSETSW2) {
+            return TCSETSW;
+        }
+        if (request == TCSETSF2) {
+            return TCSETSF;
+        }
+        throw new AssertionError("Unexpected termios2 request: 0x" + Long.toHexString(request));
     }
 
     /// Returns the terminal backing a descriptor that resolves to standard input.

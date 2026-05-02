@@ -33,6 +33,9 @@ final class TerminalDevice implements AutoCloseable {
     /// The Linux generic `struct termios` size exposed to the guest.
     private static final int TERMIOS_SIZE = 36;
 
+    /// The Linux generic `struct termios2` size exposed to the guest.
+    private static final int TERMIOS2_SIZE = 44;
+
     /// The Linux generic `struct winsize` size exposed to the guest.
     private static final int WINDOW_SIZE_SIZE = 8;
 
@@ -51,6 +54,12 @@ final class TerminalDevice implements AutoCloseable {
     /// The byte offset of `c_cc` inside Linux generic `struct termios`.
     private static final int TERMIOS_CONTROL_CHARS_OFFSET = 4 * Integer.BYTES + Byte.BYTES;
 
+    /// The byte offset of `c_ispeed` inside Linux generic `struct termios2`.
+    private static final int TERMIOS2_INPUT_SPEED_OFFSET = TERMIOS_SIZE;
+
+    /// The byte offset of `c_ospeed` inside Linux generic `struct termios2`.
+    private static final int TERMIOS2_OUTPUT_SPEED_OFFSET = TERMIOS2_INPUT_SPEED_OFFSET + Integer.BYTES;
+
     /// Linux generic `ICRNL`.
     private static final int TERMIOS_INPUT_CARRIAGE_RETURN_TO_NEWLINE = 0x00100;
 
@@ -65,6 +74,9 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Linux generic `B38400`.
     private static final int TERMIOS_CONTROL_BAUD_38400 = 0x0000f;
+
+    /// Linux termios speed value for 38400 baud.
+    private static final int TERMIOS_SPEED_38400 = 38_400;
 
     /// Linux generic `CS8`.
     private static final int TERMIOS_CONTROL_CHARACTER_SIZE_8 = 0x00030;
@@ -190,6 +202,13 @@ final class TerminalDevice implements AutoCloseable {
     /// Writes the current guest-visible `struct termios`.
     void writeTermios(Memory memory, long address) {
         memory.writeBytes(address, termios, 0, termios.length);
+    }
+
+    /// Writes the current guest-visible `struct termios2`.
+    void writeTermios2(Memory memory, long address) {
+        memory.writeBytes(address, termios, 0, termios.length);
+        memory.writeInt(address + TERMIOS2_INPUT_SPEED_OFFSET, TERMIOS_SPEED_38400);
+        memory.writeInt(address + TERMIOS2_OUTPUT_SPEED_OFFSET, TERMIOS_SPEED_38400);
     }
 
     /// Replaces the current guest-visible `struct termios`.

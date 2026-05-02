@@ -426,6 +426,12 @@ public final class GuestSyscallsTest {
     /// The Linux generic tty `TCSETS` ioctl request number.
     private static final long TCSETS = 0x5402;
 
+    /// The Linux generic tty `TCGETS2` ioctl request number.
+    private static final long TCGETS2 = 0x802c542aL;
+
+    /// The Linux generic tty `TCSETS2` ioctl request number.
+    private static final long TCSETS2 = 0x402c542bL;
+
     /// The Linux generic tty `TIOCGPGRP` ioctl request number.
     private static final long TIOCGPGRP = 0x540F;
 
@@ -441,8 +447,17 @@ public final class GuestSyscallsTest {
     /// The byte size of Linux generic `struct termios`.
     private static final int TERMIOS_SIZE = 36;
 
+    /// The byte size of Linux generic `struct termios2`.
+    private static final int TERMIOS2_SIZE = 44;
+
     /// The byte offset of `c_lflag` inside Linux generic `struct termios`.
     private static final int TERMIOS_LOCAL_FLAGS_OFFSET = 3 * Integer.BYTES;
+
+    /// The byte offset of `c_ispeed` inside Linux generic `struct termios2`.
+    private static final int TERMIOS2_INPUT_SPEED_OFFSET = TERMIOS_SIZE;
+
+    /// The byte offset of `c_ospeed` inside Linux generic `struct termios2`.
+    private static final int TERMIOS2_OUTPUT_SPEED_OFFSET = TERMIOS2_INPUT_SPEED_OFFSET + Integer.BYTES;
 
     /// Linux generic `ICANON`.
     private static final int TERMIOS_LOCAL_CANONICAL = 0x00002;
@@ -3253,6 +3268,30 @@ public final class GuestSyscallsTest {
             assertEquals(0, state.register(10));
             assertEquals(
                     TERMIOS_LOCAL_CANONICAL,
+                    memory.readInt(ioctlAddress + TERMIOS_LOCAL_FLAGS_OFFSET)
+                            & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
+
+            memory.clear(ioctlAddress, TERMIOS2_SIZE);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCGETS2, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(
+                    TERMIOS_LOCAL_CANONICAL,
+                    memory.readInt(ioctlAddress + TERMIOS_LOCAL_FLAGS_OFFSET)
+                            & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
+            assertEquals(38_400, memory.readInt(ioctlAddress + TERMIOS2_INPUT_SPEED_OFFSET));
+            assertEquals(38_400, memory.readInt(ioctlAddress + TERMIOS2_OUTPUT_SPEED_OFFSET));
+
+            memory.writeInt(ioctlAddress + TERMIOS_LOCAL_FLAGS_OFFSET, localFlags);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCSETS2, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            memory.clear(ioctlAddress, TERMIOS_SIZE);
+            setSyscall(state, SYS_IOCTL, fileDescriptor, TCGETS, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(
+                    TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO,
                     memory.readInt(ioctlAddress + TERMIOS_LOCAL_FLAGS_OFFSET)
                             & (TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO));
 
