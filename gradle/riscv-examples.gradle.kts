@@ -118,6 +118,15 @@ tasks.register<Exec>("goToolchainVersion") {
 // Static Go hello-world example.
 val goHelloWorldExampleDirectory = layout.projectDirectory.dir("examples/go/go-hello")
 val goHelloWorldExampleElf = layout.buildDirectory.file("examples/go/go-hello/hello-world")
+val freeBsdGoHelloWorldExampleElf = layout.buildDirectory.file("examples/go/go-hello-freebsd/hello-world")
+val goHelloWorldExpectedOutput = """
+    Hello and welcome, gopher!
+    i = 100
+    i = 50
+    i = 33
+    i = 25
+    i = 20
+""".trimIndent() + "\n"
 
 tasks.register<RiscVGoBuildTask>("buildGoHelloWorldExample") {
     group = "verification"
@@ -152,15 +161,7 @@ tasks.register<JavaExec>("testGoHelloWorldExample") {
 
     doLast {
         val actualOutput = stdout.toString(StandardCharsets.UTF_8)
-        val expectedOutput = """
-            Hello and welcome, gopher!
-            i = 100
-            i = 50
-            i = 33
-            i = 25
-            i = 20
-        """.trimIndent() + "\n"
-        if (actualOutput != expectedOutput) {
+        if (actualOutput != goHelloWorldExpectedOutput) {
             throw GradleException("Unexpected Go hello-world output: ${actualOutput.trim()}")
         }
 
@@ -182,6 +183,65 @@ tasks.register<JavaExec>("runGoHelloWorldExample") {
 
     doFirst {
         setArgs(listOf(goHelloWorldExampleElf.get().asFile.absolutePath))
+    }
+}
+
+tasks.register<RiscVGoBuildTask>("buildFreeBsdGoHelloWorldExample") {
+    group = "verification"
+    description = "Builds examples/go/go-hello as a static freebsd/riscv64 Go executable."
+
+    configureGoExecutable()
+    goOS.set("freebsd")
+    moduleDirectory.set(goHelloWorldExampleDirectory)
+    outputFile.set(freeBsdGoHelloWorldExampleElf)
+    buildCacheDirectory.set(layout.buildDirectory.dir("go-build-cache"))
+    moduleCacheDirectory.set(layout.buildDirectory.dir("go-module-cache"))
+}
+
+tasks.register<JavaExec>("testFreeBsdGoHelloWorldExample") {
+    group = "verification"
+    description = "Builds and verifies the static freebsd/riscv64 Go hello-world example."
+
+    dependsOn("classes", "buildFreeBsdGoHelloWorldExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(freeBsdGoHelloWorldExampleElf.get().asFile.absolutePath))
+    }
+
+    doLast {
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        if (actualOutput != goHelloWorldExpectedOutput) {
+            throw GradleException("Unexpected FreeBSD Go hello-world output: ${actualOutput.trim()}")
+        }
+
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (actualError.isNotEmpty()) {
+            throw GradleException("FreeBSD Go hello-world example wrote to stderr: $actualError")
+        }
+    }
+}
+
+tasks.register<JavaExec>("runFreeBsdGoHelloWorldExample") {
+    group = "verification"
+    description = "Runs the static freebsd/riscv64 Go hello-world example with the GraalRISCV CLI."
+
+    dependsOn("classes", "buildFreeBsdGoHelloWorldExample")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(freeBsdGoHelloWorldExampleElf.get().asFile.absolutePath))
     }
 }
 
@@ -2127,6 +2187,7 @@ tasks.register("checkHelloWorldExample") {
     dependsOn(
         "testHelloWorldExample",
         "testGoHelloWorldExample",
+        "testFreeBsdGoHelloWorldExample",
         "testLinuxStaticPrintfExample",
         "testLinuxStaticArgvExample",
         "testLinuxStaticFileIoExample",

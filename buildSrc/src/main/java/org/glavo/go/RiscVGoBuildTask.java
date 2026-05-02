@@ -24,7 +24,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-/// Builds a static `linux/riscv64` executable from a Go module.
+/// Builds a static RISC-V executable from a Go module.
 @NotNullByDefault
 public abstract class RiscVGoBuildTask extends DefaultTask {
     /// The Gradle service used to execute the Go compiler process.

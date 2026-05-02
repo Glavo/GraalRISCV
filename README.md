@@ -148,7 +148,8 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 | --- | --- | --- |
 | Freestanding Hello World | Run the smallest freestanding output example. | `./gradlew runHelloWorldExample` |
 | Freestanding hot loop | Run a small CPU hot-loop probe. | `./gradlew runHotLoopExample` |
-| Static Go hello-world | Build and run a static `linux/riscv64` Go program. | `./gradlew runGoHelloWorldExample` |
+| Static Linux Go hello-world | Build and run a static `linux/riscv64` Go program. | `./gradlew runGoHelloWorldExample` |
+| Static FreeBSD Go hello-world | Build and run a static `freebsd/riscv64` Go program. | `./gradlew runFreeBsdGoHelloWorldExample` |
 | Static Go showcase | Run a larger Go standard-library workload covering JSON, sorting, compression, hashing, and goroutines. | `./gradlew runGoShowcaseExample` |
 | Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
 | SQLite showcase | Download SQLite, build a static RISC-V file-database demo, and run transactions and queries. | `./gradlew runSQLiteShowcaseExample` |

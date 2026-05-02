@@ -271,6 +271,9 @@ public final class RiscVRootNode extends RootNode {
                 context.vectorVlenBits());
         state.setPc(program.entryPoint());
         state.setRegister(2, stackPointer);
+        if (program.abi() == GuestAbi.FREEBSD) {
+            state.setRegister(10, stackPointer);
+        }
         return state;
     }
 
