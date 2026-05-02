@@ -613,10 +613,10 @@ final class TerminalDevice implements AutoCloseable {
             out.flush();
         }
 
-        /// Returns null because stream-backed terminals do not expose host window metadata.
+        /// Returns the native terminal window size when the stream backend has a controller.
         @Override
         public @Nullable WindowSize windowSize() {
-            return null;
+            return terminalMode == null ? null : terminalMode.windowSize();
         }
 
         /// Reads host standard-input termios when native access is available.
@@ -672,6 +672,11 @@ final class TerminalDevice implements AutoCloseable {
 
         /// Applies a Linux guest `struct termios` image to the host terminal mode.
         void writeTermios(byte[] buffer, long request);
+
+        /// Returns the host terminal window size, or null when unavailable.
+        default @Nullable WindowSize windowSize() {
+            return null;
+        }
 
         /// Returns true when this host input mode cannot provide visible canonical echo itself.
         default boolean usesGuestLineDiscipline() {
@@ -742,11 +747,22 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Applies guest termios updates to a Windows console input handle.
     ///
-    /// @param handle the host console input handle
-    /// @param originalMode the console mode captured before guest changes
-    private record WindowsConsoleMode(MemorySegment handle, int originalMode) implements HostTerminalMode {
+    /// @param inputHandle the host console input handle
+    /// @param originalInputMode the input console mode captured before guest changes
+    /// @param outputHandle the host console output handle
+    /// @param originalOutputMode the output console mode captured before guest changes, or a negative value when unavailable
+    /// @param shutdownHook the JVM shutdown hook that restores the captured console modes
+    private record WindowsConsoleMode(
+            MemorySegment inputHandle,
+            int originalInputMode,
+            MemorySegment outputHandle,
+            int originalOutputMode,
+            Thread shutdownHook) implements HostTerminalMode {
         /// Windows `STD_INPUT_HANDLE`.
         private static final int STANDARD_INPUT_HANDLE = -10;
+
+        /// Windows `STD_OUTPUT_HANDLE`.
+        private static final int STANDARD_OUTPUT_HANDLE = -11;
 
         /// Windows `ENABLE_PROCESSED_INPUT`.
         private static final int WINDOWS_ENABLE_PROCESSED_INPUT = 0x0001;
@@ -760,7 +776,28 @@ final class TerminalDevice implements AutoCloseable {
         /// Windows `ENABLE_VIRTUAL_TERMINAL_INPUT`.
         private static final int WINDOWS_ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
 
-        /// Opens a Windows console mode controller for host standard input.
+        /// Windows `ENABLE_PROCESSED_OUTPUT`.
+        private static final int WINDOWS_ENABLE_PROCESSED_OUTPUT = 0x0001;
+
+        /// Windows `ENABLE_VIRTUAL_TERMINAL_PROCESSING`.
+        private static final int WINDOWS_ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
+
+        /// The byte size of Windows `CONSOLE_SCREEN_BUFFER_INFO`.
+        private static final long WINDOWS_CONSOLE_SCREEN_BUFFER_INFO_SIZE = 22;
+
+        /// The byte offset of `srWindow.Left` inside Windows `CONSOLE_SCREEN_BUFFER_INFO`.
+        private static final long WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_LEFT_OFFSET = 10;
+
+        /// The byte offset of `srWindow.Top` inside Windows `CONSOLE_SCREEN_BUFFER_INFO`.
+        private static final long WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_TOP_OFFSET = 12;
+
+        /// The byte offset of `srWindow.Right` inside Windows `CONSOLE_SCREEN_BUFFER_INFO`.
+        private static final long WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_RIGHT_OFFSET = 14;
+
+        /// The byte offset of `srWindow.Bottom` inside Windows `CONSOLE_SCREEN_BUFFER_INFO`.
+        private static final long WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_BOTTOM_OFFSET = 16;
+
+        /// Opens a Windows console mode controller for host standard input and output.
         static @Nullable HostTerminalMode openStandardInput() {
             String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
             if (!osName.contains("win")) {
@@ -774,7 +811,23 @@ final class TerminalDevice implements AutoCloseable {
                     return null;
                 }
                 int mode = readConsoleMode(handle);
-                return mode < 0 ? null : new WindowsConsoleMode(handle, mode);
+                if (mode < 0) {
+                    return null;
+                }
+
+                MemorySegment outputHandle = (MemorySegment) WindowsConsoleHandles.GET_STD_HANDLE.invokeExact(
+                        STANDARD_OUTPUT_HANDLE);
+                int outputMode = readConsoleMode(outputHandle);
+                if (outputMode >= 0) {
+                    writeConsoleMode(outputHandle, outputMode
+                            | WINDOWS_ENABLE_PROCESSED_OUTPUT
+                            | WINDOWS_ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                }
+                Thread shutdownHook = new Thread(
+                        () -> restoreConsoleModes(handle, mode, outputHandle, outputMode),
+                        "GraalRISCV Windows console restore");
+                Runtime.getRuntime().addShutdownHook(shutdownHook);
+                return new WindowsConsoleMode(handle, mode, outputHandle, outputMode, shutdownHook);
             } catch (Throwable exception) {
                 return null;
             }
@@ -783,7 +836,7 @@ final class TerminalDevice implements AutoCloseable {
         /// Reads the current Windows console mode into the guest termios local flags.
         @Override
         public void readTermios(byte[] buffer) {
-            int mode = readConsoleMode(handle);
+            int mode = readConsoleMode(inputHandle);
             if (mode < 0) {
                 return;
             }
@@ -808,7 +861,7 @@ final class TerminalDevice implements AutoCloseable {
                 MemorySegment segment = arena.allocate(length);
                 MemorySegment countAddress = arena.allocate(ValueLayout.JAVA_INT);
                 int result = (int) WindowsConsoleHandles.READ_FILE.invokeExact(
-                        handle,
+                        inputHandle,
                         segment,
                         length,
                         countAddress,
@@ -833,7 +886,7 @@ final class TerminalDevice implements AutoCloseable {
                 return;
             }
 
-            int mode = readConsoleMode(handle);
+            int mode = readConsoleMode(inputHandle);
             if (mode < 0) {
                 return;
             }
@@ -844,7 +897,38 @@ final class TerminalDevice implements AutoCloseable {
             if ((localFlags & TERMIOS_LOCAL_SIGNALS) != 0) {
                 mode |= WINDOWS_ENABLE_PROCESSED_INPUT;
             }
-            writeConsoleMode(handle, mode);
+            writeConsoleMode(inputHandle, mode);
+        }
+
+        /// Reads the visible Windows console window size.
+        @Override
+        public @Nullable WindowSize windowSize() {
+            if (originalOutputMode < 0) {
+                return null;
+            }
+
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment info = arena.allocate(WINDOWS_CONSOLE_SCREEN_BUFFER_INFO_SIZE);
+                int result = (int) WindowsConsoleHandles.GET_CONSOLE_SCREEN_BUFFER_INFO.invokeExact(
+                        outputHandle,
+                        info);
+                if (result == 0) {
+                    return null;
+                }
+
+                short left = info.get(ValueLayout.JAVA_SHORT, WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_LEFT_OFFSET);
+                short top = info.get(ValueLayout.JAVA_SHORT, WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_TOP_OFFSET);
+                short right = info.get(ValueLayout.JAVA_SHORT, WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_RIGHT_OFFSET);
+                short bottom = info.get(ValueLayout.JAVA_SHORT, WINDOWS_CONSOLE_SCREEN_BUFFER_WINDOW_BOTTOM_OFFSET);
+                int columns = right - left + 1;
+                int rows = bottom - top + 1;
+                if (columns <= 0 || rows <= 0 || columns > Short.MAX_VALUE || rows > Short.MAX_VALUE) {
+                    return null;
+                }
+                return new WindowSize((short) rows, (short) columns);
+            } catch (Throwable exception) {
+                return null;
+            }
         }
 
         /// Returns true because Windows console input echo is not written through the guest output stream.
@@ -853,12 +937,47 @@ final class TerminalDevice implements AutoCloseable {
             return true;
         }
 
-        /// Restores the original Windows console input mode.
+        /// Restores the original Windows console modes.
         @Override
         public void close() throws IOException {
-            if (!writeConsoleMode(handle, originalMode)) {
-                throw new IOException("restore(console input) failed");
+            removeShutdownHook();
+            @Nullable IOException failure = restoreConsoleModes(
+                    inputHandle,
+                    originalInputMode,
+                    outputHandle,
+                    originalOutputMode);
+            if (failure != null) {
+                throw failure;
             }
+        }
+
+        /// Removes the shutdown hook when normal close restores the console modes first.
+        private void removeShutdownHook() {
+            try {
+                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+            } catch (IllegalStateException exception) {
+                // The JVM is already shutting down, so the hook will handle best-effort restoration.
+            }
+        }
+
+        /// Restores Windows console modes and returns the first failure, if any.
+        private static @Nullable IOException restoreConsoleModes(
+                MemorySegment inputHandle,
+                int inputMode,
+                MemorySegment outputHandle,
+                int outputMode) {
+            @Nullable IOException failure = null;
+            if (outputMode >= 0 && !writeConsoleMode(outputHandle, outputMode)) {
+                failure = new IOException("restore(console output) failed");
+            }
+            if (!writeConsoleMode(inputHandle, inputMode)) {
+                IOException inputFailure = new IOException("restore(console input) failed");
+                if (failure != null) {
+                    inputFailure.addSuppressed(failure);
+                }
+                return inputFailure;
+            }
+            return failure;
         }
 
         /// Reads a Windows console mode, or returns a negative value on failure.
@@ -1095,6 +1214,11 @@ final class TerminalDevice implements AutoCloseable {
         private static final MethodHandle SET_CONSOLE_MODE = downcall(
                 "SetConsoleMode",
                 FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+
+        /// Downcall handle for `GetConsoleScreenBufferInfo`.
+        private static final MethodHandle GET_CONSOLE_SCREEN_BUFFER_INFO = downcall(
+                "GetConsoleScreenBufferInfo",
+                FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
 
         /// Prevents construction.
         private WindowsConsoleHandles() {
