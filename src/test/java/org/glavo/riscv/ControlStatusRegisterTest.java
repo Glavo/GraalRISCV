@@ -231,11 +231,12 @@ public final class ControlStatusRegisterTest {
                     fenceI(),
                     ElfTestImages.ecall());
             prepareExit(machine.state());
+            long initialGeneration = machine.state().instructionFetchGeneration();
 
             runDecodedProgram(machine);
 
             assertEquals(42, machine.state().register(RESULT_REGISTER));
-            assertEquals(1, machine.state().instructionFetchGeneration());
+            assertTrue(machine.state().instructionFetchGeneration() != initialGeneration);
         }
     }
 
@@ -250,11 +251,12 @@ public final class ControlStatusRegisterTest {
                     ElfTestImages.addi(RESULT_REGISTER, RESULT_REGISTER, 1),
                     ElfTestImages.ecall());
             prepareExit(machine.state());
+            long initialGeneration = machine.state().instructionFetchGeneration();
 
             runDecodedProgram(machine);
 
             assertEquals(42, machine.state().register(RESULT_REGISTER));
-            assertEquals(0, machine.state().instructionFetchGeneration());
+            assertEquals(initialGeneration, machine.state().instructionFetchGeneration());
         }
     }
 

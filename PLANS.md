@@ -16,12 +16,14 @@
 - FreeBSD ELF OS ABI detection selects a FreeBSD RISC-V syscall handler for static user-mode programs.
 - Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program` and `execve`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, `PR_GET_AUXV`, file-backed `MAP_PRIVATE`, tar symlink/hard-link lookup, virtual `/proc`, shell pipeline smoke coverage, and Ubuntu Base smoke coverage for common shell, coreutils, hashing, sorting, and findutils commands.
 - Standard descriptor duplication preserves current stdin/stdout/stderr redirects, including redirects to pipes and other standard descriptors used by child process setup.
+- Decoded-block and trace caches use JVM-wide instruction-fetch generations across independent process images, preventing fork/exec children from reusing stale decoded code after interactive shell startup workloads.
 - `--mount` accepts Docker-like bind/tar mount specs, rejects the removed `guest=host` form, supports read-only bind mounts, lazy non-memory tar mounts, and writable process-local memory tar mounts.
 - Fastfetch Linux RISC-V release downloads are wired into Gradle, including gzip-to-tar preparation and a version smoke task.
 - Virtual `/proc/cpuinfo` reports stable RISC-V CPU metadata plus sanitized `graalriscv_` Java runtime summary fields.
 - The memory, `--mount` filesystem namespace, customizable `GuestFileSystem` virtual mounts, read-only tar mounts, built-in `/proc` and Linux-like `/dev` with tty, null, zero, and deterministic random devices, configurable guest user credentials, Ubuntu Base image preparation, process/thread state, process-style `clone`/`wait4`, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 - Zig and Go Gradle toolchain overrides accept either executable paths or command names resolved through `PATH`.
 - Ubuntu Base shell startup compatibility covers the currently required identity, process-group, metadata, and readiness syscalls, including `setfsuid`, `setfsgid`, `fchownat`, `pselect6`, and `setpgid`.
+- Linux extended-attribute query syscalls report empty guest xattr sets, allowing metadata-heavy tools such as `ls -l` to continue when no virtual xattrs are present.
 - Interactive tty handling now exposes sane guest `termios` and `termios2`, keeps guest-driven `TCSETS` state stable, routes standard-input reads through the shared terminal device only when host tty control is active, maps `TCSETS` to Windows console input mode for real host consoles, provides Windows-backed guest-side input echo, VT key input/output, real Windows console window sizing, and shutdown-time console mode restoration for interactive shells.
 - The CLI includes `--root` as a guest root identity shortcut for `--user root --uid 0 --gid 0 --groups 0`.
 

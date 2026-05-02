@@ -53,6 +53,24 @@ import java.util.Set;
 /// Provides shared state and helpers for guest syscall ABI implementations.
 @NotNullByDefault
 public abstract class GuestSyscalls implements AutoCloseable {
+    /// The Linux RISC-V syscall number for `getxattr`.
+    private static final int SYS_GETXATTR = 8;
+
+    /// The Linux RISC-V syscall number for `lgetxattr`.
+    private static final int SYS_LGETXATTR = 9;
+
+    /// The Linux RISC-V syscall number for `fgetxattr`.
+    private static final int SYS_FGETXATTR = 10;
+
+    /// The Linux RISC-V syscall number for `listxattr`.
+    private static final int SYS_LISTXATTR = 11;
+
+    /// The Linux RISC-V syscall number for `llistxattr`.
+    private static final int SYS_LLISTXATTR = 12;
+
+    /// The Linux RISC-V syscall number for `flistxattr`.
+    private static final int SYS_FLISTXATTR = 13;
+
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final int SYS_GETCWD = 17;
 
@@ -622,6 +640,9 @@ public abstract class GuestSyscalls implements AutoCloseable {
 
     /// Linux `ENOSYS` as a raw negative syscall result.
     private static final long ENOSYS = -38;
+
+    /// Linux `ENODATA` as a raw negative syscall result.
+    private static final long ENODATA = -61;
 
     /// Linux `ENOTSUP` as a raw negative syscall result.
     private static final long ENOTSUP = -95;
@@ -2493,6 +2514,37 @@ public abstract class GuestSyscalls implements AutoCloseable {
         long previousMask = state.enterSyscallPointerMask();
         try {
             switch ((int) callNumber) {
+                case SYS_GETXATTR -> state.setRegister(10, getxattr(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13),
+                        true));
+                case SYS_LGETXATTR -> state.setRegister(10, getxattr(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13),
+                        false));
+                case SYS_FGETXATTR -> state.setRegister(10, fgetxattr(
+                        (int) state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13)));
+                case SYS_LISTXATTR -> state.setRegister(10, listxattr(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        true));
+                case SYS_LLISTXATTR -> state.setRegister(10, listxattr(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        false));
+                case SYS_FLISTXATTR -> state.setRegister(10, flistxattr(
+                        (int) state.register(10),
+                        state.register(11),
+                        state.register(12)));
                 case SYS_GETCWD -> state.setRegister(10, getcwd(state.register(10), state.register(11)));
             case SYS_EVENTFD2 -> state.setRegister(10, eventfd2(state.register(10), state.register(11)));
             case SYS_EPOLL_CREATE1 -> state.setRegister(10, epollCreate1(state.register(10)));
@@ -5561,6 +5613,92 @@ public abstract class GuestSyscalls implements AutoCloseable {
         } catch (IOException | SecurityException exception) {
             return EACCES;
         }
+    }
+
+    /// Reports a missing extended attribute for a mounted guest path.
+    private long getxattr(long pathAddress, long nameAddress, long valueAddress, long size, boolean followFinalSymlink) {
+        long pathResult = validateXattrPath(pathAddress, followFinalSymlink);
+        if (pathResult != 0) {
+            return pathResult;
+        }
+        return getMissingXattr(nameAddress, valueAddress, size);
+    }
+
+    /// Reports a missing extended attribute for an open guest file descriptor.
+    private long fgetxattr(int fileDescriptor, long nameAddress, long valueAddress, long size) {
+        if (!isOpenFileDescriptor(fileDescriptor)) {
+            return EBADF;
+        }
+        return getMissingXattr(nameAddress, valueAddress, size);
+    }
+
+    /// Reports an empty extended-attribute list for a mounted guest path.
+    private long listxattr(long pathAddress, long listAddress, long size, boolean followFinalSymlink) {
+        long pathResult = validateXattrPath(pathAddress, followFinalSymlink);
+        if (pathResult != 0) {
+            return pathResult;
+        }
+        return emptyXattrList(listAddress, size);
+    }
+
+    /// Reports an empty extended-attribute list for an open guest file descriptor.
+    private long flistxattr(int fileDescriptor, long listAddress, long size) {
+        if (!isOpenFileDescriptor(fileDescriptor)) {
+            return EBADF;
+        }
+        return emptyXattrList(listAddress, size);
+    }
+
+    /// Validates a path argument for extended-attribute queries.
+    private long validateXattrPath(long pathAddress, boolean followFinalSymlink) {
+        String guestPath;
+        try {
+            @Nullable String path = readGuestPath(pathAddress);
+            if (path == null) {
+                return ENAMETOOLONG;
+            }
+            guestPath = path;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        @Nullable TarPath tarPath = resolveTarPath(AT_FDCWD, guestPath, followFinalSymlink);
+        if (tarPath != null) {
+            return tarPath.node() == null ? ENOENT : 0;
+        }
+
+        @Nullable VirtualPath virtualPath = resolveVirtualPath(AT_FDCWD, guestPath, followFinalSymlink);
+        if (virtualPath != null) {
+            return virtualPath.node() == null ? ENOENT : 0;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        return hostFile == null ? EACCES : accessHostFile(hostFile, F_OK);
+    }
+
+    /// Reports that the requested extended attribute does not exist.
+    private long getMissingXattr(long nameAddress, long valueAddress, long size) {
+        if (size < 0) {
+            return EINVAL;
+        }
+        try {
+            @Nullable String name = readGuestPath(nameAddress);
+            if (name == null) {
+                return ENAMETOOLONG;
+            }
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+        return ENODATA;
+    }
+
+    /// Reports a mounted guest file with no extended attributes.
+    private static long emptyXattrList(long listAddress, long size) {
+        return size < 0 ? EINVAL : 0;
     }
 
     /// Writes a minimal Linux generic 64-bit `struct stat` for a path or file descriptor.

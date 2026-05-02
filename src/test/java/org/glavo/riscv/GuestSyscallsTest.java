@@ -102,6 +102,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENOSYS` as a raw negative syscall result.
     private static final long ENOSYS = -38;
 
+    /// Linux `ENODATA` as a raw negative syscall result.
+    private static final long ENODATA = -61;
+
     /// Linux `ENOTSUP` as a raw negative syscall result.
     private static final long ENOTSUP = -95;
 
@@ -119,6 +122,15 @@ public final class GuestSyscallsTest {
 
     /// Linux `ETIMEDOUT` as a raw negative syscall result.
     private static final long ETIMEDOUT = -110;
+
+    /// The Linux RISC-V syscall number for `getxattr`.
+    private static final long SYS_GETXATTR = 8;
+
+    /// The Linux RISC-V syscall number for `listxattr`.
+    private static final long SYS_LISTXATTR = 11;
+
+    /// The Linux RISC-V syscall number for `flistxattr`.
+    private static final long SYS_FLISTXATTR = 13;
 
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final long SYS_GETCWD = 17;
@@ -1935,6 +1947,44 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK | 8, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies extended-attribute queries report an empty attribute set.
+    @Test
+    public void xattrQueriesReportEmptyAttributeSet() throws Exception {
+        Files.writeString(tempDirectory.resolve("readable.txt"), "data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long nameAddress = memory.baseAddress() + 128;
+            long bufferAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "readable.txt");
+            writeGuestString(memory, nameAddress, "system.posix_acl_access");
+            setSyscall(state, SYS_LISTXATTR, pathAddress, bufferAddress, 16);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETXATTR, pathAddress, nameAddress, bufferAddress, 16);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENODATA, state.register(10));
+
+            setSyscall(state, SYS_FLISTXATTR, -1, bufferAddress, 16);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_LISTXATTR, pathAddress, bufferAddress, 16);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
         }
     }
 
@@ -6272,6 +6322,28 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_BRK, memory.endAddress() + 1, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(requestedBreak, state.register(10));
+        }
+    }
+
+    /// Verifies decoded-block generations are unique across independent address spaces.
+    @Test
+    public void instructionFetchGenerationsAreGloballyUnique() {
+        try (Memory firstMemory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null);
+             Memory secondMemory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null)) {
+            MachineState first = state(firstMemory, new ByteArrayInputStream(new byte[0]));
+            MachineState second = state(secondMemory, new ByteArrayInputStream(new byte[0]));
+
+            long firstInitialGeneration = first.instructionFetchGeneration();
+            long secondInitialGeneration = second.instructionFetchGeneration();
+            assertTrue(firstInitialGeneration != secondInitialGeneration);
+
+            first.fenceInstructionFetch();
+            long firstAfterFenceGeneration = first.instructionFetchGeneration();
+            assertTrue(firstAfterFenceGeneration != firstInitialGeneration);
+            assertTrue(firstAfterFenceGeneration != secondInitialGeneration);
+
+            second.fenceInstructionFetch();
+            assertTrue(second.instructionFetchGeneration() != firstAfterFenceGeneration);
         }
     }
 

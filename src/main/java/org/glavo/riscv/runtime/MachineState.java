@@ -13,6 +13,7 @@ import org.jetbrains.annotations.NotNullByDefault;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
 
 /// Stores mutable architectural state for one guest execution.
 @NotNullByDefault
@@ -22,6 +23,9 @@ public final class MachineState {
 
     /// The number of floating-point registers in RV64GC.
     private static final int FLOATING_POINT_REGISTER_COUNT = 32;
+
+    /// JVM-wide unique values used to distinguish instruction bytes in the decoded-block cache.
+    private static final AtomicLong NEXT_INSTRUCTION_FETCH_GENERATION = new AtomicLong(1);
 
     /// The `fflags` floating-point exception flags CSR address.
     private static final int FFLAGS_CSR = 0x001;
@@ -161,8 +165,8 @@ public final class MachineState {
     /// The number of retired guest instructions.
     private long instructionCount;
 
-    /// The current instruction-fetch visibility generation, incremented by `fence.i`.
-    private long instructionFetchGeneration;
+    /// The current instruction-fetch visibility generation used by decoded-block caches.
+    private long instructionFetchGeneration = nextInstructionFetchGeneration();
 
     /// The low eight bits of the floating-point control and status register.
     private int floatingPointControlStatus;
@@ -444,7 +448,7 @@ public final class MachineState {
         floatingPointControlStatus = 0;
         reservationAddress = ElfImage.ABSENT_ADDRESS;
         reservationLength = 0;
-        instructionFetchGeneration++;
+        instructionFetchGeneration = nextInstructionFetchGeneration();
     }
 
     /// Returns the guest clear-child-TID address for this thread.
@@ -552,7 +556,13 @@ public final class MachineState {
 
     /// Makes subsequent instruction fetches see code modifications ordered before a `fence.i`.
     public void fenceInstructionFetch() {
-        instructionFetchGeneration++;
+        instructionFetchGeneration = nextInstructionFetchGeneration();
+    }
+
+    /// Returns the next JVM-wide instruction-fetch generation.
+    private static long nextInstructionFetchGeneration() {
+        return NEXT_INSTRUCTION_FETCH_GENERATION.getAndUpdate(
+                current -> current == Long.MAX_VALUE ? 1 : current + 1);
     }
 
     /// Records one guest instruction retirement on configurations that need checks or tracing.
