@@ -181,7 +181,7 @@ tasks.register<JavaExec>("testFastfetch") {
             "Swap: Unused",
             "Disk (/):",
             "graalriscv",
-            "Local IP: Failed to detect any IPs",
+            "Local IP (eth0): 10.0.2.15/24",
             "Battery: No batteries found",
             "Power Adapter: No power adapters found",
             "Locale: C"

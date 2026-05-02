@@ -846,11 +846,29 @@ public final class GuestSyscallsTest {
     /// Linux address family number for netlink sockets.
     private static final long AF_NETLINK = 16;
 
+    /// Linux address family number for Unix domain sockets.
+    private static final long AF_UNIX = 1;
+
+    /// Linux datagram socket type.
+    private static final long SOCK_DGRAM = 2;
+
     /// Linux raw socket type.
     private static final long SOCK_RAW = 3;
 
     /// Linux netlink protocol number for route and interface metadata.
     private static final long NETLINK_ROUTE = 0;
+
+    /// Linux `SIOCGIFNAME` ioctl request number.
+    private static final long SIOCGIFNAME = 0x8910L;
+
+    /// Linux `SIOCGIFINDEX` ioctl request number.
+    private static final long SIOCGIFINDEX = 0x8933L;
+
+    /// Linux `IFNAMSIZ`.
+    private static final int INTERFACE_NAME_SIZE = 16;
+
+    /// Byte offset of `ifr_ifindex` in Linux `struct ifreq`.
+    private static final long IFREQ_INTERFACE_INDEX_OFFSET = INTERFACE_NAME_SIZE;
 
     /// Byte size of Linux `struct sockaddr_nl`.
     private static final int SOCKADDR_NL_SIZE = 12;
@@ -891,6 +909,15 @@ public final class GuestSyscallsTest {
     /// Byte offset of `nlmsg_pid` inside Linux `struct nlmsghdr`.
     private static final int NETLINK_HEADER_PORT_ID_OFFSET = 3 * Integer.BYTES;
 
+    /// Byte size of Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_SIZE = 16;
+
+    /// Byte offset of `ifi_index` inside Linux `struct ifinfomsg` payload.
+    private static final int NETLINK_LINK_INTERFACE_INDEX_OFFSET = NETLINK_HEADER_SIZE + 4;
+
+    /// Byte offset of `ifa_index` inside Linux `struct ifaddrmsg` payload.
+    private static final int NETLINK_ADDRESS_INTERFACE_INDEX_OFFSET = NETLINK_HEADER_SIZE + 4;
+
     /// Linux netlink message type for end-of-dump responses.
     private static final int NETLINK_MESSAGE_DONE = 3;
 
@@ -900,11 +927,23 @@ public final class GuestSyscallsTest {
     /// Linux rtnetlink message type for interface address records.
     private static final int RTM_NEWADDR = 20;
 
+    /// Linux rtnetlink message type for route records.
+    private static final int RTM_NEWROUTE = 24;
+
     /// Linux rtnetlink request type for interface records.
     private static final int RTM_GETLINK = 18;
 
     /// Linux rtnetlink request type for interface address records.
     private static final int RTM_GETADDR = 22;
+
+    /// Linux rtnetlink request type for route records.
+    private static final int RTM_GETROUTE = 26;
+
+    /// Linux interface index used for the synthetic loopback interface.
+    private static final int LOOPBACK_INTERFACE_INDEX = 1;
+
+    /// Linux interface index used for the synthetic Ethernet interface.
+    private static final int ETHERNET_INTERFACE_INDEX = 2;
 
     /// Linux `EFD_SEMAPHORE`.
     private static final long EFD_SEMAPHORE = 1;
@@ -5300,6 +5339,16 @@ public final class GuestSyscallsTest {
             assertEquals(RTM_NEWLINK, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
             assertEquals(11, memory.readInt(responseAddress + NETLINK_HEADER_SEQUENCE_OFFSET));
             assertEquals(portId, Integer.toUnsignedLong(memory.readInt(responseAddress + NETLINK_HEADER_PORT_ID_OFFSET)));
+            assertEquals(LOOPBACK_INTERFACE_INDEX, memory.readInt(responseAddress + NETLINK_LINK_INTERFACE_INDEX_OFFSET));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(RTM_NEWLINK, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+            assertEquals(11, memory.readInt(responseAddress + NETLINK_HEADER_SEQUENCE_OFFSET));
+            assertEquals(portId, Integer.toUnsignedLong(memory.readInt(responseAddress + NETLINK_HEADER_PORT_ID_OFFSET)));
+            assertEquals(ETHERNET_INTERFACE_INDEX, memory.readInt(responseAddress + NETLINK_LINK_INTERFACE_INDEX_OFFSET));
 
             prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
             setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
@@ -5319,6 +5368,73 @@ public final class GuestSyscallsTest {
             assertEquals(RTM_NEWADDR, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
             assertEquals(12, memory.readInt(responseAddress + NETLINK_HEADER_SEQUENCE_OFFSET));
             assertEquals(portId, Integer.toUnsignedLong(memory.readInt(responseAddress + NETLINK_HEADER_PORT_ID_OFFSET)));
+            assertEquals(LOOPBACK_INTERFACE_INDEX, memory.readInt(responseAddress + NETLINK_ADDRESS_INTERFACE_INDEX_OFFSET));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(RTM_NEWADDR, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+            assertEquals(12, memory.readInt(responseAddress + NETLINK_HEADER_SEQUENCE_OFFSET));
+            assertEquals(portId, Integer.toUnsignedLong(memory.readInt(responseAddress + NETLINK_HEADER_PORT_ID_OFFSET)));
+            assertEquals(ETHERNET_INTERFACE_INDEX, memory.readInt(responseAddress + NETLINK_ADDRESS_INTERFACE_INDEX_OFFSET));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(NETLINK_MESSAGE_DONE, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+
+            writeNetlinkRequest(memory, requestAddress, RTM_GETROUTE, 13);
+            setSyscall(state, SYS_SENDTO, socketFileDescriptor, requestAddress, 16, 0, sockaddrAddress, SOCKADDR_NL_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(16, state.register(10));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(RTM_NEWROUTE, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+            assertEquals(13, memory.readInt(responseAddress + NETLINK_HEADER_SEQUENCE_OFFSET));
+            assertEquals(portId, Integer.toUnsignedLong(memory.readInt(responseAddress + NETLINK_HEADER_PORT_ID_OFFSET)));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(NETLINK_MESSAGE_DONE, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+
+            setSyscall(state, SYS_CLOSE, socketFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies generic network-interface ioctl sockets map synthetic interface names and indexes.
+    @Test
+    public void networkInterfaceIoctlSocketMapsSyntheticInterfaces() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long ifreqAddress = memory.baseAddress();
+
+            setSyscall(state, SYS_SOCKET, AF_UNIX, SOCK_DGRAM | O_CLOEXEC, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int socketFileDescriptor = (int) state.register(10);
+            assertEquals(3, socketFileDescriptor);
+
+            memory.clear(ifreqAddress, 64);
+            memory.writeInt(ifreqAddress + IFREQ_INTERFACE_INDEX_OFFSET, ETHERNET_INTERFACE_INDEX);
+            setSyscall(state, SYS_IOCTL, socketFileDescriptor, SIOCGIFNAME, ifreqAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals("eth0", readGuestString(memory, ifreqAddress, "eth0".length()));
+
+            memory.clear(ifreqAddress, 64);
+            writeGuestString(memory, ifreqAddress, "lo");
+            setSyscall(state, SYS_IOCTL, socketFileDescriptor, SIOCGIFINDEX, ifreqAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(LOOPBACK_INTERFACE_INDEX, memory.readInt(ifreqAddress + IFREQ_INTERFACE_INDEX_OFFSET));
 
             setSyscall(state, SYS_CLOSE, socketFileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);

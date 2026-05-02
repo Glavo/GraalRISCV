@@ -1486,6 +1486,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux address family number for netlink sockets.
     private static final long AF_NETLINK = 16;
 
+    /// Linux address family number for Unix domain sockets.
+    private static final long AF_UNIX = 1;
+
     /// Linux socket type mask excluding socket creation flags.
     private static final long SOCK_TYPE_MASK = 0xf;
 
@@ -1555,17 +1558,41 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux rtnetlink message type for interface address records.
     private static final int RTM_NEWADDR = 20;
 
+    /// Linux rtnetlink message type for route records.
+    private static final int RTM_NEWROUTE = 24;
+
     /// Linux rtnetlink request type for interface records.
     private static final int RTM_GETLINK = 18;
 
     /// Linux rtnetlink request type for interface address records.
     private static final int RTM_GETADDR = 22;
 
+    /// Linux rtnetlink request type for route records.
+    private static final int RTM_GETROUTE = 26;
+
     /// Linux netlink flag marking one message as part of a multipart response.
     private static final int NETLINK_FLAG_MULTI = 2;
 
+    /// Linux route attribute type for the outgoing interface index.
+    private static final int RTA_OIF = 4;
+
+    /// Linux route attribute type for the gateway address.
+    private static final int RTA_GATEWAY = 5;
+
+    /// Linux route attribute type for the route metric.
+    private static final int RTA_PRIORITY = 6;
+
+    /// Linux route attribute type for the preferred source address.
+    private static final int RTA_PREFSRC = 7;
+
     /// Linux interface attribute type for the interface name.
     private static final int IFLA_IFNAME = 3;
+
+    /// Linux interface attribute type for the link-layer address.
+    private static final int IFLA_ADDRESS = 1;
+
+    /// Linux interface attribute type for the link-layer broadcast address.
+    private static final int IFLA_BROADCAST = 2;
 
     /// Linux interface address attribute type for the protocol address.
     private static final int IFA_ADDRESS = 1;
@@ -1576,14 +1603,26 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux interface address attribute type for the interface label.
     private static final int IFA_LABEL = 3;
 
+    /// Linux interface address attribute type for the IPv4 broadcast address.
+    private static final int IFA_BROADCAST = 4;
+
     /// Linux interface index used for the synthetic loopback interface.
     private static final int LOOPBACK_INTERFACE_INDEX = 1;
+
+    /// Linux interface index used for the synthetic Ethernet interface.
+    private static final int ETHERNET_INTERFACE_INDEX = 2;
 
     /// Linux ARPHRD_LOOPBACK hardware type.
     private static final int LOOPBACK_HARDWARE_TYPE = 772;
 
+    /// Linux ARPHRD_ETHER hardware type.
+    private static final int ETHERNET_HARDWARE_TYPE = 1;
+
     /// Linux interface flags for an up and running loopback interface.
     private static final int LOOPBACK_INTERFACE_FLAGS = 0x49;
+
+    /// Linux interface flags for an up and running Ethernet interface.
+    private static final int ETHERNET_INTERFACE_FLAGS = 0x11043;
 
     /// Linux address family number for IPv4.
     private static final int AF_INET = 2;
@@ -1591,11 +1630,38 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux rtnetlink host scope used by loopback addresses.
     private static final int RT_SCOPE_HOST = 254;
 
+    /// Linux rtnetlink universe scope used by regular IPv4 addresses.
+    private static final int RT_SCOPE_UNIVERSE = 0;
+
+    /// Linux main routing table id.
+    private static final int RT_TABLE_MAIN = 254;
+
+    /// Linux static route protocol id.
+    private static final int RTPROT_STATIC = 4;
+
+    /// Linux unicast route type id.
+    private static final int RTN_UNICAST = 1;
+
     /// Linux permanent interface-address flag.
     private static final int IFA_F_PERMANENT = 0x80;
 
     /// Linux socket type creation flags accepted by the minimal socket runtime.
     private static final long SUPPORTED_SOCKET_TYPE_FLAGS = O_NONBLOCK | O_CLOEXEC;
+
+    /// Linux `SIOCGIFNAME` ioctl request number.
+    private static final long SIOCGIFNAME = 0x8910L;
+
+    /// Linux `SIOCGIFINDEX` ioctl request number.
+    private static final long SIOCGIFINDEX = 0x8933L;
+
+    /// Linux `IFNAMSIZ`.
+    private static final int INTERFACE_NAME_SIZE = 16;
+
+    /// Byte offset of `ifr_ifindex` in Linux `struct ifreq`.
+    private static final long IFREQ_INTERFACE_INDEX_OFFSET = INTERFACE_NAME_SIZE;
+
+    /// Minimum byte size needed for Linux `struct ifreq` name/index ioctls.
+    private static final long IFREQ_NAME_INDEX_SIZE = IFREQ_INTERFACE_INDEX_OFFSET + Integer.BYTES;
 
     /// Creates a guest socket for the minimal network-related Linux runtime.
     protected long socket(long domain, long type, long protocol) {
@@ -1609,7 +1675,86 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 && protocol == NETLINK_ROUTE) {
             return addOpenFile(OpenFile.socket(new NetlinkRouteSocket(), (typeFlags & O_NONBLOCK) != 0));
         }
+        if (domain == AF_UNIX && socketType == SOCK_DGRAM && protocol == 0) {
+            return addOpenFile(OpenFile.socket(new NetworkInterfaceIoctlSocket(), (typeFlags & O_NONBLOCK) != 0));
+        }
         return EAFNOSUPPORT;
+    }
+
+    /// Handles Linux network-interface ioctl requests on generic ioctl sockets.
+    @Override
+    protected long ioctl(int fileDescriptor, long request, long argument) {
+        if (networkInterfaceIoctlSocket(fileDescriptor) == null) {
+            return super.ioctl(fileDescriptor, request, argument);
+        }
+        if (!memory.isBacked(argument, IFREQ_NAME_INDEX_SIZE)) {
+            return EFAULT;
+        }
+
+        if (request == SIOCGIFNAME) {
+            @Nullable String name = interfaceName(memory.readInt(argument + IFREQ_INTERFACE_INDEX_OFFSET));
+            if (name == null) {
+                return ENODEV;
+            }
+            writeInterfaceName(argument, name);
+            return 0;
+        }
+        if (request == SIOCGIFINDEX) {
+            int index = interfaceIndex(readInterfaceName(argument));
+            if (index == 0) {
+                return ENODEV;
+            }
+            memory.writeInt(argument + IFREQ_INTERFACE_INDEX_OFFSET, index);
+            return 0;
+        }
+        return ENOTTY;
+    }
+
+    /// Returns the network-interface ioctl socket backing a descriptor, or null when it is not such a socket.
+    private @Nullable NetworkInterfaceIoctlSocket networkInterfaceIoctlSocket(int fileDescriptor) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.isSocket()) {
+            return null;
+        }
+
+        GuestSocket socket = openFile.socket();
+        return socket instanceof NetworkInterfaceIoctlSocket ioctlSocket ? ioctlSocket : null;
+    }
+
+    /// Returns the synthetic interface name for an index, or null when absent.
+    private static @Nullable String interfaceName(int index) {
+        return switch (index) {
+            case LOOPBACK_INTERFACE_INDEX -> "lo";
+            case ETHERNET_INTERFACE_INDEX -> "eth0";
+            default -> null;
+        };
+    }
+
+    /// Returns the synthetic interface index for a name, or zero when absent.
+    private static int interfaceIndex(String name) {
+        return switch (name) {
+            case "lo" -> LOOPBACK_INTERFACE_INDEX;
+            case "eth0" -> ETHERNET_INTERFACE_INDEX;
+            default -> 0;
+        };
+    }
+
+    /// Reads a null-terminated Linux interface name from a guest `struct ifreq`.
+    private String readInterfaceName(long ifreqAddress) {
+        byte[] bytes = memory.readBytes(ifreqAddress, INTERFACE_NAME_SIZE);
+        int length = 0;
+        while (length < bytes.length && bytes[length] != 0) {
+            length++;
+        }
+        return new String(bytes, 0, length, StandardCharsets.UTF_8);
+    }
+
+    /// Writes a null-terminated Linux interface name into a guest `struct ifreq`.
+    private void writeInterfaceName(long ifreqAddress, String name) {
+        byte[] bytes = name.getBytes(StandardCharsets.UTF_8);
+        int length = Math.min(bytes.length, INTERFACE_NAME_SIZE - 1);
+        memory.clear(ifreqAddress, INTERFACE_NAME_SIZE);
+        memory.writeBytes(ifreqAddress, bytes, 0, length);
     }
 
     /// Binds a minimal netlink socket to a local port id.
@@ -1854,38 +1999,160 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         System.arraycopy(payload, 0, bytes, offset + 2 * Short.BYTES, payload.length);
     }
 
-    /// Builds one synthetic loopback `RTM_NEWLINK` message.
-    private static byte[] netlinkLoopbackLinkMessage(int sequence, long portId) {
-        byte[] name = new byte[]{'l', 'o', 0};
+    /// Returns a new byte array containing one little-endian 32-bit value.
+    private static byte[] littleEndianIntBytes(int value) {
+        byte[] bytes = new byte[Integer.BYTES];
+        putLittleEndianInt(bytes, 0, value);
+        return bytes;
+    }
+
+    /// Builds one synthetic `RTM_NEWLINK` message.
+    private static byte[] netlinkLinkMessage(
+            int sequence,
+            long portId,
+            int hardwareType,
+            int interfaceIndex,
+            int interfaceFlags,
+            byte[] name,
+            byte @Nullable [] hardwareAddress,
+            byte @Nullable [] broadcastAddress) {
         int attributeOffset = NETLINK_HEADER_SIZE + 16;
-        int size = attributeOffset + netlinkAlign(2 * Short.BYTES + name.length);
+        int nameAttributeSize = netlinkAlign(2 * Short.BYTES + name.length);
+        int hardwareAddressAttributeSize = hardwareAddress == null
+                ? 0
+                : netlinkAlign(2 * Short.BYTES + hardwareAddress.length);
+        int broadcastAddressAttributeSize = broadcastAddress == null
+                ? 0
+                : netlinkAlign(2 * Short.BYTES + broadcastAddress.length);
+        int size = attributeOffset
+                + hardwareAddressAttributeSize
+                + broadcastAddressAttributeSize
+                + nameAttributeSize;
         byte[] response = new byte[size];
         putNetlinkHeader(response, RTM_NEWLINK, sequence, portId);
-        putLittleEndianShort(response, NETLINK_HEADER_SIZE + 2, LOOPBACK_HARDWARE_TYPE);
-        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 4, LOOPBACK_INTERFACE_INDEX);
-        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 8, LOOPBACK_INTERFACE_FLAGS);
+        putLittleEndianShort(response, NETLINK_HEADER_SIZE + 2, hardwareType);
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 4, interfaceIndex);
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 8, interfaceFlags);
         putLittleEndianInt(response, NETLINK_HEADER_SIZE + 12, -1);
-        putRouteAttribute(response, attributeOffset, IFLA_IFNAME, name);
+        int nextAttributeOffset = attributeOffset;
+        if (hardwareAddress != null) {
+            putRouteAttribute(response, nextAttributeOffset, IFLA_ADDRESS, hardwareAddress);
+            nextAttributeOffset += hardwareAddressAttributeSize;
+        }
+        if (broadcastAddress != null) {
+            putRouteAttribute(response, nextAttributeOffset, IFLA_BROADCAST, broadcastAddress);
+            nextAttributeOffset += broadcastAddressAttributeSize;
+        }
+        putRouteAttribute(response, nextAttributeOffset, IFLA_IFNAME, name);
         return response;
+    }
+
+    /// Builds one synthetic IPv4 `RTM_NEWADDR` message.
+    private static byte[] netlinkIpv4AddressMessage(
+            int sequence,
+            long portId,
+            int prefixLength,
+            int scope,
+            int interfaceIndex,
+            byte[] address,
+            byte @Nullable [] broadcastAddress,
+            byte[] label) {
+        int attributeOffset = NETLINK_HEADER_SIZE + 8;
+        int addressAttributeSize = netlinkAlign(2 * Short.BYTES + address.length);
+        int broadcastAddressAttributeSize = broadcastAddress == null
+                ? 0
+                : netlinkAlign(2 * Short.BYTES + broadcastAddress.length);
+        int labelAttributeSize = netlinkAlign(2 * Short.BYTES + label.length);
+        byte[] response = new byte[attributeOffset
+                + 2 * addressAttributeSize
+                + broadcastAddressAttributeSize
+                + labelAttributeSize];
+        putNetlinkHeader(response, RTM_NEWADDR, sequence, portId);
+        response[NETLINK_HEADER_SIZE] = AF_INET;
+        response[NETLINK_HEADER_SIZE + 1] = (byte) prefixLength;
+        response[NETLINK_HEADER_SIZE + 2] = (byte) IFA_F_PERMANENT;
+        response[NETLINK_HEADER_SIZE + 3] = (byte) scope;
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 4, interfaceIndex);
+        putRouteAttribute(response, attributeOffset, IFA_ADDRESS, address);
+        putRouteAttribute(response, attributeOffset + addressAttributeSize, IFA_LOCAL, address);
+        int nextAttributeOffset = attributeOffset + 2 * addressAttributeSize;
+        if (broadcastAddress != null) {
+            putRouteAttribute(response, nextAttributeOffset, IFA_BROADCAST, broadcastAddress);
+            nextAttributeOffset += broadcastAddressAttributeSize;
+        }
+        putRouteAttribute(response, nextAttributeOffset, IFA_LABEL, label);
+        return response;
+    }
+
+    /// Builds one synthetic loopback `RTM_NEWLINK` message.
+    private static byte[] netlinkLoopbackLinkMessage(int sequence, long portId) {
+        return netlinkLinkMessage(
+                sequence,
+                portId,
+                LOOPBACK_HARDWARE_TYPE,
+                LOOPBACK_INTERFACE_INDEX,
+                LOOPBACK_INTERFACE_FLAGS,
+                new byte[]{'l', 'o', 0},
+                null,
+                null);
+    }
+
+    /// Builds one synthetic Ethernet `RTM_NEWLINK` message.
+    private static byte[] netlinkEthernetLinkMessage(int sequence, long portId) {
+        return netlinkLinkMessage(
+                sequence,
+                portId,
+                ETHERNET_HARDWARE_TYPE,
+                ETHERNET_INTERFACE_INDEX,
+                ETHERNET_INTERFACE_FLAGS,
+                new byte[]{'e', 't', 'h', '0', 0},
+                new byte[]{0x02, 0, 0, 0, 0, 0x01},
+                new byte[]{(byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0xff});
     }
 
     /// Builds one synthetic loopback IPv4 `RTM_NEWADDR` message.
     private static byte[] netlinkLoopbackAddressMessage(int sequence, long portId) {
-        byte[] address = new byte[]{127, 0, 0, 1};
-        byte[] label = new byte[]{'l', 'o', 0};
-        int attributeOffset = NETLINK_HEADER_SIZE + 8;
-        int addressAttributeSize = netlinkAlign(2 * Short.BYTES + address.length);
-        int labelAttributeSize = netlinkAlign(2 * Short.BYTES + label.length);
-        byte[] response = new byte[attributeOffset + 2 * addressAttributeSize + labelAttributeSize];
-        putNetlinkHeader(response, RTM_NEWADDR, sequence, portId);
+        return netlinkIpv4AddressMessage(
+                sequence,
+                portId,
+                8,
+                RT_SCOPE_HOST,
+                LOOPBACK_INTERFACE_INDEX,
+                new byte[]{127, 0, 0, 1},
+                null,
+                new byte[]{'l', 'o', 0});
+    }
+
+    /// Builds one synthetic Ethernet IPv4 `RTM_NEWADDR` message.
+    private static byte[] netlinkEthernetAddressMessage(int sequence, long portId) {
+        return netlinkIpv4AddressMessage(
+                sequence,
+                portId,
+                24,
+                RT_SCOPE_UNIVERSE,
+                ETHERNET_INTERFACE_INDEX,
+                new byte[]{10, 0, 2, 15},
+                new byte[]{10, 0, 2, (byte) 255},
+                new byte[]{'e', 't', 'h', '0', 0});
+    }
+
+    /// Builds one synthetic IPv4 default-route `RTM_NEWROUTE` message.
+    private static byte[] netlinkDefaultRouteMessage(int sequence, long portId) {
+        int attributeOffset = NETLINK_HEADER_SIZE + 12;
+        int integerAttributeSize = netlinkAlign(2 * Short.BYTES + Integer.BYTES);
+        byte[] gateway = new byte[]{10, 0, 2, 2};
+        byte[] preferredSource = new byte[]{10, 0, 2, 15};
+        byte[] response = new byte[attributeOffset + 4 * integerAttributeSize];
+        putNetlinkHeader(response, RTM_NEWROUTE, sequence, portId);
         response[NETLINK_HEADER_SIZE] = AF_INET;
-        response[NETLINK_HEADER_SIZE + 1] = 8;
-        response[NETLINK_HEADER_SIZE + 2] = (byte) IFA_F_PERMANENT;
-        response[NETLINK_HEADER_SIZE + 3] = (byte) RT_SCOPE_HOST;
-        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 4, LOOPBACK_INTERFACE_INDEX);
-        putRouteAttribute(response, attributeOffset, IFA_ADDRESS, address);
-        putRouteAttribute(response, attributeOffset + addressAttributeSize, IFA_LOCAL, address);
-        putRouteAttribute(response, attributeOffset + 2 * addressAttributeSize, IFA_LABEL, label);
+        response[NETLINK_HEADER_SIZE + 4] = (byte) RT_TABLE_MAIN;
+        response[NETLINK_HEADER_SIZE + 5] = RTPROT_STATIC;
+        response[NETLINK_HEADER_SIZE + 6] = RT_SCOPE_UNIVERSE;
+        response[NETLINK_HEADER_SIZE + 7] = RTN_UNICAST;
+        putRouteAttribute(response, attributeOffset, RTA_OIF, littleEndianIntBytes(ETHERNET_INTERFACE_INDEX));
+        putRouteAttribute(response, attributeOffset + integerAttributeSize, RTA_GATEWAY, gateway);
+        putRouteAttribute(response, attributeOffset + 2 * integerAttributeSize, RTA_PRIORITY, littleEndianIntBytes(0));
+        putRouteAttribute(response, attributeOffset + 3 * integerAttributeSize, RTA_PREFSRC, preferredSource);
         return response;
     }
 
@@ -1995,8 +2262,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             int type = netlinkType(request);
             if (type == RTM_GETLINK) {
                 responses.add(netlinkLoopbackLinkMessage(sequence, localPortId));
+                responses.add(netlinkEthernetLinkMessage(sequence, localPortId));
             } else if (type == RTM_GETADDR) {
                 responses.add(netlinkLoopbackAddressMessage(sequence, localPortId));
+                responses.add(netlinkEthernetAddressMessage(sequence, localPortId));
+            } else if (type == RTM_GETROUTE) {
+                responses.add(netlinkDefaultRouteMessage(sequence, localPortId));
             }
             responses.add(netlinkDoneMessage(sequence, localPortId));
         }
@@ -2005,6 +2276,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         @Nullable byte[] pollResponse() {
             return responses.poll();
         }
+    }
+
+    /// Marks a generic socket that exists only for Linux network-interface ioctl helpers.
+    private static final class NetworkInterfaceIoctlSocket implements GuestSocket {
     }
 
 
