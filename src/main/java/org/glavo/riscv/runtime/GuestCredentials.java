@@ -121,7 +121,8 @@ public record GuestCredentials(
                 "USER=" + userName,
                 "LOGNAME=" + userName,
                 "HOME=" + homeDirectory,
-                "SHELL=" + shell
+                "SHELL=" + shell,
+                "TERM=xterm-256color"
         };
     }
 

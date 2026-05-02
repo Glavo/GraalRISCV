@@ -68,9 +68,10 @@ public final class LinuxInitialStackTest {
             assertEquals("LANG=C", readString(memory, memory.readLong(envp)));
             assertEquals("PATH=/usr/bin:/bin", readString(memory, memory.readLong(envp + Long.BYTES)));
             assertEquals("PWD=/", readString(memory, memory.readLong(envp + 2L * Long.BYTES)));
-            assertEquals(0, memory.readLong(envp + 3L * Long.BYTES));
+            assertEquals("TERM=xterm-256color", readString(memory, memory.readLong(envp + 3L * Long.BYTES)));
+            assertEquals(0, memory.readLong(envp + 4L * Long.BYTES));
 
-            long auxv = envp + 4L * Long.BYTES;
+            long auxv = envp + 5L * Long.BYTES;
             assertAuxvContains(memory, auxv, AT_PAGESZ, 4096);
             assertAuxvContains(memory, auxv, AT_ENTRY, image.entryPoint());
             assertAuxvContains(memory, auxv, AT_UID, 1000);
@@ -111,9 +112,10 @@ public final class LinuxInitialStackTest {
             assertEquals("LOGNAME=alice", readString(memory, memory.readLong(envp + 4L * Long.BYTES)));
             assertEquals("HOME=/home/alice", readString(memory, memory.readLong(envp + 5L * Long.BYTES)));
             assertEquals("SHELL=/bin/bash", readString(memory, memory.readLong(envp + 6L * Long.BYTES)));
-            assertEquals(0, memory.readLong(envp + 7L * Long.BYTES));
+            assertEquals("TERM=xterm-256color", readString(memory, memory.readLong(envp + 7L * Long.BYTES)));
+            assertEquals(0, memory.readLong(envp + 8L * Long.BYTES));
 
-            long auxv = envp + 8L * Long.BYTES;
+            long auxv = envp + 9L * Long.BYTES;
             assertAuxvContains(memory, auxv, AT_UID, 1234);
             assertAuxvContains(memory, auxv, AT_EUID, 1234);
             assertAuxvContains(memory, auxv, AT_GID, 5678);

@@ -71,7 +71,8 @@ public final class LinuxInitialStack {
     private static final String @Unmodifiable [] DEFAULT_ENVIRONMENT = {
             "LANG=C",
             "PATH=/usr/bin:/bin",
-            "PWD=/"
+            "PWD=/",
+            "TERM=xterm-256color"
     };
 
     /// Deterministic bytes exposed through `AT_RANDOM`.

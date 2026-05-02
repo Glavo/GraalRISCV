@@ -20,6 +20,7 @@ import java.lang.invoke.MethodHandle;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /// Provides the guest controlling terminal exposed through `/dev/tty`.
 @NotNullByDefault
@@ -29,6 +30,9 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Linux `O_NOCTTY`.
     private static final int POSIX_OPEN_NO_CONTROL_TTY = 0x100;
+
+    /// The Linux generic tty `TCSETS` ioctl request number.
+    private static final long TERMIOS_SET_NOW_REQUEST = 0x5402;
 
     /// The Linux generic `struct termios` size exposed to the guest.
     private static final int TERMIOS_SIZE = 36;
@@ -156,6 +160,18 @@ final class TerminalDevice implements AutoCloseable {
     /// The current guest-visible terminal column count.
     private short columns = DEFAULT_COLUMNS;
 
+    /// Canonical input bytes buffered by guest-side line discipline.
+    private byte[] pendingInput = new byte[0];
+
+    /// The next buffered canonical input byte returned to the guest.
+    private int pendingInputOffset = 0;
+
+    /// Raw-mode input bytes already echoed by the guest-side Windows line discipline.
+    private byte[] rawEchoedInput = new byte[0];
+
+    /// The next raw-mode replay byte to suppress from guest output.
+    private int rawEchoedInputOffset = 0;
+
     /// The number of guest process syscall handlers sharing this terminal.
     private int references = 1;
 
@@ -164,6 +180,9 @@ final class TerminalDevice implements AutoCloseable {
         this.backend = backend;
         initializeDefaultTermios(termios);
         backend.readTermios(termios);
+        if (backend.usesGuestLineDiscipline()) {
+            backend.writeTermios(termios, TERMIOS_SET_NOW_REQUEST);
+        }
     }
 
     /// Creates a terminal device using a host tty when requested and available.
@@ -186,12 +205,25 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Reads bytes from the terminal input backend.
     int read(byte[] buffer, int length) throws IOException {
-        return backend.read(buffer, length);
+        if (backend.usesGuestLineDiscipline()) {
+            return readWithGuestLineDiscipline(buffer, length);
+        }
+
+        int count = backend.read(buffer, length);
+        normalizeInput(buffer, count);
+        return count;
     }
 
     /// Writes bytes to the terminal output backend.
     void write(byte[] buffer, int length) throws IOException {
-        backend.write(buffer, length);
+        int offset = suppressRawEchoReplay(buffer, length);
+        if (offset < length) {
+            byte[] bytes = offset == 0 ? buffer : Arrays.copyOfRange(buffer, offset, length);
+            backend.write(bytes, bytes.length);
+            if (containsLineBreak(bytes, bytes.length)) {
+                clearRawEchoReplay();
+            }
+        }
     }
 
     /// Returns true when the original standard descriptors should be visible as tty descriptors.
@@ -289,9 +321,197 @@ final class TerminalDevice implements AutoCloseable {
         return ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).getInt(TERMIOS_LOCAL_FLAGS_OFFSET);
     }
 
+    /// Reads `c_iflag` from a Linux guest `struct termios` image.
+    private static int readInputFlags(byte[] buffer) {
+        return ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).getInt(TERMIOS_INPUT_FLAGS_OFFSET);
+    }
+
     /// Writes `c_lflag` to a Linux guest `struct termios` image.
     private static void writeLocalFlags(byte[] buffer, int localFlags) {
         ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).putInt(TERMIOS_LOCAL_FLAGS_OFFSET, localFlags);
+    }
+
+    /// Reads input through the guest-side canonical mode and echo implementation.
+    private int readWithGuestLineDiscipline(byte[] buffer, int length) throws IOException {
+        int pendingCount = drainPendingInput(buffer, length);
+        if (pendingCount > 0) {
+            return pendingCount;
+        }
+
+        if ((readLocalFlags(termios) & TERMIOS_LOCAL_CANONICAL) == 0) {
+            int count = backend.read(buffer, length);
+            normalizeInput(buffer, count);
+            echoRawInput(buffer, count);
+            return count;
+        }
+
+        byte[] line = new byte[Math.max(16, Math.min(length, 256))];
+        int lineLength = 0;
+        while (true) {
+            byte[] oneByte = new byte[1];
+            int count = backend.read(oneByte, oneByte.length);
+            if (count == 0) {
+                if (lineLength == 0) {
+                    return 0;
+                }
+                break;
+            }
+
+            normalizeInput(oneByte, count);
+            byte input = oneByte[0];
+            int unsignedInput = Byte.toUnsignedInt(input);
+            if (unsignedInput == controlChar(TERMIOS_END_OF_FILE_INDEX)) {
+                if (lineLength == 0) {
+                    return 0;
+                }
+                break;
+            }
+            if (unsignedInput == controlChar(TERMIOS_ERASE_INDEX)) {
+                if (lineLength > 0) {
+                    lineLength--;
+                    echoErase();
+                }
+                continue;
+            }
+
+            if (lineLength == line.length) {
+                line = Arrays.copyOf(line, line.length * 2);
+            }
+            line[lineLength] = input;
+            lineLength++;
+            echoInput(input);
+            if (input == '\n') {
+                break;
+            }
+        }
+
+        pendingInput = Arrays.copyOf(line, lineLength);
+        pendingInputOffset = 0;
+        return drainPendingInput(buffer, length);
+    }
+
+    /// Returns buffered canonical input bytes to the guest.
+    private int drainPendingInput(byte[] buffer, int length) {
+        int available = pendingInput.length - pendingInputOffset;
+        if (available <= 0) {
+            return 0;
+        }
+
+        int count = Math.min(length, available);
+        System.arraycopy(pendingInput, pendingInputOffset, buffer, 0, count);
+        pendingInputOffset += count;
+        if (pendingInputOffset == pendingInput.length) {
+            pendingInput = new byte[0];
+            pendingInputOffset = 0;
+        }
+        return count;
+    }
+
+    /// Applies guest input translations that are independent of canonical buffering.
+    private void normalizeInput(byte[] buffer, int length) {
+        if ((readInputFlags(termios) & TERMIOS_INPUT_CARRIAGE_RETURN_TO_NEWLINE) == 0) {
+            return;
+        }
+        for (int index = 0; index < length; index++) {
+            if (buffer[index] == '\r') {
+                buffer[index] = '\n';
+            }
+        }
+    }
+
+    /// Echoes one input byte when guest `ECHO` is enabled.
+    private void echoInput(byte input) throws IOException {
+        int localFlags = readLocalFlags(termios);
+        if ((localFlags & TERMIOS_LOCAL_ECHO) == 0) {
+            return;
+        }
+        byte[] bytes = {input};
+        backend.write(bytes, bytes.length);
+    }
+
+    /// Echoes one erase operation when guest erase echoing is enabled.
+    private void echoErase() throws IOException {
+        int localFlags = readLocalFlags(termios);
+        if ((localFlags & (TERMIOS_LOCAL_ECHO | TERMIOS_LOCAL_ECHO_ERASE)) !=
+                (TERMIOS_LOCAL_ECHO | TERMIOS_LOCAL_ECHO_ERASE)) {
+            return;
+        }
+        byte[] bytes = {'\b', ' ', '\b'};
+        backend.write(bytes, bytes.length);
+    }
+
+    /// Echoes printable raw-mode bytes when Windows-backed readline defers redisplay.
+    private void echoRawInput(byte[] buffer, int length) throws IOException {
+        int localFlags = readLocalFlags(termios);
+        if ((localFlags & TERMIOS_LOCAL_CANONICAL) != 0
+                || (localFlags & TERMIOS_LOCAL_ECHO) != 0
+                || (localFlags & (TERMIOS_LOCAL_ECHO_ERASE | TERMIOS_LOCAL_ECHO_KILL)) == 0) {
+            return;
+        }
+
+        for (int index = 0; index < length; index++) {
+            byte input = buffer[index];
+            int unsignedInput = Byte.toUnsignedInt(input);
+            if (unsignedInput == controlChar(TERMIOS_ERASE_INDEX)) {
+                if (rawEchoedInput.length > 0) {
+                    rawEchoedInput = Arrays.copyOf(rawEchoedInput, rawEchoedInput.length - 1);
+                    rawEchoedInputOffset = Math.min(rawEchoedInputOffset, rawEchoedInput.length);
+                    byte[] bytes = {'\b', ' ', '\b'};
+                    backend.write(bytes, bytes.length);
+                }
+            } else if (input >= 0x20 && input != 0x7f) {
+                byte[] bytes = {input};
+                backend.write(bytes, bytes.length);
+                appendRawEchoReplay(input);
+            }
+        }
+    }
+
+    /// Appends one locally echoed raw input byte to the replay suppression buffer.
+    private void appendRawEchoReplay(byte input) {
+        int length = rawEchoedInput.length;
+        rawEchoedInput = Arrays.copyOf(rawEchoedInput, length + 1);
+        rawEchoedInput[length] = input;
+    }
+
+    /// Suppresses guest output that replays raw input already locally echoed by this terminal.
+    private int suppressRawEchoReplay(byte[] buffer, int length) {
+        if (rawEchoedInputOffset >= rawEchoedInput.length) {
+            return 0;
+        }
+
+        int offset = 0;
+        while (offset < length
+                && rawEchoedInputOffset < rawEchoedInput.length
+                && buffer[offset] == rawEchoedInput[rawEchoedInputOffset]) {
+            offset++;
+            rawEchoedInputOffset++;
+        }
+        if (offset == 0) {
+            clearRawEchoReplay();
+        }
+        return offset;
+    }
+
+    /// Clears raw input replay suppression state.
+    private void clearRawEchoReplay() {
+        rawEchoedInput = new byte[0];
+        rawEchoedInputOffset = 0;
+    }
+
+    /// Returns true when the byte prefix contains a line break.
+    private static boolean containsLineBreak(byte[] buffer, int length) {
+        for (int index = 0; index < length; index++) {
+            if (buffer[index] == '\n' || buffer[index] == '\r') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Reads one unsigned control character value from the guest termios image.
+    private int controlChar(int index) {
+        return Byte.toUnsignedInt(termios[TERMIOS_CONTROL_CHARS_OFFSET + index]);
     }
 
     /// Provides terminal I/O and optional host terminal metadata.
@@ -315,6 +535,11 @@ final class TerminalDevice implements AutoCloseable {
 
         /// Returns true when this backend can safely expose original standard descriptors as a tty.
         default boolean supportsStandardFileDescriptors() {
+            return false;
+        }
+
+        /// Returns true when guest-side terminal line discipline should process input.
+        default boolean usesGuestLineDiscipline() {
             return false;
         }
 
@@ -342,6 +567,9 @@ final class TerminalDevice implements AutoCloseable {
         /// Reads bytes from the configured input stream.
         @Override
         public int read(byte[] buffer, int length) throws IOException {
+            if (terminalMode != null) {
+                return terminalMode.read(buffer, length);
+            }
             int count = in.read(buffer, 0, length);
             return Math.max(count, 0);
         }
@@ -381,6 +609,12 @@ final class TerminalDevice implements AutoCloseable {
             return terminalMode != null;
         }
 
+        /// Returns true when the native mode controller requires guest-side line discipline.
+        @Override
+        public boolean usesGuestLineDiscipline() {
+            return terminalMode != null && terminalMode.usesGuestLineDiscipline();
+        }
+
         /// Restores host terminal mode and leaves externally owned streams open.
         @Override
         public void close() throws IOException {
@@ -401,8 +635,16 @@ final class TerminalDevice implements AutoCloseable {
         /// Reads a host terminal mode into the Linux guest `struct termios` image.
         void readTermios(byte[] buffer);
 
+        /// Reads bytes from the host terminal input.
+        int read(byte[] buffer, int length) throws IOException;
+
         /// Applies a Linux guest `struct termios` image to the host terminal mode.
         void writeTermios(byte[] buffer, long request);
+
+        /// Returns true when this host input mode cannot provide visible canonical echo itself.
+        default boolean usesGuestLineDiscipline() {
+            return false;
+        }
 
         /// Restores the original host terminal mode.
         @Override
@@ -428,6 +670,24 @@ final class TerminalDevice implements AutoCloseable {
                 return;
             }
             System.arraycopy(bytes, 0, buffer, 0, Math.min(bytes.length, buffer.length));
+        }
+
+        /// Reads bytes from the host terminal file descriptor.
+        @Override
+        public int read(byte[] buffer, int length) throws IOException {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment segment = arena.allocate(length);
+                long count = (long) PosixHandles.READ.invokeExact(fileDescriptor, segment, (long) length);
+                if (count < 0) {
+                    throw new IOException("read(stdin) failed");
+                }
+                segment.asByteBuffer().get(buffer, 0, (int) count);
+                return (int) count;
+            } catch (IOException exception) {
+                throw exception;
+            } catch (Throwable exception) {
+                throw new IOException("read(stdin) failed", exception);
+            }
         }
 
         /// Applies a native terminal `struct termios` byte image.
@@ -471,9 +731,6 @@ final class TerminalDevice implements AutoCloseable {
             if (!osName.contains("win")) {
                 return null;
             }
-            if (System.console() == null) {
-                return null;
-            }
 
             try {
                 MemorySegment handle = (MemorySegment) WindowsConsoleHandles.GET_STD_HANDLE.invokeExact(
@@ -509,6 +766,31 @@ final class TerminalDevice implements AutoCloseable {
             writeLocalFlags(buffer, localFlags);
         }
 
+        /// Reads bytes from the Windows console input handle.
+        @Override
+        public int read(byte[] buffer, int length) throws IOException {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment segment = arena.allocate(length);
+                MemorySegment countAddress = arena.allocate(ValueLayout.JAVA_INT);
+                int result = (int) WindowsConsoleHandles.READ_FILE.invokeExact(
+                        handle,
+                        segment,
+                        length,
+                        countAddress,
+                        MemorySegment.NULL);
+                if (result == 0) {
+                    throw new IOException("read(console input) failed");
+                }
+                int count = countAddress.get(ValueLayout.JAVA_INT, 0);
+                segment.asByteBuffer().get(buffer, 0, count);
+                return count;
+            } catch (IOException exception) {
+                throw exception;
+            } catch (Throwable exception) {
+                throw new IOException("read(console input) failed", exception);
+            }
+        }
+
         /// Applies guest local flags to the Windows console input mode.
         @Override
         public void writeTermios(byte[] buffer, long request) {
@@ -526,13 +808,13 @@ final class TerminalDevice implements AutoCloseable {
             if ((localFlags & TERMIOS_LOCAL_SIGNALS) != 0) {
                 mode |= WINDOWS_ENABLE_PROCESSED_INPUT;
             }
-            if ((localFlags & TERMIOS_LOCAL_CANONICAL) != 0) {
-                mode |= WINDOWS_ENABLE_LINE_INPUT;
-            }
-            if ((localFlags & TERMIOS_LOCAL_ECHO) != 0) {
-                mode |= WINDOWS_ENABLE_ECHO_INPUT;
-            }
             writeConsoleMode(handle, mode);
+        }
+
+        /// Returns true because Windows console input echo is not written through the guest output stream.
+        @Override
+        public boolean usesGuestLineDiscipline() {
+            return true;
         }
 
         /// Restores the original Windows console input mode.
@@ -750,7 +1032,7 @@ final class TerminalDevice implements AutoCloseable {
         private static final Linker LINKER = Linker.nativeLinker();
 
         /// The Windows Kernel32 symbol lookup.
-        private static final SymbolLookup LOOKUP = SymbolLookup.libraryLookup("kernel32", Arena.global());
+        private static final SymbolLookup LOOKUP = kernel32Lookup();
 
         /// Downcall handle for `GetStdHandle`.
         private static final MethodHandle GET_STD_HANDLE = downcall(
@@ -762,6 +1044,17 @@ final class TerminalDevice implements AutoCloseable {
                 "GetConsoleMode",
                 FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
 
+        /// Downcall handle for `ReadFile`.
+        private static final MethodHandle READ_FILE = downcall(
+                "ReadFile",
+                FunctionDescriptor.of(
+                        ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS));
+
         /// Downcall handle for `SetConsoleMode`.
         private static final MethodHandle SET_CONSOLE_MODE = downcall(
                 "SetConsoleMode",
@@ -769,6 +1062,15 @@ final class TerminalDevice implements AutoCloseable {
 
         /// Prevents construction.
         private WindowsConsoleHandles() {
+        }
+
+        /// Returns a lookup for Windows Kernel32 symbols.
+        private static SymbolLookup kernel32Lookup() {
+            try {
+                return SymbolLookup.libraryLookup("kernel32", Arena.global());
+            } catch (IllegalArgumentException exception) {
+                return SymbolLookup.libraryLookup("kernel32.dll", Arena.global());
+            }
         }
 
         /// Creates a downcall handle for one Windows console symbol.

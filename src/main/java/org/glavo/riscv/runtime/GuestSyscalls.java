@@ -4023,8 +4023,15 @@ public final class GuestSyscalls implements AutoCloseable {
             return 0;
         }
 
-        OutputStream stream = outputStreamFor(fileDescriptor);
         try {
+            @Nullable TerminalDevice terminalOutput = terminalOutputFor(fileDescriptor);
+            if (terminalOutput != null) {
+                byte[] bytes = memory.readBytes(address, length);
+                terminalOutput.write(bytes, bytes.length);
+                return bytes.length;
+            }
+
+            OutputStream stream = outputStreamFor(fileDescriptor);
             if (stream != null) {
                 byte[] bytes = memory.readBytes(address, length);
                 stream.write(bytes);
@@ -5531,6 +5538,15 @@ public final class GuestSyscalls implements AutoCloseable {
     /// Returns the terminal backing a descriptor that resolves to standard input.
     private @Nullable TerminalDevice terminalInputFor(int fileDescriptor) {
         return standardFileDescriptorFor(fileDescriptor) == 0 && terminalDevice.supportsStandardFileDescriptors()
+                ? terminalDevice
+                : null;
+    }
+
+    /// Returns the terminal backing a descriptor that resolves to standard output or standard error.
+    private @Nullable TerminalDevice terminalOutputFor(int fileDescriptor) {
+        int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
+        return (standardFileDescriptor == 1 || standardFileDescriptor == 2)
+                && terminalDevice.supportsStandardFileDescriptors()
                 ? terminalDevice
                 : null;
     }
