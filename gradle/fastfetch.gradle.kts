@@ -128,6 +128,69 @@ tasks.register<JavaExec>("testFastfetchVersion") {
     }
 }
 
+tasks.register<JavaExec>("testFastfetch") {
+    group = "verification"
+    description = "Runs fastfetch from the downloaded RISC-V Linux release tar and verifies key output fields."
+
+    dependsOn("classes", "decompressUbuntuBaseImage", "decompressFastfetchArchive")
+    classpath = fastfetchSourceSets.named("main").get().runtimeClasspath
+    mainClass = fastfetchMainClassName
+    jvmArgs(fastfetchApplicationDefaultJvmArgs)
+    isIgnoreExitValue = true
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(
+            "--mount", "type=tar,src=${fastfetchUbuntuBaseTarFile.get().asFile.absolutePath},dst=/",
+            "--mount", "type=tar,src=${fastfetchTarFile.get().asFile.absolutePath},dst=$fastfetchMountPath",
+            "--guest-program", fastfetchGuestProgramPath,
+            "--",
+            "--logo", "none",
+            "--pipe", "true",
+            "--structure",
+            "Title:Separator:OS:Kernel:Uptime:Packages:Shell:Terminal:CPU:Memory:Swap:Disk:Locale"
+        ))
+    }
+
+    doLast {
+        val exitCode = executionResult.get().exitValue
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        if (exitCode != 0) {
+            throw GradleException("$name exited with $exitCode. stderr: $actualError")
+        }
+
+        val requiredOutputFragments = listOf(
+            "user@localhost",
+            "OS: Ubuntu 26.04",
+            "Kernel: Linux",
+            "Packages: 86 (dpkg)",
+            "Shell: sh",
+            "Terminal: xterm-256color",
+            "CPU: graalriscv rv64gc",
+            "Memory:",
+            "/ 4.00 GiB",
+            "Swap: Unused",
+            "Disk (/):",
+            "graalriscv",
+            "Locale: C"
+        )
+        val missingFragments = requiredOutputFragments.filterNot(actualOutput::contains)
+        if (missingFragments.isNotEmpty()) {
+            throw GradleException("$name output missed expected fragments $missingFragments. stdout: $actualOutput")
+        }
+        if (actualError.isNotEmpty()) {
+            throw GradleException("$name wrote to stderr: $actualError")
+        }
+    }
+}
+
 tasks.register<JavaExec>("runFastfetch") {
     group = "verification"
     description = "Runs fastfetch from the downloaded RISC-V Linux release tar."
@@ -144,4 +207,8 @@ tasks.register<JavaExec>("runFastfetch") {
             "--guest-program", fastfetchGuestProgramPath
         ))
     }
+}
+
+tasks.named("checkShowcaseExamples") {
+    dependsOn("testFastfetch")
 }

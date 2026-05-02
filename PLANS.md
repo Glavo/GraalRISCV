@@ -19,7 +19,7 @@
 - Standard descriptor duplication preserves current stdin/stdout/stderr redirects, including redirects to pipes and other standard descriptors used by child process setup.
 - Decoded-block and trace caches use JVM-wide instruction-fetch generations across independent process images, preventing fork/exec children from reusing stale decoded code after interactive shell startup workloads.
 - `--mount` accepts Docker-like bind/tar mount specs, rejects the removed `guest=host` form, supports read-only bind mounts, lazy non-memory tar mounts, and writable process-local memory tar mounts.
-- Fastfetch Linux RISC-V release downloads are wired into Gradle, including gzip-to-tar preparation and a version smoke task.
+- Fastfetch Linux RISC-V release downloads are wired into Gradle, including gzip-to-tar preparation, a version smoke task, and a full output smoke task.
 - Virtual `/proc/cpuinfo` reports stable RISC-V CPU metadata plus sanitized `graalriscv_` Java runtime summary fields.
 - The memory, `--mount` filesystem namespace, customizable `GuestFileSystem` virtual mounts, read-only tar mounts, built-in `/proc` and Linux-like `/dev` with tty, null, zero, and deterministic random devices, configurable guest user credentials, Ubuntu Base image preparation, process/thread state, process-style `clone`/`wait4`, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 - Zig and Go Gradle toolchain overrides accept either executable paths or command names resolved through `PATH`.

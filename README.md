@@ -110,9 +110,9 @@ without unpacking the tar entries.
 The `decompressFastfetchArchive` task downloads fastfetch for Linux RISC-V from
 GitHub releases and produces a `.tar` archive under
 `build/downloads/fastfetch`. The default version is 2.62.1; override it with
-`-PfastfetchVersion=<version>`. The `runFastfetch` and `testFastfetchVersion`
-tasks also mount Ubuntu Base because the fastfetch release binary is dynamically
-linked.
+`-PfastfetchVersion=<version>`. The `runFastfetch`, `testFastfetchVersion`, and
+`testFastfetch` tasks also mount Ubuntu Base because the fastfetch release
+binary is dynamically linked.
 
 Run the Ubuntu Base dynamic-linking smoke tests:
 
