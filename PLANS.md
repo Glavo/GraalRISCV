@@ -1,50 +1,42 @@
 # Plans
 
-## Current Status
+## Scope
 
-- GraalRISCV is a user-mode RV64 emulator for 64-bit little-endian RISC-V ELF programs on Linux-like and FreeBSD syscall runtimes.
-- The implemented profile is RVA23U64 when the configured VLEN is profile-valid; shorter vector configurations expose the RVA22U64 capability surface.
+- GraalRISCV is a user-mode RV64 emulator for 64-bit little-endian RISC-V ELF programs.
+- Linux-like user-mode execution is the primary compatibility target; FreeBSD user-mode support is incremental.
 - Privileged mode, guest page tables, interrupts, devices, and Linux kernel boot are out of scope unless a later plan explicitly adds them.
-- The build covers unit tests, package smoke tests, example workloads, pinned `riscv-tests`, repository-owned RVA22U64/RVA23U64 acceptance tests, and Ubuntu Base dynamic-linking smoke tests.
 
-## Completed
+## Current Baseline
 
-- RVA22U64 and RVA23U64 user-mode profile support is implemented, centrally reported, and covered by focused tests.
-- RVV 1.0, mandatory RVA23U64 vector additions, `Zkt`/`Zvkt`, and optional standard `Zvbc` are implemented; the CRC example exercises `Zvbc`.
-- RVV gather coverage includes `vrgatherei16.vv`, including the OPIVV encoding used by current Ubuntu RISC-V userland tools.
-- The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
-- FreeBSD ELF OS ABI detection selects a FreeBSD RISC-V syscall handler for static user-mode programs.
-- Static FreeBSD Go hello-world startup is supported, including the Go runtime's initial stack register convention, thread bootstrap, signal setup, `sysctl`, and `_umtx_op` primitives required by the current smoke workload.
-- Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program` and `execve`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, `PR_GET_AUXV`, file-backed `MAP_PRIVATE`, tar symlink/hard-link lookup, virtual `/proc`, shell pipeline smoke coverage, and Ubuntu Base smoke coverage for common shell, coreutils, hashing, sorting, and findutils commands.
-- Standard descriptor duplication preserves current stdin/stdout/stderr redirects, including redirects to pipes and other standard descriptors used by child process setup.
-- Decoded-block and trace caches use JVM-wide instruction-fetch generations across independent process images, preventing fork/exec children from reusing stale decoded code after interactive shell startup workloads.
-- `--mount` accepts Docker-like bind/tar mount specs, rejects the removed `guest=host` form, supports read-only bind mounts, lazy non-memory tar mounts, and writable process-local memory tar mounts.
-- Fastfetch Linux RISC-V release downloads are wired into Gradle, including gzip-to-tar preparation, a version smoke task, and a full output smoke task.
-- Virtual `/proc/cpuinfo` reports stable RISC-V CPU metadata plus sanitized `graalriscv_` Java runtime summary fields.
-- The memory, `--mount` filesystem namespace, customizable `GuestFileSystem` virtual mounts, read-only tar mounts, built-in `/proc` and Linux-like `/dev` with tty, null, zero, and deterministic random devices, configurable guest user credentials, Ubuntu Base image preparation, process/thread state, process-style `clone`/`wait4`, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
-- Zig and Go Gradle toolchain overrides accept either executable paths or command names resolved through `PATH`.
-- Ubuntu Base shell startup compatibility covers the currently required identity, process-group, metadata, and readiness syscalls, including `setfsuid`, `setfsgid`, `fchownat`, `pselect6`, and `setpgid`.
-- Linux extended-attribute query syscalls report empty guest xattr sets, allowing metadata-heavy tools such as `ls -l` to continue when no virtual xattrs are present.
-- Interactive tty handling now exposes sane guest `termios` and `termios2`, keeps guest-driven `TCSETS` state stable, routes standard-input reads through the shared terminal device only when host tty control is active, maps `TCSETS` to Windows console input mode for real host consoles, provides Windows-backed guest-side input echo, VT key input/output, real Windows console window sizing, and shutdown-time console mode restoration for interactive shells.
-- The CLI includes `--root` as a guest root identity shortcut for `--user root --uid 0 --gid 0 --groups 0`.
+- ISA support targets RVA23U64 when the configured VLEN is profile-valid; shorter vector configurations expose the RVA22U64 capability surface.
+- Linux workloads currently cover static C/musl/Go programs, SQLite, CoreMark, RVV examples, `riscv-tests`, Ubuntu Base dynamic-linking smoke tests, interactive shell use, and fastfetch.
+- FreeBSD support currently covers static user-mode programs needed by the FreeBSD Go hello-world smoke workload.
+- The runtime includes Docker-like bind/tar mounts, virtual `/proc`, Linux-like `/dev`, guest credentials, deterministic time, process/thread state, `clone`/`wait4`, terminal handling, and Gradle-managed example/test tasks.
+- Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.
+
+## Maintenance Principles
+
+- Expand syscall, ELF, filesystem, terminal, and runtime behavior only when a direct test or real workload requires it.
+- Keep profile reporting, Linux `riscv_hwprobe`, README claims, and acceptance tests aligned whenever ISA behavior changes.
+- Keep filesystem simulation behind `GuestFileSystem`; avoid coupling workload-specific behavior directly to mount implementations.
+- Preserve deterministic behavior for tests, especially around time, process/thread state, random data, terminal state, and child process cleanup.
+- Prefer focused smoke workloads over broad host-dependent assumptions.
 
 ## Remaining Work
 
 ### ISA And Profile Correctness
 
-- Keep `Rva22Profile`, `Rva23Profile`, Linux `riscv_hwprobe`, README, CI aggregation, and acceptance tests aligned whenever ISA or profile-reporting behavior changes.
 - Add ISA corner-case coverage as bugs or spec ambiguities are found.
-- Preserve the `Zkt`/`Zvkt` audit boundary, and keep unimplemented optional extensions unreported.
+- Preserve the `Zkt`/`Zvkt` audit boundary and keep unimplemented optional extensions unreported.
 
 ### Linux Runtime Compatibility
 
-- Expand ELF, auxv, stack, `mmap`, syscall, dynamic-linking, and runtime behavior only when direct tests or real workloads require it.
-- Continue improving signal, process, and clone semantics while keeping thread behavior deterministic.
-- Keep filesystem simulation behind `GuestFileSystem`; add richer device, terminal, and process/thread-scoped filesystem state only when workloads require it.
+- Continue improving signal, process, clone, exec, and dynamic-linking semantics as workloads require them.
+- Add richer `/proc`, `/sys`, device, terminal, and process/thread-scoped filesystem state only when concrete programs need it.
 
 ### FreeBSD Runtime Compatibility
 
-- Expand FreeBSD stack, auxv, dynamic-linking, syscall, and libc behavior only when direct tests or real workloads require it.
+- Grow FreeBSD stack, auxv, dynamic-linking, syscall, threading, and libc behavior from direct smoke workloads.
 
 ### Memory And Mapping
 

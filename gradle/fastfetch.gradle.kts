@@ -173,7 +173,7 @@ tasks.register<JavaExec>("testFastfetch") {
             "Packages: 86 (dpkg)",
             "Shell: sh",
             "Terminal: xterm-256color",
-            "CPU: graalriscv rv64gc",
+            "CPU: glavo,graalriscv rv64gc",
             "Memory:",
             "/ 4.00 GiB",
             "Swap: Unused",

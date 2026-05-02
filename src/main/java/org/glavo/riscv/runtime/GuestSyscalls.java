@@ -6745,7 +6745,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 + "hart\t\t: 0\n"
                 + "isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"
                 + "mmu\t\t: sv57\n"
-                + "uarch\t\t: graalriscv\n"
+                + "uarch\t\t: glavo,graalriscv\n"
                 + "graalriscv_java_version\t: " + procCpuinfoProperty("java.version") + "\n"
                 + "graalriscv_java_vm_name\t: " + procCpuinfoProperty("java.vm.name") + "\n"
                 + "graalriscv_java_vm_version\t: " + procCpuinfoProperty("java.vm.version") + "\n"
