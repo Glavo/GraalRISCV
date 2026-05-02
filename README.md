@@ -108,12 +108,12 @@ Each `run...Example` task builds the required RISC-V program before executing
 it.
 
 The `decompressUbuntuBaseImage` task downloads Ubuntu Base 26.04 for RISC-V and
-produces a `.tar` root filesystem under `build/downloads/ubuntu-base/26.04`
+produces a `.tar` root filesystem under `downloads/ubuntu-base/26.04`
 without unpacking the tar entries.
 
 The `decompressFastfetchArchive` task downloads fastfetch for Linux RISC-V from
 GitHub releases and produces a `.tar` archive under
-`build/downloads/fastfetch`. The default version is 2.62.1; override it with
+`downloads/fastfetch`. The default version is 2.62.1; override it with
 `-PfastfetchVersion=<version>`. The `runFastfetch`, `testFastfetchVersion`, and
 `testFastfetch` tasks also mount Ubuntu Base because the fastfetch release
 binary is dynamically linked.

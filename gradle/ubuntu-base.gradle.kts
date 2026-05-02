@@ -11,12 +11,14 @@ val sourceSets = extensions.getByType<SourceSetContainer>()
 val ubuntuBaseMainClassName = applicationExtension.mainClass.get()
 val ubuntuBaseApplicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 
+fun downloadFile(path: String) = providers.provider { layout.projectDirectory.file("downloads/$path") }
+
 val ubuntuBaseVersion = "26.04"
 val ubuntuBaseArchitecture = "riscv64"
 val ubuntuBaseArchiveName = "ubuntu-base-$ubuntuBaseVersion-base-$ubuntuBaseArchitecture.tar.gz"
 val ubuntuBaseTarName = ubuntuBaseArchiveName.removeSuffix(".gz")
-val ubuntuBaseArchiveFile = layout.buildDirectory.file("downloads/ubuntu-base/$ubuntuBaseVersion/$ubuntuBaseArchiveName")
-val ubuntuBaseTarFile = layout.buildDirectory.file("downloads/ubuntu-base/$ubuntuBaseVersion/$ubuntuBaseTarName")
+val ubuntuBaseArchiveFile = downloadFile("ubuntu-base/$ubuntuBaseVersion/$ubuntuBaseArchiveName")
+val ubuntuBaseTarFile = downloadFile("ubuntu-base/$ubuntuBaseVersion/$ubuntuBaseTarName")
 
 fun registerUbuntuBaseSmokeTest(
     taskName: String,

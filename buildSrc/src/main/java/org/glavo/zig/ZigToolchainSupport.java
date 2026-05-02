@@ -35,9 +35,8 @@ public final class ZigToolchainSupport {
             return toolchain;
         }
 
-        Provider<RegularFile> archiveFile = project.getLayout()
-                .getBuildDirectory()
-                .file("downloads/zig/" + ZigUtils.getZigArchiveName());
+        Provider<RegularFile> archiveFile = project.provider(() ->
+                project.getLayout().getProjectDirectory().file("downloads/zig/" + ZigUtils.getZigArchiveName()));
         Provider<Directory> installDirectory = project.getLayout()
                 .getBuildDirectory()
                 .dir("tools/zig/" + ZigUtils.getZigArchiveBaseName());

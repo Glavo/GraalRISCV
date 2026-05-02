@@ -10,6 +10,7 @@
 
 - ISA support targets RVA23U64 when the configured VLEN is profile-valid; shorter vector configurations expose the RVA22U64 capability surface.
 - Linux workloads currently cover static C/musl/Go programs, SQLite, CoreMark, RVV examples, `riscv-tests`, Ubuntu Base dynamic-linking smoke tests, interactive shell use, fastfetch, and BellSoft JDK 25 interpreted `java -version`.
+- Gradle-managed external downloads are cached under project-root `downloads/` so `clean` preserves them.
 - FreeBSD support currently covers static user-mode programs needed by the FreeBSD Go hello-world smoke workload.
 - The runtime includes Docker-like bind/tar mounts, virtual `/proc`, minimal virtual `/sys` DMI, PCI, and class stubs, Linux-like `/dev`, deterministic `NETLINK_ROUTE` interface and default-route metadata, guest credentials, deterministic time, process/thread state, `clone`/`wait4`, terminal handling, and Gradle-managed example/test tasks.
 - Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.

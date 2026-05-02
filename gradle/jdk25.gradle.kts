@@ -11,6 +11,8 @@ val jdk25SourceSets = extensions.getByType<SourceSetContainer>()
 val jdk25MainClassName = jdk25ApplicationExtension.mainClass.get()
 val jdk25ApplicationDefaultJvmArgs = jdk25ApplicationExtension.applicationDefaultJvmArgs.toList()
 
+fun downloadFile(path: String) = providers.provider { layout.projectDirectory.file("downloads/$path") }
+
 val jdk25Version = providers.gradleProperty("jdk25Version").orElse("25.0.3+11").get()
 val jdk25FeatureVersion = jdk25Version.substringBefore("+")
 val jdk25Platform = providers.gradleProperty("jdk25Platform").orElse("linux-riscv64").get()
@@ -27,8 +29,8 @@ val jdk25ArchiveUrl =
     providers.gradleProperty("jdk25ArchiveUrl")
         .orElse("https://download.bell-sw.com/java/$jdk25Version/$jdk25ArchiveName")
         .get()
-val jdk25ArchiveFile = layout.buildDirectory.file("downloads/jdk25/$jdk25Version/$jdk25ArchiveName")
-val jdk25TarFile = layout.buildDirectory.file("downloads/jdk25/$jdk25Version/$jdk25TarName")
+val jdk25ArchiveFile = downloadFile("jdk25/$jdk25Version/$jdk25ArchiveName")
+val jdk25TarFile = downloadFile("jdk25/$jdk25Version/$jdk25TarName")
 val jdk25MountPath = "/opt/jdk25"
 val jdk25GuestJavaPath = "$jdk25MountPath/$jdk25ArchiveRoot/bin/java"
 val jdk25GuestTempDirectory = layout.buildDirectory.dir("tmp/jdk25-guest-tmp")
@@ -38,7 +40,7 @@ val jdk25UbuntuBaseArchitecture = "riscv64"
 val jdk25UbuntuBaseTarName =
     "ubuntu-base-$jdk25UbuntuBaseVersion-base-$jdk25UbuntuBaseArchitecture.tar"
 val jdk25UbuntuBaseTarFile =
-    layout.buildDirectory.file("downloads/ubuntu-base/$jdk25UbuntuBaseVersion/$jdk25UbuntuBaseTarName")
+    downloadFile("ubuntu-base/$jdk25UbuntuBaseVersion/$jdk25UbuntuBaseTarName")
 
 val downloadJdk25Archive by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
     group = "build setup"

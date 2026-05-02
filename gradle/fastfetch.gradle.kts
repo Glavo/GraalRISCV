@@ -11,13 +11,15 @@ val fastfetchSourceSets = extensions.getByType<SourceSetContainer>()
 val fastfetchMainClassName = fastfetchApplicationExtension.mainClass.get()
 val fastfetchApplicationDefaultJvmArgs = fastfetchApplicationExtension.applicationDefaultJvmArgs.toList()
 
+fun downloadFile(path: String) = providers.provider { layout.projectDirectory.file("downloads/$path") }
+
 val fastfetchVersion = providers.gradleProperty("fastfetchVersion").orElse("2.62.1").get()
 val fastfetchPlatform = providers.gradleProperty("fastfetchPlatform").orElse("linux-riscv64").get()
 val fastfetchArchiveBaseName = "fastfetch-$fastfetchPlatform"
 val fastfetchArchiveName = "$fastfetchArchiveBaseName.tar.gz"
 val fastfetchTarName = fastfetchArchiveName.removeSuffix(".gz")
-val fastfetchArchiveFile = layout.buildDirectory.file("downloads/fastfetch/$fastfetchVersion/$fastfetchArchiveName")
-val fastfetchTarFile = layout.buildDirectory.file("downloads/fastfetch/$fastfetchVersion/$fastfetchTarName")
+val fastfetchArchiveFile = downloadFile("fastfetch/$fastfetchVersion/$fastfetchArchiveName")
+val fastfetchTarFile = downloadFile("fastfetch/$fastfetchVersion/$fastfetchTarName")
 val fastfetchMountPath = "/opt/fastfetch"
 val fastfetchGuestProgramPath = "$fastfetchMountPath/$fastfetchArchiveBaseName/usr/bin/fastfetch"
 val fastfetchUbuntuBaseVersion = "26.04"
@@ -25,7 +27,7 @@ val fastfetchUbuntuBaseArchitecture = "riscv64"
 val fastfetchUbuntuBaseTarName =
     "ubuntu-base-$fastfetchUbuntuBaseVersion-base-$fastfetchUbuntuBaseArchitecture.tar"
 val fastfetchUbuntuBaseTarFile =
-    layout.buildDirectory.file("downloads/ubuntu-base/$fastfetchUbuntuBaseVersion/$fastfetchUbuntuBaseTarName")
+    downloadFile("ubuntu-base/$fastfetchUbuntuBaseVersion/$fastfetchUbuntuBaseTarName")
 
 val downloadFastfetchArchive by tasks.registering(de.undercouch.gradle.tasks.download.Download::class) {
     group = "build setup"

@@ -13,19 +13,22 @@ val zigToolchain = ZigToolchainSupport.getOrCreate(project)
 val mainClassName = applicationExtension.mainClass.get()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 
+fun downloadFile(path: String) = providers.provider { layout.projectDirectory.file("downloads/$path") }
+fun downloadDirectory(path: String) = providers.provider { layout.projectDirectory.dir("downloads/$path") }
+
 fun RiscVTestsBuildTask.configureZigExecutable() {
     zigToolchain.configureExecutable(this, zigExecutable)
 }
 
 val riscVTestsRevision = "0bbecd1a01c61a16ad45fdfd89f29ebfdb493d1d"
 val riscVTestsArchiveRoot = "riscv-tests-$riscVTestsRevision"
-val riscVTestsArchiveFile = layout.buildDirectory.file("downloads/riscv-tests/riscv-tests-$riscVTestsRevision.zip")
-val riscVTestsSourceDirectory = layout.buildDirectory.dir("downloads/riscv-tests/$riscVTestsRevision")
+val riscVTestsArchiveFile = downloadFile("riscv-tests/riscv-tests-$riscVTestsRevision.zip")
+val riscVTestsSourceDirectory = downloadDirectory("riscv-tests/$riscVTestsRevision")
 val riscVTestEnvRevision = "6de71edb142be36319e380ce782c3d1830c65d68"
 val riscVTestEnvArchiveRoot = "riscv-test-env-$riscVTestEnvRevision"
 val riscVTestEnvArchiveFile =
-    layout.buildDirectory.file("downloads/riscv-test-env/riscv-test-env-$riscVTestEnvRevision.zip")
-val riscVTestEnvSourceDirectory = layout.buildDirectory.dir("downloads/riscv-test-env/$riscVTestEnvRevision")
+    downloadFile("riscv-test-env/riscv-test-env-$riscVTestEnvRevision.zip")
+val riscVTestEnvSourceDirectory = downloadDirectory("riscv-test-env/$riscVTestEnvRevision")
 val riscVTestsElfDirectory = layout.buildDirectory.dir("riscv-tests/rv64gc-p")
 val rva22AcceptanceSourceInputDirectory = layout.projectDirectory.dir("src/test/asm/rva22")
 val rva22AcceptanceGeneratedSourceDirectory = layout.buildDirectory.dir("generated/rva22-acceptance")

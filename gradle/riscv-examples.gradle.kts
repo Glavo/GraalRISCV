@@ -24,7 +24,10 @@ val mainClassName = applicationExtension.mainClass.get()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val goArchiveName = GoUtils.getGoArchiveName()
-val goArchiveFile = layout.buildDirectory.file("downloads/go/$goArchiveName")
+fun downloadFile(path: String) = providers.provider { layout.projectDirectory.file("downloads/$path") }
+fun downloadDirectory(path: String) = providers.provider { layout.projectDirectory.dir("downloads/$path") }
+
+val goArchiveFile = downloadFile("go/$goArchiveName")
 val goInstallDirectory = layout.buildDirectory.dir("tools/go/${GoUtils.getGoDistributionName()}")
 val goExecutableFile = goInstallDirectory.map {
     it.file("go/bin/${GoUtils.getGoExecutableName()}")
@@ -74,6 +77,10 @@ val downloadGo by tasks.registering(de.undercouch.gradle.tasks.download.Download
 
     doFirst {
         val archive = goArchiveFile.get().asFile
+        val parent = archive.parentFile
+        if (!parent.isDirectory && !parent.mkdirs()) {
+            throw GradleException("Failed to create Go archive directory: $parent")
+        }
         if (archive.isFile && archive.length() == 0L) {
             delete(archive)
         }
@@ -1178,8 +1185,8 @@ tasks.register<JavaExec>("testLinuxStaticProcessSignalsExample") {
 // Downloaded static Linux SQLite showcase example.
 val sqliteVersion = "3520000"
 val sqliteArchiveRoot = "sqlite-autoconf-$sqliteVersion"
-val sqliteArchiveFile = layout.buildDirectory.file("downloads/sqlite/sqlite-autoconf-$sqliteVersion.tar.gz")
-val sqliteSourceDirectory = layout.buildDirectory.dir("downloads/sqlite/$sqliteVersion")
+val sqliteArchiveFile = downloadFile("sqlite/sqlite-autoconf-$sqliteVersion.tar.gz")
+val sqliteSourceDirectory = downloadDirectory("sqlite/$sqliteVersion")
 val sqliteExampleElf = layout.buildDirectory.file("examples/linux-static/sqlite-showcase.elf")
 val sqliteRoot = layout.buildDirectory.dir("tmp/linux-static-sqlite-root")
 val sqliteSourcePaths = listOf(
@@ -1347,8 +1354,8 @@ tasks.register<JavaExec>("runSQLiteShowcaseExample") {
 // Downloaded RVV examples.
 val rvvExamplesRevision = "29b4973954799cdbc32ea354df22c4bab6b82b67"
 val rvvExamplesArchiveRoot = "rvv-examples-$rvvExamplesRevision"
-val rvvExamplesArchiveFile = layout.buildDirectory.file("downloads/rvv-examples/rvv-examples-$rvvExamplesRevision.zip")
-val rvvExamplesSourceDirectory = layout.buildDirectory.dir("downloads/rvv-examples/$rvvExamplesRevision")
+val rvvExamplesArchiveFile = downloadFile("rvv-examples/rvv-examples-$rvvExamplesRevision.zip")
+val rvvExamplesSourceDirectory = downloadDirectory("rvv-examples/$rvvExamplesRevision")
 val rvvExamplesGeneratedDirectory = layout.buildDirectory.dir("generated/rvv-examples/$rvvExamplesRevision")
 val rvvVectorAddExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-vector-add.elf")
 val rvvMatrixTransposeExampleElf = layout.buildDirectory.file("examples/linux-static/rvv-matrix-transpose.elf")
@@ -2005,8 +2012,8 @@ registerRvvExampleTestTask(
 // Downloaded static Linux CoreMark example.
 val coreMarkRevision = "1f483d5b8316753a742cbf5590caf5bd0a4e4777"
 val coreMarkArchiveRoot = "coremark-$coreMarkRevision"
-val coreMarkArchiveFile = layout.buildDirectory.file("downloads/coremark/coremark-$coreMarkRevision.zip")
-val coreMarkSourceDirectory = layout.buildDirectory.dir("downloads/coremark/$coreMarkRevision")
+val coreMarkArchiveFile = downloadFile("coremark/coremark-$coreMarkRevision.zip")
+val coreMarkSourceDirectory = downloadDirectory("coremark/$coreMarkRevision")
 val coreMarkExampleElf = layout.buildDirectory.file("examples/linux-static/coremark.elf")
 val coreMarkSourcePaths = listOf(
     "core_list_join.c",

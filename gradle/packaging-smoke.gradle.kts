@@ -11,7 +11,7 @@ val applicationExtension = extensions.getByType<JavaApplication>()
 val applicationDefaultJvmArgs = applicationExtension.applicationDefaultJvmArgs.toList()
 val isWindowsHost = System.getProperty("os.name").lowercase().contains("win")
 val smokeElfFile = layout.buildDirectory.file("fixtures/smoke/smoke.elf")
-val zigArchiveFile = layout.buildDirectory.file("downloads/zig/${ZigUtils.getZigArchiveName()}")
+val zigArchiveFile = providers.provider { layout.projectDirectory.file("downloads/zig/${ZigUtils.getZigArchiveName()}") }
 val zigExecutableFile = layout.buildDirectory.file(
     "tools/zig/${ZigUtils.getZigArchiveBaseName()}/${ZigUtils.getZigExecutableName()}"
 )
