@@ -335,6 +335,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux `RISCV_HWPROBE_WHICH_CPUS`.
     private static final long RISCV_HWPROBE_WHICH_CPUS = 1;
 
+    /// Linux `SYS_RISCV_FLUSH_ICACHE_ALL` flag.
+    private static final long RISCV_FLUSH_ICACHE_ALL = 1;
+
     /// Linux `RISCV_HWPROBE_KEY_MVENDORID`.
     private static final long RISCV_HWPROBE_KEY_MVENDORID = 0;
 
@@ -364,6 +367,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Linux `RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS`.
     private static final long RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS = 7;
+
+    /// The highest guest user address reported for an SV48-compatible Linux RISC-V process.
+    private static final long RISCV_HIGHEST_SV48_USER_ADDRESS = (1L << 47) - 1;
 
     /// Linux `RISCV_HWPROBE_KEY_TIME_CSR_FREQ`.
     private static final long RISCV_HWPROBE_KEY_TIME_CSR_FREQ = 8;
@@ -873,6 +879,16 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return 0;
     }
 
+    /// Flushes guest instruction-fetch visibility for Linux `riscv_flush_icache`.
+    protected static long riscvFlushIcache(MachineState state, long startAddress, long endAddress, long flags) {
+        if ((flags & ~RISCV_FLUSH_ICACHE_ALL) != 0 || Long.compareUnsigned(startAddress, endAddress) > 0) {
+            return EINVAL;
+        }
+
+        state.fenceInstructionFetch();
+        return 0;
+    }
+
     /// Writes values for all requested RISC-V hardware probe pairs.
     protected void populateHwprobePairs(long pairsAddress, long pairCount, MachineState state) {
         for (long index = 0; index < pairCount; index++) {
@@ -935,7 +951,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case (int) RISCV_HWPROBE_KEY_CPUPERF_0 -> RISCV_HWPROBE_MISALIGNED_EMULATED;
             case (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF -> RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED;
             case (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW;
-            case (int) RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS -> Long.MAX_VALUE;
+            case (int) RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS -> RISCV_HIGHEST_SV48_USER_ADDRESS;
             case (int) RISCV_HWPROBE_KEY_TIME_CSR_FREQ -> NANOSECONDS_PER_SECOND;
             default -> throw new AssertionError("validated RISC-V hardware probe key");
         };
@@ -2838,6 +2854,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
     private static final int SYS_RISCV_HWPROBE = 258;
 
+    /// The Linux RISC-V syscall number for `riscv_flush_icache`.
+    private static final int SYS_RISCV_FLUSH_ICACHE = 259;
+
     /// The Linux RISC-V syscall number for `wait4`.
     private static final int SYS_WAIT4 = 260;
 
@@ -3186,6 +3205,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(13),
                     state.register(14),
                     state));
+            case SYS_RISCV_FLUSH_ICACHE -> state.setRegister(10, riscvFlushIcache(
+                    state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_WAIT4 -> state.setRegister(10, wait4(
                     state.register(10),
                     state.register(11),

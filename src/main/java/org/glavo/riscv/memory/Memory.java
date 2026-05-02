@@ -992,9 +992,65 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns a RISC-V memory fault for the supplied guest range.
-    private static RiscVException accessFault(long address, long length) {
-        return new RiscVException("Guest memory access out of range: address=0x"
-                + Long.toUnsignedString(address, 16) + ", length=" + length);
+    private RiscVException accessFault(long address, long length) {
+        StringBuilder builder = new StringBuilder("Guest memory access out of range: address=0x")
+                .append(Long.toUnsignedString(address, 16))
+                .append(", length=")
+                .append(length);
+
+        @Nullable Vma vma = length == 0 ? null : vmas.find(address, length);
+        if (vma != null) {
+            builder.append(", vma=");
+            appendVma(builder, vma);
+        } else {
+            @Nullable Vma overlapping = length == 0 ? null : vmas.findOverlap(address, length);
+            if (overlapping != null) {
+                builder.append(", overlappingVma=");
+                appendVma(builder, overlapping);
+            } else {
+                appendNearestVmas(builder, address);
+            }
+        }
+        return new RiscVException(builder.toString());
+    }
+
+    /// Appends the mapped area closest to an access fault.
+    private void appendNearestVmas(StringBuilder builder, long address) {
+        @Nullable Vma previous = null;
+        @Nullable Vma next = null;
+        VmaTable table = vmas;
+        for (int index = 0; index < table.size(); index++) {
+            Vma candidate = table.vma(index);
+            if (Long.compareUnsigned(candidate.endAddress(), address) <= 0) {
+                previous = candidate;
+                continue;
+            }
+            if (Long.compareUnsigned(candidate.address(), address) > 0) {
+                next = candidate;
+                break;
+            }
+        }
+
+        if (previous != null) {
+            builder.append(", previousVma=");
+            appendVma(builder, previous);
+        }
+        if (next != null) {
+            builder.append(", nextVma=");
+            appendVma(builder, next);
+        }
+    }
+
+    /// Appends one guest virtual memory area in a compact diagnostic format.
+    private static void appendVma(StringBuilder builder, Vma vma) {
+        builder.append("0x")
+                .append(Long.toUnsignedString(vma.address(), 16))
+                .append("-0x")
+                .append(Long.toUnsignedString(vma.endAddress(), 16))
+                .append(' ')
+                .append((vma.protection() & PROTECTION_READ) != 0 ? 'r' : '-')
+                .append((vma.protection() & PROTECTION_WRITE) != 0 ? 'w' : '-')
+                .append((vma.protection() & PROTECTION_EXECUTE) != 0 ? 'x' : '-');
     }
 
     /// Returns a checked byte count within one page.

@@ -420,6 +420,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
     private static final long SYS_RISCV_HWPROBE = 258;
 
+    /// The Linux RISC-V syscall number for `riscv_flush_icache`.
+    private static final long SYS_RISCV_FLUSH_ICACHE = 259;
+
     /// The Linux RISC-V syscall number for `wait4`.
     private static final long SYS_WAIT4 = 260;
 
@@ -1080,6 +1083,9 @@ public final class GuestSyscallsTest {
     /// Linux `RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS`.
     private static final long RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS = 7;
 
+    /// Highest SV48-compatible Linux RISC-V user address reported by `riscv_hwprobe`.
+    private static final long RISCV_HIGHEST_SV48_USER_ADDRESS = (1L << 47) - 1;
+
     /// Linux `RISCV_HWPROBE_KEY_TIME_CSR_FREQ`.
     private static final long RISCV_HWPROBE_KEY_TIME_CSR_FREQ = 8;
 
@@ -1115,6 +1121,12 @@ public final class GuestSyscallsTest {
 
     /// Linux `MAP_PRIVATE`.
     private static final long MAP_PRIVATE = 0x02;
+
+    /// Linux `MAP_SHARED`.
+    private static final long MAP_SHARED = 0x01;
+
+    /// Linux `MAP_SHARED_VALIDATE`.
+    private static final long MAP_SHARED_VALIDATE = 0x03;
 
     /// Linux `MAP_FIXED`.
     private static final long MAP_FIXED = 0x10;
@@ -4535,7 +4547,7 @@ public final class GuestSyscallsTest {
                             | RiscVExtensions.HWPROBE_EXT_ZACAS;
             assertEquals(0, imaExtensions & unreportedOptionalExtensions);
             assertEquals(RISCV_HWPROBE_MISALIGNED_EMULATED, readHwprobeValue(memory, pairsAddress, 3));
-            assertEquals(Long.MAX_VALUE, readHwprobeValue(memory, pairsAddress, 4));
+            assertEquals(RISCV_HIGHEST_SV48_USER_ADDRESS, readHwprobeValue(memory, pairsAddress, 4));
             assertEquals(1_000_000_000L, readHwprobeValue(memory, pairsAddress, 5));
             assertEquals(RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED, readHwprobeValue(memory, pairsAddress, 6));
             assertEquals(RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW, readHwprobeValue(memory, pairsAddress, 7));
@@ -4608,6 +4620,28 @@ public final class GuestSyscallsTest {
             assertEquals(EINVAL, state.register(10));
 
             setSyscall(state, SYS_RISCV_HWPROBE, pairsAddress, 1, 0, 0, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `riscv_flush_icache` refreshes guest instruction-fetch visibility.
+    @Test
+    public void riscvFlushIcacheRefreshesInstructionFetch() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long previousGeneration = state.instructionFetchGeneration();
+
+            setSyscall(state, SYS_RISCV_FLUSH_ICACHE, memory.baseAddress(), memory.baseAddress() + 64, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(state.instructionFetchGeneration() > previousGeneration);
+
+            setSyscall(state, SYS_RISCV_FLUSH_ICACHE, memory.baseAddress() + 64, memory.baseAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RISCV_FLUSH_ICACHE, memory.baseAddress(), memory.baseAddress() + 64, 2);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
         }
@@ -5174,6 +5208,7 @@ public final class GuestSyscallsTest {
             String cpuinfo = readGuestString(memory, bufferAddress, count);
             assertTrue(cpuinfo.contains("processor\t: 0\n"));
             assertTrue(cpuinfo.contains("isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"));
+            assertTrue(cpuinfo.contains("mmu\t\t: sv48\n"));
             assertTrue(cpuinfo.contains("uarch\t\t: glavo,graalriscv\n"));
             assertTrue(cpuinfo.contains("java_version\t: "));
             assertTrue(cpuinfo.contains("java_vm_name\t: "));
@@ -6065,6 +6100,56 @@ public final class GuestSyscallsTest {
             assertEquals(initialBreak, mappedAddress);
             assertEquals("mapped-file-data", readGuestString(memory, mappedAddress, "mapped-file-data".length()));
             assertEquals(0, memory.readUnsignedByte(mappedAddress + "mapped-file-data".length()));
+        }
+    }
+
+    /// Verifies that shared read-only file-backed `mmap` copies data and appears in `/proc/self/maps`.
+    @Test
+    public void mmapMapsSharedReadOnlyRegularFilePages() throws Exception {
+        Files.writeString(tempDirectory.resolve("shared.txt"), "shared-file-data", StandardCharsets.UTF_8);
+        try (Memory memory = new Memory(0, 128 * PAGE_SIZE, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    PAGE_SIZE,
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 8 * PAGE_SIZE;
+            long fixedAddress = 0x10000;
+            writeGuestString(memory, pathAddress, "shared.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertTrue(fileDescriptor >= 3);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    fixedAddress,
+                    PAGE_SIZE,
+                    PROT_READ,
+                    MAP_SHARED_VALIDATE | MAP_FIXED,
+                    fileDescriptor,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(fixedAddress, state.register(10));
+            assertEquals("shared-file-data", readGuestString(memory, fixedAddress, "shared-file-data".length()));
+
+            writeGuestString(memory, pathAddress, "/proc/self/maps");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int mapsFileDescriptor = (int) state.register(10);
+            assertTrue(mapsFileDescriptor > fileDescriptor);
+
+            setSyscall(state, SYS_READ, mapsFileDescriptor, bufferAddress, PAGE_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            int mapsLength = (int) state.register(10);
+            assertTrue(mapsLength > 0);
+            String maps = readGuestString(memory, bufferAddress, mapsLength);
+            assertTrue(maps.contains("10000-11000 r--s 00000000 00:00 0    /shared.txt\n"));
         }
     }
 

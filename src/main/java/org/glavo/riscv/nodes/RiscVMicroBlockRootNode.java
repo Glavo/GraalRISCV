@@ -224,13 +224,13 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.JAL -> {
                 beginInstruction(state, index, mode);
                 writeRegister(registers, rd(operand), nextPcs[index]);
-                state.setPc(addresses[index] + immediates[index]);
+                state.setPcFromInstruction(addresses[index], addresses[index] + immediates[index]);
             }
             case RiscVMicroOpcode.JALR -> {
                 beginInstruction(state, index, mode);
                 long target = (registers[rs1(operand)] + immediates[index]) & ~1L;
                 writeRegister(registers, rd(operand), nextPcs[index]);
-                state.setPc(target);
+                state.setPcFromInstruction(addresses[index], target);
             }
             case RiscVMicroOpcode.BEQ -> {
                 beginInstruction(state, index, mode);
@@ -535,7 +535,9 @@ final class RiscVMicroBlockNode extends Node {
 
     /// Writes a conditional branch target.
     private void branch(MachineState state, boolean taken, int index) {
-        state.setPc(taken ? addresses[index] + immediates[index] : nextPcs[index]);
+        state.setPcFromInstruction(
+                addresses[index],
+                taken ? addresses[index] + immediates[index] : nextPcs[index]);
     }
 
     /// Computes a memory address from `rs1` and an immediate.

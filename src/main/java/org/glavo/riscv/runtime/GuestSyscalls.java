@@ -635,6 +635,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `MAP_PRIVATE`.
     protected static final long MAP_PRIVATE = 0x02;
 
+    /// Linux `MAP_SHARED_VALIDATE`.
+    protected static final long MAP_SHARED_VALIDATE = 0x03;
+
     /// Linux `MAP_TYPE`.
     protected static final long MAP_TYPE = 0x0f;
 
@@ -1118,7 +1121,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The highest program-break address that currently has guest memory backing.
     protected long programBreakBackingEnd;
 
-    /// The active anonymous mappings created by `mmap`.
+    /// The active mappings created by `mmap`.
     protected final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
 
     /// The guest base page size used for page-based memory syscalls.
@@ -6086,23 +6089,24 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         long mappingType = flags & MAP_TYPE;
-        if (mappingType != MAP_PRIVATE && mappingType != MAP_SHARED) {
+        if (mappingType != MAP_PRIVATE && mappingType != MAP_SHARED && mappingType != MAP_SHARED_VALIDATE) {
             return EINVAL;
         }
+        boolean shared = mappingType == MAP_SHARED || mappingType == MAP_SHARED_VALIDATE;
         boolean anonymous = (flags & MAP_ANONYMOUS) != 0;
         @Nullable OpenFile mappedFile = null;
         if (!anonymous) {
             if (fileDescriptor < 0) {
                 return EBADF;
             }
-            if (mappingType != MAP_PRIVATE) {
-                return ENODEV;
-            }
             mappedFile = openFile((int) fileDescriptor);
             if (mappedFile == null || mappedFile.isDirectory() || !mappedFile.isHostFile()) {
                 return EBADF;
             }
             if (!mappedFile.readable()) {
+                return EACCES;
+            }
+            if (shared && (protection & Memory.PROTECTION_WRITE) != 0) {
                 return EACCES;
             }
         }
@@ -6153,7 +6157,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return loadResult;
             }
         }
-        addMemoryMapping(mappingAddress, alignedLength, protection);
+        addMemoryMapping(
+                mappingAddress,
+                alignedLength,
+                protection,
+                mappedFile == null ? null : mappedFile.guestPath(),
+                mappedFile == null ? 0 : offset,
+                shared);
         return mappingAddress;
     }
 
@@ -6909,7 +6919,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return "processor\t: 0\n"
                 + "hart\t\t: 0\n"
                 + "isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"
-                + "mmu\t\t: sv57\n"
+                + "mmu\t\t: sv48\n"
                 + "uarch\t\t: glavo,graalriscv\n"
                 + "java_version\t: " + procCpuinfoProperty("java.version") + "\n"
                 + "java_vm_name\t: " + procCpuinfoProperty("java.vm.name") + "\n"
@@ -6966,7 +6976,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return seconds + "." + twoDigits(centiseconds) + " " + seconds + "." + twoDigits(centiseconds) + "\n";
     }
 
-    /// Returns `/proc/self/maps` content for tracked anonymous mappings.
+    /// Returns `/proc/self/maps` content for tracked mappings.
     protected String procMaps() {
         StringBuilder builder = new StringBuilder();
         for (MemoryMapping mapping : memoryMappings) {
@@ -6974,8 +6984,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     .append('-')
                     .append(Long.toUnsignedString(mapping.endAddress(), 16))
                     .append(' ')
-                    .append(memoryProtectionString(mapping.protection()))
-                    .append(" 00000000 00:00 0\n");
+                    .append(memoryProtectionString(mapping.protection(), mapping.shared()))
+                    .append(' ');
+            appendPaddedHex(builder, mapping.fileOffset(), 8);
+            builder.append(" 00:00 0");
+            @Nullable String path = mapping.path();
+            if (path != null) {
+                builder.append("    ").append(path);
+            }
+            builder.append('\n');
         }
         return builder.toString();
     }
@@ -7036,11 +7053,20 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns Linux `maps` permission text for a memory protection mask.
-    protected static String memoryProtectionString(long protection) {
+    protected static String memoryProtectionString(long protection, boolean shared) {
         return ((protection & Memory.PROTECTION_READ) != 0 ? "r" : "-")
                 + ((protection & Memory.PROTECTION_WRITE) != 0 ? "w" : "-")
                 + ((protection & Memory.PROTECTION_EXECUTE) != 0 ? "x" : "-")
-                + "p";
+                + (shared ? "s" : "p");
+    }
+
+    /// Appends an unsigned hexadecimal value padded to at least the requested digit count.
+    protected static void appendPaddedHex(StringBuilder builder, long value, int digits) {
+        String text = Long.toUnsignedString(value, 16);
+        for (int index = text.length(); index < digits; index++) {
+            builder.append('0');
+        }
+        builder.append(text);
     }
 
     /// Returns true when a non-empty guest path can be resolved from the supplied directory descriptor.
@@ -7503,7 +7529,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Adds an active anonymous mapping in address order.
     protected void addMemoryMapping(long address, long length, long protection) {
-        MemoryMapping mapping = new MemoryMapping(address, length, protection);
+        addMemoryMapping(address, length, protection, null, 0, false);
+    }
+
+    /// Adds an active mapping in address order.
+    protected void addMemoryMapping(
+            long address,
+            long length,
+            long protection,
+            @Nullable String path,
+            long fileOffset,
+            boolean shared) {
+        MemoryMapping mapping = new MemoryMapping(address, length, protection, path, fileOffset, shared);
         int insertionIndex = 0;
         while (insertionIndex < memoryMappings.size()
                 && Long.compareUnsigned(memoryMappings.get(insertionIndex).address(), address) < 0) {
@@ -7528,17 +7565,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             releaseRemovedMappingMemory(mapping, clearStart, clearEnd - clearStart);
 
             if (mapping.address() < address) {
-                memoryMappings.add(index, new MemoryMapping(
+                memoryMappings.add(index, mapping.withRange(
                         mapping.address(),
-                        address - mapping.address(),
-                        mapping.protection()));
+                        address - mapping.address()));
                 index++;
             }
             if (endAddress < mapping.endAddress()) {
-                memoryMappings.add(index, new MemoryMapping(
+                memoryMappings.add(index, mapping.withRange(
                         endAddress,
-                        mapping.endAddress() - endAddress,
-                        mapping.protection()));
+                        mapping.endAddress() - endAddress));
                 index++;
             }
         }
@@ -7550,7 +7585,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (index < 0) {
             throw new RiscVException("Failed to find guest memory mapping metadata for mremap.");
         }
-        memoryMappings.set(index, new MemoryMapping(mapping.address(), newLength, mapping.protection()));
+        memoryMappings.set(index, mapping.withRange(mapping.address(), newLength));
     }
 
     /// Moves tracked mapping data to a new guest address.
@@ -7576,7 +7611,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return ENOMEM;
         }
 
-        addMemoryMapping(newAddress, newLength, protection);
+        addMemoryMapping(newAddress, newLength, protection, mapping.path(), mapping.fileOffset(), mapping.shared());
         removeMemoryMappings(oldAddress, oldLength);
         return newAddress;
     }
@@ -7683,19 +7718,17 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
 
             if (mapping.address() < protectStart) {
-                memoryMappings.add(index, new MemoryMapping(
+                memoryMappings.add(index, mapping.withRange(
                         mapping.address(),
-                        protectStart - mapping.address(),
-                        mapping.protection()));
+                        protectStart - mapping.address()));
                 index++;
             }
-            memoryMappings.add(index, new MemoryMapping(protectStart, protectLength, protection));
+            memoryMappings.add(index, mapping.withRangeAndProtection(protectStart, protectLength, protection));
             index++;
             if (protectEnd < mapping.endAddress()) {
-                memoryMappings.add(index, new MemoryMapping(
+                memoryMappings.add(index, mapping.withRange(
                         protectEnd,
-                        mapping.endAddress() - protectEnd,
-                        mapping.protection()));
+                        mapping.endAddress() - protectEnd));
                 index++;
             }
         }
@@ -7987,15 +8020,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
-    /// Describes an anonymous guest memory mapping tracked by the syscall layer.
+    /// Describes a guest memory mapping tracked by the syscall layer.
     ///
     /// @param address the inclusive guest start address of the mapping
     /// @param length the byte length of the mapping
     /// @param protection the Linux protection flags currently tracked for the mapping
+    /// @param path the guest-visible mapped file path, or null for anonymous mappings
+    /// @param fileOffset the file offset backing the first mapped byte
+    /// @param shared whether the mapping was created as shared
     protected record MemoryMapping(
             long address,
             long length,
-            long protection) {
+            long protection,
+            @Nullable String path,
+            long fileOffset,
+            boolean shared) {
         /// Returns the exclusive guest end address of the mapping.
         long endAddress() {
             return address + length;
@@ -8004,6 +8043,28 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when this mapping should have host memory backing.
         boolean isBacked() {
             return isMemoryBackedProtection(protection);
+        }
+
+        /// Returns this mapping metadata with a different address range.
+        MemoryMapping withRange(long newAddress, long newLength) {
+            return new MemoryMapping(
+                    newAddress,
+                    newLength,
+                    protection,
+                    path,
+                    fileOffset + (newAddress - address),
+                    shared);
+        }
+
+        /// Returns this mapping metadata with a different address range and protection.
+        MemoryMapping withRangeAndProtection(long newAddress, long newLength, long newProtection) {
+            return new MemoryMapping(
+                    newAddress,
+                    newLength,
+                    newProtection,
+                    path,
+                    fileOffset + (newAddress - address),
+                    shared);
         }
     }
 

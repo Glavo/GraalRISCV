@@ -21,8 +21,22 @@ public final class MachineState {
     /// The number of integer registers in RV64I.
     private static final int REGISTER_COUNT = 32;
 
+    /// The standard RISC-V integer register ABI names.
+    private static final String[] REGISTER_ABI_NAMES = {
+            "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
+            "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+            "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
+            "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
+    };
+
     /// The number of floating-point registers in RV64GC.
     private static final int FLOATING_POINT_REGISTER_COUNT = 32;
+
+    /// The number of recent program-counter transitions retained for diagnostics.
+    private static final int RECENT_PC_TRANSITION_COUNT = 16;
+
+    /// The number of recent checked instructions retained for diagnostics.
+    private static final int RECENT_INSTRUCTION_COUNT = 32;
 
     /// JVM-wide unique values used to distinguish instruction bytes in the decoded-block cache.
     private static final AtomicLong NEXT_INSTRUCTION_FETCH_GENERATION = new AtomicLong(1);
@@ -159,6 +173,24 @@ public final class MachineState {
     /// The current guest program counter.
     private long pc;
 
+    /// Recent program-counter transition sources.
+    private final long[] recentPcTransitionSources = new long[RECENT_PC_TRANSITION_COUNT];
+
+    /// Recent program-counter transition targets.
+    private final long[] recentPcTransitionTargets = new long[RECENT_PC_TRANSITION_COUNT];
+
+    /// The number of recorded program-counter transitions.
+    private long recentPcTransitionCount;
+
+    /// Recent checked instruction addresses.
+    private final long[] recentInstructionAddresses = new long[RECENT_INSTRUCTION_COUNT];
+
+    /// Recent checked instruction raw encodings.
+    private final int[] recentInstructionRaws = new int[RECENT_INSTRUCTION_COUNT];
+
+    /// The number of recorded checked instructions.
+    private long recentInstructionCount;
+
     /// The compatibility storage for `mepc`, used by `mret` during `riscv-test-env` startup.
     private long machineExceptionProgramCounter;
 
@@ -256,9 +288,108 @@ public final class MachineState {
         return pc;
     }
 
+    /// Formats the current integer execution state for failure diagnostics.
+    public String formatExecutionContext() {
+        StringBuilder builder = new StringBuilder(512);
+        builder.append("pc=0x")
+                .append(Long.toUnsignedString(pc, 16))
+                .append(", instructions=")
+                .append(instructionCount);
+        for (int index = 0; index < REGISTER_COUNT; index++) {
+            builder.append(", x")
+                    .append(index)
+                    .append('/')
+                    .append(REGISTER_ABI_NAMES[index])
+                    .append("=0x")
+                    .append(Long.toUnsignedString(registers[index], 16));
+        }
+        long transitionCount = Math.min(recentPcTransitionCount, RECENT_PC_TRANSITION_COUNT);
+        if (transitionCount > 0) {
+            builder.append(", recentPcTransitions=[");
+            long first = recentPcTransitionCount - transitionCount;
+            for (long ordinal = first; ordinal < recentPcTransitionCount; ordinal++) {
+                int index = (int) (ordinal & (RECENT_PC_TRANSITION_COUNT - 1));
+                if (ordinal > first) {
+                    builder.append(", ");
+                }
+                builder.append("0x")
+                        .append(Long.toUnsignedString(recentPcTransitionSources[index], 16))
+                        .append("->0x")
+                        .append(Long.toUnsignedString(recentPcTransitionTargets[index], 16));
+            }
+            builder.append(']');
+            int lastIndex = (int) ((recentPcTransitionCount - 1) & (RECENT_PC_TRANSITION_COUNT - 1));
+            appendInstructionBytes(builder, "lastPcSource", recentPcTransitionSources[lastIndex]);
+        }
+        appendRecentInstructions(builder);
+        appendInstructionBytes(builder, "pc", pc);
+        return builder.toString();
+    }
+
+    /// Appends recently retired checked instructions.
+    private void appendRecentInstructions(StringBuilder builder) {
+        long count = Math.min(recentInstructionCount, RECENT_INSTRUCTION_COUNT);
+        if (count == 0) {
+            return;
+        }
+
+        builder.append(", recentInstructions=[");
+        long first = recentInstructionCount - count;
+        for (long ordinal = first; ordinal < recentInstructionCount; ordinal++) {
+            int index = (int) (ordinal & (RECENT_INSTRUCTION_COUNT - 1));
+            if (ordinal > first) {
+                builder.append(", ");
+            }
+            builder.append("0x")
+                    .append(Long.toUnsignedString(recentInstructionAddresses[index], 16))
+                    .append(":0x")
+                    .append(Integer.toUnsignedString(recentInstructionRaws[index], 16));
+        }
+        builder.append(']');
+    }
+
+    /// Appends raw instruction bytes from a guest address when they are still readable.
+    private void appendInstructionBytes(StringBuilder builder, String label, long address) {
+        try {
+            int half = memory.readUnsignedShort(address);
+            builder.append(", ")
+                    .append(label)
+                    .append("Raw16=0x")
+                    .append(Integer.toUnsignedString(half, 16));
+            if ((half & 0b11) == 0b11) {
+                builder.append(", ")
+                        .append(label)
+                        .append("Raw32=0x")
+                        .append(Integer.toUnsignedString(memory.readInstructionInt(address), 16));
+            }
+        } catch (RiscVException ignored) {
+            builder.append(", ")
+                    .append(label)
+                    .append("Raw=<unmapped>");
+        }
+    }
+
     /// Updates the current guest program counter.
     public void setPc(long pc) {
-        this.pc = pc & thread.pointerMask();
+        setPcFromSource(this.pc, pc);
+    }
+
+    /// Updates the current guest program counter with an explicit transition source.
+    public void setPcFromInstruction(long instructionAddress, long pc) {
+        setPcFromSource(instructionAddress, pc);
+    }
+
+    /// Updates the current guest program counter and records the transition source.
+    private void setPcFromSource(long sourcePc, long pc) {
+        long maskedSourcePc = sourcePc & thread.pointerMask();
+        long maskedPc = pc & thread.pointerMask();
+        if (maskedSourcePc != maskedPc) {
+            int transitionIndex = (int) (recentPcTransitionCount & (RECENT_PC_TRANSITION_COUNT - 1));
+            recentPcTransitionSources[transitionIndex] = maskedSourcePc;
+            recentPcTransitionTargets[transitionIndex] = maskedPc;
+            recentPcTransitionCount++;
+        }
+        this.pc = maskedPc;
     }
 
     /// Returns an integer register value.
@@ -424,6 +555,8 @@ public final class MachineState {
         child.floatingPointControlStatus = floatingPointControlStatus;
         child.instructionFetchGeneration = instructionFetchGeneration;
         child.pc = childPc;
+        child.recentPcTransitionCount = 0;
+        child.recentInstructionCount = 0;
         child.registers[0] = 0;
         if (stackAddress != 0) {
             child.registers[2] = stackAddress;
@@ -440,6 +573,8 @@ public final class MachineState {
         Arrays.fill(floatingPointRegisters, 0);
         vectorUnit.reset();
         this.pc = entryPoint & thread.pointerMask();
+        this.recentPcTransitionCount = 0;
+        this.recentInstructionCount = 0;
         this.tohostAddress = tohostAddress;
         this.fromhostAddress = fromhostAddress;
         this.storeSideEffectsEnabled = hasTohostSideEffects(tohostAddress);
@@ -572,10 +707,19 @@ public final class MachineState {
                     + ", pc=0x" + Long.toUnsignedString(address, 16));
         }
 
+        recordRecentInstruction(address, raw);
         instructionCount++;
         if (trace) {
             traceInstruction(traceStream, address, raw);
         }
+    }
+
+    /// Records one instruction for failure diagnostics in checked execution modes.
+    private void recordRecentInstruction(long address, int raw) {
+        int index = (int) (recentInstructionCount & (RECENT_INSTRUCTION_COUNT - 1));
+        recentInstructionAddresses[index] = address;
+        recentInstructionRaws[index] = raw;
+        recentInstructionCount++;
     }
 
     /// Sets the LR/SC reservation address and data width.

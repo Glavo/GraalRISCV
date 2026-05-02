@@ -114,6 +114,8 @@ public final class RiscVRootNode extends RootNode {
                 continue;
             } catch (ThreadExitException exit) {
                 return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
+            } catch (RiscVException exception) {
+                throw withGuestContext(exception, state);
             }
         }
     }
@@ -141,8 +143,23 @@ public final class RiscVRootNode extends RootNode {
                 throw new AssertionError("Guest loop returned without an exit signal");
             } catch (ProcessImageReplacedException ignored) {
                 continue;
+            } catch (RiscVException exception) {
+                throw withGuestContext(exception, state);
             }
         }
+    }
+
+    /// Adds the current architectural state to an unexpected guest failure.
+    private static RiscVException withGuestContext(RiscVException exception, MachineState state) {
+        String message = exception.getMessage();
+        if (message != null && message.contains("Guest execution context:")) {
+            return exception;
+        }
+        return new RiscVException(
+                (message == null ? "Guest execution failed" : message)
+                        + "\nGuest execution context: "
+                        + state.formatExecutionContext(),
+                exception);
     }
 
     /// Loads the main executable and its optional dynamic interpreter before guest memory is created.
