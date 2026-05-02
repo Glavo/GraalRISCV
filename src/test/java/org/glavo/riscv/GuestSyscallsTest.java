@@ -4842,6 +4842,40 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `/proc/cpuinfo` exposes virtual CPU metadata and host Java runtime summary fields.
+    @Test
+    public void procCpuinfoExposesJavaRuntimeSummary() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 1024;
+
+            writeGuestString(memory, pathAddress, "/proc/cpuinfo");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 2048);
+            state.syscalls().handle(state, TEST_PC);
+            int count = (int) state.register(10);
+            assertTrue(count > 0);
+
+            String cpuinfo = readGuestString(memory, bufferAddress, count);
+            assertTrue(cpuinfo.contains("processor\t: 0\n"));
+            assertTrue(cpuinfo.contains("isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"));
+            assertTrue(cpuinfo.contains("uarch\t\t: graalriscv\n"));
+            assertTrue(cpuinfo.contains("graalriscv_java_version\t: "));
+            assertTrue(cpuinfo.contains("graalriscv_java_vm_name\t: "));
+            assertTrue(cpuinfo.contains("graalriscv_java_vm_version\t: "));
+            assertTrue(cpuinfo.contains("graalriscv_java_vendor\t: "));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
     /// Verifies callers can mount a custom virtual filesystem provider.
     @Test
     public void customVirtualFilesystemMountCanServeFiles() {

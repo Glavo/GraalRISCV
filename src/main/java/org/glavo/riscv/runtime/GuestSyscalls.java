@@ -8492,7 +8492,28 @@ public final class GuestSyscalls implements AutoCloseable {
                 + "hart\t\t: 0\n"
                 + "isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"
                 + "mmu\t\t: sv57\n"
-                + "uarch\t\t: graalriscv\n";
+                + "uarch\t\t: glavo,graalriscv\n"
+                + "java_version\t: " + procCpuinfoProperty("java.version") + "\n"
+                + "java_vm_name\t: " + procCpuinfoProperty("java.vm.name") + "\n"
+                + "java_vm_version\t: " + procCpuinfoProperty("java.vm.version") + "\n"
+                + "java_vendor\t: " + procCpuinfoProperty("java.vendor") + "\n";
+    }
+
+    /// Returns a host Java system property sanitized for `/proc/cpuinfo`.
+    private static String procCpuinfoProperty(String propertyName) {
+        return sanitizeProcCpuinfoValue(System.getProperty(propertyName, "unknown"));
+    }
+
+    /// Restricts generated `/proc/cpuinfo` values to one printable ASCII line.
+    private static String sanitizeProcCpuinfoValue(String value) {
+        StringBuilder result = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
+            result.append(ch >= 0x20 && ch <= 0x7e ? ch : ' ');
+        }
+
+        String sanitized = result.toString().trim();
+        return sanitized.isEmpty() ? "unknown" : sanitized;
     }
 
     /// Returns `/proc/meminfo` content.
