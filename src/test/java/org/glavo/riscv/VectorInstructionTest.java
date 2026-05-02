@@ -747,15 +747,20 @@ public final class VectorInstructionTest {
     public void vectorGatherSlideAndCompressInstructionsExecute() {
         try (TestMachine machine = TestMachine.create()) {
             long input = TEST_PC + 256;
+            long indexInput = TEST_PC + 512;
             int[] values = {10, 20, 30, 40, 50, 60, 70, 80};
+            int[] indices = {0, 2, 7, 16, 1, 5, 3, 6};
             for (int index = 0; index < values.length; index++) {
                 machine.memory().writeByte(input + index, (byte) values[index]);
+                machine.memory().writeShort(indexInput + (long) index * Short.BYTES, (short) indices[index]);
             }
             loadInstructions(
                     machine.memory(),
                     vsetvli(5, 10, vtype(8, 1)),
                     vle(8, 1, 6),
+                    vle(16, 8, 13),
                     vrgatherVi(2, 1, 2),
+                    vrgatherei16Vv(10, 1, 8),
                     vslideupVi(3, 1, 2),
                     vslidedownVi(4, 1, 3),
                     vslide1upVx(5, 1, 11),
@@ -765,6 +770,7 @@ public final class VectorInstructionTest {
             prepareExit(machine.state());
             machine.state().setRegister(10, values.length);
             machine.state().setRegister(6, input);
+            machine.state().setRegister(13, indexInput);
             machine.state().setRegister(11, 99);
             machine.state().setRegister(12, 77);
             machine.state().vectorUnit().writeElement(0, 0, 0b1010_1001);
@@ -772,6 +778,7 @@ public final class VectorInstructionTest {
             runDecodedProgram(machine);
 
             assertVectorBytes(machine.state(), 2, 30, 30, 30, 30, 30, 30, 30, 30);
+            assertVectorBytes(machine.state(), 10, 10, 30, 80, 0, 20, 60, 40, 70);
             assertVectorBytes(machine.state(), 3, 0, 0, 10, 20, 30, 40, 50, 60);
             assertVectorBytes(machine.state(), 4, 40, 50, 60, 70, 80, 0, 0, 0);
             assertVectorBytes(machine.state(), 5, 99, 10, 20, 30, 40, 50, 60, 70);
@@ -1318,6 +1325,11 @@ public final class VectorInstructionTest {
     /// Encodes `vrgather.vi`.
     private static int vrgatherVi(int vd, int vs2, int immediate) {
         return vectorInteger(0x0c, true, vd, immediate, vs2, 3);
+    }
+
+    /// Encodes `vrgatherei16.vv`.
+    private static int vrgatherei16Vv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x0e, true, vd, vs1, vs2, 0);
     }
 
     /// Encodes `vslideup.vi`.

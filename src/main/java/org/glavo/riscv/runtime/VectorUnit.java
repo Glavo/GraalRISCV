@@ -2760,7 +2760,7 @@ public final class VectorUnit {
 
     /// Returns whether the operation is `vrgatherei16.vv`.
     private static boolean isGatherEi16(int funct3, int funct6) {
-        return funct3 == OPMVV && funct6 == 0x0e;
+        return funct3 == OPIVV && funct6 == 0x0e;
     }
 
     /// Returns whether the operation is a slide instruction.
