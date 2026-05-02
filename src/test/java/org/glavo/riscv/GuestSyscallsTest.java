@@ -5058,10 +5058,10 @@ public final class GuestSyscallsTest {
             assertTrue(cpuinfo.contains("processor\t: 0\n"));
             assertTrue(cpuinfo.contains("isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"));
             assertTrue(cpuinfo.contains("uarch\t\t: glavo,graalriscv\n"));
-            assertTrue(cpuinfo.contains("graalriscv_java_version\t: "));
-            assertTrue(cpuinfo.contains("graalriscv_java_vm_name\t: "));
-            assertTrue(cpuinfo.contains("graalriscv_java_vm_version\t: "));
-            assertTrue(cpuinfo.contains("graalriscv_java_vendor\t: "));
+            assertTrue(cpuinfo.contains("java_version\t: "));
+            assertTrue(cpuinfo.contains("java_vm_name\t: "));
+            assertTrue(cpuinfo.contains("java_vm_version\t: "));
+            assertTrue(cpuinfo.contains("java_vendor\t: "));
 
             setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);
