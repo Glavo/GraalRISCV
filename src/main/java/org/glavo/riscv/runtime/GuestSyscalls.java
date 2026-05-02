@@ -52,7 +52,8 @@ import java.util.Set;
 
 /// Provides shared state and helpers for guest syscall ABI implementations.
 @NotNullByDefault
-public abstract class GuestSyscalls implements AutoCloseable {
+public sealed abstract class GuestSyscalls implements AutoCloseable
+        permits LinuxGuestSyscalls, FreeBsdGuestSyscalls {
     /// The Linux RISC-V syscall number for `getxattr`.
     private static final int SYS_GETXATTR = 8;
 
