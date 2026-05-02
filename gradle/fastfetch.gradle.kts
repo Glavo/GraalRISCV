@@ -105,8 +105,8 @@ tasks.register<JavaExec>("testFastfetchVersion") {
         stdout.reset()
         stderr.reset()
         setArgs(listOf(
-            "--mount", "/=${fastfetchUbuntuBaseTarFile.get().asFile.absolutePath}",
-            "--mount", "$fastfetchMountPath=${fastfetchTarFile.get().asFile.absolutePath}",
+            "--mount", "type=tar,src=${fastfetchUbuntuBaseTarFile.get().asFile.absolutePath},dst=/",
+            "--mount", "type=tar,src=${fastfetchTarFile.get().asFile.absolutePath},dst=$fastfetchMountPath",
             "--guest-program", fastfetchGuestProgramPath,
             "--version"
         ))
@@ -139,8 +139,8 @@ tasks.register<JavaExec>("runFastfetch") {
 
     doFirst {
         setArgs(listOf(
-            "--mount", "/=${fastfetchUbuntuBaseTarFile.get().asFile.absolutePath}",
-            "--mount", "$fastfetchMountPath=${fastfetchTarFile.get().asFile.absolutePath}",
+            "--mount", "type=tar,src=${fastfetchUbuntuBaseTarFile.get().asFile.absolutePath},dst=/",
+            "--mount", "type=tar,src=${fastfetchTarFile.get().asFile.absolutePath},dst=$fastfetchMountPath",
             "--guest-program", fastfetchGuestProgramPath
         ))
     }

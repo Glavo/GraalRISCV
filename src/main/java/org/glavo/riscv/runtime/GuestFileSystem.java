@@ -87,7 +87,7 @@ public final class GuestFileSystem {
     /// The Truffle environment used to resolve lazy mount specs, or null for eager-only filesystems.
     private final @Nullable TruffleLanguage.Env env;
 
-    /// Lazy mount specs in `guest=host` form.
+    /// Lazy mount specs in Docker-like key-value form.
     private final String @Unmodifiable [] mountSpecs;
 
     /// Virtual mounts appended to the mount namespace.

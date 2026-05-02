@@ -43,7 +43,7 @@ fun registerUbuntuBaseSmokeTest(
             stdout.reset()
             stderr.reset()
             setArgs(listOf(
-                "--mount", "/=${ubuntuBaseTarFile.get().asFile.absolutePath}"
+                "--mount", "type=tar,src=${ubuntuBaseTarFile.get().asFile.absolutePath},dst=/"
             ) + guestArguments)
         }
 

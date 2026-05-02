@@ -11,9 +11,8 @@ import java.util.ArrayList;
 
 /// Parses and formats guest filesystem mount specifications.
 ///
-/// Mount specs accept the legacy `guest=host` form and the Docker-like
-/// `type=...,source=...,target=...` form used by the command-line interface and
-/// the `riscv.mounts` language option.
+/// Mount specs accept the Docker-like `type=...,source=...,target=...` form used
+/// by the command-line interface and the `riscv.mounts` language option.
 @NotNullByDefault
 public record FilesystemMountSpec(
         String guestPath,
@@ -51,15 +50,7 @@ public record FilesystemMountSpec(
 
     /// Parses one mount specification.
     public static FilesystemMountSpec parse(String value) {
-        if (value.startsWith("/")) {
-            return parseLegacy(value);
-        }
         return parseKeyValue(value);
-    }
-
-    /// Creates a legacy auto-detected mount specification.
-    public static FilesystemMountSpec legacy(String guestPath, String hostPath) {
-        return new FilesystemMountSpec(guestPath, hostPath, Type.AUTO, null, false);
     }
 
     /// Returns this mount specification encoded as one key-value line.
@@ -87,15 +78,6 @@ public record FilesystemMountSpec(
     /// Returns the read-only flag to apply to a tar mount.
     public boolean tarReadOnly() {
         return readOnly == null || readOnly;
-    }
-
-    /// Parses a legacy `guest=host` mount specification.
-    private static FilesystemMountSpec parseLegacy(String value) {
-        int separator = value.indexOf('=');
-        if (separator <= 0 || separator == value.length() - 1) {
-            throw new RiscVException("Invalid filesystem mount entry: " + value);
-        }
-        return legacy(value.substring(0, separator), value.substring(separator + 1));
     }
 
     /// Parses a Docker-like key-value mount specification.

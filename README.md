@@ -46,9 +46,10 @@ Options:
   --huge-pages <n>           Guest HugeTLB page pool size.
   --vector-vlen <bits>       Vector register length in bits. Default is 128.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-  --mount <spec>             Mount a host path. Accepts <guest>=<path> or
+  --mount <spec>             Mount a host path:
                               type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
   --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
+  --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
   --user <name>              Guest login name. Default is user.
   --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
   --gid <id>                 Guest real, effective, and saved gid. Default is 1000.
@@ -64,9 +65,9 @@ Options:
 
 `<program.elf>` is interpreted as a host path. Use `--guest-program` when the
 executable should be loaded from the guest filesystem. `--mount` controls the
-host directories and tar archives visible to guest file syscalls. Legacy
-`--mount /data=dataset.tar` syntax is still accepted. Docker-like syntax also
-works, for example `--mount type=bind,src=./root,dst=/,readonly` or
+host directories and tar archives visible to guest file syscalls. Mount specs
+use Docker-like key-value syntax, for example
+`--mount type=bind,src=./root,dst=/,readonly` or
 `--mount type=tar,src=ubuntu-base.tar,dst=/`. When `type` is omitted, regular
 host files are inferred as tar mounts and other host paths are inferred as bind
 mounts. Non-memory tar mounts are lazy and read file payloads from the archive

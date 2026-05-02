@@ -45,7 +45,7 @@ public final class Main {
               --huge-pages <n>           Guest HugeTLB page pool size.
               --vector-vlen <bits>       Vector register length in bits. Default is 128.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-              --mount <spec>             Mount a host path. Accepts <guest>=<path> or
+              --mount <spec>             Mount a host path:
                                           type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
               --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
@@ -624,7 +624,7 @@ public final class Main {
         } catch (RiscVException exception) {
             err.println("Invalid value for --mount: " + value);
             err.println(exception.getMessage());
-            err.println("Expected --mount <guest-path>=<host-path> or Docker-like key-value syntax.");
+            err.println("Expected --mount type=bind|tar,src=<host-path>,dst=<guest-path>[,readonly|rw][,memory].");
             return null;
         }
     }

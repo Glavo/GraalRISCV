@@ -275,7 +275,7 @@ public final class MainTest {
         int exitCode = Main.run(
                 new String[]{
                         "--max-instructions", "1000",
-                        "--mount", "/data=" + mountedDirectory,
+                        "--mount", "type=bind,src=" + mountedDirectory + ",dst=/data",
                         elfPath.toString()
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -300,7 +300,7 @@ public final class MainTest {
         int exitCode = Main.run(
                 new String[]{
                         "--max-instructions", "1000",
-                        "--mount", "/data=" + archive,
+                        "--mount", "type=tar,src=" + archive + ",dst=/data",
                         elfPath.toString()
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -361,6 +361,25 @@ public final class MainTest {
         assertEquals(0, exitCode);
         assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that the removed `--mount <guest>=<host>` syntax is rejected.
+    @Test
+    public void rejectsLegacyMountSyntax() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--mount", "/data=" + tempDirectory,
+                        tempDirectory.resolve("unused.elf").toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(2, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(err.toString(StandardCharsets.UTF_8).contains("Invalid value for --mount"));
     }
 
     /// Verifies that a read-only bind mount rejects guest writes.
@@ -453,7 +472,7 @@ public final class MainTest {
         int exitCode = Main.run(
                 new String[]{
                         "--max-instructions", "1000",
-                        "--mount", "/=" + archive,
+                        "--mount", "type=tar,src=" + archive + ",dst=/",
                         "--guest-program", "/bin/hello"
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -476,7 +495,7 @@ public final class MainTest {
         int exitCode = Main.run(
                 new String[]{
                         "--max-instructions", "1000",
-                        "--mount", "/=" + tempDirectory,
+                        "--mount", "type=bind,src=" + tempDirectory + ",dst=/",
                         "--guest-program", "/parent.elf"
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -499,7 +518,7 @@ public final class MainTest {
         int exitCode = Main.run(
                 new String[]{
                         "--max-instructions", "1000",
-                        "--mount", "/=" + archive,
+                        "--mount", "type=tar,src=" + archive + ",dst=/",
                         "--guest-program", "/usr/bin/hello"
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -524,7 +543,7 @@ public final class MainTest {
         int exitCode = Main.run(
                 new String[]{
                         "--max-instructions", "1000",
-                        "--mount", "/data=" + archive,
+                        "--mount", "type=tar,src=" + archive + ",dst=/data",
                         elfPath.toString()
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -549,7 +568,7 @@ public final class MainTest {
         int exitCode = Main.run(
                 new String[]{
                         "--max-instructions", "1000",
-                        "--mount", "/data=" + archive,
+                        "--mount", "type=tar,src=" + archive + ",dst=/data",
                         elfPath.toString()
                 },
                 new ByteArrayInputStream(new byte[0]),

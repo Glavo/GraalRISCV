@@ -1944,7 +1944,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 out,
                 err,
                 initialProgramBreak,
-                GuestFileSystem.forMountSpecs(env, new String[]{"/=" + hostRootPath}),
+                GuestFileSystem.forMountSpecs(env, new String[]{
+                        new FilesystemMountSpec("/", hostRootPath, FilesystemMountSpec.Type.BIND, null, false).encode()
+                }),
                 env,
                 timeSource,
                 false,
@@ -1985,7 +1987,9 @@ public final class GuestSyscalls implements AutoCloseable {
                 out,
                 err,
                 initialProgramBreak,
-                GuestFileSystem.forMountSpecs(env, new String[]{"/=" + hostRootPath}),
+                GuestFileSystem.forMountSpecs(env, new String[]{
+                        new FilesystemMountSpec("/", hostRootPath, FilesystemMountSpec.Type.BIND, null, false).encode()
+                }),
                 env,
                 timeSource,
                 useHostTty,

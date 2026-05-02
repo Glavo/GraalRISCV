@@ -270,7 +270,7 @@ public final class RiscVContext {
     /// Parses newline-separated mount entries, defaulting to `riscv.hostRoot` as `/`.
     private static String @Unmodifiable [] parseFilesystemMounts(String hostRoot, String filesystemMounts) {
         if (filesystemMounts.isEmpty()) {
-            return new String[]{FilesystemMountSpec.legacy("/", hostRoot).encode()};
+            return new String[]{new FilesystemMountSpec("/", hostRoot, FilesystemMountSpec.Type.BIND, null, false).encode()};
         }
 
         ArrayList<String> result = new ArrayList<>();
@@ -280,7 +280,7 @@ public final class RiscVContext {
             }
         }
         if (result.isEmpty()) {
-            return new String[]{FilesystemMountSpec.legacy("/", hostRoot).encode()};
+            return new String[]{new FilesystemMountSpec("/", hostRoot, FilesystemMountSpec.Type.BIND, null, false).encode()};
         }
         return result.toArray(String[]::new);
     }

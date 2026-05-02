@@ -579,7 +579,7 @@ tasks.register<JavaExec>("testLinuxStaticFileIoExample") {
             throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticFileIoExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", linuxStaticFileIoExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -641,7 +641,7 @@ tasks.register<JavaExec>("testLinuxStaticDirectoryListExample") {
             throw GradleException("Failed to create nested example directory.")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticDirectoryListExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", linuxStaticDirectoryListExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -693,7 +693,7 @@ tasks.register<JavaExec>("testLinuxStaticFileMutationExample") {
             throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticFileMutationExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", linuxStaticFileMutationExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -749,7 +749,7 @@ tasks.register<JavaExec>("testLinuxStaticWorkingDirectoryExample") {
             throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticWorkingDirectoryExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", linuxStaticWorkingDirectoryExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -806,7 +806,7 @@ tasks.register<JavaExec>("testLinuxStaticFilesystemStatusExample") {
             throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticFilesystemStatusExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", linuxStaticFilesystemStatusExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -863,7 +863,7 @@ tasks.register<JavaExec>("testLinuxStaticStatxMetadataExample") {
             throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticStatxMetadataExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", linuxStaticStatxMetadataExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -920,7 +920,7 @@ tasks.register<JavaExec>("testLinuxStaticPositionedIoExample") {
             throw GradleException("Failed to create example root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", linuxStaticPositionedIoExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", linuxStaticPositionedIoExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -1235,7 +1235,7 @@ tasks.register<JavaExec>("testSQLiteShowcaseExample") {
             throw GradleException("Failed to create SQLite showcase root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", sqliteExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", sqliteExampleElf.get().asFile.absolutePath))
     }
 
     doLast {
@@ -1280,7 +1280,7 @@ tasks.register<JavaExec>("runSQLiteShowcaseExample") {
             throw GradleException("Failed to create SQLite showcase root mount: $root")
         }
 
-        setArgs(listOf("--mount", "/=${root.absolutePath}", sqliteExampleElf.get().asFile.absolutePath))
+        setArgs(listOf("--mount", "type=bind,src=${root.absolutePath},dst=/", sqliteExampleElf.get().asFile.absolutePath))
     }
 }
 
