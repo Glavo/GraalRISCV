@@ -3,11 +3,10 @@
 GraalRISCV is a pure Java RV64 user-mode emulator built with GraalVM’s Truffle framework.
 Its long-term goal is to run every Linux and FreeBSD RISC-V 64-bit user-space program without a guest kernel.
 
-The project already runs a practical and growing slice of real RISC-V userland: statically linked C, musl, and Go programs;
-RVA22U64/RVA23U64 acceptance workloads; RVV examples; CoreMark; SQLite; dynamically linked Ubuntu Base tools; interactive
-shell sessions; and fastfetch from the upstream Linux RISC-V release tarball. The runtime provides Linux-like and FreeBSD
-syscall ABIs, Docker-like bind/tar mounts, virtual `/proc` and `/dev`, guest credentials, terminal handling, process/thread
-state, and deterministic smoke-test infrastructure.
+Today it can already run real Linux RISC-V userland without a Linux kernel:
+Ubuntu Base binaries, interactive Bash, fastfetch, SQLite, CoreMark, Go programs,
+and RVV workloads. FreeBSD user-space support has also started, with static
+FreeBSD Go programs running through the FreeBSD syscall ABI.
 
 ## Requirements
 
