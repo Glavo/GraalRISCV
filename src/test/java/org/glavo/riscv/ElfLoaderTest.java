@@ -34,6 +34,19 @@ public final class ElfLoaderTest {
         assertEquals(ElfTestImages.BASE_ADDRESS, image.loadSegments().getFirst().virtualAddress());
         assertEquals(Integer.BYTES, image.loadSegments().getFirst().contents().length);
         assertEquals(ElfImage.ABSENT_ADDRESS, image.programHeaderAddress());
+        assertEquals(ElfOperatingSystem.LINUX_COMPATIBLE, image.operatingSystem());
+    }
+
+    /// Verifies that the loader records FreeBSD ELF OS ABI metadata.
+    @Test
+    public void recordsFreeBsdOperatingSystemAbi() {
+        byte[] elf = ElfTestImages.withOsAbi(
+                ElfTestImages.executable(ElfTestImages.ecall()),
+                ElfTestImages.OS_ABI_FREEBSD);
+
+        ElfImage image = ElfLoader.load(elf);
+
+        assertEquals(ElfOperatingSystem.FREEBSD, image.operatingSystem());
     }
 
     /// Verifies that the loader records program header metadata when it is present in a load segment.

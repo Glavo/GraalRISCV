@@ -32,6 +32,12 @@ public final class ElfTestImages {
     /// The size in bytes of one generated ELF64 section header.
     public static final int SECTION_HEADER_SIZE = 64;
 
+    /// The byte offset of `EI_OSABI` in generated ELF images.
+    public static final int OS_ABI_OFFSET = 7;
+
+    /// The ELF `EI_OSABI` value for FreeBSD images.
+    public static final int OS_ABI_FREEBSD = 9;
+
     /// The default generated `PT_LOAD` segment flags.
     public static final int DEFAULT_LOAD_FLAGS = 7;
 
@@ -136,6 +142,13 @@ public final class ElfTestImages {
         buffer.position(sectionHeaderOffset);
         buffer.putInt(0);
         buffer.putInt(sectionType);
+        return bytes;
+    }
+
+    /// Returns a copy of the supplied ELF image with the requested `EI_OSABI` value.
+    public static byte[] withOsAbi(byte[] executable, int osAbi) {
+        byte[] bytes = executable.clone();
+        bytes[OS_ABI_OFFSET] = (byte) osAbi;
         return bytes;
     }
 

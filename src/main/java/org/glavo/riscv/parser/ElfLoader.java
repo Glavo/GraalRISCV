@@ -17,6 +17,9 @@ import java.util.ArrayList;
 /// Parses and validates the ELF subset accepted by the bare-metal simulator.
 @NotNullByDefault
 public final class ElfLoader {
+    /// The byte offset of `EI_OSABI` in the ELF identification array.
+    private static final int EI_OSABI = 7;
+
     /// ELF object type for position-independent executables and shared objects.
     private static final int ET_DYN = 3;
 
@@ -94,6 +97,7 @@ public final class ElfLoader {
             return new ElfImage(
                     elfFile.e_type,
                     elfFile.e_entry,
+                    operatingSystem(bytes),
                     interpreterPath,
                     loadSegments,
                     symbolAddress(elfFile, "tohost"),
@@ -104,6 +108,11 @@ public final class ElfLoader {
         } catch (ElfException | IndexOutOfBoundsException exception) {
             throw new RiscVException("Invalid ELF file", exception);
         }
+    }
+
+    /// Returns the guest operating system encoded by the ELF identification bytes.
+    private static ElfOperatingSystem operatingSystem(byte[] bytes) {
+        return ElfOperatingSystem.fromOsAbi(Byte.toUnsignedInt(bytes[EI_OSABI]));
     }
 
     /// Validates program header metadata that does not directly map guest memory.

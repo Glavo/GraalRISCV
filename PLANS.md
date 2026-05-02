@@ -2,7 +2,7 @@
 
 ## Current Status
 
-- GraalRISCV is a user-mode RV64 emulator for 64-bit little-endian RISC-V ELF programs on a Linux-like runtime.
+- GraalRISCV is a user-mode RV64 emulator for 64-bit little-endian RISC-V ELF programs on Linux-like and FreeBSD syscall runtimes.
 - The implemented profile is RVA23U64 when the configured VLEN is profile-valid; shorter vector configurations expose the RVA22U64 capability surface.
 - Privileged mode, guest page tables, interrupts, devices, and Linux kernel boot are out of scope unless a later plan explicitly adds them.
 - The build covers unit tests, package smoke tests, example workloads, pinned `riscv-tests`, repository-owned RVA22U64/RVA23U64 acceptance tests, and Ubuntu Base dynamic-linking smoke tests.
@@ -12,6 +12,7 @@
 - RVA22U64 and RVA23U64 user-mode profile support is implemented, centrally reported, and covered by focused tests.
 - RVV 1.0, mandatory RVA23U64 vector additions, `Zkt`/`Zvkt`, and optional standard `Zvbc` are implemented; the CRC example exercises `Zvbc`.
 - The Linux user-mode runtime supports the current static workload set: freestanding C, musl C, Go, SQLite, RVV examples, CoreMark, and `riscv-tests`.
+- FreeBSD ELF OS ABI detection selects a FreeBSD RISC-V syscall handler for static user-mode programs.
 - Dynamic ELF startup is implemented for guest-mounted programs through `--guest-program` and `execve`, including `PT_INTERP`, `ET_DYN` load bias, auxv metadata, `PR_GET_AUXV`, file-backed `MAP_PRIVATE`, tar symlink/hard-link lookup, virtual `/proc`, shell pipeline smoke coverage, and Ubuntu Base smoke coverage for common shell, coreutils, hashing, sorting, and findutils commands.
 - `--mount` accepts Docker-like bind/tar mount specs, rejects the removed `guest=host` form, supports read-only bind mounts, lazy non-memory tar mounts, and writable process-local memory tar mounts.
 - Fastfetch Linux RISC-V release downloads are wired into Gradle, including gzip-to-tar preparation and a version smoke task.
@@ -35,6 +36,10 @@
 - Expand ELF, auxv, stack, `mmap`, syscall, dynamic-linking, and runtime behavior only when direct tests or real workloads require it.
 - Continue improving signal, process, and clone semantics while keeping thread behavior deterministic.
 - Keep filesystem simulation behind `GuestFileSystem`; add richer device, terminal, and process/thread-scoped filesystem state only when workloads require it.
+
+### FreeBSD Runtime Compatibility
+
+- Expand FreeBSD stack, auxv, dynamic-linking, syscall, and libc behavior only when direct tests or real workloads require it.
 
 ### Memory And Mapping
 

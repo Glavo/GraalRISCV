@@ -30,9 +30,12 @@ import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.ElfLoader;
 import org.glavo.riscv.parser.RiscVDecoder;
 import org.glavo.riscv.parser.RiscVOperation;
+import org.glavo.riscv.runtime.FreeBsdGuestSyscalls;
+import org.glavo.riscv.runtime.GuestAbi;
 import org.glavo.riscv.runtime.GuestFileSystem;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxInitialStack;
+import org.glavo.riscv.runtime.LinuxGuestSyscalls;
 import org.glavo.riscv.runtime.MachineState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
@@ -145,6 +148,7 @@ public final class RiscVRootNode extends RootNode {
     /// Loads the main executable and its optional dynamic interpreter before guest memory is created.
     private LoadedProgram loadProgram(RiscVContext context) {
         ElfImage executable = ElfLoader.load(readExecutableBytes(context));
+        GuestAbi abi = GuestAbi.fromElfOperatingSystem(executable.operatingSystem());
         LoadedImage loadedExecutable = loadImage(executable, DYNAMIC_EXECUTABLE_BASE, context.pageSize());
         @Nullable LoadedImage loadedInterpreter = null;
         @Nullable String interpreterPath = executable.interpreterPath();
@@ -157,6 +161,9 @@ public final class RiscVRootNode extends RootNode {
             if (interpreter.hasInterpreter()) {
                 throw new RiscVException("ELF interpreter must not request another interpreter: " + interpreterPath);
             }
+            if (interpreter.operatingSystem() != executable.operatingSystem()) {
+                throw new RiscVException("ELF interpreter OS ABI does not match executable: " + interpreterPath);
+            }
             loadedInterpreter = loadImage(
                     interpreter,
                     alignUp(
@@ -164,7 +171,7 @@ public final class RiscVRootNode extends RootNode {
                             DYNAMIC_LOAD_ALIGNMENT),
                     context.pageSize());
         }
-        return new LoadedProgram(loadedExecutable, loadedInterpreter, context.guestProgramPath());
+        return new LoadedProgram(loadedExecutable, loadedInterpreter, context.guestProgramPath(), abi);
     }
 
     /// Reads executable bytes from the source or from the configured guest filesystem mounts.
@@ -250,18 +257,7 @@ public final class RiscVRootNode extends RootNode {
             }
         }
 
-        GuestSyscalls syscalls = new GuestSyscalls(
-                memory,
-                context.env().in(),
-                context.env().out(),
-                context.env().err(),
-                initialProgramBreak,
-                context.env(),
-                context.filesystemMounts(),
-                context.timeSource(),
-                context.useHostTty(),
-                context.guestCredentials(),
-                this::runGuestThread);
+        GuestSyscalls syscalls = createSyscalls(context, memory, initialProgramBreak, program.abi());
         long stackPointer = initializeLinuxStack(memory, context, program);
         syscalls.recordInitialAuxiliaryVector(stackPointer);
         MachineState state = new MachineState(
@@ -276,6 +272,40 @@ public final class RiscVRootNode extends RootNode {
         state.setPc(program.entryPoint());
         state.setRegister(2, stackPointer);
         return state;
+    }
+
+    /// Creates the syscall handler selected by the loaded executable ABI.
+    private GuestSyscalls createSyscalls(
+            RiscVContext context,
+            Memory memory,
+            long initialProgramBreak,
+            GuestAbi abi) {
+        return switch (abi) {
+            case LINUX -> new LinuxGuestSyscalls(
+                    memory,
+                    context.env().in(),
+                    context.env().out(),
+                    context.env().err(),
+                    initialProgramBreak,
+                    context.env(),
+                    context.filesystemMounts(),
+                    context.timeSource(),
+                    context.useHostTty(),
+                    context.guestCredentials(),
+                    this::runGuestThread);
+            case FREEBSD -> new FreeBsdGuestSyscalls(
+                    memory,
+                    context.env().in(),
+                    context.env().out(),
+                    context.env().err(),
+                    initialProgramBreak,
+                    context.env(),
+                    context.filesystemMounts(),
+                    context.timeSource(),
+                    context.useHostTty(),
+                    context.guestCredentials(),
+                    this::runGuestThread);
+        };
     }
 
     /// Adds explicit backing for one ELF load segment.
@@ -481,11 +511,13 @@ public final class RiscVRootNode extends RootNode {
     /// @param executable the main executable image
     /// @param interpreter the optional dynamic interpreter image
     /// @param executablePath the guest executable path used for `AT_EXECFN`, or null for host-loaded programs
+    /// @param abi the guest syscall ABI selected from the main executable
     @NotNullByDefault
     private record LoadedProgram(
             LoadedImage executable,
             @Nullable LoadedImage interpreter,
-            @Nullable String executablePath) {
+            @Nullable String executablePath,
+            GuestAbi abi) {
         /// Returns the images that must be mapped before execution starts.
         private LoadedImage @Unmodifiable [] images() {
             return interpreter == null

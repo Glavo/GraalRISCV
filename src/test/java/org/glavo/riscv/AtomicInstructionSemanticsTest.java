@@ -230,7 +230,7 @@ public final class AtomicInstructionSemanticsTest {
         /// Creates a test machine initialized at the atomic test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
-            GuestSyscalls syscalls = new GuestSyscalls(
+            GuestSyscalls syscalls = new LinuxGuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),

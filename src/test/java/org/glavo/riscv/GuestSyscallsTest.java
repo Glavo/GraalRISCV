@@ -4329,7 +4329,7 @@ public final class GuestSyscallsTest {
     @Test
     public void riscvHwprobeReportsRva22ForShortVectorLength() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null);
-             GuestSyscalls syscalls = new GuestSyscalls(
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
                      memory,
                      new ByteArrayInputStream(new byte[0]),
                      new ByteArrayOutputStream(),
@@ -6278,7 +6278,7 @@ public final class GuestSyscallsTest {
             long initialProgramBreak,
             GuestFileSystem fileSystem,
             GuestCredentials credentials) {
-        GuestSyscalls syscalls = new GuestSyscalls(
+        GuestSyscalls syscalls = new LinuxGuestSyscalls(
                 memory,
                 in,
                 out,
@@ -6305,7 +6305,7 @@ public final class GuestSyscallsTest {
             long initialProgramBreak,
             Path hostRoot,
             TimeSource timeSource) {
-        GuestSyscalls syscalls = new GuestSyscalls(
+        GuestSyscalls syscalls = new LinuxGuestSyscalls(
                 memory,
                 in,
                 out,

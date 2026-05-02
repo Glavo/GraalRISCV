@@ -10,6 +10,7 @@ import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.RiscVDecoder;
 import org.glavo.riscv.runtime.GuestSyscalls;
+import org.glavo.riscv.runtime.LinuxGuestSyscalls;
 import org.glavo.riscv.runtime.MachineState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
@@ -1501,7 +1502,7 @@ public final class VectorInstructionTest {
         /// Creates a test machine initialized at the vector test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
-            GuestSyscalls syscalls = new GuestSyscalls(
+            GuestSyscalls syscalls = new LinuxGuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),

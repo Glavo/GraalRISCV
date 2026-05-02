@@ -80,11 +80,13 @@ By default, guest `/dev/tty` is backed by the configured process streams; pass
 
 ## Supported ELF Inputs
 
-The loader accepts ELF64 little-endian RISC-V `ET_EXEC` and `ET_DYN` inputs. It
-validates segment ranges, alignment, permissions, overlap, entry-point
-placement, and dynamic interpreter metadata before execution. Dynamically linked
-Linux programs are supported when their interpreter and shared libraries are
-available through configured guest mounts.
+The loader accepts ELF64 little-endian RISC-V `ET_EXEC` and `ET_DYN` inputs with
+System V, GNU/Linux, or FreeBSD OS ABI markers. It validates segment ranges,
+alignment, permissions, overlap, entry-point placement, and dynamic interpreter
+metadata before execution. Dynamically linked Linux programs are supported when
+their interpreter and shared libraries are available through configured guest
+mounts. FreeBSD ELF support currently selects the FreeBSD RISC-V syscall ABI for
+static user-mode programs and a growing syscall subset.
 
 ## Current Linux User-Mode Support
 

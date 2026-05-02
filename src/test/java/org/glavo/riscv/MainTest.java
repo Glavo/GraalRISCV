@@ -118,6 +118,12 @@ public final class MainTest {
     /// The Linux RISC-V syscall number for `getgroups`.
     private static final int SYS_GETGROUPS = 158;
 
+    /// The FreeBSD RISC-V syscall number for `exit`.
+    private static final int FREEBSD_SYS_EXIT = 1;
+
+    /// The FreeBSD RISC-V syscall number for `write`.
+    private static final int FREEBSD_SYS_WRITE = 4;
+
     /// A temporary directory for generated ELF files.
     @TempDir
     private Path tempDirectory;
@@ -138,6 +144,27 @@ public final class MainTest {
 
         assertEquals(0, exitCode);
         assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that FreeBSD ELF OS ABI selects the FreeBSD RISC-V syscall convention.
+    @Test
+    public void runsFreeBsdHelloWorldProgram() throws Exception {
+        Path elfPath = tempDirectory.resolve("hello-freebsd.elf");
+        Files.write(elfPath, ElfTestImages.withOsAbi(
+                ElfTestImages.executable(freeBsdHelloWorldCode()),
+                ElfTestImages.OS_ABI_FREEBSD));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{"--max-instructions", "1000", elfPath.toString()},
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Hello FreeBSD!\n", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
@@ -884,6 +911,24 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        code.put(message);
+        return code.array();
+    }
+
+    /// Builds a freestanding FreeBSD Hello World program using the RISC-V FreeBSD syscall ABI.
+    private static byte[] freeBsdHelloWorldCode() {
+        byte[] message = "Hello FreeBSD!\n".getBytes(StandardCharsets.UTF_8);
+        int messageOffset = Integer.BYTES * 9;
+        ByteBuffer code = ByteBuffer.allocate(messageOffset + message.length).order(ByteOrder.LITTLE_ENDIAN);
+        ElfTestImages.putInt(code, ElfTestImages.auipc(11, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 11, messageOffset));
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, message.length));
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, FREEBSD_SYS_WRITE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 0, FREEBSD_SYS_EXIT));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put(message);
         return code.array();

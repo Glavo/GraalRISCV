@@ -293,7 +293,7 @@ public final class RiscVInstructionSemanticsTest {
     /// Executes one standalone instruction and returns its destination register value.
     private static long executeOperation(RiscVOperation operation, long leftValue, long rightValue, long immediate) {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            GuestSyscalls syscalls = new GuestSyscalls(
+            GuestSyscalls syscalls = new LinuxGuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -362,7 +362,7 @@ public final class RiscVInstructionSemanticsTest {
         /// Creates a test machine initialized at the standalone instruction test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
-            GuestSyscalls syscalls = new GuestSyscalls(
+            GuestSyscalls syscalls = new LinuxGuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),

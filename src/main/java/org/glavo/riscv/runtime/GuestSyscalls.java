@@ -50,9 +50,9 @@ import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.Set;
 
-/// Handles the small Linux-compatible syscall subset exposed by the simulator.
+/// Provides shared state and helpers for guest syscall ABI implementations.
 @NotNullByDefault
-public final class GuestSyscalls implements AutoCloseable {
+public abstract class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final int SYS_GETCWD = 17;
 
@@ -368,6 +368,189 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final int SYS_FACCESSAT2 = 439;
 
+    /// The FreeBSD RISC-V syscall number for the `syscall` indirection entry.
+    private static final int FREEBSD_SYS_SYSCALL = 0;
+
+    /// The FreeBSD RISC-V syscall number for `exit`.
+    private static final int FREEBSD_SYS_EXIT = 1;
+
+    /// The FreeBSD RISC-V syscall number for `read`.
+    private static final int FREEBSD_SYS_READ = 3;
+
+    /// The FreeBSD RISC-V syscall number for `write`.
+    private static final int FREEBSD_SYS_WRITE = 4;
+
+    /// The FreeBSD RISC-V syscall number for `open`.
+    private static final int FREEBSD_SYS_OPEN = 5;
+
+    /// The FreeBSD RISC-V syscall number for `close`.
+    private static final int FREEBSD_SYS_CLOSE = 6;
+
+    /// The FreeBSD RISC-V syscall number for `chdir`.
+    private static final int FREEBSD_SYS_CHDIR = 12;
+
+    /// The FreeBSD RISC-V syscall number for `fchdir`.
+    private static final int FREEBSD_SYS_FCHDIR = 13;
+
+    /// The FreeBSD RISC-V syscall number for `getpid`.
+    private static final int FREEBSD_SYS_GETPID = 20;
+
+    /// The FreeBSD RISC-V syscall number for `getuid`.
+    private static final int FREEBSD_SYS_GETUID = 24;
+
+    /// The FreeBSD RISC-V syscall number for `geteuid`.
+    private static final int FREEBSD_SYS_GETEUID = 25;
+
+    /// The FreeBSD RISC-V syscall number for `access`.
+    private static final int FREEBSD_SYS_ACCESS = 33;
+
+    /// The FreeBSD RISC-V syscall number for `sync`.
+    private static final int FREEBSD_SYS_SYNC = 36;
+
+    /// The FreeBSD RISC-V syscall number for `kill`.
+    private static final int FREEBSD_SYS_KILL = 37;
+
+    /// The FreeBSD RISC-V syscall number for `getppid`.
+    private static final int FREEBSD_SYS_GETPPID = 39;
+
+    /// The FreeBSD RISC-V syscall number for `dup`.
+    private static final int FREEBSD_SYS_DUP = 41;
+
+    /// The FreeBSD RISC-V syscall number for `getegid`.
+    private static final int FREEBSD_SYS_GETEGID = 43;
+
+    /// The FreeBSD RISC-V syscall number for `getgid`.
+    private static final int FREEBSD_SYS_GETGID = 47;
+
+    /// The FreeBSD RISC-V syscall number for `ioctl`.
+    private static final int FREEBSD_SYS_IOCTL = 54;
+
+    /// The FreeBSD RISC-V syscall number for `readlink`.
+    private static final int FREEBSD_SYS_READLINK = 58;
+
+    /// The FreeBSD RISC-V syscall number for `execve`.
+    private static final int FREEBSD_SYS_EXECVE = 59;
+
+    /// The FreeBSD RISC-V syscall number for `munmap`.
+    private static final int FREEBSD_SYS_MUNMAP = 73;
+
+    /// The FreeBSD RISC-V syscall number for `mprotect`.
+    private static final int FREEBSD_SYS_MPROTECT = 74;
+
+    /// The FreeBSD RISC-V syscall number for `madvise`.
+    private static final int FREEBSD_SYS_MADVISE = 75;
+
+    /// The FreeBSD RISC-V syscall number for `setpgid`.
+    private static final int FREEBSD_SYS_SETPGID = 82;
+
+    /// The FreeBSD RISC-V syscall number for `dup2`.
+    private static final int FREEBSD_SYS_DUP2 = 90;
+
+    /// The FreeBSD RISC-V syscall number for `fcntl`.
+    private static final int FREEBSD_SYS_FCNTL = 92;
+
+    /// The FreeBSD RISC-V syscall number for `fsync`.
+    private static final int FREEBSD_SYS_FSYNC = 95;
+
+    /// The FreeBSD RISC-V syscall number for `gettimeofday`.
+    private static final int FREEBSD_SYS_GETTIMEOFDAY = 116;
+
+    /// The FreeBSD RISC-V syscall number for `getrusage`.
+    private static final int FREEBSD_SYS_GETRUSAGE = 117;
+
+    /// The FreeBSD RISC-V syscall number for `readv`.
+    private static final int FREEBSD_SYS_READV = 120;
+
+    /// The FreeBSD RISC-V syscall number for `writev`.
+    private static final int FREEBSD_SYS_WRITEV = 121;
+
+    /// The FreeBSD RISC-V syscall number for `setsid`.
+    private static final int FREEBSD_SYS_SETSID = 147;
+
+    /// The FreeBSD RISC-V syscall number for `__syscall`.
+    private static final int FREEBSD_SYS___SYSCALL = 198;
+
+    /// The FreeBSD RISC-V syscall number for `clock_gettime`.
+    private static final int FREEBSD_SYS_CLOCK_GETTIME = 232;
+
+    /// The FreeBSD RISC-V syscall number for `clock_getres`.
+    private static final int FREEBSD_SYS_CLOCK_GETRES = 234;
+
+    /// The FreeBSD RISC-V syscall number for `nanosleep`.
+    private static final int FREEBSD_SYS_NANOSLEEP = 240;
+
+    /// The FreeBSD RISC-V syscall number for `__getcwd`.
+    private static final int FREEBSD_SYS___GETCWD = 326;
+
+    /// The FreeBSD RISC-V syscall number for `sched_yield`.
+    private static final int FREEBSD_SYS_SCHED_YIELD = 331;
+
+    /// The FreeBSD RISC-V syscall number for `getresuid`.
+    private static final int FREEBSD_SYS_GETRESUID = 360;
+
+    /// The FreeBSD RISC-V syscall number for `getresgid`.
+    private static final int FREEBSD_SYS_GETRESGID = 361;
+
+    /// The FreeBSD RISC-V syscall number for `pread`.
+    private static final int FREEBSD_SYS_PREAD = 475;
+
+    /// The FreeBSD RISC-V syscall number for `pwrite`.
+    private static final int FREEBSD_SYS_PWRITE = 476;
+
+    /// The FreeBSD RISC-V syscall number for `mmap`.
+    private static final int FREEBSD_SYS_MMAP = 477;
+
+    /// The FreeBSD RISC-V syscall number for `lseek`.
+    private static final int FREEBSD_SYS_LSEEK = 478;
+
+    /// The FreeBSD RISC-V syscall number for `truncate`.
+    private static final int FREEBSD_SYS_TRUNCATE = 479;
+
+    /// The FreeBSD RISC-V syscall number for `ftruncate`.
+    private static final int FREEBSD_SYS_FTRUNCATE = 480;
+
+    /// The FreeBSD RISC-V syscall number for `faccessat`.
+    private static final int FREEBSD_SYS_FACCESSAT = 489;
+
+    /// The FreeBSD RISC-V syscall number for `fchownat`.
+    private static final int FREEBSD_SYS_FCHOWNAT = 491;
+
+    /// The FreeBSD RISC-V syscall number for `mkdirat`.
+    private static final int FREEBSD_SYS_MKDIRAT = 496;
+
+    /// The FreeBSD RISC-V syscall number for `openat`.
+    private static final int FREEBSD_SYS_OPENAT = 499;
+
+    /// The FreeBSD RISC-V syscall number for `readlinkat`.
+    private static final int FREEBSD_SYS_READLINKAT = 500;
+
+    /// The FreeBSD RISC-V syscall number for `renameat`.
+    private static final int FREEBSD_SYS_RENAMEAT = 501;
+
+    /// The FreeBSD RISC-V syscall number for `unlinkat`.
+    private static final int FREEBSD_SYS_UNLINKAT = 503;
+
+    /// The FreeBSD RISC-V syscall number for `pipe2`.
+    private static final int FREEBSD_SYS_PIPE2 = 542;
+
+    /// The FreeBSD RISC-V syscall number for `ppoll`.
+    private static final int FREEBSD_SYS_PPOLL = 545;
+
+    /// The FreeBSD RISC-V syscall number for `fdatasync`.
+    private static final int FREEBSD_SYS_FDATASYNC = 550;
+
+    /// The FreeBSD RISC-V syscall number for `fstat`.
+    private static final int FREEBSD_SYS_FSTAT = 551;
+
+    /// The FreeBSD RISC-V syscall number for `fstatat`.
+    private static final int FREEBSD_SYS_FSTATAT = 552;
+
+    /// The FreeBSD RISC-V syscall number for `statfs`.
+    private static final int FREEBSD_SYS_STATFS = 555;
+
+    /// The FreeBSD RISC-V syscall number for `fstatfs`.
+    private static final int FREEBSD_SYS_FSTATFS = 556;
+
     /// Linux `EBADF` as a raw negative syscall result.
     private static final long EBADF = -9;
 
@@ -618,6 +801,42 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux flags accepted by `epoll_create1`.
     private static final long SUPPORTED_EPOLL_CREATE1_FLAGS = O_CLOEXEC;
+
+    /// FreeBSD `O_ACCMODE`.
+    private static final long FREEBSD_O_ACCMODE = 0x0003;
+
+    /// FreeBSD `O_NONBLOCK`.
+    private static final long FREEBSD_O_NONBLOCK = 0x0004;
+
+    /// FreeBSD `O_APPEND`.
+    private static final long FREEBSD_O_APPEND = 0x0008;
+
+    /// FreeBSD `O_CREAT`.
+    private static final long FREEBSD_O_CREAT = 0x0200;
+
+    /// FreeBSD `O_TRUNC`.
+    private static final long FREEBSD_O_TRUNC = 0x0400;
+
+    /// FreeBSD `O_EXCL`.
+    private static final long FREEBSD_O_EXCL = 0x0800;
+
+    /// FreeBSD `O_DIRECTORY`.
+    private static final long FREEBSD_O_DIRECTORY = 0x0002_0000;
+
+    /// FreeBSD `O_CLOEXEC`.
+    private static final long FREEBSD_O_CLOEXEC = 0x0010_0000;
+
+    /// FreeBSD `AT_EACCESS`.
+    private static final long FREEBSD_AT_EACCESS = 0x0100;
+
+    /// FreeBSD `AT_SYMLINK_NOFOLLOW`.
+    private static final long FREEBSD_AT_SYMLINK_NOFOLLOW = 0x0200;
+
+    /// FreeBSD `AT_REMOVEDIR`.
+    private static final long FREEBSD_AT_REMOVEDIR = 0x0800;
+
+    /// FreeBSD `AT_EMPTY_PATH`.
+    private static final long FREEBSD_AT_EMPTY_PATH = 0x4000;
 
     /// Linux `EPOLL_CTL_ADD`.
     private static final int EPOLL_CTL_ADD = 1;
@@ -963,6 +1182,12 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `MAP_FIXED_NOREPLACE`.
     private static final long MAP_FIXED_NOREPLACE = 0x100000;
+
+    /// FreeBSD `MAP_ANON`.
+    private static final long FREEBSD_MAP_ANON = 0x1000;
+
+    /// FreeBSD `MAP_EXCL`, used with `MAP_FIXED`.
+    private static final long FREEBSD_MAP_EXCL = 0x4000;
 
     /// Linux `MADV_NORMAL`.
     private static final long MADV_NORMAL = 0;
@@ -1832,7 +2057,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1853,7 +2078,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and resolved root mount.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1864,7 +2089,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by the supplied streams, resolved root mount, and guest time source.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1887,7 +2112,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by the supplied streams, filesystem namespace, and guest time source.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1910,7 +2135,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by streams, filesystem namespace, guest time source, and credentials.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1923,7 +2148,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy root mount.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1935,7 +2160,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by the supplied streams, lazy root mount, and guest time source.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1961,7 +2186,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by streams, lazy root mount, guest time source, and guest thread runner.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -1976,7 +2201,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Creates a syscall handler backed by streams, lazy root mount, guest time source, terminal option,
     /// and guest thread runner.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -2004,7 +2229,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by the supplied streams, lazy filesystem mounts, and guest time source.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -2028,7 +2253,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a syscall handler backed by streams, lazy filesystem mounts, guest time source, and guest thread runner.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -2043,7 +2268,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Creates a syscall handler backed by streams, lazy filesystem mounts, guest time source, terminal option,
     /// and guest thread runner.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -2070,7 +2295,7 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Creates a syscall handler backed by streams, lazy filesystem mounts, time source, credentials,
     /// terminal option, and guest thread runner.
-    public GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -2135,7 +2360,7 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Creates a child-process syscall handler by copying fork-inherited parent state.
-    private GuestSyscalls(GuestSyscalls parent, Memory memory, GuestProcess process) {
+    protected GuestSyscalls(GuestSyscalls parent, Memory memory, GuestProcess process) {
         this.memory = memory;
         this.in = parent.in;
         this.out = parent.out;
@@ -2253,7 +2478,13 @@ public final class GuestSyscalls implements AutoCloseable {
     }
 
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
-    public void handle(MachineState state, long pc) {
+    public abstract void handle(MachineState state, long pc);
+
+    /// Creates a child-process syscall handler of the same guest ABI as this handler.
+    protected abstract GuestSyscalls createChildSyscalls(Memory childMemory, GuestProcess childProcess);
+
+    /// Executes the Linux syscall described by the guest argument registers at the supplied program counter.
+    protected final void handleLinux(MachineState state, long pc) {
         long callNumber = state.register(17);
         if (callNumber != (int) callNumber) {
             throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
@@ -2549,6 +2780,297 @@ public final class GuestSyscalls implements AutoCloseable {
         } finally {
             state.restorePointerMask(previousMask);
         }
+    }
+
+    /// Executes the FreeBSD syscall described by the guest argument registers at the supplied program counter.
+    protected final void handleFreeBsd(MachineState state, long pc) {
+        long callNumber = state.register(5);
+        boolean indirect = callNumber == FREEBSD_SYS_SYSCALL || callNumber == FREEBSD_SYS___SYSCALL;
+        int argumentBaseRegister = indirect ? 11 : 10;
+        if (indirect) {
+            callNumber = state.register(10);
+        }
+        if (callNumber != (int) callNumber) {
+            throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
+        }
+
+        long previousMask = state.enterSyscallPointerMask();
+        try {
+            long result;
+            switch ((int) callNumber) {
+                case FREEBSD_SYS_EXIT -> {
+                    long exitCode = freeBsdArgument(state, argumentBaseRegister, 0);
+                    requestProcessExit(exitCode);
+                    throw new ProgramExitException(exitCode);
+                }
+                case FREEBSD_SYS_READ -> result = read(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_WRITE -> result = write(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_OPEN -> result = openat(
+                        AT_FDCWD,
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdOpenFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 1)),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_OPENAT -> result = openat(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdOpenFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 2)),
+                        freeBsdArgument(state, argumentBaseRegister, 3));
+                case FREEBSD_SYS_CLOSE -> result = close((int) freeBsdArgument(state, argumentBaseRegister, 0));
+                case FREEBSD_SYS_CHDIR -> result = chdir(freeBsdArgument(state, argumentBaseRegister, 0));
+                case FREEBSD_SYS_FCHDIR -> result = fchdir((int) freeBsdArgument(state, argumentBaseRegister, 0));
+                case FREEBSD_SYS_GETPID -> result = process.id();
+                case FREEBSD_SYS_GETPPID -> result = process.parentId();
+                case FREEBSD_SYS_GETUID -> result = credentials.realUserId();
+                case FREEBSD_SYS_GETEUID -> result = credentials.effectiveUserId();
+                case FREEBSD_SYS_GETGID -> result = credentials.realGroupId();
+                case FREEBSD_SYS_GETEGID -> result = credentials.effectiveGroupId();
+                case FREEBSD_SYS_ACCESS -> result = faccessat(
+                        AT_FDCWD,
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        0);
+                case FREEBSD_SYS_FACCESSAT -> result = faccessat(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdAtFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 3)));
+                case FREEBSD_SYS_SYNC -> result = sync();
+                case FREEBSD_SYS_KILL -> result = kill(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_DUP -> result = dup((int) freeBsdArgument(state, argumentBaseRegister, 0));
+                case FREEBSD_SYS_DUP2 -> result = dup3(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        (int) freeBsdArgument(state, argumentBaseRegister, 1),
+                        0);
+                case FREEBSD_SYS_IOCTL -> result = ioctl(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_READLINK -> result = readlinkat(
+                        AT_FDCWD,
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_READLINKAT -> result = readlinkat(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdArgument(state, argumentBaseRegister, 3));
+                case FREEBSD_SYS_EXECVE -> result = execve(
+                        state,
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_MUNMAP -> result = munmap(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_MPROTECT -> result = mprotect(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_MADVISE -> result = madvise(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_SETPGID -> result = setpgid(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_FCNTL -> result = fcntl(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdFcntlCommandToLinux(freeBsdArgument(state, argumentBaseRegister, 1)),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_FSYNC -> result = fsync((int) freeBsdArgument(state, argumentBaseRegister, 0));
+                case FREEBSD_SYS_FDATASYNC -> result = fdatasync((int) freeBsdArgument(state, argumentBaseRegister, 0));
+                case FREEBSD_SYS_GETTIMEOFDAY -> result = gettimeofday(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_READV -> result = readv(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_WRITEV -> result = writev(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_SETSID -> result = setsid();
+                case FREEBSD_SYS_CLOCK_GETTIME -> result = clockGettime(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_CLOCK_GETRES -> result = clockGetres(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_NANOSLEEP -> result = nanosleep(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS___GETCWD -> result = getcwd(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_SCHED_YIELD -> result = schedYield();
+                case FREEBSD_SYS_GETRESUID -> result = getresid(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        credentials.realUserId(),
+                        credentials.effectiveUserId(),
+                        credentials.savedUserId());
+                case FREEBSD_SYS_GETRESGID -> result = getresid(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        credentials.realGroupId(),
+                        credentials.effectiveGroupId(),
+                        credentials.savedGroupId());
+                case FREEBSD_SYS_PREAD -> result = pread64(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdArgument(state, argumentBaseRegister, 3));
+                case FREEBSD_SYS_PWRITE -> result = pwrite64(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdArgument(state, argumentBaseRegister, 3));
+                case FREEBSD_SYS_MMAP -> result = mmap(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdMmapFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 3)),
+                        freeBsdArgument(state, argumentBaseRegister, 4),
+                        freeBsdArgument(state, argumentBaseRegister, 6));
+                case FREEBSD_SYS_LSEEK -> result = lseek(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        (int) freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_TRUNCATE -> result = truncate(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_FTRUNCATE -> result = ftruncate(
+                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1));
+                case FREEBSD_SYS_FCHOWNAT -> result = fchownat(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdArgument(state, argumentBaseRegister, 3),
+                        freeBsdAtFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 4)));
+                case FREEBSD_SYS_MKDIRAT -> result = mkdirat(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2));
+                case FREEBSD_SYS_RENAMEAT -> result = renameat(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdArgument(state, argumentBaseRegister, 3));
+                case FREEBSD_SYS_UNLINKAT -> result = unlinkat(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdAtFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 2)));
+                case FREEBSD_SYS_PIPE2 -> result = pipe2(
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdOpenFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 1)));
+                case FREEBSD_SYS_PPOLL -> result = ppoll(
+                        state,
+                        freeBsdArgument(state, argumentBaseRegister, 0),
+                        freeBsdArgument(state, argumentBaseRegister, 1),
+                        freeBsdArgument(state, argumentBaseRegister, 2),
+                        freeBsdArgument(state, argumentBaseRegister, 3),
+                        freeBsdArgument(state, argumentBaseRegister, 4));
+                default -> throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
+            }
+            setFreeBsdSyscallResult(state, result);
+        } finally {
+            state.restorePointerMask(previousMask);
+        }
+    }
+
+    /// Reads one FreeBSD syscall argument register after optional syscall-number indirection.
+    private static long freeBsdArgument(MachineState state, int baseRegister, int index) {
+        int register = baseRegister + index;
+        return register <= 17 ? state.register(register) : 0;
+    }
+
+    /// Stores a FreeBSD syscall result and error indicator in guest registers.
+    private static void setFreeBsdSyscallResult(MachineState state, long result) {
+        if (result < 0) {
+            state.setRegister(10, -result);
+            state.setRegister(5, 1);
+            return;
+        }
+        state.setRegister(10, result);
+        state.setRegister(5, 0);
+    }
+
+    /// Translates FreeBSD open flags to the Linux-style internal flag set.
+    private static long freeBsdOpenFlagsToLinux(long freeBsdFlags) {
+        long flags = freeBsdFlags & FREEBSD_O_ACCMODE;
+        if ((freeBsdFlags & FREEBSD_O_NONBLOCK) != 0) {
+            flags |= O_NONBLOCK;
+        }
+        if ((freeBsdFlags & FREEBSD_O_APPEND) != 0) {
+            flags |= O_APPEND;
+        }
+        if ((freeBsdFlags & FREEBSD_O_CREAT) != 0) {
+            flags |= O_CREAT;
+        }
+        if ((freeBsdFlags & FREEBSD_O_TRUNC) != 0) {
+            flags |= O_TRUNC;
+        }
+        if ((freeBsdFlags & FREEBSD_O_EXCL) != 0) {
+            flags |= O_EXCL;
+        }
+        if ((freeBsdFlags & FREEBSD_O_DIRECTORY) != 0) {
+            flags |= O_DIRECTORY;
+        }
+        if ((freeBsdFlags & FREEBSD_O_CLOEXEC) != 0) {
+            flags |= O_CLOEXEC;
+        }
+        return flags;
+    }
+
+    /// Translates FreeBSD `*at` flags to the Linux-style internal flag set.
+    private static long freeBsdAtFlagsToLinux(long freeBsdFlags) {
+        long flags = 0;
+        if ((freeBsdFlags & FREEBSD_AT_EACCESS) != 0) {
+            flags |= AT_EACCESS;
+        }
+        if ((freeBsdFlags & FREEBSD_AT_SYMLINK_NOFOLLOW) != 0) {
+            flags |= AT_SYMLINK_NOFOLLOW;
+        }
+        if ((freeBsdFlags & FREEBSD_AT_REMOVEDIR) != 0) {
+            flags |= AT_REMOVEDIR;
+        }
+        if ((freeBsdFlags & FREEBSD_AT_EMPTY_PATH) != 0) {
+            flags |= AT_EMPTY_PATH;
+        }
+        return flags;
+    }
+
+    /// Translates FreeBSD `mmap` flags to the Linux-style internal flag set.
+    private static long freeBsdMmapFlagsToLinux(long freeBsdFlags) {
+        long flags = freeBsdFlags & (MAP_SHARED | MAP_PRIVATE | MAP_FIXED);
+        if ((freeBsdFlags & FREEBSD_MAP_ANON) != 0) {
+            flags |= MAP_ANONYMOUS;
+        }
+        if ((freeBsdFlags & FREEBSD_MAP_EXCL) != 0) {
+            flags |= MAP_FIXED_NOREPLACE;
+        }
+        return flags;
+    }
+
+    /// Translates FreeBSD `fcntl` commands to the Linux-style internal command set.
+    private static long freeBsdFcntlCommandToLinux(long command) {
+        if (command == 17) {
+            return F_DUPFD_CLOEXEC;
+        }
+        return command;
     }
 
     /// Returns true when a syscall may need a full architectural register snapshot.
@@ -6619,7 +7141,7 @@ public final class GuestSyscalls implements AutoCloseable {
             return ENOMEM;
         }
 
-        GuestSyscalls childSyscalls = new GuestSyscalls(this, childMemory, childProcess);
+        GuestSyscalls childSyscalls = createChildSyscalls(childMemory, childProcess);
         GuestThread childThread = childProcess.initialThread();
         childThread.setSignalMask(state.guestThread().signalMask());
         childThread.inheritExecutionControlsFrom(state.guestThread());

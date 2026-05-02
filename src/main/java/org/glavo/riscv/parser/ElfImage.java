@@ -31,6 +31,9 @@ public final class ElfImage {
     /// The optional dynamic interpreter path from `PT_INTERP`.
     private final @Nullable String interpreterPath;
 
+    /// The guest operating-system ABI requested by the ELF header.
+    private final ElfOperatingSystem operatingSystem;
+
     /// The immutable loadable segment list.
     private final @Unmodifiable List<LoadSegment> loadSegments;
 
@@ -53,6 +56,7 @@ public final class ElfImage {
     public ElfImage(
             int type,
             long entryPoint,
+            ElfOperatingSystem operatingSystem,
             @Nullable String interpreterPath,
             @Unmodifiable List<LoadSegment> loadSegments,
             long tohostAddress,
@@ -62,6 +66,7 @@ public final class ElfImage {
             int programHeaderCount) {
         this.type = type;
         this.entryPoint = entryPoint;
+        this.operatingSystem = operatingSystem;
         this.interpreterPath = interpreterPath;
         this.loadSegments = List.copyOf(loadSegments);
         this.tohostAddress = tohostAddress;
@@ -84,6 +89,11 @@ public final class ElfImage {
     /// Returns true when this image uses position-independent `ET_DYN` addresses.
     public boolean isPositionIndependent() {
         return type == TYPE_DYNAMIC;
+    }
+
+    /// Returns the guest operating-system ABI requested by the ELF header.
+    public ElfOperatingSystem operatingSystem() {
+        return operatingSystem;
     }
 
     /// Returns the optional dynamic interpreter path from `PT_INTERP`.
