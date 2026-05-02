@@ -98,6 +98,13 @@ The `decompressUbuntuBaseImage` task downloads Ubuntu Base 26.04 for RISC-V and
 produces a `.tar` root filesystem under `build/downloads/ubuntu-base/26.04`
 without unpacking the tar entries.
 
+The `decompressFastfetchArchive` task downloads fastfetch for Linux RISC-V from
+GitHub releases and produces a `.tar` archive under
+`build/downloads/fastfetch`. The default version is 2.62.1; override it with
+`-PfastfetchVersion=<version>`. The `runFastfetch` and `testFastfetchVersion`
+tasks also mount Ubuntu Base because the fastfetch release binary is dynamically
+linked.
+
 Run the Ubuntu Base dynamic-linking smoke tests:
 
 ```text
@@ -136,6 +143,7 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 | Static Go showcase | Run a larger Go standard-library workload covering JSON, sorting, compression, hashing, and goroutines. | `./gradlew runGoShowcaseExample` |
 | Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
 | SQLite showcase | Download SQLite, build a static RISC-V file-database demo, and run transactions and queries. | `./gradlew runSQLiteShowcaseExample` |
+| fastfetch | Download the Linux RISC-V fastfetch release tar and run it. | `./gradlew runFastfetch` |
 | RVV vector add | Build and run the RVV vector-add example. | `./gradlew runRvvVectorAddExample` |
 | RVV matrix transpose | Build and run the RVV matrix-transpose smoke example. | `./gradlew runRvvMatrixTransposeExample` |
 | RVV reduction | Build and run the RVV reduction smoke example. | `./gradlew runRvvReductionExample` |
