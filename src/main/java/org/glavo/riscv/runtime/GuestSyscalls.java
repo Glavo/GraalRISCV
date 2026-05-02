@@ -6503,11 +6503,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         public @Nullable VirtualNode node(String absoluteGuestPath) {
             return switch (absoluteGuestPath) {
                 case SYS_MOUNT_PATH -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/bus" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/bus/pci" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/bus/pci/devices" -> VirtualNode.directory(absoluteGuestPath);
                 case SYS_MOUNT_PATH + "/class" -> VirtualNode.directory(absoluteGuestPath);
                 case SYS_MOUNT_PATH + "/class/dmi" -> VirtualNode.directory(absoluteGuestPath);
                 case SYS_MOUNT_PATH + "/class/dmi/id" ->
                         VirtualNode.symbolicLink(absoluteGuestPath, SYS_MOUNT_PATH + "/devices/virtual/dmi/id");
                 case SYS_MOUNT_PATH + "/class/drm" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/class/graphics" -> VirtualNode.directory(absoluteGuestPath);
                 case SYS_MOUNT_PATH + "/class/power_supply" -> VirtualNode.directory(absoluteGuestPath);
                 case SYS_MOUNT_PATH + "/devices" -> VirtualNode.directory(absoluteGuestPath);
                 case SYS_MOUNT_PATH + "/devices/virtual" -> VirtualNode.directory(absoluteGuestPath);
@@ -6532,12 +6536,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         public VirtualNode @Unmodifiable [] childNodes(String directoryGuestPath) {
             return switch (directoryGuestPath) {
                 case SYS_MOUNT_PATH -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/bus"),
                         VirtualNode.directory(SYS_MOUNT_PATH + "/class"),
                         VirtualNode.directory(SYS_MOUNT_PATH + "/devices")
                 };
+                case SYS_MOUNT_PATH + "/bus" -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/bus/pci")
+                };
+                case SYS_MOUNT_PATH + "/bus/pci" -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/bus/pci/devices")
+                };
+                case SYS_MOUNT_PATH + "/bus/pci/devices" -> new VirtualNode[0];
                 case SYS_MOUNT_PATH + "/class" -> new VirtualNode[]{
                         VirtualNode.directory(SYS_MOUNT_PATH + "/class/dmi"),
                         VirtualNode.directory(SYS_MOUNT_PATH + "/class/drm"),
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/class/graphics"),
                         VirtualNode.directory(SYS_MOUNT_PATH + "/class/power_supply")
                 };
                 case SYS_MOUNT_PATH + "/class/dmi" -> new VirtualNode[]{
@@ -6545,7 +6558,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                                 SYS_MOUNT_PATH + "/class/dmi/id",
                                 SYS_MOUNT_PATH + "/devices/virtual/dmi/id")
                 };
-                case SYS_MOUNT_PATH + "/class/drm", SYS_MOUNT_PATH + "/class/power_supply" -> new VirtualNode[0];
+                case SYS_MOUNT_PATH + "/class/drm",
+                     SYS_MOUNT_PATH + "/class/graphics",
+                     SYS_MOUNT_PATH + "/class/power_supply" -> new VirtualNode[0];
                 case SYS_MOUNT_PATH + "/devices" -> new VirtualNode[]{
                         VirtualNode.directory(SYS_MOUNT_PATH + "/devices/virtual")
                 };

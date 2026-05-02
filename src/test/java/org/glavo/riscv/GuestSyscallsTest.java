@@ -5175,9 +5175,31 @@ public final class GuestSyscallsTest {
             nextEntry = assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
             nextEntry = assertDirectoryEntry(memory, nextEntry, "dmi", DIRECTORY_ENTRY_DIRECTORY, 3);
             nextEntry = assertDirectoryEntry(memory, nextEntry, "drm", DIRECTORY_ENTRY_DIRECTORY, 4);
-            assertDirectoryEntry(memory, nextEntry, "power_supply", DIRECTORY_ENTRY_DIRECTORY, 5);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "graphics", DIRECTORY_ENTRY_DIRECTORY, 5);
+            assertDirectoryEntry(memory, nextEntry, "power_supply", DIRECTORY_ENTRY_DIRECTORY, 6);
 
             setSyscall(state, SYS_CLOSE, classDirectoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/sys/bus/pci/devices");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int pciDevicesDirectoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, pciDevicesDirectoryFileDescriptor);
+
+            setSyscall(state, SYS_FSTATFS, pciDevicesDirectoryFileDescriptor, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertSysfsStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_GETDENTS64, pciDevicesDirectoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            nextEntry = assertDirectoryEntry(memory, bufferAddress, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+
+            setSyscall(state, SYS_CLOSE, pciDevicesDirectoryFileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
 
