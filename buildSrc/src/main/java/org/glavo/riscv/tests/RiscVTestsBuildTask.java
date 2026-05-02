@@ -6,12 +6,10 @@ import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.FileSystemOperations;
-import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputDirectory;
-import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.LocalState;
 import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.PathSensitive;
@@ -85,12 +83,11 @@ public abstract class RiscVTestsBuildTask extends DefaultTask {
         ));
     }
 
-    /// Returns the Zig executable file.
+    /// Returns the Zig executable command or path.
     ///
-    /// @return the Zig executable file property
-    @InputFile
-    @PathSensitive(PathSensitivity.NONE)
-    public abstract RegularFileProperty getZigExecutable();
+    /// @return the Zig executable command property
+    @Input
+    public abstract Property<String> getZigExecutable();
 
     /// Returns the extracted `riscv-tests` source directory.
     ///
@@ -358,7 +355,7 @@ public abstract class RiscVTestsBuildTask extends DefaultTask {
         }
 
         execOperations.exec(spec -> {
-            spec.setExecutable(getZigExecutable().get().getAsFile());
+            spec.setExecutable(getZigExecutable().get());
             spec.environment("ZIG_LOCAL_CACHE_DIR", localCache.getAbsolutePath());
             spec.environment("ZIG_GLOBAL_CACHE_DIR", globalCache.getAbsolutePath());
             spec.args(createCompilerArguments(

@@ -10,7 +10,6 @@ import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
-import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.LocalState;
 import org.gradle.api.tasks.OutputFile;
@@ -47,12 +46,11 @@ public abstract class AbstractRiscVZigCCTask extends DefaultTask {
         getAdditionalCompilerArguments().convention(List.of());
     }
 
-    /// Returns the Zig executable file.
+    /// Returns the Zig executable command or path.
     ///
-    /// @return the Zig executable file property
-    @InputFile
-    @PathSensitive(PathSensitivity.NONE)
-    public abstract RegularFileProperty getZigExecutable();
+    /// @return the Zig executable command property
+    @Input
+    public abstract Property<String> getZigExecutable();
 
     /// Returns the C source files to compile and link.
     ///
@@ -126,7 +124,7 @@ public abstract class AbstractRiscVZigCCTask extends DefaultTask {
         createDirectory(globalCache);
 
         execOperations.exec(spec -> {
-            spec.setExecutable(getZigExecutable().get().getAsFile());
+            spec.setExecutable(getZigExecutable().get());
             spec.environment("ZIG_LOCAL_CACHE_DIR", localCache.getAbsolutePath());
             spec.environment("ZIG_GLOBAL_CACHE_DIR", globalCache.getAbsolutePath());
             spec.args(createCompilerArguments(outputFile));

@@ -10,7 +10,6 @@ import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputDirectory;
-import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.LocalState;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
@@ -44,12 +43,11 @@ public abstract class RiscVGoBuildTask extends DefaultTask {
         getAdditionalBuildArguments().convention(List.of("-trimpath"));
     }
 
-    /// Returns the Go executable file.
+    /// Returns the Go executable command or path.
     ///
-    /// @return the Go executable file property
-    @InputFile
-    @PathSensitive(PathSensitivity.NONE)
-    public abstract RegularFileProperty getGoExecutable();
+    /// @return the Go executable command property
+    @Input
+    public abstract Property<String> getGoExecutable();
 
     /// Returns the Go module directory to build.
     ///
@@ -115,7 +113,7 @@ public abstract class RiscVGoBuildTask extends DefaultTask {
         createDirectory(moduleCache);
 
         execOperations.exec(spec -> {
-            spec.setExecutable(getGoExecutable().get().getAsFile());
+            spec.setExecutable(getGoExecutable().get());
             spec.setWorkingDir(getModuleDirectory().get().getAsFile());
             spec.environment("GOOS", getGoOS().get());
             spec.environment("GOARCH", getGoArch().get());

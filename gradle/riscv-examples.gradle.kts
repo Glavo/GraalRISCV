@@ -44,10 +44,10 @@ fun AbstractRiscVZigCCTask.configureZigExecutable() {
 fun RiscVGoBuildTask.configureGoExecutable() {
     val configuredPath = configuredGoExecutablePath.orNull
     if (configuredPath != null) {
-        goExecutable.fileValue(file(configuredPath))
+        goExecutable.set(configuredPath)
     } else {
         dependsOn(extractGo)
-        goExecutable.set(goExecutableFile)
+        goExecutable.set(goExecutableFile.map { it.asFile.absolutePath })
     }
 }
 
@@ -110,8 +110,8 @@ tasks.register<Exec>("goToolchainVersion") {
     }
 
     doFirst {
-        val executable = configuredGoExecutablePath.orNull?.let { file(it) } ?: goExecutableFile.get().asFile
-        commandLine(executable.absolutePath, "version")
+        val executable = configuredGoExecutablePath.orNull ?: goExecutableFile.get().asFile.absolutePath
+        commandLine(executable, "version")
     }
 }
 

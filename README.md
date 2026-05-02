@@ -109,19 +109,21 @@ Run the Ubuntu Base dynamic-linking smoke tests:
 ```
 
 The C and CoreMark examples use Zig CC. Gradle downloads the configured Zig
-release when needed. To use an existing Zig executable, set one of
-`ZIG_EXECUTABLE`, `zigExecutable`, or `graalriscv.zigExecutable`:
+release when needed. To use an existing Zig executable command or path, set one
+of `ZIG_EXECUTABLE`, `zigExecutable`, or `graalriscv.zigExecutable`:
 
 ```text
+ZIG_EXECUTABLE=zig ./gradlew runLinuxStaticPrintfExample
 ZIG_EXECUTABLE=/path/to/zig ./gradlew runLinuxStaticPrintfExample
 ./gradlew "-PzigExecutable=/path/to/zig" runLinuxStaticPrintfExample
 ```
 
 The Go example uses the Go toolchain. Gradle downloads the configured Go
-release when needed. To use an existing Go executable, set one of
-`GO_EXECUTABLE`, `goExecutable`, or `graalriscv.goExecutable`:
+release when needed. To use an existing Go executable command or path, set one
+of `GO_EXECUTABLE`, `goExecutable`, or `graalriscv.goExecutable`:
 
 ```text
+GO_EXECUTABLE=go ./gradlew runGoHelloWorldExample
 GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 ./gradlew "-PgoExecutable=/path/to/go" runGoHelloWorldExample
 ```

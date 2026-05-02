@@ -40,6 +40,9 @@ final class TerminalDevice implements AutoCloseable {
     /// The Linux generic `struct termios2` size exposed to the guest.
     private static final int TERMIOS2_SIZE = 44;
 
+    /// A buffer large enough for the host Linux `struct termios` used by native `ioctl` calls.
+    private static final int HOST_TERMIOS_BUFFER_SIZE = 128;
+
     /// The Linux generic `struct winsize` size exposed to the guest.
     private static final int WINDOW_SIZE_SIZE = 8;
 
@@ -1155,12 +1158,12 @@ final class TerminalDevice implements AutoCloseable {
         /// Reads a native `struct termios` byte image from a host terminal descriptor.
         private static byte @Nullable [] nativeTermios(int fileDescriptor) {
             try (Arena arena = Arena.ofConfined()) {
-                MemorySegment segment = arena.allocate(TERMIOS_SIZE);
+                MemorySegment segment = arena.allocate(HOST_TERMIOS_BUFFER_SIZE);
                 int result = (int) PosixHandles.IOCTL.invokeExact(fileDescriptor, TCGETS, segment);
                 if (result != 0) {
                     return null;
                 }
-                byte[] bytes = new byte[TERMIOS_SIZE];
+                byte[] bytes = new byte[HOST_TERMIOS_BUFFER_SIZE];
                 segment.asByteBuffer().get(bytes);
                 return bytes;
             } catch (Throwable exception) {
@@ -1171,8 +1174,16 @@ final class TerminalDevice implements AutoCloseable {
         /// Writes a native `struct termios` byte image to a host terminal descriptor.
         private static boolean writeNativeTermios(int fileDescriptor, long request, byte[] bytes) {
             try (Arena arena = Arena.ofConfined()) {
-                MemorySegment segment = arena.allocate(TERMIOS_SIZE);
-                segment.asByteBuffer().put(bytes, 0, Math.min(bytes.length, TERMIOS_SIZE));
+                MemorySegment segment = arena.allocate(HOST_TERMIOS_BUFFER_SIZE);
+                ByteBuffer buffer = segment.asByteBuffer();
+                if (bytes.length < HOST_TERMIOS_BUFFER_SIZE) {
+                    byte @Nullable [] current = nativeTermios(fileDescriptor);
+                    if (current != null) {
+                        buffer.put(current, 0, Math.min(current.length, HOST_TERMIOS_BUFFER_SIZE));
+                        buffer.position(0);
+                    }
+                }
+                buffer.put(bytes, 0, Math.min(bytes.length, HOST_TERMIOS_BUFFER_SIZE));
                 int result = (int) PosixHandles.IOCTL.invokeExact(fileDescriptor, request, segment);
                 return result == 0;
             } catch (Throwable exception) {

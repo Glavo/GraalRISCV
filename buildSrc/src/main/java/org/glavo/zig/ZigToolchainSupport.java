@@ -7,8 +7,8 @@ import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.file.Directory;
 import org.gradle.api.file.RegularFile;
-import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.Provider;
+import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.TaskProvider;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
@@ -114,17 +114,17 @@ public final class ZigToolchainSupport {
             this.extractTask = extractTask;
         }
 
-        /// Configures a task's Zig executable property.
+        /// Configures a task's Zig executable command property.
         ///
         /// @param task the task that needs a Zig executable
-        /// @param zigExecutable the task property that receives the executable
-        public void configureExecutable(Task task, RegularFileProperty zigExecutable) {
+        /// @param zigExecutable the task property that receives the executable command
+        public void configureExecutable(Task task, Property<String> zigExecutable) {
             @Nullable String configuredPath = configuredExecutablePath.getOrNull();
             if (configuredPath != null) {
-                zigExecutable.fileValue(task.getProject().file(configuredPath));
+                zigExecutable.set(configuredPath);
             } else {
                 task.dependsOn(extractTask);
-                zigExecutable.set(executableFile);
+                zigExecutable.set(executableFile.map(file -> file.getAsFile().getAbsolutePath()));
             }
         }
 
