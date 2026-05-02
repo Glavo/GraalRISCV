@@ -177,6 +177,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `fchdir`.
     private static final long SYS_FCHDIR = 50;
 
+    /// The Linux RISC-V syscall number for `fchownat`.
+    private static final long SYS_FCHOWNAT = 54;
+
     /// The Linux RISC-V syscall number for `openat`.
     private static final long SYS_OPENAT = 56;
 
@@ -1967,6 +1970,91 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, X_OK, AT_EMPTY_PATH, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EACCES, state.register(10));
+        }
+    }
+
+    /// Verifies that `fchownat` validates paths and accepts ownership updates as no-ops.
+    @Test
+    public void fchownatAcceptsSandboxedPathsAsNoOp() throws Exception {
+        Files.writeString(tempDirectory.resolve("owned.txt"), "data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+
+            writeGuestString(memory, pathAddress, "owned.txt");
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, -1, -1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "../owned.txt");
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "owned.txt");
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, GuestCredentials.MAX_ID + 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 0, 0, AT_EACCESS);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+        }
+    }
+
+    /// Verifies that `fchownat` supports `AT_EMPTY_PATH` file descriptor updates.
+    @Test
+    public void fchownatSupportsEmptyPathFileDescriptors() throws Exception {
+        Files.writeString(tempDirectory.resolve("owned.txt"), "data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+
+            writeGuestString(memory, pathAddress, "owned.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(state, SYS_FCHOWNAT, fileDescriptor, pathAddress, 0, 0, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCHOWNAT, 99, pathAddress, 0, 0, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_FCHOWNAT, fileDescriptor, pathAddress, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
         }
     }
 

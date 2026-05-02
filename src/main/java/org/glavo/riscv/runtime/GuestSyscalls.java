@@ -110,6 +110,9 @@ public final class GuestSyscalls implements AutoCloseable {
     /// The Linux RISC-V syscall number for `fchdir`.
     private static final int SYS_FCHDIR = 50;
 
+    /// The Linux RISC-V syscall number for `fchownat`.
+    private static final int SYS_FCHOWNAT = 54;
+
     /// The Linux RISC-V syscall number for `openat`.
     private static final int SYS_OPENAT = 56;
 
@@ -570,6 +573,9 @@ public final class GuestSyscalls implements AutoCloseable {
 
     /// Linux `faccessat2` flags accepted by this simulator.
     private static final long SUPPORTED_FACCESSAT2_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH;
+
+    /// Linux `fchownat` flags accepted by this simulator.
+    private static final long SUPPORTED_FCHOWNAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
 
     /// Linux `O_ACCMODE`.
     private static final long O_ACCMODE = 0x3;
@@ -2290,6 +2296,12 @@ public final class GuestSyscalls implements AutoCloseable {
             case SYS_FACCESSAT -> state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
             case SYS_CHDIR -> state.setRegister(10, chdir(state.register(10)));
             case SYS_FCHDIR -> state.setRegister(10, fchdir((int) state.register(10)));
+            case SYS_FCHOWNAT -> state.setRegister(10, fchownat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_OPENAT -> state.setRegister(10, openat(
                     state.register(10),
                     state.register(11),
@@ -3773,6 +3785,96 @@ public final class GuestSyscalls implements AutoCloseable {
         }
         guestWorkingDirectory = procPath.guestPath();
         return 0;
+    }
+
+    /// Accepts a validated no-op ownership update for an open descriptor or sandboxed path.
+    private long fchownat(long directoryFileDescriptor, long pathAddress, long owner, long group, long flags) {
+        if ((flags & ~SUPPORTED_FCHOWNAT_FLAGS) != 0 || !isChownId(owner) || !isChownId(group)) {
+            return EINVAL;
+        }
+        if (pathAddress == 0) {
+            return EFAULT;
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+
+        if (guestPath.isEmpty()) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return ENOENT;
+            }
+            if (directoryFileDescriptor == AT_FDCWD) {
+                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                return currentDirectory == null ? EACCES : chownHostFile(currentDirectory, flags);
+            }
+            if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
+                return EBADF;
+            }
+            return chownFileDescriptor((int) directoryFileDescriptor);
+        }
+
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TarPath tarPath = resolveTarPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
+        if (tarPath != null) {
+            return tarPath.node() == null ? ENOENT : 0;
+        }
+
+        @Nullable VirtualPath procPath = resolveVirtualPath(
+                directoryFileDescriptor,
+                guestPath,
+                (flags & AT_SYMLINK_NOFOLLOW) == 0);
+        if (procPath != null) {
+            return procPath.node() == null ? ENOENT : 0;
+        }
+
+        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+        return chownHostFile(hostFile, flags);
+    }
+
+    /// Returns true when a Linux `chown` uid or gid argument is valid.
+    private static boolean isChownId(long id) {
+        return id == -1L || id >= 0 && id <= GuestCredentials.MAX_ID;
+    }
+
+    /// Accepts a no-op ownership update for an existing open file descriptor.
+    private long chownFileDescriptor(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return 0;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        return openFile == null ? EBADF : 0;
+    }
+
+    /// Accepts a no-op ownership update for an existing sandboxed host filesystem entry.
+    private long chownHostFile(TruffleFile hostFile, long flags) {
+        try {
+            if (!pathEntryExists(hostFile)) {
+                return ENOENT;
+            }
+            if ((flags & AT_SYMLINK_NOFOLLOW) == 0) {
+                return canonicalFileStaysBelowMount(hostFile) ? 0 : EACCES;
+            }
+
+            @Nullable HostMount mount = mountForHostFile(hostFile);
+            if (mount == null) {
+                return EACCES;
+            }
+            return 0;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
     }
 
     /// Opens a host file or directory below a configured filesystem mount.

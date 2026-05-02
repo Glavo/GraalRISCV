@@ -18,7 +18,7 @@
 - Virtual `/proc/cpuinfo` reports stable RISC-V CPU metadata plus sanitized `graalriscv_` Java runtime summary fields.
 - The memory, `--mount` filesystem namespace, customizable `GuestFileSystem` virtual mounts, read-only tar mounts, built-in `/proc` and Linux-like `/dev` with tty, null, zero, and deterministic random devices, configurable guest user credentials, Ubuntu Base image preparation, process/thread state, process-style `clone`/`wait4`, deterministic time, and Gradle-based example/test build foundations are in place for current workloads.
 - Zig and Go Gradle toolchain overrides accept either executable paths or command names resolved through `PATH`.
-- Ubuntu Base shell startup compatibility covers the currently required identity, process-group, and readiness syscalls, including `setfsuid`, `setfsgid`, `pselect6`, and `setpgid`.
+- Ubuntu Base shell startup compatibility covers the currently required identity, process-group, metadata, and readiness syscalls, including `setfsuid`, `setfsgid`, `fchownat`, `pselect6`, and `setpgid`.
 - Interactive tty handling now exposes sane guest `termios` and `termios2`, keeps guest-driven `TCSETS` state stable, routes standard-input reads through the shared terminal device only when host tty control is active, maps `TCSETS` to Windows console input mode for real host consoles, provides Windows-backed guest-side input echo, VT key input/output, real Windows console window sizing, and shutdown-time console mode restoration for interactive shells.
 - The CLI includes `--root` as a guest root identity shortcut for `--user root --uid 0 --gid 0 --groups 0`.
 
