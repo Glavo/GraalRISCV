@@ -154,7 +154,7 @@ tasks.register<JavaExec>("testFastfetch") {
             "--logo", "none",
             "--pipe", "true",
             "--structure",
-            "Title:Separator:OS:Kernel:Uptime:Packages:Shell:Terminal:CPU:Memory:Swap:Disk:Locale"
+            "Title:Separator:OS:Host:Kernel:Uptime:Packages:Shell:Terminal:CPU:Memory:Swap:Disk:Locale"
         ))
     }
 
@@ -169,6 +169,7 @@ tasks.register<JavaExec>("testFastfetch") {
         val requiredOutputFragments = listOf(
             "user@localhost",
             "OS: Ubuntu 26.04",
+            "Host: GraalRISCV",
             "Kernel: Linux",
             "Packages: 86 (dpkg)",
             "Shell: sh",

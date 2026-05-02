@@ -633,6 +633,9 @@ public final class GuestSyscallsTest {
     /// Linux `PROC_SUPER_MAGIC`.
     private static final long PROC_SUPER_MAGIC = 0x9fa0L;
 
+    /// Linux `SYSFS_MAGIC`.
+    private static final long SYSFS_MAGIC = 0x6265_6572L;
+
     /// The synthetic filesystem block size returned by `statfs`.
     private static final long STATFS_BLOCK_SIZE = 4096;
 
@@ -5069,6 +5072,93 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies the built-in sysfs exposes minimal hardware identity and empty class directories.
+    @Test
+    public void defaultSysFilesystemExposesMinimalHardwareTree() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 1024;
+            long statfsAddress = memory.baseAddress() + 4096;
+
+            writeGuestString(memory, pathAddress, "/sys");
+            setSyscall(state, SYS_STATFS, pathAddress, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertSysfsStatfs(memory, statfsAddress);
+
+            writeGuestString(memory, pathAddress, "/sys/class");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int classDirectoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, classDirectoryFileDescriptor);
+
+            setSyscall(state, SYS_GETDENTS64, classDirectoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            long nextEntry = assertDirectoryEntry(memory, bufferAddress, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "dmi", DIRECTORY_ENTRY_DIRECTORY, 3);
+            nextEntry = assertDirectoryEntry(memory, nextEntry, "drm", DIRECTORY_ENTRY_DIRECTORY, 4);
+            assertDirectoryEntry(memory, nextEntry, "power_supply", DIRECTORY_ENTRY_DIRECTORY, 5);
+
+            setSyscall(state, SYS_CLOSE, classDirectoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/sys/class/power_supply");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int powerSupplyDirectoryFileDescriptor = (int) state.register(10);
+            assertEquals(3, powerSupplyDirectoryFileDescriptor);
+
+            setSyscall(state, SYS_FSTATFS, powerSupplyDirectoryFileDescriptor, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertSysfsStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_GETDENTS64, powerSupplyDirectoryFileDescriptor, bufferAddress, 512);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            nextEntry = assertDirectoryEntry(memory, bufferAddress, ".", DIRECTORY_ENTRY_DIRECTORY, 1);
+            assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
+
+            setSyscall(state, SYS_CLOSE, powerSupplyDirectoryFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/sys/devices/virtual/dmi/id/product_name");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int productNameFileDescriptor = (int) state.register(10);
+            assertEquals(3, productNameFileDescriptor);
+
+            setSyscall(state, SYS_READ, productNameFileDescriptor, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("GraalRISCV\n".length(), state.register(10));
+            assertEquals("GraalRISCV\n", readGuestString(memory, bufferAddress, "GraalRISCV\n".length()));
+
+            setSyscall(state, SYS_CLOSE, productNameFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/sys/class/dmi/id/sys_vendor");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int vendorFileDescriptor = (int) state.register(10);
+            assertEquals(3, vendorFileDescriptor);
+
+            setSyscall(state, SYS_READ, vendorFileDescriptor, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("Glavo\n".length(), state.register(10));
+            assertEquals("Glavo\n", readGuestString(memory, bufferAddress, "Glavo\n".length()));
+
+            setSyscall(state, SYS_CLOSE, vendorFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
     /// Verifies callers can mount a custom virtual filesystem provider.
     @Test
     public void customVirtualFilesystemMountCanServeFiles() {
@@ -6521,6 +6611,20 @@ public final class GuestSyscallsTest {
     /// Verifies the deterministic `struct statfs` values exposed by the virtual proc filesystem.
     private static void assertProcStatfs(Memory memory, long address) {
         assertEquals(PROC_SUPER_MAGIC, memory.readLong(address + STATFS_TYPE_OFFSET));
+        assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_BLOCK_SIZE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_BLOCKS_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_BLOCKS_FREE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_BLOCKS_AVAILABLE_OFFSET));
+        assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_OFFSET));
+        assertEquals(STATFS_FILE_COUNT, memory.readLong(address + STATFS_FILES_FREE_OFFSET));
+        assertEquals(STATFS_NAME_MAX, memory.readLong(address + STATFS_NAME_LENGTH_OFFSET));
+        assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_FRAGMENT_SIZE_OFFSET));
+        assertEquals(0, memory.readLong(address + STATFS_FLAGS_OFFSET));
+    }
+
+    /// Verifies the deterministic `struct statfs` values exposed by the virtual sys filesystem.
+    private static void assertSysfsStatfs(Memory memory, long address) {
+        assertEquals(SYSFS_MAGIC, memory.readLong(address + STATFS_TYPE_OFFSET));
         assertEquals(STATFS_BLOCK_SIZE, memory.readLong(address + STATFS_BLOCK_SIZE_OFFSET));
         assertEquals(0, memory.readLong(address + STATFS_BLOCKS_OFFSET));
         assertEquals(0, memory.readLong(address + STATFS_BLOCKS_FREE_OFFSET));

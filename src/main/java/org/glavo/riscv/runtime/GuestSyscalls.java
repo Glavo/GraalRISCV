@@ -1037,11 +1037,17 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `PROC_SUPER_MAGIC`.
     protected static final long PROC_SUPER_MAGIC = 0x9fa0L;
 
+    /// Linux `SYSFS_MAGIC`.
+    protected static final long SYSFS_MAGIC = 0x6265_6572L;
+
     /// The guest path where the built-in virtual proc filesystem is mounted.
     protected static final String PROC_MOUNT_PATH = "/proc";
 
     /// The guest path where the built-in virtual device filesystem is mounted.
     protected static final String DEV_MOUNT_PATH = "/dev";
+
+    /// The guest path where the built-in virtual sys filesystem is mounted.
+    protected static final String SYS_MOUNT_PATH = "/sys";
 
     /// Synthetic inode base used for virtual proc entries.
     protected static final long PROC_INODE_BASE = 0x7000_0000L;
@@ -1232,7 +1238,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     protected GuestFileSystem addDefaultVirtualMounts(GuestFileSystem fileSystem) {
         return fileSystem
                 .withDefaultVirtualMount(DEV_MOUNT_PATH, new DevFileSystem())
-                .withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem());
+                .withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem())
+                .withDefaultVirtualMount(SYS_MOUNT_PATH, new SysFileSystem());
     }
 
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
@@ -4557,9 +4564,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return tarPath.node() == null ? ENOENT : writeStatfsResult(statfsAddress);
         }
 
-        @Nullable VirtualPath procPath = resolveVirtualPath(AT_FDCWD, guestPath);
-        if (procPath != null) {
-            return procPath.node() == null ? ENOENT : writeProcStatfsResult(statfsAddress);
+        @Nullable VirtualPath virtualPath = resolveVirtualPath(AT_FDCWD, guestPath);
+        if (virtualPath != null) {
+            return virtualPath.node() == null ? ENOENT : writeVirtualStatfsResult(virtualPath.mount(), statfsAddress);
         }
 
         @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
@@ -4589,7 +4596,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
         if (openFile.isVirtualEntry()) {
-            writeProcStatfs(statfsAddress);
+            @Nullable VirtualMount virtualMount = openFile.virtualMount();
+            if (virtualMount == null) {
+                return EBADF;
+            }
+            writeVirtualStatfs(virtualMount, statfsAddress);
             return 0;
         }
 
@@ -4603,9 +4614,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 0;
     }
 
-    /// Writes proc `statfs` metadata and returns a successful syscall result.
-    protected long writeProcStatfsResult(long statfsAddress) {
-        writeProcStatfs(statfsAddress);
+    /// Writes virtual filesystem `statfs` metadata and returns a successful syscall result.
+    protected long writeVirtualStatfsResult(VirtualMount mount, long statfsAddress) {
+        writeVirtualStatfs(mount, statfsAddress);
         return 0;
     }
 
@@ -4899,6 +4910,32 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         memory.writeLong(statfsAddress + STATFS_NAME_LENGTH_OFFSET, STATFS_NAME_MAX);
         memory.writeLong(statfsAddress + STATFS_FRAGMENT_SIZE_OFFSET, STATFS_BLOCK_SIZE);
         memory.writeLong(statfsAddress + STATFS_FLAGS_OFFSET, 0);
+    }
+
+    /// Writes deterministic sysfs Linux generic 64-bit `struct statfs` fields.
+    protected void writeSysStatfs(long statfsAddress) {
+        memory.clear(statfsAddress, STATFS_SIZE);
+        memory.writeLong(statfsAddress + STATFS_TYPE_OFFSET, SYSFS_MAGIC);
+        memory.writeLong(statfsAddress + STATFS_BLOCK_SIZE_OFFSET, STATFS_BLOCK_SIZE);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_OFFSET, 0);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_FREE_OFFSET, 0);
+        memory.writeLong(statfsAddress + STATFS_BLOCKS_AVAILABLE_OFFSET, 0);
+        memory.writeLong(statfsAddress + STATFS_FILES_OFFSET, STATFS_FILE_COUNT);
+        memory.writeLong(statfsAddress + STATFS_FILES_FREE_OFFSET, STATFS_FILE_COUNT);
+        memory.writeLong(statfsAddress + STATFS_NAME_LENGTH_OFFSET, STATFS_NAME_MAX);
+        memory.writeLong(statfsAddress + STATFS_FRAGMENT_SIZE_OFFSET, STATFS_BLOCK_SIZE);
+        memory.writeLong(statfsAddress + STATFS_FLAGS_OFFSET, 0);
+    }
+
+    /// Writes deterministic Linux generic 64-bit `struct statfs` fields for a virtual filesystem mount.
+    protected void writeVirtualStatfs(VirtualMount mount, long statfsAddress) {
+        if (PROC_MOUNT_PATH.equals(mount.guestPath())) {
+            writeProcStatfs(statfsAddress);
+        } else if (SYS_MOUNT_PATH.equals(mount.guestPath())) {
+            writeSysStatfs(statfsAddress);
+        } else {
+            writeStatfs(statfsAddress);
+        }
     }
 
     /// Returns a deterministic synthetic inode number for a sandboxed host path.
@@ -6438,6 +6475,119 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.ZERO);
                 default -> null;
             };
+        }
+    }
+
+    /// Identifies sys regular files whose payload is generated on demand.
+    protected enum SysFile {
+        /// `/sys/devices/virtual/dmi/id/board_name`.
+        BOARD_NAME,
+
+        /// `/sys/devices/virtual/dmi/id/board_vendor`.
+        BOARD_VENDOR,
+
+        /// `/sys/devices/virtual/dmi/id/product_family`.
+        PRODUCT_FAMILY,
+
+        /// `/sys/devices/virtual/dmi/id/product_name`.
+        PRODUCT_NAME,
+
+        /// `/sys/devices/virtual/dmi/id/sys_vendor`.
+        SYS_VENDOR
+    }
+
+    /// Provides the built-in read-only virtual sys filesystem.
+    protected static final class SysFileSystem implements GuestFileSystem.VirtualFileSystem {
+        /// Returns a sys node at an absolute guest path, or null when absent.
+        @Override
+        public @Nullable VirtualNode node(String absoluteGuestPath) {
+            return switch (absoluteGuestPath) {
+                case SYS_MOUNT_PATH -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/class" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/class/dmi" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/class/dmi/id" ->
+                        VirtualNode.symbolicLink(absoluteGuestPath, SYS_MOUNT_PATH + "/devices/virtual/dmi/id");
+                case SYS_MOUNT_PATH + "/class/drm" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/class/power_supply" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/devices" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/devices/virtual" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi/id" -> VirtualNode.directory(absoluteGuestPath);
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi/id/board_name" ->
+                        VirtualNode.file(absoluteGuestPath, SysFile.BOARD_NAME);
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi/id/board_vendor" ->
+                        VirtualNode.file(absoluteGuestPath, SysFile.BOARD_VENDOR);
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi/id/product_family" ->
+                        VirtualNode.file(absoluteGuestPath, SysFile.PRODUCT_FAMILY);
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi/id/product_name" ->
+                        VirtualNode.file(absoluteGuestPath, SysFile.PRODUCT_NAME);
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi/id/sys_vendor" ->
+                        VirtualNode.file(absoluteGuestPath, SysFile.SYS_VENDOR);
+                default -> null;
+            };
+        }
+
+        /// Returns child sys nodes for a directory.
+        @Override
+        public VirtualNode @Unmodifiable [] childNodes(String directoryGuestPath) {
+            return switch (directoryGuestPath) {
+                case SYS_MOUNT_PATH -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/class"),
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/devices")
+                };
+                case SYS_MOUNT_PATH + "/class" -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/class/dmi"),
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/class/drm"),
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/class/power_supply")
+                };
+                case SYS_MOUNT_PATH + "/class/dmi" -> new VirtualNode[]{
+                        VirtualNode.symbolicLink(
+                                SYS_MOUNT_PATH + "/class/dmi/id",
+                                SYS_MOUNT_PATH + "/devices/virtual/dmi/id")
+                };
+                case SYS_MOUNT_PATH + "/class/drm", SYS_MOUNT_PATH + "/class/power_supply" -> new VirtualNode[0];
+                case SYS_MOUNT_PATH + "/devices" -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/devices/virtual")
+                };
+                case SYS_MOUNT_PATH + "/devices/virtual" -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/devices/virtual/dmi")
+                };
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi" -> new VirtualNode[]{
+                        VirtualNode.directory(SYS_MOUNT_PATH + "/devices/virtual/dmi/id")
+                };
+                case SYS_MOUNT_PATH + "/devices/virtual/dmi/id" -> new VirtualNode[]{
+                        VirtualNode.file(SYS_MOUNT_PATH + "/devices/virtual/dmi/id/board_name", SysFile.BOARD_NAME),
+                        VirtualNode.file(SYS_MOUNT_PATH + "/devices/virtual/dmi/id/board_vendor", SysFile.BOARD_VENDOR),
+                        VirtualNode.file(
+                                SYS_MOUNT_PATH + "/devices/virtual/dmi/id/product_family",
+                                SysFile.PRODUCT_FAMILY),
+                        VirtualNode.file(SYS_MOUNT_PATH + "/devices/virtual/dmi/id/product_name", SysFile.PRODUCT_NAME),
+                        VirtualNode.file(SYS_MOUNT_PATH + "/devices/virtual/dmi/id/sys_vendor", SysFile.SYS_VENDOR)
+                };
+                default -> new VirtualNode[0];
+            };
+        }
+
+        /// Returns generated bytes for a sys regular file.
+        @Override
+        public byte @Unmodifiable [] fileData(VirtualNode node) {
+            Object fileKey = node.fileKey();
+            if (!(fileKey instanceof SysFile file)) {
+                return new byte[0];
+            }
+
+            return switch (file) {
+                case BOARD_NAME, PRODUCT_NAME -> asciiBytes("GraalRISCV\n");
+                case BOARD_VENDOR, SYS_VENDOR -> asciiBytes("Glavo\n");
+                case PRODUCT_FAMILY -> asciiBytes("RV64 user-mode emulator\n");
+            };
+        }
+
+        /// Returns the target of a sys symbolic link.
+        @Override
+        public String linkTarget(VirtualNode node) {
+            @Nullable String target = node.linkTarget();
+            return target == null ? "" : target;
         }
     }
 
