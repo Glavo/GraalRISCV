@@ -172,6 +172,9 @@ final class TerminalDevice implements AutoCloseable {
     /// The next raw-mode replay byte to suppress from guest output.
     private int rawEchoedInputOffset = 0;
 
+    /// The current raw-mode escape sequence parsing state for local echo suppression.
+    private int rawEscapeState = 0;
+
     /// The number of guest process syscall handlers sharing this terminal.
     private int references = 1;
 
@@ -452,6 +455,9 @@ final class TerminalDevice implements AutoCloseable {
         for (int index = 0; index < length; index++) {
             byte input = buffer[index];
             int unsignedInput = Byte.toUnsignedInt(input);
+            if (isRawEscapeByte(unsignedInput)) {
+                continue;
+            }
             if (unsignedInput == controlChar(TERMIOS_ERASE_INDEX)) {
                 if (rawEchoedInput.length > 0) {
                     rawEchoedInput = Arrays.copyOf(rawEchoedInput, rawEchoedInput.length - 1);
@@ -465,6 +471,31 @@ final class TerminalDevice implements AutoCloseable {
                 appendRawEchoReplay(input);
             }
         }
+    }
+
+    /// Returns true when one raw input byte belongs to an escape sequence that should not be locally echoed.
+    private boolean isRawEscapeByte(int input) {
+        if (rawEscapeState == 0) {
+            if (input == 0x1b) {
+                rawEscapeState = 1;
+                return true;
+            }
+            return false;
+        }
+
+        if (rawEscapeState == 1) {
+            if (input == '[' || input == 'O') {
+                rawEscapeState = 2;
+                return true;
+            }
+            rawEscapeState = 0;
+            return true;
+        }
+
+        if (input >= 0x40 && input <= 0x7e) {
+            rawEscapeState = 0;
+        }
+        return true;
     }
 
     /// Appends one locally echoed raw input byte to the replay suppression buffer.
@@ -497,6 +528,7 @@ final class TerminalDevice implements AutoCloseable {
     private void clearRawEchoReplay() {
         rawEchoedInput = new byte[0];
         rawEchoedInputOffset = 0;
+        rawEscapeState = 0;
     }
 
     /// Returns true when the byte prefix contains a line break.
@@ -725,6 +757,9 @@ final class TerminalDevice implements AutoCloseable {
         /// Windows `ENABLE_ECHO_INPUT`.
         private static final int WINDOWS_ENABLE_ECHO_INPUT = 0x0004;
 
+        /// Windows `ENABLE_VIRTUAL_TERMINAL_INPUT`.
+        private static final int WINDOWS_ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
+
         /// Opens a Windows console mode controller for host standard input.
         static @Nullable HostTerminalMode openStandardInput() {
             String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
@@ -805,6 +840,7 @@ final class TerminalDevice implements AutoCloseable {
 
             int localFlags = readLocalFlags(buffer);
             mode &= ~(WINDOWS_ENABLE_PROCESSED_INPUT | WINDOWS_ENABLE_LINE_INPUT | WINDOWS_ENABLE_ECHO_INPUT);
+            mode |= WINDOWS_ENABLE_VIRTUAL_TERMINAL_INPUT;
             if ((localFlags & TERMIOS_LOCAL_SIGNALS) != 0) {
                 mode |= WINDOWS_ENABLE_PROCESSED_INPUT;
             }
