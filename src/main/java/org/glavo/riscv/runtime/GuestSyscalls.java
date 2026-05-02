@@ -8269,6 +8269,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Describes a guest socket object stored in the shared descriptor table.
+    protected interface GuestSocket extends AutoCloseable {
+        /// Releases socket-local resources.
+        @Override
+        default void close() throws IOException {
+        }
+    }
+
     /// Describes an open file description referenced by one or more guest file descriptors.
     @NotNullByDefault
     protected static final class OpenFile {
@@ -8301,6 +8309,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         /// The interest set backing an epoll descriptor.
         private final @Nullable EpollSet epollSet;
+
+        /// The socket object backing this descriptor, or null for non-socket entries.
+        private final @Nullable GuestSocket socket;
 
         /// The terminal device backing this descriptor, or null for non-terminal entries.
         private final @Nullable TerminalDevice terminalDevice;
@@ -8338,7 +8349,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// The number of guest descriptor table slots sharing this entry.
         private int references = 1;
 
-        /// Creates a file descriptor entry.
+        /// Creates a non-socket file descriptor entry.
         private OpenFile(
                 int standardFileDescriptor,
                 @Nullable TruffleFile path,
@@ -8359,6 +8370,51 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 boolean writable,
                 boolean append,
                 boolean nonblocking) {
+            this(
+                    standardFileDescriptor,
+                    path,
+                    guestPath,
+                    tarNode,
+                    virtualNode,
+                    virtualMount,
+                    channel,
+                    pipe,
+                    eventCounter,
+                    epollSet,
+                    null,
+                    terminalDevice,
+                    nullDevice,
+                    directory,
+                    pipeReader,
+                    pipeWriter,
+                    readable,
+                    writable,
+                    append,
+                    nonblocking);
+        }
+
+        /// Creates a file descriptor entry.
+        private OpenFile(
+                int standardFileDescriptor,
+                @Nullable TruffleFile path,
+                @Nullable String guestPath,
+                @Nullable TarNode tarNode,
+                @Nullable VirtualNode virtualNode,
+                @Nullable VirtualMount virtualMount,
+                @Nullable SeekableByteChannel channel,
+                @Nullable PipeBuffer pipe,
+                @Nullable EventCounter eventCounter,
+                @Nullable EpollSet epollSet,
+                @Nullable GuestSocket socket,
+                @Nullable TerminalDevice terminalDevice,
+                boolean nullDevice,
+                boolean directory,
+                boolean pipeReader,
+                boolean pipeWriter,
+                boolean readable,
+                boolean writable,
+                boolean append,
+                boolean nonblocking) {
             this.standardFileDescriptor = standardFileDescriptor;
             this.path = path;
             this.guestPath = guestPath;
@@ -8369,6 +8425,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             this.pipe = pipe;
             this.eventCounter = eventCounter;
             this.epollSet = epollSet;
+            this.socket = socket;
             this.terminalDevice = terminalDevice;
             this.nullDevice = nullDevice;
             this.directory = directory;
@@ -8754,6 +8811,31 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     false);
         }
 
+        /// Creates an entry backed by a guest socket object.
+        static OpenFile socket(GuestSocket socket, boolean nonblocking) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    socket,
+                    null,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    true,
+                    false,
+                    nonblocking);
+        }
+
         /// Returns true when this entry duplicates one of the original standard streams.
         boolean isStandardFileDescriptor() {
             return standardFileDescriptor >= 0;
@@ -8782,6 +8864,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when this entry is backed by an epoll interest set.
         boolean isEpollFile() {
             return epollSet != null;
+        }
+
+        /// Returns true when this entry is backed by a guest socket.
+        boolean isSocket() {
+            return socket != null;
         }
 
         /// Returns true when this entry is backed by a virtual terminal device.
@@ -8831,6 +8918,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         EpollSet epollSet() {
             assert epollSet != null;
             return epollSet;
+        }
+
+        /// Returns the guest socket backing this descriptor.
+        GuestSocket socket() {
+            assert socket != null;
+            return socket;
         }
 
         /// Returns the terminal device backing this descriptor.
@@ -8946,6 +9039,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 if (pipeWriter) {
                     pipe.closeWriter();
                 }
+                return;
+            }
+            if (socket != null) {
+                socket.close();
             }
         }
     }

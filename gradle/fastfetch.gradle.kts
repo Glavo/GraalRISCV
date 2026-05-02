@@ -153,8 +153,9 @@ tasks.register<JavaExec>("testFastfetch") {
             "--",
             "--logo", "none",
             "--pipe", "true",
+            "--show-errors", "true",
             "--structure",
-            "Title:Separator:OS:Host:Kernel:Uptime:Packages:Shell:Terminal:CPU:Memory:Swap:Disk:Locale"
+            "Title:Separator:OS:Host:Kernel:Uptime:Packages:Shell:Terminal:CPU:Memory:Swap:Disk:LocalIp:Battery:PowerAdapter:Locale"
         ))
     }
 
@@ -180,6 +181,9 @@ tasks.register<JavaExec>("testFastfetch") {
             "Swap: Unused",
             "Disk (/):",
             "graalriscv",
+            "Local IP: Failed to detect any IPs",
+            "Battery: No batteries found",
+            "Power Adapter: No power adapters found",
             "Locale: C"
         )
         val missingFragments = requiredOutputFragments.filterNot(actualOutput::contains)

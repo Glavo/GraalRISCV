@@ -372,11 +372,23 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `socket`.
     private static final long SYS_SOCKET = 198;
 
+    /// The Linux RISC-V syscall number for `bind`.
+    private static final long SYS_BIND = 200;
+
     /// The Linux RISC-V syscall number for `getsockname`.
     private static final long SYS_GETSOCKNAME = 204;
 
     /// The Linux RISC-V syscall number for `getpeername`.
     private static final long SYS_GETPEERNAME = 205;
+
+    /// The Linux RISC-V syscall number for `sendto`.
+    private static final long SYS_SENDTO = 206;
+
+    /// The Linux RISC-V syscall number for `recvfrom`.
+    private static final long SYS_RECVFROM = 207;
+
+    /// The Linux RISC-V syscall number for `recvmsg`.
+    private static final long SYS_RECVMSG = 212;
 
     /// The Linux RISC-V syscall number for `brk`.
     private static final long SYS_BRK = 214;
@@ -830,6 +842,69 @@ public final class GuestSyscallsTest {
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
+
+    /// Linux address family number for netlink sockets.
+    private static final long AF_NETLINK = 16;
+
+    /// Linux raw socket type.
+    private static final long SOCK_RAW = 3;
+
+    /// Linux netlink protocol number for route and interface metadata.
+    private static final long NETLINK_ROUTE = 0;
+
+    /// Byte size of Linux `struct sockaddr_nl`.
+    private static final int SOCKADDR_NL_SIZE = 12;
+
+    /// Byte offset of `nl_pid` inside Linux `struct sockaddr_nl`.
+    private static final int SOCKADDR_NL_PID_OFFSET = 4;
+
+    /// Byte offset of `nl_groups` inside Linux `struct sockaddr_nl`.
+    private static final int SOCKADDR_NL_GROUPS_OFFSET = 8;
+
+    /// Byte offset of `msg_namelen` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final int MSGHDR_NAME_LENGTH_OFFSET = Long.BYTES;
+
+    /// Byte offset of `msg_iov` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final int MSGHDR_IOV_OFFSET = 2 * Long.BYTES;
+
+    /// Byte offset of `msg_iovlen` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final int MSGHDR_IOV_LENGTH_OFFSET = 3 * Long.BYTES;
+
+    /// Byte offset of `msg_flags` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final int MSGHDR_FLAGS_OFFSET = 6 * Long.BYTES;
+
+    /// Byte size of one Linux RISC-V 64-bit `struct iovec`.
+    private static final int IOVEC_SIZE = 2 * Long.BYTES;
+
+    /// Byte offset of `iov_base` inside Linux RISC-V 64-bit `struct iovec`.
+    private static final int IOVEC_BASE_OFFSET = 0;
+
+    /// Byte offset of `iov_len` inside Linux RISC-V 64-bit `struct iovec`.
+    private static final int IOVEC_LENGTH_OFFSET = Long.BYTES;
+
+    /// Byte offset of `nlmsg_type` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_TYPE_OFFSET = Integer.BYTES;
+
+    /// Byte offset of `nlmsg_seq` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_SEQUENCE_OFFSET = 2 * Integer.BYTES;
+
+    /// Byte offset of `nlmsg_pid` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_PORT_ID_OFFSET = 3 * Integer.BYTES;
+
+    /// Linux netlink message type for end-of-dump responses.
+    private static final int NETLINK_MESSAGE_DONE = 3;
+
+    /// Linux rtnetlink message type for interface records.
+    private static final int RTM_NEWLINK = 16;
+
+    /// Linux rtnetlink message type for interface address records.
+    private static final int RTM_NEWADDR = 20;
+
+    /// Linux rtnetlink request type for interface records.
+    private static final int RTM_GETLINK = 18;
+
+    /// Linux rtnetlink request type for interface address records.
+    private static final int RTM_GETADDR = 22;
 
     /// Linux `EFD_SEMAPHORE`.
     private static final long EFD_SEMAPHORE = 1;
@@ -5159,6 +5234,76 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies minimal `NETLINK_ROUTE` sockets expose a loopback interface dump.
+    @Test
+    public void netlinkRouteSocketReportsLoopbackInterfaceDump() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
+            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 64;
+            long requestAddress = memory.baseAddress() + 128;
+            long messageAddress = memory.baseAddress() + 256;
+            long iovecAddress = memory.baseAddress() + 384;
+            long responseAddress = memory.baseAddress() + 512;
+
+            setSyscall(state, SYS_SOCKET, AF_NETLINK, SOCK_RAW | O_CLOEXEC, NETLINK_ROUTE);
+            state.syscalls().handle(state, TEST_PC);
+            int socketFileDescriptor = (int) state.register(10);
+            assertEquals(3, socketFileDescriptor);
+
+            memory.clear(sockaddrAddress, SOCKADDR_NL_SIZE);
+            memory.writeShort(sockaddrAddress, (short) AF_NETLINK);
+            setSyscall(state, SYS_BIND, socketFileDescriptor, sockaddrAddress, SOCKADDR_NL_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeInt(lengthAddress, SOCKADDR_NL_SIZE);
+            setSyscall(state, SYS_GETSOCKNAME, socketFileDescriptor, sockaddrAddress, lengthAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(SOCKADDR_NL_SIZE, memory.readInt(lengthAddress));
+            long portId = Integer.toUnsignedLong(memory.readInt(sockaddrAddress + SOCKADDR_NL_PID_OFFSET));
+            assertTrue(portId > 0);
+            assertEquals(0, memory.readInt(sockaddrAddress + SOCKADDR_NL_GROUPS_OFFSET));
+
+            writeNetlinkRequest(memory, requestAddress, RTM_GETLINK, 11);
+            setSyscall(state, SYS_SENDTO, socketFileDescriptor, requestAddress, 16, 0, sockaddrAddress, SOCKADDR_NL_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(16, state.register(10));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(RTM_NEWLINK, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+            assertEquals(11, memory.readInt(responseAddress + NETLINK_HEADER_SEQUENCE_OFFSET));
+            assertEquals(portId, Integer.toUnsignedLong(memory.readInt(responseAddress + NETLINK_HEADER_PORT_ID_OFFSET)));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(NETLINK_MESSAGE_DONE, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+
+            writeNetlinkRequest(memory, requestAddress, RTM_GETADDR, 12);
+            setSyscall(state, SYS_SENDTO, socketFileDescriptor, requestAddress, 16, 0, sockaddrAddress, SOCKADDR_NL_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(16, state.register(10));
+
+            prepareRecvmsg(memory, messageAddress, sockaddrAddress, iovecAddress, responseAddress, 512);
+            setSyscall(state, SYS_RECVMSG, socketFileDescriptor, messageAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) > 0);
+            assertEquals(RTM_NEWADDR, memory.readUnsignedShort(responseAddress + NETLINK_HEADER_TYPE_OFFSET));
+            assertEquals(12, memory.readInt(responseAddress + NETLINK_HEADER_SEQUENCE_OFFSET));
+            assertEquals(portId, Integer.toUnsignedLong(memory.readInt(responseAddress + NETLINK_HEADER_PORT_ID_OFFSET)));
+
+            setSyscall(state, SYS_CLOSE, socketFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
     /// Verifies callers can mount a custom virtual filesystem provider.
     @Test
     public void customVirtualFilesystemMountCanServeFiles() {
@@ -6582,6 +6727,33 @@ public final class GuestSyscallsTest {
             bytes[index] = (byte) value;
         }
         return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /// Writes a minimal Linux `struct nlmsghdr` request.
+    private static void writeNetlinkRequest(Memory memory, long address, int type, int sequence) {
+        memory.clear(address, 16);
+        memory.writeInt(address, 16);
+        memory.writeShort(address + NETLINK_HEADER_TYPE_OFFSET, (short) type);
+        memory.writeInt(address + NETLINK_HEADER_SEQUENCE_OFFSET, sequence);
+    }
+
+    /// Prepares a guest `struct msghdr` with one receive iovec.
+    private static void prepareRecvmsg(
+            Memory memory,
+            long messageAddress,
+            long nameAddress,
+            long iovecAddress,
+            long responseAddress,
+            long responseLength) {
+        memory.clear(messageAddress, 64);
+        memory.clear(nameAddress, SOCKADDR_NL_SIZE);
+        memory.writeLong(messageAddress, nameAddress);
+        memory.writeInt(messageAddress + MSGHDR_NAME_LENGTH_OFFSET, SOCKADDR_NL_SIZE);
+        memory.writeLong(messageAddress + MSGHDR_IOV_OFFSET, iovecAddress);
+        memory.writeLong(messageAddress + MSGHDR_IOV_LENGTH_OFFSET, 1);
+        memory.writeLong(iovecAddress + IOVEC_BASE_OFFSET, responseAddress);
+        memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, responseLength);
+        memory.clear(responseAddress, responseLength);
     }
 
     /// Verifies one `struct linux_dirent64` record and returns the next record address.

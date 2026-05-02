@@ -18,6 +18,7 @@ import org.jetbrains.annotations.Unmodifiable;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 
 /// Handles the Linux-compatible syscall subset exposed by the simulator.
 @NotNullByDefault
@@ -1482,9 +1483,528 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return groupCount;
     }
 
-    /// Rejects socket creation for the current non-networked user-mode runtime.
-    protected static long socket(long domain, long type, long protocol) {
+    /// Linux address family number for netlink sockets.
+    private static final long AF_NETLINK = 16;
+
+    /// Linux socket type mask excluding socket creation flags.
+    private static final long SOCK_TYPE_MASK = 0xf;
+
+    /// Linux datagram socket type.
+    private static final long SOCK_DGRAM = 2;
+
+    /// Linux raw socket type.
+    private static final long SOCK_RAW = 3;
+
+    /// Linux netlink protocol number for route and interface metadata.
+    private static final long NETLINK_ROUTE = 0;
+
+    /// Byte size of Linux `struct sockaddr_nl`.
+    private static final long SOCKADDR_NL_SIZE = 12;
+
+    /// Byte offset of `nl_family` inside Linux `struct sockaddr_nl`.
+    private static final long SOCKADDR_NL_FAMILY_OFFSET = 0;
+
+    /// Byte offset of `nl_pid` inside Linux `struct sockaddr_nl`.
+    private static final long SOCKADDR_NL_PID_OFFSET = 4;
+
+    /// Byte offset of `nl_groups` inside Linux `struct sockaddr_nl`.
+    private static final long SOCKADDR_NL_GROUPS_OFFSET = 8;
+
+    /// Byte offset of `msg_name` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final long MSGHDR_NAME_OFFSET = 0;
+
+    /// Byte offset of `msg_namelen` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final long MSGHDR_NAME_LENGTH_OFFSET = Long.BYTES;
+
+    /// Byte offset of `msg_iov` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final long MSGHDR_IOV_OFFSET = 2L * Long.BYTES;
+
+    /// Byte offset of `msg_iovlen` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final long MSGHDR_IOV_LENGTH_OFFSET = 3L * Long.BYTES;
+
+    /// Byte offset of `msg_flags` inside Linux RISC-V 64-bit `struct msghdr`.
+    private static final long MSGHDR_FLAGS_OFFSET = 6L * Long.BYTES;
+
+    /// Byte size of Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_SIZE = 16;
+
+    /// Byte size of a minimal `NLMSG_DONE` response with a zero status payload.
+    private static final int NETLINK_DONE_MESSAGE_SIZE = NETLINK_HEADER_SIZE + Integer.BYTES;
+
+    /// Byte offset of `nlmsg_len` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_LENGTH_OFFSET = 0;
+
+    /// Byte offset of `nlmsg_type` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_TYPE_OFFSET = Integer.BYTES;
+
+    /// Byte offset of `nlmsg_flags` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_FLAGS_OFFSET = Integer.BYTES + Short.BYTES;
+
+    /// Byte offset of `nlmsg_seq` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_SEQUENCE_OFFSET = 2 * Integer.BYTES;
+
+    /// Byte offset of `nlmsg_pid` inside Linux `struct nlmsghdr`.
+    private static final int NETLINK_HEADER_PORT_ID_OFFSET = 3 * Integer.BYTES;
+
+    /// Linux netlink message type for end-of-dump responses.
+    private static final int NETLINK_MESSAGE_DONE = 3;
+
+    /// Linux rtnetlink message type for interface records.
+    private static final int RTM_NEWLINK = 16;
+
+    /// Linux rtnetlink message type for interface address records.
+    private static final int RTM_NEWADDR = 20;
+
+    /// Linux rtnetlink request type for interface records.
+    private static final int RTM_GETLINK = 18;
+
+    /// Linux rtnetlink request type for interface address records.
+    private static final int RTM_GETADDR = 22;
+
+    /// Linux netlink flag marking one message as part of a multipart response.
+    private static final int NETLINK_FLAG_MULTI = 2;
+
+    /// Linux interface attribute type for the interface name.
+    private static final int IFLA_IFNAME = 3;
+
+    /// Linux interface address attribute type for the protocol address.
+    private static final int IFA_ADDRESS = 1;
+
+    /// Linux interface address attribute type for the local address.
+    private static final int IFA_LOCAL = 2;
+
+    /// Linux interface address attribute type for the interface label.
+    private static final int IFA_LABEL = 3;
+
+    /// Linux interface index used for the synthetic loopback interface.
+    private static final int LOOPBACK_INTERFACE_INDEX = 1;
+
+    /// Linux ARPHRD_LOOPBACK hardware type.
+    private static final int LOOPBACK_HARDWARE_TYPE = 772;
+
+    /// Linux interface flags for an up and running loopback interface.
+    private static final int LOOPBACK_INTERFACE_FLAGS = 0x49;
+
+    /// Linux address family number for IPv4.
+    private static final int AF_INET = 2;
+
+    /// Linux rtnetlink host scope used by loopback addresses.
+    private static final int RT_SCOPE_HOST = 254;
+
+    /// Linux permanent interface-address flag.
+    private static final int IFA_F_PERMANENT = 0x80;
+
+    /// Linux socket type creation flags accepted by the minimal socket runtime.
+    private static final long SUPPORTED_SOCKET_TYPE_FLAGS = O_NONBLOCK | O_CLOEXEC;
+
+    /// Creates a guest socket for the minimal network-related Linux runtime.
+    protected long socket(long domain, long type, long protocol) {
+        long socketType = type & SOCK_TYPE_MASK;
+        long typeFlags = type & ~SOCK_TYPE_MASK;
+        if ((typeFlags & ~SUPPORTED_SOCKET_TYPE_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (domain == AF_NETLINK
+                && (socketType == SOCK_RAW || socketType == SOCK_DGRAM)
+                && protocol == NETLINK_ROUTE) {
+            return addOpenFile(OpenFile.socket(new NetlinkRouteSocket(), (typeFlags & O_NONBLOCK) != 0));
+        }
         return EAFNOSUPPORT;
+    }
+
+    /// Binds a minimal netlink socket to a local port id.
+    protected long bind(int fileDescriptor, long address, long addressLength) {
+        @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
+        if (socket == null) {
+            return ENOTSOCK;
+        }
+        if (address != 0) {
+            if (addressLength < SOCKADDR_NL_SIZE || !memory.isBacked(address, SOCKADDR_NL_SIZE)) {
+                return EFAULT;
+            }
+            if (Short.toUnsignedLong(memory.readShort(address + SOCKADDR_NL_FAMILY_OFFSET)) != AF_NETLINK) {
+                return EINVAL;
+            }
+            socket.bind(Integer.toUnsignedLong(memory.readInt(address + SOCKADDR_NL_PID_OFFSET)));
+        } else {
+            socket.bind(0);
+        }
+        return 0;
+    }
+
+    /// Sends one minimal netlink route request and queues an empty dump response.
+    protected long sendto(
+            int fileDescriptor,
+            long bufferAddress,
+            long length,
+            long flags,
+            long destinationAddress,
+            long destinationLength) {
+        @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
+        if (socket == null) {
+            return ENOTSOCK;
+        }
+        if (length < 0 || length > Integer.MAX_VALUE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(bufferAddress, length)) {
+            return EFAULT;
+        }
+        if (destinationAddress != 0 && destinationLength < SOCKADDR_NL_SIZE) {
+            return EINVAL;
+        }
+
+        byte[] request = memory.readBytes(bufferAddress, Math.min(length, NETLINK_HEADER_SIZE));
+        socket.enqueueResponse(request, process.id());
+        return length;
+    }
+
+    /// Receives one queued minimal netlink route response into a flat guest buffer.
+    protected long recvfrom(
+            int fileDescriptor,
+            long bufferAddress,
+            long length,
+            long flags,
+            long sourceAddress,
+            long sourceLengthAddress) {
+        @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
+        if (socket == null) {
+            return ENOTSOCK;
+        }
+        if (length < 0 || length > Integer.MAX_VALUE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(bufferAddress, length)) {
+            return EFAULT;
+        }
+
+        @Nullable byte[] response = socket.pollResponse();
+        if (response == null) {
+            return EAGAIN;
+        }
+        writeSockaddrNl(sourceAddress, sourceLengthAddress, 0);
+        int count = (int) Math.min(length, response.length);
+        memory.writeBytes(bufferAddress, response, 0, count);
+        return count;
+    }
+
+    /// Sends one minimal netlink route request described by a guest `struct msghdr`.
+    protected long sendmsg(int fileDescriptor, long messageAddress, long flags) {
+        @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
+        if (socket == null) {
+            return ENOTSOCK;
+        }
+        if (!memory.isBacked(messageAddress, MSGHDR_FLAGS_OFFSET + Integer.BYTES)) {
+            return EFAULT;
+        }
+
+        long iovecAddress = memory.readLong(messageAddress + MSGHDR_IOV_OFFSET);
+        long iovecCount = memory.readLong(messageAddress + MSGHDR_IOV_LENGTH_OFFSET);
+        if (iovecCount < 0 || iovecCount > IOV_MAX) {
+            return EINVAL;
+        }
+
+        byte[] request = readIovPrefix(iovecAddress, iovecCount, NETLINK_HEADER_SIZE);
+        if (request == null) {
+            return EFAULT;
+        }
+        long byteCount = iovByteCount(iovecAddress, iovecCount);
+        if (byteCount < 0) {
+            return byteCount;
+        }
+        socket.enqueueResponse(request, process.id());
+        return byteCount;
+    }
+
+    /// Receives one queued minimal netlink route response into guest `struct msghdr` buffers.
+    protected long recvmsg(int fileDescriptor, long messageAddress, long flags) {
+        @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
+        if (socket == null) {
+            return ENOTSOCK;
+        }
+        if (!memory.isBacked(messageAddress, MSGHDR_FLAGS_OFFSET + Integer.BYTES)) {
+            return EFAULT;
+        }
+
+        @Nullable byte[] response = socket.pollResponse();
+        if (response == null) {
+            return EAGAIN;
+        }
+
+        long nameAddress = memory.readLong(messageAddress + MSGHDR_NAME_OFFSET);
+        long nameLength = Integer.toUnsignedLong(memory.readInt(messageAddress + MSGHDR_NAME_LENGTH_OFFSET));
+        if (nameAddress != 0 && nameLength >= SOCKADDR_NL_SIZE) {
+            writeSockaddrNl(nameAddress, 0, 0);
+            memory.writeInt(messageAddress + MSGHDR_NAME_LENGTH_OFFSET, (int) SOCKADDR_NL_SIZE);
+        }
+        memory.writeInt(messageAddress + MSGHDR_FLAGS_OFFSET, 0);
+
+        long iovecAddress = memory.readLong(messageAddress + MSGHDR_IOV_OFFSET);
+        long iovecCount = memory.readLong(messageAddress + MSGHDR_IOV_LENGTH_OFFSET);
+        if (iovecCount < 0 || iovecCount > IOV_MAX) {
+            return EINVAL;
+        }
+        return writeIovBytes(iovecAddress, iovecCount, response);
+    }
+
+    /// Writes the local netlink socket address for `getsockname`.
+    protected long getsockname(int fileDescriptor, long address, long lengthAddress) {
+        @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
+        if (socket == null) {
+            return ENOTSOCK;
+        }
+        return writeSockaddrNl(address, lengthAddress, socket.portId(process.id()));
+    }
+
+    /// Reports that the minimal netlink socket has no connected peer.
+    protected long getpeername(int fileDescriptor, long address, long lengthAddress) {
+        return netlinkRouteSocket(fileDescriptor) == null ? ENOTSOCK : EINVAL;
+    }
+
+    /// Returns the netlink route socket backing a descriptor, or null when the descriptor is not such a socket.
+    private @Nullable NetlinkRouteSocket netlinkRouteSocket(int fileDescriptor) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.isSocket()) {
+            return null;
+        }
+
+        GuestSocket socket = openFile.socket();
+        return socket instanceof NetlinkRouteSocket netlinkSocket ? netlinkSocket : null;
+    }
+
+    /// Writes a Linux `struct sockaddr_nl` through either direct or value-result length addressing.
+    private long writeSockaddrNl(long address, long lengthAddress, long portId) {
+        if (lengthAddress != 0 && !memory.isBacked(lengthAddress, Integer.BYTES)) {
+            return EFAULT;
+        }
+        if (address != 0) {
+            if (!memory.isBacked(address, SOCKADDR_NL_SIZE)) {
+                return EFAULT;
+            }
+            memory.clear(address, SOCKADDR_NL_SIZE);
+            memory.writeShort(address + SOCKADDR_NL_FAMILY_OFFSET, (short) AF_NETLINK);
+            memory.writeInt(address + SOCKADDR_NL_PID_OFFSET, (int) portId);
+            memory.writeInt(address + SOCKADDR_NL_GROUPS_OFFSET, 0);
+        }
+        if (lengthAddress != 0) {
+            memory.writeInt(lengthAddress, (int) SOCKADDR_NL_SIZE);
+        }
+        return 0;
+    }
+
+    /// Reads the netlink sequence number from a request header prefix.
+    private static int netlinkSequence(byte[] header) {
+        return header.length >= NETLINK_HEADER_SEQUENCE_OFFSET + Integer.BYTES
+                ? getLittleEndianInt(header, NETLINK_HEADER_SEQUENCE_OFFSET)
+                : 0;
+    }
+
+    /// Reads the netlink message type from a request header prefix.
+    private static int netlinkType(byte[] header) {
+        return header.length >= NETLINK_HEADER_TYPE_OFFSET + Short.BYTES
+                ? getLittleEndianShort(header, NETLINK_HEADER_TYPE_OFFSET)
+                : 0;
+    }
+
+    /// Reads a little-endian unsigned 16-bit value from a byte array.
+    private static int getLittleEndianShort(byte[] bytes, int offset) {
+        return (bytes[offset] & 0xff) | ((bytes[offset + 1] & 0xff) << 8);
+    }
+
+    /// Reads a little-endian 32-bit value from a byte array.
+    private static int getLittleEndianInt(byte[] bytes, int offset) {
+        return (bytes[offset] & 0xff)
+                | ((bytes[offset + 1] & 0xff) << 8)
+                | ((bytes[offset + 2] & 0xff) << 16)
+                | ((bytes[offset + 3] & 0xff) << 24);
+    }
+
+    /// Writes a little-endian 16-bit value into a byte array.
+    private static void putLittleEndianShort(byte[] bytes, int offset, int value) {
+        bytes[offset] = (byte) value;
+        bytes[offset + 1] = (byte) (value >>> 8);
+    }
+
+    /// Writes a little-endian 32-bit value into a byte array.
+    private static void putLittleEndianInt(byte[] bytes, int offset, int value) {
+        bytes[offset] = (byte) value;
+        bytes[offset + 1] = (byte) (value >>> 8);
+        bytes[offset + 2] = (byte) (value >>> 16);
+        bytes[offset + 3] = (byte) (value >>> 24);
+    }
+
+    /// Returns a 4-byte aligned netlink payload size.
+    private static int netlinkAlign(int value) {
+        return (value + 3) & ~3;
+    }
+
+    /// Writes a netlink message header into a response buffer.
+    private static void putNetlinkHeader(byte[] bytes, int type, int sequence, long portId) {
+        putLittleEndianInt(bytes, NETLINK_HEADER_LENGTH_OFFSET, bytes.length);
+        putLittleEndianShort(bytes, NETLINK_HEADER_TYPE_OFFSET, type);
+        putLittleEndianShort(bytes, NETLINK_HEADER_FLAGS_OFFSET, NETLINK_FLAG_MULTI);
+        putLittleEndianInt(bytes, NETLINK_HEADER_SEQUENCE_OFFSET, sequence);
+        putLittleEndianInt(bytes, NETLINK_HEADER_PORT_ID_OFFSET, (int) portId);
+    }
+
+    /// Writes a Linux `struct rtattr` and its payload into a response buffer.
+    private static void putRouteAttribute(byte[] bytes, int offset, int type, byte[] payload) {
+        putLittleEndianShort(bytes, offset, Short.BYTES * 2 + payload.length);
+        putLittleEndianShort(bytes, offset + Short.BYTES, type);
+        System.arraycopy(payload, 0, bytes, offset + 2 * Short.BYTES, payload.length);
+    }
+
+    /// Builds one synthetic loopback `RTM_NEWLINK` message.
+    private static byte[] netlinkLoopbackLinkMessage(int sequence, long portId) {
+        byte[] name = new byte[]{'l', 'o', 0};
+        int attributeOffset = NETLINK_HEADER_SIZE + 16;
+        int size = attributeOffset + netlinkAlign(2 * Short.BYTES + name.length);
+        byte[] response = new byte[size];
+        putNetlinkHeader(response, RTM_NEWLINK, sequence, portId);
+        putLittleEndianShort(response, NETLINK_HEADER_SIZE + 2, LOOPBACK_HARDWARE_TYPE);
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 4, LOOPBACK_INTERFACE_INDEX);
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 8, LOOPBACK_INTERFACE_FLAGS);
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 12, -1);
+        putRouteAttribute(response, attributeOffset, IFLA_IFNAME, name);
+        return response;
+    }
+
+    /// Builds one synthetic loopback IPv4 `RTM_NEWADDR` message.
+    private static byte[] netlinkLoopbackAddressMessage(int sequence, long portId) {
+        byte[] address = new byte[]{127, 0, 0, 1};
+        byte[] label = new byte[]{'l', 'o', 0};
+        int attributeOffset = NETLINK_HEADER_SIZE + 8;
+        int addressAttributeSize = netlinkAlign(2 * Short.BYTES + address.length);
+        int labelAttributeSize = netlinkAlign(2 * Short.BYTES + label.length);
+        byte[] response = new byte[attributeOffset + 2 * addressAttributeSize + labelAttributeSize];
+        putNetlinkHeader(response, RTM_NEWADDR, sequence, portId);
+        response[NETLINK_HEADER_SIZE] = AF_INET;
+        response[NETLINK_HEADER_SIZE + 1] = 8;
+        response[NETLINK_HEADER_SIZE + 2] = (byte) IFA_F_PERMANENT;
+        response[NETLINK_HEADER_SIZE + 3] = (byte) RT_SCOPE_HOST;
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE + 4, LOOPBACK_INTERFACE_INDEX);
+        putRouteAttribute(response, attributeOffset, IFA_ADDRESS, address);
+        putRouteAttribute(response, attributeOffset + addressAttributeSize, IFA_LOCAL, address);
+        putRouteAttribute(response, attributeOffset + 2 * addressAttributeSize, IFA_LABEL, label);
+        return response;
+    }
+
+    /// Builds one synthetic `NLMSG_DONE` message.
+    private static byte[] netlinkDoneMessage(int sequence, long portId) {
+        byte[] response = new byte[NETLINK_DONE_MESSAGE_SIZE];
+        putNetlinkHeader(response, NETLINK_MESSAGE_DONE, sequence, portId);
+        putLittleEndianInt(response, NETLINK_HEADER_SIZE, 0);
+        return response;
+    }
+
+    /// Reads the first bytes from guest iovecs, returning null when any range is invalid.
+    private byte @Nullable [] readIovPrefix(long iovecAddress, long iovecCount, int maximumLength) {
+        if (maximumLength == 0) {
+            return new byte[0];
+        }
+        if (iovecCount > 0 && !memory.isBacked(iovecAddress, iovecCount * IOVEC_SIZE)) {
+            return null;
+        }
+
+        byte[] result = new byte[maximumLength];
+        int copied = 0;
+        for (long index = 0; index < iovecCount && copied < maximumLength; index++) {
+            long entryAddress = iovecAddress + index * IOVEC_SIZE;
+            long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+            long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+            if (length < 0 || length > Integer.MAX_VALUE || !memory.isBacked(baseAddress, length)) {
+                return null;
+            }
+            int copyLength = (int) Math.min(length, maximumLength - copied);
+            byte[] bytes = memory.readBytes(baseAddress, copyLength);
+            System.arraycopy(bytes, 0, result, copied, copyLength);
+            copied += copyLength;
+        }
+
+        if (copied == result.length) {
+            return result;
+        }
+
+        byte[] truncated = new byte[copied];
+        System.arraycopy(result, 0, truncated, 0, copied);
+        return truncated;
+    }
+
+    /// Returns the total byte count described by guest iovecs, or a raw negative Linux error.
+    private long iovByteCount(long iovecAddress, long iovecCount) {
+        if (iovecCount > 0 && !memory.isBacked(iovecAddress, iovecCount * IOVEC_SIZE)) {
+            return EFAULT;
+        }
+        long total = 0;
+        for (long index = 0; index < iovecCount; index++) {
+            long length = memory.readLong(iovecAddress + index * IOVEC_SIZE + IOVEC_LENGTH_OFFSET);
+            if (length < 0 || Long.MAX_VALUE - total < length) {
+                return EINVAL;
+            }
+            total += length;
+        }
+        return total;
+    }
+
+    /// Writes bytes into guest iovecs and returns the copied byte count, or a raw negative Linux error.
+    private long writeIovBytes(long iovecAddress, long iovecCount, byte[] bytes) {
+        if (iovecCount > 0 && !memory.isBacked(iovecAddress, iovecCount * IOVEC_SIZE)) {
+            return EFAULT;
+        }
+
+        int copied = 0;
+        for (long index = 0; index < iovecCount && copied < bytes.length; index++) {
+            long entryAddress = iovecAddress + index * IOVEC_SIZE;
+            long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+            long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+            if (length < 0 || length > Integer.MAX_VALUE || !memory.isBacked(baseAddress, length)) {
+                return EFAULT;
+            }
+            int copyLength = (int) Math.min(length, bytes.length - copied);
+            memory.writeBytes(baseAddress, bytes, copied, copyLength);
+            copied += copyLength;
+        }
+        return copied;
+    }
+
+    /// Stores the queued responses for one minimal `NETLINK_ROUTE` socket.
+    private static final class NetlinkRouteSocket implements GuestSocket {
+        /// Queued response datagrams.
+        private final ArrayDeque<byte[]> responses = new ArrayDeque<>();
+
+        /// Local netlink port id, or zero until assigned lazily.
+        private long portId;
+
+        /// Stores the requested local port id.
+        void bind(long requestedPortId) {
+            this.portId = requestedPortId;
+        }
+
+        /// Returns the local port id, assigning the process id when the guest requested automatic binding.
+        long portId(long processId) {
+            if (portId == 0) {
+                portId = processId;
+            }
+            return portId;
+        }
+
+        /// Queues synthetic responses for the supplied rtnetlink request.
+        void enqueueResponse(byte[] request, long processId) {
+            long localPortId = portId(processId);
+            int sequence = netlinkSequence(request);
+            int type = netlinkType(request);
+            if (type == RTM_GETLINK) {
+                responses.add(netlinkLoopbackLinkMessage(sequence, localPortId));
+            } else if (type == RTM_GETADDR) {
+                responses.add(netlinkLoopbackAddressMessage(sequence, localPortId));
+            }
+            responses.add(netlinkDoneMessage(sequence, localPortId));
+        }
+
+        /// Returns and removes the next queued response, or null when none is available.
+        @Nullable byte[] pollResponse() {
+            return responses.poll();
+        }
     }
 
 
@@ -1989,11 +2509,26 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `socket`.
     private static final int SYS_SOCKET = 198;
 
+    /// The Linux RISC-V syscall number for `bind`.
+    private static final int SYS_BIND = 200;
+
     /// The Linux RISC-V syscall number for `getsockname`.
     private static final int SYS_GETSOCKNAME = 204;
 
     /// The Linux RISC-V syscall number for `getpeername`.
     private static final int SYS_GETPEERNAME = 205;
+
+    /// The Linux RISC-V syscall number for `sendto`.
+    private static final int SYS_SENDTO = 206;
+
+    /// The Linux RISC-V syscall number for `recvfrom`.
+    private static final int SYS_RECVFROM = 207;
+
+    /// The Linux RISC-V syscall number for `sendmsg`.
+    private static final int SYS_SENDMSG = 211;
+
+    /// The Linux RISC-V syscall number for `recvmsg`.
+    private static final int SYS_RECVMSG = 212;
 
     /// The Linux RISC-V syscall number for `brk`.
     private static final int SYS_BRK = 214;
@@ -2299,7 +2834,40 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_GETEGID -> state.setRegister(10, credentials.effectiveGroupId());
             case SYS_SYSINFO -> state.setRegister(10, sysinfo(state.register(10)));
             case SYS_SOCKET -> state.setRegister(10, socket(state.register(10), state.register(11), state.register(12)));
-            case SYS_GETSOCKNAME, SYS_GETPEERNAME -> state.setRegister(10, ENOTSOCK);
+            case SYS_BIND -> state.setRegister(10, bind(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_GETSOCKNAME -> state.setRegister(10, getsockname(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_GETPEERNAME -> state.setRegister(10, getpeername(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_SENDTO -> state.setRegister(10, sendto(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
+            case SYS_RECVFROM -> state.setRegister(10, recvfrom(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
+            case SYS_SENDMSG -> state.setRegister(10, sendmsg(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_RECVMSG -> state.setRegister(10, recvmsg(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_CLONE -> state.setRegister(10, clone(
                     state,
                     pc,
