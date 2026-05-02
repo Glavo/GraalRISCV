@@ -7,9 +7,6 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.RiscVLanguage;
-import org.glavo.riscv.constants.RiscVExtensions;
-import org.glavo.riscv.constants.Rva22Profile;
-import org.glavo.riscv.constants.Rva23Profile;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.ProcessImageReplacedException;
 import org.glavo.riscv.exception.RiscVException;
@@ -54,2132 +51,1156 @@ import java.util.Set;
 @NotNullByDefault
 public sealed abstract class GuestSyscalls implements AutoCloseable
         permits LinuxGuestSyscalls, FreeBsdGuestSyscalls {
-    /// The Linux RISC-V syscall number for `getxattr`.
-    private static final int SYS_GETXATTR = 8;
-
-    /// The Linux RISC-V syscall number for `lgetxattr`.
-    private static final int SYS_LGETXATTR = 9;
-
-    /// The Linux RISC-V syscall number for `fgetxattr`.
-    private static final int SYS_FGETXATTR = 10;
-
-    /// The Linux RISC-V syscall number for `listxattr`.
-    private static final int SYS_LISTXATTR = 11;
-
-    /// The Linux RISC-V syscall number for `llistxattr`.
-    private static final int SYS_LLISTXATTR = 12;
-
-    /// The Linux RISC-V syscall number for `flistxattr`.
-    private static final int SYS_FLISTXATTR = 13;
-
-    /// The Linux RISC-V syscall number for `getcwd`.
-    private static final int SYS_GETCWD = 17;
-
-    /// The Linux RISC-V syscall number for `eventfd2`.
-    private static final int SYS_EVENTFD2 = 19;
-
-    /// The Linux RISC-V syscall number for `epoll_create1`.
-    private static final int SYS_EPOLL_CREATE1 = 20;
-
-    /// The Linux RISC-V syscall number for `epoll_ctl`.
-    private static final int SYS_EPOLL_CTL = 21;
-
-    /// The Linux RISC-V syscall number for `epoll_pwait`.
-    private static final int SYS_EPOLL_PWAIT = 22;
-
-    /// The Linux RISC-V syscall number for `dup`.
-    private static final int SYS_DUP = 23;
-
-    /// The Linux RISC-V syscall number for `dup3`.
-    private static final int SYS_DUP3 = 24;
-
-    /// The Linux RISC-V syscall number for `fcntl`.
-    private static final int SYS_FCNTL = 25;
-
-    /// The Linux RISC-V syscall number for `ioctl`.
-    private static final int SYS_IOCTL = 29;
-
-    /// The Linux RISC-V syscall number for `mkdirat`.
-    private static final int SYS_MKDIRAT = 34;
-
-    /// The Linux RISC-V syscall number for `unlinkat`.
-    private static final int SYS_UNLINKAT = 35;
-
-    /// The Linux RISC-V syscall number for `renameat`.
-    private static final int SYS_RENAMEAT = 38;
-
-    /// The Linux RISC-V syscall number for `statfs`.
-    private static final int SYS_STATFS = 43;
-
-    /// The Linux RISC-V syscall number for `fstatfs`.
-    private static final int SYS_FSTATFS = 44;
-
-    /// The Linux RISC-V syscall number for `truncate`.
-    private static final int SYS_TRUNCATE = 45;
-
-    /// The Linux RISC-V syscall number for `ftruncate`.
-    private static final int SYS_FTRUNCATE = 46;
-
-    /// The Linux RISC-V syscall number for `faccessat`.
-    private static final int SYS_FACCESSAT = 48;
-
-    /// The Linux RISC-V syscall number for `chdir`.
-    private static final int SYS_CHDIR = 49;
-
-    /// The Linux RISC-V syscall number for `fchdir`.
-    private static final int SYS_FCHDIR = 50;
-
-    /// The Linux RISC-V syscall number for `fchownat`.
-    private static final int SYS_FCHOWNAT = 54;
-
-    /// The Linux RISC-V syscall number for `openat`.
-    private static final int SYS_OPENAT = 56;
-
-    /// The Linux RISC-V syscall number for `close`.
-    private static final int SYS_CLOSE = 57;
-
-    /// The Linux RISC-V syscall number for `pipe2`.
-    private static final int SYS_PIPE2 = 59;
-
-    /// The Linux RISC-V syscall number for `getdents64`.
-    private static final int SYS_GETDENTS64 = 61;
-
-    /// The Linux RISC-V syscall number for `lseek`.
-    private static final int SYS_LSEEK = 62;
-
-    /// The Linux RISC-V syscall number for `read`.
-    private static final int SYS_READ = 63;
-
-    /// The Linux RISC-V syscall number for `write`.
-    private static final int SYS_WRITE = 64;
-
-    /// The Linux RISC-V syscall number for `readv`.
-    private static final int SYS_READV = 65;
-
-    /// The Linux RISC-V syscall number for `writev`.
-    private static final int SYS_WRITEV = 66;
-
-    /// The Linux RISC-V syscall number for `pread64`.
-    private static final int SYS_PREAD64 = 67;
-
-    /// The Linux RISC-V syscall number for `pwrite64`.
-    private static final int SYS_PWRITE64 = 68;
-
-    /// The Linux RISC-V syscall number for `pselect6`.
-    private static final int SYS_PSELECT6 = 72;
-
-    /// The Linux RISC-V syscall number for `ppoll`.
-    private static final int SYS_PPOLL = 73;
-
-    /// The Linux RISC-V syscall number for `splice`.
-    private static final int SYS_SPLICE = 76;
-
-    /// The Linux RISC-V syscall number for `readlinkat`.
-    private static final int SYS_READLINKAT = 78;
-
-    /// The Linux RISC-V syscall number for `newfstatat`.
-    private static final int SYS_NEWFSTATAT = 79;
-
-    /// The Linux RISC-V syscall number for `fstat`.
-    private static final int SYS_FSTAT = 80;
-
-    /// The Linux RISC-V syscall number for `sync`.
-    private static final int SYS_SYNC = 81;
-
-    /// The Linux RISC-V syscall number for `fsync`.
-    private static final int SYS_FSYNC = 82;
-
-    /// The Linux RISC-V syscall number for `fdatasync`.
-    private static final int SYS_FDATASYNC = 83;
-
-    /// The Linux RISC-V syscall number for `exit`.
-    private static final int SYS_EXIT = 93;
-
-    /// The Linux RISC-V syscall number for `exit_group`.
-    private static final int SYS_EXIT_GROUP = 94;
-
-    /// The Linux RISC-V syscall number for `set_tid_address`.
-    private static final int SYS_SET_TID_ADDRESS = 96;
-
-    /// The Linux RISC-V syscall number for `futex`.
-    private static final int SYS_FUTEX = 98;
-
-    /// The Linux RISC-V syscall number for `set_robust_list`.
-    private static final int SYS_SET_ROBUST_LIST = 99;
-
-    /// The Linux RISC-V syscall number for `get_robust_list`.
-    private static final int SYS_GET_ROBUST_LIST = 100;
-
-    /// The Linux RISC-V syscall number for `nanosleep`.
-    private static final int SYS_NANOSLEEP = 101;
-
-    /// The Linux RISC-V syscall number for `clock_gettime`.
-    private static final int SYS_CLOCK_GETTIME = 113;
-
-    /// The Linux RISC-V syscall number for `clock_getres`.
-    private static final int SYS_CLOCK_GETRES = 114;
-
-    /// The Linux RISC-V syscall number for `clock_nanosleep`.
-    private static final int SYS_CLOCK_NANOSLEEP = 115;
-
-    /// The Linux RISC-V syscall number for `sched_getaffinity`.
-    private static final int SYS_SCHED_GETAFFINITY = 123;
-
-    /// The Linux RISC-V syscall number for `sched_yield`.
-    private static final int SYS_SCHED_YIELD = 124;
-
-    /// The Linux RISC-V syscall number for `kill`.
-    private static final int SYS_KILL = 129;
-
-    /// The Linux RISC-V syscall number for `tkill`.
-    private static final int SYS_TKILL = 130;
-
-    /// The Linux RISC-V syscall number for `tgkill`.
-    private static final int SYS_TGKILL = 131;
-
-    /// The Linux RISC-V syscall number for `sigaltstack`.
-    private static final int SYS_SIGALTSTACK = 132;
-
-    /// The Linux RISC-V syscall number for `rt_sigaction`.
-    private static final int SYS_RT_SIGACTION = 134;
-
-    /// The Linux RISC-V syscall number for `rt_sigprocmask`.
-    private static final int SYS_RT_SIGPROCMASK = 135;
-
-    /// The Linux RISC-V syscall number for `setresuid`.
-    private static final int SYS_SETRESUID = 147;
-
-    /// The Linux RISC-V syscall number for `getresuid`.
-    private static final int SYS_GETRESUID = 148;
-
-    /// The Linux RISC-V syscall number for `setresgid`.
-    private static final int SYS_SETRESGID = 149;
-
-    /// The Linux RISC-V syscall number for `getresgid`.
-    private static final int SYS_GETRESGID = 150;
-
-    /// The Linux RISC-V syscall number for `setfsuid`.
-    private static final int SYS_SETFSUID = 151;
-
-    /// The Linux RISC-V syscall number for `setfsgid`.
-    private static final int SYS_SETFSGID = 152;
-
-    /// The Linux RISC-V syscall number for `times`.
-    private static final int SYS_TIMES = 153;
-
-    /// The Linux RISC-V syscall number for `setpgid`.
-    private static final int SYS_SETPGID = 154;
-
-    /// The Linux RISC-V syscall number for `getpgid`.
-    private static final int SYS_GETPGID = 155;
-
-    /// The Linux RISC-V syscall number for `setsid`.
-    private static final int SYS_SETSID = 157;
-
-    /// The Linux RISC-V syscall number for `getgroups`.
-    private static final int SYS_GETGROUPS = 158;
-
-    /// The Linux RISC-V syscall number for `uname`.
-    private static final int SYS_UNAME = 160;
-
-    /// The Linux RISC-V syscall number for `getrusage`.
-    private static final int SYS_GETRUSAGE = 165;
-
-    /// The Linux RISC-V syscall number for `prctl`.
-    private static final int SYS_PRCTL = 167;
-
-    /// The Linux RISC-V syscall number for `getcpu`.
-    private static final int SYS_GETCPU = 168;
-
-    /// The Linux RISC-V syscall number for `gettimeofday`.
-    private static final int SYS_GETTIMEOFDAY = 169;
-
-    /// The Linux RISC-V syscall number for `getpid`.
-    private static final int SYS_GETPID = 172;
-
-    /// The Linux RISC-V syscall number for `getppid`.
-    private static final int SYS_GETPPID = 173;
-
-    /// The Linux RISC-V syscall number for `getuid`.
-    private static final int SYS_GETUID = 174;
-
-    /// The Linux RISC-V syscall number for `geteuid`.
-    private static final int SYS_GETEUID = 175;
-
-    /// The Linux RISC-V syscall number for `getgid`.
-    private static final int SYS_GETGID = 176;
-
-    /// The Linux RISC-V syscall number for `getegid`.
-    private static final int SYS_GETEGID = 177;
-
-    /// The Linux RISC-V syscall number for `gettid`.
-    private static final int SYS_GETTID = 178;
-
-    /// The Linux RISC-V syscall number for `sysinfo`.
-    private static final int SYS_SYSINFO = 179;
-
-    /// The Linux RISC-V syscall number for `socket`.
-    private static final int SYS_SOCKET = 198;
-
-    /// The Linux RISC-V syscall number for `getsockname`.
-    private static final int SYS_GETSOCKNAME = 204;
-
-    /// The Linux RISC-V syscall number for `getpeername`.
-    private static final int SYS_GETPEERNAME = 205;
-
-    /// The Linux RISC-V syscall number for `brk`.
-    private static final int SYS_BRK = 214;
-
-    /// The Linux RISC-V syscall number for `munmap`.
-    private static final int SYS_MUNMAP = 215;
-
-    /// The Linux RISC-V syscall number for `mremap`.
-    private static final int SYS_MREMAP = 216;
-
-    /// The Linux RISC-V syscall number for `clone`.
-    private static final int SYS_CLONE = 220;
-
-    /// The Linux RISC-V syscall number for `clone3`.
-    private static final int SYS_CLONE3 = 435;
-
-    /// The Linux RISC-V syscall number for `execve`.
-    private static final int SYS_EXECVE = 221;
-
-    /// The Linux RISC-V syscall number for `mmap`.
-    private static final int SYS_MMAP = 222;
-
-    /// The Linux RISC-V syscall number for `mprotect`.
-    private static final int SYS_MPROTECT = 226;
-
-    /// The Linux RISC-V syscall number for `mincore`.
-    private static final int SYS_MINCORE = 232;
-
-    /// The Linux RISC-V syscall number for `madvise`.
-    private static final int SYS_MADVISE = 233;
-
-    /// The Linux RISC-V syscall number for `riscv_hwprobe`.
-    private static final int SYS_RISCV_HWPROBE = 258;
-
-    /// The Linux RISC-V syscall number for `wait4`.
-    private static final int SYS_WAIT4 = 260;
-
-    /// The Linux RISC-V syscall number for `prlimit64`.
-    private static final int SYS_PRLIMIT64 = 261;
-
-    /// The Linux RISC-V syscall number for `syncfs`.
-    private static final int SYS_SYNCFS = 267;
-
-    /// The Linux RISC-V syscall number for `renameat2`.
-    private static final int SYS_RENAMEAT2 = 276;
-
-    /// The Linux RISC-V syscall number for `getrandom`.
-    private static final int SYS_GETRANDOM = 278;
-
-    /// The Linux RISC-V syscall number for `membarrier`.
-    private static final int SYS_MEMBARRIER = 283;
-
-    /// The Linux RISC-V syscall number for `statx`.
-    private static final int SYS_STATX = 291;
-
-    /// The Linux RISC-V syscall number for `rseq`.
-    private static final int SYS_RSEQ = 293;
-
-    /// The Linux RISC-V syscall number for `faccessat2`.
-    private static final int SYS_FACCESSAT2 = 439;
-
-    /// The FreeBSD RISC-V syscall number for the `syscall` indirection entry.
-    private static final int FREEBSD_SYS_SYSCALL = 0;
-
-    /// The FreeBSD RISC-V syscall number for `exit`.
-    private static final int FREEBSD_SYS_EXIT = 1;
-
-    /// The FreeBSD RISC-V syscall number for `read`.
-    private static final int FREEBSD_SYS_READ = 3;
-
-    /// The FreeBSD RISC-V syscall number for `write`.
-    private static final int FREEBSD_SYS_WRITE = 4;
-
-    /// The FreeBSD RISC-V syscall number for `open`.
-    private static final int FREEBSD_SYS_OPEN = 5;
-
-    /// The FreeBSD RISC-V syscall number for `close`.
-    private static final int FREEBSD_SYS_CLOSE = 6;
-
-    /// The FreeBSD RISC-V syscall number for `chdir`.
-    private static final int FREEBSD_SYS_CHDIR = 12;
-
-    /// The FreeBSD RISC-V syscall number for `fchdir`.
-    private static final int FREEBSD_SYS_FCHDIR = 13;
-
-    /// The FreeBSD RISC-V syscall number for `getpid`.
-    private static final int FREEBSD_SYS_GETPID = 20;
-
-    /// The FreeBSD RISC-V syscall number for `getuid`.
-    private static final int FREEBSD_SYS_GETUID = 24;
-
-    /// The FreeBSD RISC-V syscall number for `geteuid`.
-    private static final int FREEBSD_SYS_GETEUID = 25;
-
-    /// The FreeBSD RISC-V syscall number for `access`.
-    private static final int FREEBSD_SYS_ACCESS = 33;
-
-    /// The FreeBSD RISC-V syscall number for `sync`.
-    private static final int FREEBSD_SYS_SYNC = 36;
-
-    /// The FreeBSD RISC-V syscall number for `kill`.
-    private static final int FREEBSD_SYS_KILL = 37;
-
-    /// The FreeBSD RISC-V syscall number for `sigaltstack`.
-    private static final int FREEBSD_SYS_SIGALTSTACK = 53;
-
-    /// The FreeBSD RISC-V syscall number for `getppid`.
-    private static final int FREEBSD_SYS_GETPPID = 39;
-
-    /// The FreeBSD RISC-V syscall number for `dup`.
-    private static final int FREEBSD_SYS_DUP = 41;
-
-    /// The FreeBSD RISC-V syscall number for `getegid`.
-    private static final int FREEBSD_SYS_GETEGID = 43;
-
-    /// The FreeBSD RISC-V syscall number for `getgid`.
-    private static final int FREEBSD_SYS_GETGID = 47;
-
-    /// The FreeBSD RISC-V syscall number for `ioctl`.
-    private static final int FREEBSD_SYS_IOCTL = 54;
-
-    /// The FreeBSD RISC-V syscall number for `readlink`.
-    private static final int FREEBSD_SYS_READLINK = 58;
-
-    /// The FreeBSD RISC-V syscall number for `execve`.
-    private static final int FREEBSD_SYS_EXECVE = 59;
-
-    /// The FreeBSD RISC-V syscall number for `munmap`.
-    private static final int FREEBSD_SYS_MUNMAP = 73;
-
-    /// The FreeBSD RISC-V syscall number for `mprotect`.
-    private static final int FREEBSD_SYS_MPROTECT = 74;
-
-    /// The FreeBSD RISC-V syscall number for `madvise`.
-    private static final int FREEBSD_SYS_MADVISE = 75;
-
-    /// The FreeBSD RISC-V syscall number for `setpgid`.
-    private static final int FREEBSD_SYS_SETPGID = 82;
-
-    /// The FreeBSD RISC-V syscall number for `dup2`.
-    private static final int FREEBSD_SYS_DUP2 = 90;
-
-    /// The FreeBSD RISC-V syscall number for `fcntl`.
-    private static final int FREEBSD_SYS_FCNTL = 92;
-
-    /// The FreeBSD RISC-V syscall number for `fsync`.
-    private static final int FREEBSD_SYS_FSYNC = 95;
-
-    /// The FreeBSD RISC-V syscall number for `gettimeofday`.
-    private static final int FREEBSD_SYS_GETTIMEOFDAY = 116;
-
-    /// The FreeBSD RISC-V syscall number for `getrusage`.
-    private static final int FREEBSD_SYS_GETRUSAGE = 117;
-
-    /// The FreeBSD RISC-V syscall number for `readv`.
-    private static final int FREEBSD_SYS_READV = 120;
-
-    /// The FreeBSD RISC-V syscall number for `writev`.
-    private static final int FREEBSD_SYS_WRITEV = 121;
-
-    /// The FreeBSD RISC-V syscall number for `setsid`.
-    private static final int FREEBSD_SYS_SETSID = 147;
-
-    /// The FreeBSD RISC-V syscall number for `__syscall`.
-    private static final int FREEBSD_SYS___SYSCALL = 198;
-
-    /// The FreeBSD RISC-V syscall number for `getrlimit`.
-    private static final int FREEBSD_SYS_GETRLIMIT = 194;
-
-    /// The FreeBSD RISC-V syscall number for `__sysctl`.
-    private static final int FREEBSD_SYS___SYSCTL = 202;
-
-    /// The FreeBSD RISC-V syscall number for `clock_gettime`.
-    private static final int FREEBSD_SYS_CLOCK_GETTIME = 232;
-
-    /// The FreeBSD RISC-V syscall number for `clock_getres`.
-    private static final int FREEBSD_SYS_CLOCK_GETRES = 234;
-
-    /// The FreeBSD RISC-V syscall number for `nanosleep`.
-    private static final int FREEBSD_SYS_NANOSLEEP = 240;
-
-    /// The FreeBSD RISC-V syscall number for `issetugid`.
-    private static final int FREEBSD_SYS_ISSETUGID = 253;
-
-    /// The FreeBSD RISC-V syscall number for `__getcwd`.
-    private static final int FREEBSD_SYS___GETCWD = 326;
-
-    /// The FreeBSD RISC-V syscall number for `sched_yield`.
-    private static final int FREEBSD_SYS_SCHED_YIELD = 331;
-
-    /// The FreeBSD RISC-V syscall number for `sigprocmask`.
-    private static final int FREEBSD_SYS_SIGPROCMASK = 340;
-
-    /// The FreeBSD RISC-V syscall number for `getresuid`.
-    private static final int FREEBSD_SYS_GETRESUID = 360;
-
-    /// The FreeBSD RISC-V syscall number for `getresgid`.
-    private static final int FREEBSD_SYS_GETRESGID = 361;
-
-    /// The FreeBSD RISC-V syscall number for `sigaction`.
-    private static final int FREEBSD_SYS_SIGACTION = 416;
-
-    /// The FreeBSD RISC-V syscall number for `thr_exit`.
-    private static final int FREEBSD_SYS_THR_EXIT = 431;
-
-    /// The FreeBSD RISC-V syscall number for `thr_self`.
-    private static final int FREEBSD_SYS_THR_SELF = 432;
-
-    /// The FreeBSD RISC-V syscall number for `thr_kill`.
-    private static final int FREEBSD_SYS_THR_KILL = 433;
-
-    /// The FreeBSD RISC-V syscall number for `_umtx_op`.
-    private static final int FREEBSD_SYS_UMTX_OP = 454;
-
-    /// The FreeBSD RISC-V syscall number for `thr_new`.
-    private static final int FREEBSD_SYS_THR_NEW = 455;
-
-    /// The FreeBSD RISC-V syscall number for `pread`.
-    private static final int FREEBSD_SYS_PREAD = 475;
-
-    /// The FreeBSD RISC-V syscall number for `pwrite`.
-    private static final int FREEBSD_SYS_PWRITE = 476;
-
-    /// The FreeBSD RISC-V syscall number for `mmap`.
-    private static final int FREEBSD_SYS_MMAP = 477;
-
-    /// The FreeBSD RISC-V syscall number for `lseek`.
-    private static final int FREEBSD_SYS_LSEEK = 478;
-
-    /// The FreeBSD RISC-V syscall number for `truncate`.
-    private static final int FREEBSD_SYS_TRUNCATE = 479;
-
-    /// The FreeBSD RISC-V syscall number for `ftruncate`.
-    private static final int FREEBSD_SYS_FTRUNCATE = 480;
-
-    /// The FreeBSD RISC-V syscall number for `faccessat`.
-    private static final int FREEBSD_SYS_FACCESSAT = 489;
-
-    /// The FreeBSD RISC-V syscall number for `cpuset_getaffinity`.
-    private static final int FREEBSD_SYS_CPUSET_GETAFFINITY = 487;
-
-    /// The FreeBSD RISC-V syscall number for `fchownat`.
-    private static final int FREEBSD_SYS_FCHOWNAT = 491;
-
-    /// The FreeBSD RISC-V syscall number for `mkdirat`.
-    private static final int FREEBSD_SYS_MKDIRAT = 496;
-
-    /// The FreeBSD RISC-V syscall number for `openat`.
-    private static final int FREEBSD_SYS_OPENAT = 499;
-
-    /// The FreeBSD RISC-V syscall number for `readlinkat`.
-    private static final int FREEBSD_SYS_READLINKAT = 500;
-
-    /// The FreeBSD RISC-V syscall number for `renameat`.
-    private static final int FREEBSD_SYS_RENAMEAT = 501;
-
-    /// The FreeBSD RISC-V syscall number for `unlinkat`.
-    private static final int FREEBSD_SYS_UNLINKAT = 503;
-
-    /// The FreeBSD RISC-V syscall number for `pipe2`.
-    private static final int FREEBSD_SYS_PIPE2 = 542;
-
-    /// The FreeBSD RISC-V syscall number for `ppoll`.
-    private static final int FREEBSD_SYS_PPOLL = 545;
-
-    /// The FreeBSD RISC-V syscall number for `fdatasync`.
-    private static final int FREEBSD_SYS_FDATASYNC = 550;
-
-    /// The FreeBSD RISC-V syscall number for `fstat`.
-    private static final int FREEBSD_SYS_FSTAT = 551;
-
-    /// The FreeBSD RISC-V syscall number for `fstatat`.
-    private static final int FREEBSD_SYS_FSTATAT = 552;
-
-    /// The FreeBSD RISC-V syscall number for `statfs`.
-    private static final int FREEBSD_SYS_STATFS = 555;
-
-    /// The FreeBSD RISC-V syscall number for `fstatfs`.
-    private static final int FREEBSD_SYS_FSTATFS = 556;
-
-    /// FreeBSD `CTL_QUERY`.
-    private static final int FREEBSD_CTL_QUERY = 0;
-
-    /// FreeBSD `CTL_QUERY_MIB`.
-    private static final int FREEBSD_CTL_QUERY_MIB = 3;
-
-    /// FreeBSD `CTL_HW`.
-    private static final int FREEBSD_CTL_HW = 6;
-
-    /// FreeBSD `HW_PAGESIZE`.
-    private static final int FREEBSD_HW_PAGESIZE = 7;
-
-    /// Synthetic FreeBSD sysctl MIB component for `kern`.
-    private static final int FREEBSD_CTL_KERN = 1;
-
-    /// Synthetic FreeBSD sysctl MIB component for `kern.smp`.
-    private static final int FREEBSD_KERN_SMP = 1000;
-
-    /// Synthetic FreeBSD sysctl MIB component for `kern.smp.maxcpus`.
-    private static final int FREEBSD_KERN_SMP_MAXCPUS = 1;
-
-    /// Synthetic FreeBSD `kern.smp.maxcpus` MIB exposed to Go runtime startup.
-    private static final int @Unmodifiable [] FREEBSD_SYSCTL_KERN_SMP_MAXCPUS = {
-            FREEBSD_CTL_KERN,
-            FREEBSD_KERN_SMP,
-            FREEBSD_KERN_SMP_MAXCPUS
-    };
-
-    /// FreeBSD sysctl name used by Go to discover the cpuset mask size.
-    private static final String FREEBSD_SYSCTL_KERN_SMP_MAXCPUS_NAME = "kern.smp.maxcpus";
-
     /// Linux `EBADF` as a raw negative syscall result.
-    private static final long EBADF = -9;
+    protected static final long EBADF = -9;
 
     /// Linux `ECHILD` as a raw negative syscall result.
-    private static final long ECHILD = -10;
+    protected static final long ECHILD = -10;
 
     /// Linux `ENOENT` as a raw negative syscall result.
-    private static final long ENOENT = -2;
+    protected static final long ENOENT = -2;
 
     /// Linux `E2BIG` as a raw negative syscall result.
-    private static final long E2BIG = -7;
+    protected static final long E2BIG = -7;
 
     /// Linux `ENOEXEC` as a raw negative syscall result.
-    private static final long ENOEXEC = -8;
+    protected static final long ENOEXEC = -8;
 
     /// Linux `ESRCH` as a raw negative syscall result.
-    private static final long ESRCH = -3;
+    protected static final long ESRCH = -3;
 
     /// Linux `EACCES` as a raw negative syscall result.
-    private static final long EACCES = -13;
+    protected static final long EACCES = -13;
 
     /// Linux `EFAULT` as a raw negative syscall result.
-    private static final long EFAULT = -14;
+    protected static final long EFAULT = -14;
 
     /// Linux `EPERM` as a raw negative syscall result.
-    private static final long EPERM = -1;
+    protected static final long EPERM = -1;
 
     /// Linux `ENOMEM` as a raw negative syscall result.
-    private static final long ENOMEM = -12;
+    protected static final long ENOMEM = -12;
 
     /// Linux `EEXIST` as a raw negative syscall result.
-    private static final long EEXIST = -17;
+    protected static final long EEXIST = -17;
 
     /// Linux `EXDEV` as a raw negative syscall result.
-    private static final long EXDEV = -18;
+    protected static final long EXDEV = -18;
 
     /// Linux `EINTR` as a raw negative syscall result.
-    private static final long EINTR = -4;
+    protected static final long EINTR = -4;
 
     /// Linux `EAGAIN` as a raw negative syscall result.
-    private static final long EAGAIN = -11;
+    protected static final long EAGAIN = -11;
 
     /// Linux `EBUSY` as a raw negative syscall result.
-    private static final long EBUSY = -16;
+    protected static final long EBUSY = -16;
 
     /// Linux `ENODEV` as a raw negative syscall result.
-    private static final long ENODEV = -19;
+    protected static final long ENODEV = -19;
 
     /// Linux `ENOTDIR` as a raw negative syscall result.
-    private static final long ENOTDIR = -20;
+    protected static final long ENOTDIR = -20;
 
     /// Linux `EISDIR` as a raw negative syscall result.
-    private static final long EISDIR = -21;
+    protected static final long EISDIR = -21;
 
     /// Linux `EINVAL` as a raw negative syscall result.
-    private static final long EINVAL = -22;
+    protected static final long EINVAL = -22;
 
     /// Linux `ENOTTY` as a raw negative syscall result.
-    private static final long ENOTTY = -25;
+    protected static final long ENOTTY = -25;
 
     /// Linux `ERANGE` as a raw negative syscall result.
-    private static final long ERANGE = -34;
+    protected static final long ERANGE = -34;
 
     /// Linux `ELOOP` as a raw negative syscall result.
-    private static final long ELOOP = -40;
+    protected static final long ELOOP = -40;
 
     /// Linux `ENAMETOOLONG` as a raw negative syscall result.
-    private static final long ENAMETOOLONG = -36;
+    protected static final long ENAMETOOLONG = -36;
 
     /// Linux `ENOSYS` as a raw negative syscall result.
-    private static final long ENOSYS = -38;
+    protected static final long ENOSYS = -38;
 
     /// Linux `ENODATA` as a raw negative syscall result.
-    private static final long ENODATA = -61;
+    protected static final long ENODATA = -61;
 
     /// Linux `ENOTSUP` as a raw negative syscall result.
-    private static final long ENOTSUP = -95;
+    protected static final long ENOTSUP = -95;
 
     /// Linux `ENOTSOCK` as a raw negative syscall result.
-    private static final long ENOTSOCK = -88;
+    protected static final long ENOTSOCK = -88;
 
     /// Linux `EAFNOSUPPORT` as a raw negative syscall result.
-    private static final long EAFNOSUPPORT = -97;
+    protected static final long EAFNOSUPPORT = -97;
 
     /// Linux `ENOTEMPTY` as a raw negative syscall result.
-    private static final long ENOTEMPTY = -39;
+    protected static final long ENOTEMPTY = -39;
 
     /// Linux `ESPIPE` as a raw negative syscall result.
-    private static final long ESPIPE = -29;
+    protected static final long ESPIPE = -29;
 
     /// Linux `EROFS` as a raw negative syscall result.
-    private static final long EROFS = -30;
+    protected static final long EROFS = -30;
 
     /// Linux `EPIPE` as a raw negative syscall result.
-    private static final long EPIPE = -32;
+    protected static final long EPIPE = -32;
 
     /// Linux `ETIMEDOUT` as a raw negative syscall result.
-    private static final long ETIMEDOUT = -110;
+    protected static final long ETIMEDOUT = -110;
 
     /// The maximum Linux `iovcnt` accepted by `readv` and `writev`.
-    private static final long IOV_MAX = 1024;
+    protected static final long IOV_MAX = 1024;
 
     /// The byte size of one Linux RISC-V 64-bit `struct iovec`.
-    private static final int IOVEC_SIZE = 16;
+    protected static final int IOVEC_SIZE = 16;
 
     /// The byte offset of `d_ino` inside Linux `struct linux_dirent64`.
-    private static final int DIRENT64_INODE_OFFSET = 0;
+    protected static final int DIRENT64_INODE_OFFSET = 0;
 
     /// The byte offset of `d_off` inside Linux `struct linux_dirent64`.
-    private static final int DIRENT64_NEXT_OFFSET = 8;
+    protected static final int DIRENT64_NEXT_OFFSET = 8;
 
     /// The byte offset of `d_reclen` inside Linux `struct linux_dirent64`.
-    private static final int DIRENT64_RECORD_LENGTH_OFFSET = 16;
+    protected static final int DIRENT64_RECORD_LENGTH_OFFSET = 16;
 
     /// The byte offset of `d_type` inside Linux `struct linux_dirent64`.
-    private static final int DIRENT64_TYPE_OFFSET = 18;
+    protected static final int DIRENT64_TYPE_OFFSET = 18;
 
     /// The byte offset of `d_name` inside Linux `struct linux_dirent64`.
-    private static final int DIRENT64_NAME_OFFSET = 19;
+    protected static final int DIRENT64_NAME_OFFSET = 19;
 
     /// The record alignment used by Linux `struct linux_dirent64`.
-    private static final int DIRENT64_RECORD_ALIGNMENT = Long.BYTES;
+    protected static final int DIRENT64_RECORD_ALIGNMENT = Long.BYTES;
 
     /// Linux `DT_UNKNOWN` directory entry type.
-    private static final byte DIRECTORY_ENTRY_UNKNOWN = 0;
+    protected static final byte DIRECTORY_ENTRY_UNKNOWN = 0;
 
     /// Linux `DT_DIR` directory entry type.
-    private static final byte DIRECTORY_ENTRY_DIRECTORY = 4;
+    protected static final byte DIRECTORY_ENTRY_DIRECTORY = 4;
 
     /// Linux `DT_REG` directory entry type.
-    private static final byte DIRECTORY_ENTRY_REGULAR_FILE = 8;
+    protected static final byte DIRECTORY_ENTRY_REGULAR_FILE = 8;
 
     /// Linux `DT_LNK` directory entry type.
-    private static final byte DIRECTORY_ENTRY_SYMBOLIC_LINK = 10;
+    protected static final byte DIRECTORY_ENTRY_SYMBOLIC_LINK = 10;
 
     /// The byte offset of `iov_base` inside `struct iovec`.
-    private static final int IOVEC_BASE_OFFSET = 0;
+    protected static final int IOVEC_BASE_OFFSET = 0;
 
     /// The byte offset of `iov_len` inside `struct iovec`.
-    private static final int IOVEC_LENGTH_OFFSET = 8;
+    protected static final int IOVEC_LENGTH_OFFSET = 8;
 
     /// The maximum transient buffer size used by one `splice` copy step.
-    private static final int SPLICE_BUFFER_SIZE = 64 * 1024;
+    protected static final int SPLICE_BUFFER_SIZE = 64 * 1024;
 
     /// Linux `SPLICE_F_MOVE`.
-    private static final long SPLICE_F_MOVE = 1;
+    protected static final long SPLICE_F_MOVE = 1;
 
     /// Linux `SPLICE_F_NONBLOCK`.
-    private static final long SPLICE_F_NONBLOCK = 2;
+    protected static final long SPLICE_F_NONBLOCK = 2;
 
     /// Linux `SPLICE_F_MORE`.
-    private static final long SPLICE_F_MORE = 4;
+    protected static final long SPLICE_F_MORE = 4;
 
     /// Linux `SPLICE_F_GIFT`.
-    private static final long SPLICE_F_GIFT = 8;
+    protected static final long SPLICE_F_GIFT = 8;
 
     /// Linux `splice` flags accepted by this simulator.
-    private static final long SUPPORTED_SPLICE_FLAGS =
+    protected static final long SUPPORTED_SPLICE_FLAGS =
             SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
 
     /// Linux `F_OK` access mode.
-    private static final long F_OK = 0;
+    protected static final long F_OK = 0;
 
     /// Linux `X_OK` access mode bit.
-    private static final long X_OK = 1;
+    protected static final long X_OK = 1;
 
     /// Linux `W_OK` access mode bit.
-    private static final long W_OK = 2;
+    protected static final long W_OK = 2;
 
     /// Linux `R_OK` access mode bit.
-    private static final long R_OK = 4;
+    protected static final long R_OK = 4;
 
     /// Linux access mode bit mask accepted by `faccessat`.
-    private static final long ACCESS_MODE_MASK = R_OK | W_OK | X_OK;
+    protected static final long ACCESS_MODE_MASK = R_OK | W_OK | X_OK;
 
     /// The Linux `AT_FDCWD` pseudo file descriptor for path-based syscalls.
-    private static final long AT_FDCWD = -100;
+    protected static final long AT_FDCWD = -100;
 
     /// Linux `AT_SYMLINK_NOFOLLOW`.
-    private static final long AT_SYMLINK_NOFOLLOW = 0x100;
+    protected static final long AT_SYMLINK_NOFOLLOW = 0x100;
 
     /// Linux `AT_EACCESS`.
-    private static final long AT_EACCESS = 0x200;
+    protected static final long AT_EACCESS = 0x200;
 
     /// Linux `AT_REMOVEDIR`.
-    private static final long AT_REMOVEDIR = 0x200;
+    protected static final long AT_REMOVEDIR = 0x200;
 
     /// Linux `AT_NO_AUTOMOUNT`.
-    private static final long AT_NO_AUTOMOUNT = 0x800;
+    protected static final long AT_NO_AUTOMOUNT = 0x800;
 
     /// Linux `AT_EMPTY_PATH`.
-    private static final long AT_EMPTY_PATH = 0x1000;
+    protected static final long AT_EMPTY_PATH = 0x1000;
 
     /// Linux `AT_STATX_FORCE_SYNC`.
-    private static final long AT_STATX_FORCE_SYNC = 0x2000;
+    protected static final long AT_STATX_FORCE_SYNC = 0x2000;
 
     /// Linux `AT_STATX_DONT_SYNC`.
-    private static final long AT_STATX_DONT_SYNC = 0x4000;
+    protected static final long AT_STATX_DONT_SYNC = 0x4000;
 
     /// Linux `newfstatat` flags accepted by this simulator.
-    private static final long SUPPORTED_NEWFSTATAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+    protected static final long SUPPORTED_NEWFSTATAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
 
     /// Linux `statx` flags accepted by this simulator.
-    private static final long SUPPORTED_STATX_FLAGS =
+    protected static final long SUPPORTED_STATX_FLAGS =
             AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC;
 
     /// Linux `faccessat2` flags accepted by this simulator.
-    private static final long SUPPORTED_FACCESSAT2_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH;
+    protected static final long SUPPORTED_FACCESSAT2_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH;
 
     /// Linux `fchownat` flags accepted by this simulator.
-    private static final long SUPPORTED_FCHOWNAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+    protected static final long SUPPORTED_FCHOWNAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
 
     /// Linux `O_ACCMODE`.
-    private static final long O_ACCMODE = 0x3;
+    protected static final long O_ACCMODE = 0x3;
 
     /// Linux `O_RDONLY`.
-    private static final long O_RDONLY = 0;
+    protected static final long O_RDONLY = 0;
 
     /// Linux `O_WRONLY`.
-    private static final long O_WRONLY = 1;
+    protected static final long O_WRONLY = 1;
 
     /// Linux `O_RDWR`.
-    private static final long O_RDWR = 2;
+    protected static final long O_RDWR = 2;
 
     /// Linux `O_CREAT`.
-    private static final long O_CREAT = 00000100L;
+    protected static final long O_CREAT = 00000100L;
 
     /// Linux `O_EXCL`.
-    private static final long O_EXCL = 00000200L;
+    protected static final long O_EXCL = 00000200L;
 
     /// Linux `O_TRUNC`.
-    private static final long O_TRUNC = 00001000L;
+    protected static final long O_TRUNC = 00001000L;
 
     /// Linux `O_APPEND`.
-    private static final long O_APPEND = 00002000L;
+    protected static final long O_APPEND = 00002000L;
 
     /// Linux `O_NONBLOCK`.
-    private static final long O_NONBLOCK = 00004000L;
+    protected static final long O_NONBLOCK = 00004000L;
 
     /// Linux `O_DIRECTORY`.
-    private static final long O_DIRECTORY = 00200000L;
+    protected static final long O_DIRECTORY = 00200000L;
 
     /// Linux `O_CLOEXEC`.
-    private static final long O_CLOEXEC = 02000000L;
+    protected static final long O_CLOEXEC = 02000000L;
 
     /// Linux `EFD_SEMAPHORE`.
-    private static final long EFD_SEMAPHORE = 1;
+    protected static final long EFD_SEMAPHORE = 1;
 
     /// Linux flags accepted by `eventfd2`.
-    private static final long SUPPORTED_EVENTFD2_FLAGS = EFD_SEMAPHORE | O_NONBLOCK | O_CLOEXEC;
+    protected static final long SUPPORTED_EVENTFD2_FLAGS = EFD_SEMAPHORE | O_NONBLOCK | O_CLOEXEC;
 
     /// Linux flags accepted by `epoll_create1`.
-    private static final long SUPPORTED_EPOLL_CREATE1_FLAGS = O_CLOEXEC;
-
-    /// FreeBSD `O_ACCMODE`.
-    private static final long FREEBSD_O_ACCMODE = 0x0003;
-
-    /// FreeBSD `O_NONBLOCK`.
-    private static final long FREEBSD_O_NONBLOCK = 0x0004;
-
-    /// FreeBSD `O_APPEND`.
-    private static final long FREEBSD_O_APPEND = 0x0008;
-
-    /// FreeBSD `O_CREAT`.
-    private static final long FREEBSD_O_CREAT = 0x0200;
-
-    /// FreeBSD `O_TRUNC`.
-    private static final long FREEBSD_O_TRUNC = 0x0400;
-
-    /// FreeBSD `O_EXCL`.
-    private static final long FREEBSD_O_EXCL = 0x0800;
-
-    /// FreeBSD `O_DIRECTORY`.
-    private static final long FREEBSD_O_DIRECTORY = 0x0002_0000;
-
-    /// FreeBSD `O_CLOEXEC`.
-    private static final long FREEBSD_O_CLOEXEC = 0x0010_0000;
-
-    /// FreeBSD `AT_EACCESS`.
-    private static final long FREEBSD_AT_EACCESS = 0x0100;
-
-    /// FreeBSD `AT_SYMLINK_NOFOLLOW`.
-    private static final long FREEBSD_AT_SYMLINK_NOFOLLOW = 0x0200;
-
-    /// FreeBSD `AT_REMOVEDIR`.
-    private static final long FREEBSD_AT_REMOVEDIR = 0x0800;
-
-    /// FreeBSD `AT_EMPTY_PATH`.
-    private static final long FREEBSD_AT_EMPTY_PATH = 0x4000;
+    protected static final long SUPPORTED_EPOLL_CREATE1_FLAGS = O_CLOEXEC;
 
     /// Linux `EPOLL_CTL_ADD`.
-    private static final int EPOLL_CTL_ADD = 1;
+    protected static final int EPOLL_CTL_ADD = 1;
 
     /// Linux `EPOLL_CTL_DEL`.
-    private static final int EPOLL_CTL_DEL = 2;
+    protected static final int EPOLL_CTL_DEL = 2;
 
     /// Linux `EPOLL_CTL_MOD`.
-    private static final int EPOLL_CTL_MOD = 3;
+    protected static final int EPOLL_CTL_MOD = 3;
 
     /// Linux `EPOLLIN`.
-    private static final int EPOLLIN = 0x001;
+    protected static final int EPOLLIN = 0x001;
 
     /// Linux `EPOLLOUT`.
-    private static final int EPOLLOUT = 0x004;
+    protected static final int EPOLLOUT = 0x004;
 
     /// Linux `EPOLLERR`.
-    private static final int EPOLLERR = 0x008;
+    protected static final int EPOLLERR = 0x008;
 
     /// Linux `EPOLLHUP`.
-    private static final int EPOLLHUP = 0x010;
+    protected static final int EPOLLHUP = 0x010;
 
     /// The byte size of Linux RISC-V 64-bit `struct epoll_event`.
-    private static final int EPOLL_EVENT_SIZE = 16;
+    protected static final int EPOLL_EVENT_SIZE = 16;
 
     /// The byte offset of `events` inside Linux RISC-V 64-bit `struct epoll_event`.
-    private static final int EPOLL_EVENT_EVENTS_OFFSET = 0;
+    protected static final int EPOLL_EVENT_EVENTS_OFFSET = 0;
 
     /// The byte offset of `data` inside Linux RISC-V 64-bit `struct epoll_event`.
-    private static final int EPOLL_EVENT_DATA_OFFSET = Long.BYTES;
+    protected static final int EPOLL_EVENT_DATA_OFFSET = Long.BYTES;
 
     /// Linux `POLLIN`.
-    private static final int POLLIN = 0x001;
+    protected static final int POLLIN = 0x001;
 
     /// Linux `POLLOUT`.
-    private static final int POLLOUT = 0x004;
+    protected static final int POLLOUT = 0x004;
 
     /// Linux `POLLERR`.
-    private static final int POLLERR = 0x008;
+    protected static final int POLLERR = 0x008;
 
     /// Linux `POLLHUP`.
-    private static final int POLLHUP = 0x010;
+    protected static final int POLLHUP = 0x010;
 
     /// Linux `POLLNVAL`.
-    private static final int POLLNVAL = 0x020;
+    protected static final int POLLNVAL = 0x020;
 
     /// The byte size of Linux RISC-V 64-bit `struct pollfd`.
-    private static final int POLL_FD_SIZE = 8;
+    protected static final int POLL_FD_SIZE = 8;
 
     /// The byte offset of `fd` inside Linux RISC-V 64-bit `struct pollfd`.
-    private static final int POLL_FD_FILE_DESCRIPTOR_OFFSET = 0;
+    protected static final int POLL_FD_FILE_DESCRIPTOR_OFFSET = 0;
 
     /// The byte offset of `events` inside Linux RISC-V 64-bit `struct pollfd`.
-    private static final int POLL_FD_EVENTS_OFFSET = Integer.BYTES;
+    protected static final int POLL_FD_EVENTS_OFFSET = Integer.BYTES;
 
     /// The byte offset of `revents` inside Linux RISC-V 64-bit `struct pollfd`.
-    private static final int POLL_FD_REVENTS_OFFSET = Integer.BYTES + Short.BYTES;
+    protected static final int POLL_FD_REVENTS_OFFSET = Integer.BYTES + Short.BYTES;
 
     /// The number of descriptor bits stored in one Linux RISC-V 64-bit `fd_set` word.
-    private static final int FD_SET_BITS_PER_WORD = Long.SIZE;
+    protected static final int FD_SET_BITS_PER_WORD = Long.SIZE;
 
     /// The byte offset of `ss` inside the Linux `pselect6` signal-mask argument.
-    private static final int PSELECT6_SIGNAL_MASK_ADDRESS_OFFSET = 0;
+    protected static final int PSELECT6_SIGNAL_MASK_ADDRESS_OFFSET = 0;
 
     /// The byte offset of `ss_len` inside the Linux `pselect6` signal-mask argument.
-    private static final int PSELECT6_SIGNAL_SET_SIZE_OFFSET = Long.BYTES;
+    protected static final int PSELECT6_SIGNAL_SET_SIZE_OFFSET = Long.BYTES;
 
     /// The byte size of the Linux `pselect6` signal-mask argument on RISC-V 64-bit.
-    private static final int PSELECT6_SIGNAL_ARGUMENT_SIZE = 2 * Long.BYTES;
+    protected static final int PSELECT6_SIGNAL_ARGUMENT_SIZE = 2 * Long.BYTES;
 
     /// Linux flags accepted by `pipe2`.
-    private static final long SUPPORTED_PIPE2_FLAGS = O_NONBLOCK | O_CLOEXEC;
+    protected static final long SUPPORTED_PIPE2_FLAGS = O_NONBLOCK | O_CLOEXEC;
 
     /// Linux flags accepted by `dup3`.
-    private static final long SUPPORTED_DUP3_FLAGS = O_CLOEXEC;
+    protected static final long SUPPORTED_DUP3_FLAGS = O_CLOEXEC;
 
     /// Linux `F_DUPFD`.
-    private static final long F_DUPFD = 0;
+    protected static final long F_DUPFD = 0;
 
     /// Linux `F_GETFD`.
-    private static final long F_GETFD = 1;
+    protected static final long F_GETFD = 1;
 
     /// Linux `F_SETFD`.
-    private static final long F_SETFD = 2;
+    protected static final long F_SETFD = 2;
 
     /// Linux `F_GETFL`.
-    private static final long F_GETFL = 3;
+    protected static final long F_GETFL = 3;
 
     /// Linux `F_SETFL`.
-    private static final long F_SETFL = 4;
+    protected static final long F_SETFL = 4;
 
     /// Linux `F_GETLK`.
-    private static final long F_GETLK = 5;
+    protected static final long F_GETLK = 5;
 
     /// Linux `F_SETLK`.
-    private static final long F_SETLK = 6;
+    protected static final long F_SETLK = 6;
 
     /// Linux `F_SETLKW`.
-    private static final long F_SETLKW = 7;
+    protected static final long F_SETLKW = 7;
 
     /// Linux `F_DUPFD_CLOEXEC`.
-    private static final long F_DUPFD_CLOEXEC = 1030;
+    protected static final long F_DUPFD_CLOEXEC = 1030;
 
     /// Linux `F_UNLCK`.
-    private static final short F_UNLCK = 2;
+    protected static final short F_UNLCK = 2;
 
     /// The byte offset of `l_type` inside Linux RISC-V 64-bit `struct flock`.
-    private static final int FLOCK_TYPE_OFFSET = 0;
+    protected static final int FLOCK_TYPE_OFFSET = 0;
 
     /// The maximum guest path length accepted by `openat`, including the terminator.
-    private static final int PATH_MAX = 4096;
+    protected static final int PATH_MAX = 4096;
 
     /// The maximum number of argument or environment pointers accepted by `execve`.
-    private static final int EXECVE_MAX_VECTOR_ENTRIES = 131_072;
+    protected static final int EXECVE_MAX_VECTOR_ENTRIES = 131_072;
 
     /// The maximum bytes accepted for one `execve` argument or environment string, including the terminator.
-    private static final int EXECVE_MAX_STRING_BYTES = 128 * 1024;
+    protected static final int EXECVE_MAX_STRING_BYTES = 128 * 1024;
 
     /// The maximum aggregate bytes accepted for `execve` argument and environment strings.
-    private static final int EXECVE_MAX_TOTAL_STRING_BYTES = 2 * 1024 * 1024;
+    protected static final int EXECVE_MAX_TOTAL_STRING_BYTES = 2 * 1024 * 1024;
 
     /// The maximum number of symbolic links followed while resolving one guest path.
-    private static final int SYMBOLIC_LINK_LIMIT = 40;
+    protected static final int SYMBOLIC_LINK_LIMIT = 40;
 
     /// The Linux generic tty `TCGETS` ioctl request number.
-    private static final long TCGETS = 0x5401;
+    protected static final long TCGETS = 0x5401;
 
     /// The Linux generic tty `TCSETS` ioctl request number.
-    private static final long TCSETS = 0x5402;
+    protected static final long TCSETS = 0x5402;
 
     /// The Linux generic tty `TCSETSW` ioctl request number.
-    private static final long TCSETSW = 0x5403;
+    protected static final long TCSETSW = 0x5403;
 
     /// The Linux generic tty `TCSETSF` ioctl request number.
-    private static final long TCSETSF = 0x5404;
+    protected static final long TCSETSF = 0x5404;
 
     /// The Linux generic tty `TCGETS2` ioctl request number.
-    private static final long TCGETS2 = 0x802c542aL;
+    protected static final long TCGETS2 = 0x802c542aL;
 
     /// The Linux generic tty `TCSETS2` ioctl request number.
-    private static final long TCSETS2 = 0x402c542bL;
+    protected static final long TCSETS2 = 0x402c542bL;
 
     /// The Linux generic tty `TCSETSW2` ioctl request number.
-    private static final long TCSETSW2 = 0x402c542cL;
+    protected static final long TCSETSW2 = 0x402c542cL;
 
     /// The Linux generic tty `TCSETSF2` ioctl request number.
-    private static final long TCSETSF2 = 0x402c542dL;
+    protected static final long TCSETSF2 = 0x402c542dL;
 
     /// The Linux generic tty `TIOCSCTTY` ioctl request number.
-    private static final long TIOCSCTTY = 0x540E;
+    protected static final long TIOCSCTTY = 0x540E;
 
     /// The Linux generic tty `TIOCGPGRP` ioctl request number.
-    private static final long TIOCGPGRP = 0x540F;
+    protected static final long TIOCGPGRP = 0x540F;
 
     /// The Linux generic tty `TIOCSPGRP` ioctl request number.
-    private static final long TIOCSPGRP = 0x5410;
+    protected static final long TIOCSPGRP = 0x5410;
 
     /// The Linux generic tty `TIOCGWINSZ` ioctl request number.
-    private static final long TIOCGWINSZ = 0x5413;
+    protected static final long TIOCGWINSZ = 0x5413;
 
     /// The Linux generic tty `TIOCSWINSZ` ioctl request number.
-    private static final long TIOCSWINSZ = 0x5414;
+    protected static final long TIOCSWINSZ = 0x5414;
 
     /// The byte size of Linux generic `struct termios`.
-    private static final int TERMIOS_SIZE = 36;
+    protected static final int TERMIOS_SIZE = 36;
 
     /// The byte size of Linux generic `struct termios2`.
-    private static final int TERMIOS2_SIZE = 44;
+    protected static final int TERMIOS2_SIZE = 44;
 
     /// The byte size of Linux generic `struct winsize`.
-    private static final int WINSIZE_SIZE = 8;
+    protected static final int WINSIZE_SIZE = 8;
 
     /// The byte size of Linux generic 64-bit `struct stat`.
-    private static final int STAT_SIZE = 128;
+    protected static final int STAT_SIZE = 128;
 
     /// The byte size of Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_SIZE = 120;
+    protected static final int STATFS_SIZE = 120;
 
     /// The byte size of Linux generic `struct statx`.
-    private static final int STATX_SIZE = 256;
+    protected static final int STATX_SIZE = 256;
 
     /// The byte size of one Linux `struct utsname` field.
-    private static final int UTSNAME_FIELD_SIZE = 65;
+    protected static final int UTSNAME_FIELD_SIZE = 65;
 
     /// The byte size of Linux `struct utsname`.
-    private static final int UTSNAME_SIZE = 6 * UTSNAME_FIELD_SIZE;
+    protected static final int UTSNAME_SIZE = 6 * UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `sysname` inside Linux `struct utsname`.
-    private static final int UTSNAME_SYSNAME_OFFSET = 0;
+    protected static final int UTSNAME_SYSNAME_OFFSET = 0;
 
     /// The byte offset of `nodename` inside Linux `struct utsname`.
-    private static final int UTSNAME_NODENAME_OFFSET = UTSNAME_FIELD_SIZE;
+    protected static final int UTSNAME_NODENAME_OFFSET = UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `release` inside Linux `struct utsname`.
-    private static final int UTSNAME_RELEASE_OFFSET = 2 * UTSNAME_FIELD_SIZE;
+    protected static final int UTSNAME_RELEASE_OFFSET = 2 * UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `version` inside Linux `struct utsname`.
-    private static final int UTSNAME_VERSION_OFFSET = 3 * UTSNAME_FIELD_SIZE;
+    protected static final int UTSNAME_VERSION_OFFSET = 3 * UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `machine` inside Linux `struct utsname`.
-    private static final int UTSNAME_MACHINE_OFFSET = 4 * UTSNAME_FIELD_SIZE;
+    protected static final int UTSNAME_MACHINE_OFFSET = 4 * UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `domainname` inside Linux `struct utsname`.
-    private static final int UTSNAME_DOMAINNAME_OFFSET = 5 * UTSNAME_FIELD_SIZE;
+    protected static final int UTSNAME_DOMAINNAME_OFFSET = 5 * UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `tv_sec` inside Linux RISC-V 64-bit `struct timeval`.
-    private static final int TIMEVAL_SECONDS_OFFSET = 0;
+    protected static final int TIMEVAL_SECONDS_OFFSET = 0;
 
     /// The byte offset of `tv_usec` inside Linux RISC-V 64-bit `struct timeval`.
-    private static final int TIMEVAL_MICROSECONDS_OFFSET = Long.BYTES;
+    protected static final int TIMEVAL_MICROSECONDS_OFFSET = Long.BYTES;
 
     /// The byte offset of `tz_minuteswest` inside Linux `struct timezone`.
-    private static final int TIMEZONE_MINUTESWEST_OFFSET = 0;
+    protected static final int TIMEZONE_MINUTESWEST_OFFSET = 0;
 
     /// The byte offset of `tz_dsttime` inside Linux `struct timezone`.
-    private static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
+    protected static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
 
     /// The byte size of Linux RISC-V 64-bit `struct tms`.
-    private static final int TMS_SIZE = 4 * Long.BYTES;
+    protected static final int TMS_SIZE = 4 * Long.BYTES;
 
     /// The byte offset of `tms_utime` inside Linux RISC-V 64-bit `struct tms`.
-    private static final int TMS_USER_TIME_OFFSET = 0;
+    protected static final int TMS_USER_TIME_OFFSET = 0;
 
     /// The byte offset of `tms_stime` inside Linux RISC-V 64-bit `struct tms`.
-    private static final int TMS_SYSTEM_TIME_OFFSET = Long.BYTES;
+    protected static final int TMS_SYSTEM_TIME_OFFSET = Long.BYTES;
 
     /// The byte offset of `tms_cutime` inside Linux RISC-V 64-bit `struct tms`.
-    private static final int TMS_CHILD_USER_TIME_OFFSET = 2 * Long.BYTES;
+    protected static final int TMS_CHILD_USER_TIME_OFFSET = 2 * Long.BYTES;
 
     /// The byte offset of `tms_cstime` inside Linux RISC-V 64-bit `struct tms`.
-    private static final int TMS_CHILD_SYSTEM_TIME_OFFSET = 3 * Long.BYTES;
+    protected static final int TMS_CHILD_SYSTEM_TIME_OFFSET = 3 * Long.BYTES;
 
     /// The byte size of Linux RISC-V 64-bit `struct rusage`.
-    private static final int RUSAGE_SIZE = 144;
+    protected static final int RUSAGE_SIZE = 144;
 
     /// The byte offset of `ru_utime` inside Linux RISC-V 64-bit `struct rusage`.
-    private static final int RUSAGE_USER_TIME_OFFSET = 0;
+    protected static final int RUSAGE_USER_TIME_OFFSET = 0;
 
     /// The byte offset of `ru_stime` inside Linux RISC-V 64-bit `struct rusage`.
-    private static final int RUSAGE_SYSTEM_TIME_OFFSET = 2 * Long.BYTES;
+    protected static final int RUSAGE_SYSTEM_TIME_OFFSET = 2 * Long.BYTES;
 
     /// The byte size of Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_SIZE = 112;
+    protected static final int SYSINFO_SIZE = 112;
 
     /// The byte offset of `uptime` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_UPTIME_OFFSET = 0;
+    protected static final int SYSINFO_UPTIME_OFFSET = 0;
 
     /// The byte offset of `loads` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_LOADS_OFFSET = Long.BYTES;
+    protected static final int SYSINFO_LOADS_OFFSET = Long.BYTES;
 
     /// The byte offset of `totalram` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_TOTAL_RAM_OFFSET = 4 * Long.BYTES;
+    protected static final int SYSINFO_TOTAL_RAM_OFFSET = 4 * Long.BYTES;
 
     /// The byte offset of `freeram` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_FREE_RAM_OFFSET = 5 * Long.BYTES;
+    protected static final int SYSINFO_FREE_RAM_OFFSET = 5 * Long.BYTES;
 
     /// The byte offset of `sharedram` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_SHARED_RAM_OFFSET = 6 * Long.BYTES;
+    protected static final int SYSINFO_SHARED_RAM_OFFSET = 6 * Long.BYTES;
 
     /// The byte offset of `bufferram` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_BUFFER_RAM_OFFSET = 7 * Long.BYTES;
+    protected static final int SYSINFO_BUFFER_RAM_OFFSET = 7 * Long.BYTES;
 
     /// The byte offset of `totalswap` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_TOTAL_SWAP_OFFSET = 8 * Long.BYTES;
+    protected static final int SYSINFO_TOTAL_SWAP_OFFSET = 8 * Long.BYTES;
 
     /// The byte offset of `freeswap` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_FREE_SWAP_OFFSET = 9 * Long.BYTES;
+    protected static final int SYSINFO_FREE_SWAP_OFFSET = 9 * Long.BYTES;
 
     /// The byte offset of `procs` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_PROCESSES_OFFSET = 10 * Long.BYTES;
+    protected static final int SYSINFO_PROCESSES_OFFSET = 10 * Long.BYTES;
 
     /// The byte offset of `totalhigh` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_TOTAL_HIGH_OFFSET = 11 * Long.BYTES;
+    protected static final int SYSINFO_TOTAL_HIGH_OFFSET = 11 * Long.BYTES;
 
     /// The byte offset of `freehigh` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_FREE_HIGH_OFFSET = 12 * Long.BYTES;
+    protected static final int SYSINFO_FREE_HIGH_OFFSET = 12 * Long.BYTES;
 
     /// The byte offset of `mem_unit` inside Linux RISC-V 64-bit `struct sysinfo`.
-    private static final int SYSINFO_MEMORY_UNIT_OFFSET = 13 * Long.BYTES;
+    protected static final int SYSINFO_MEMORY_UNIT_OFFSET = 13 * Long.BYTES;
 
     /// Linux `RUSAGE_CHILDREN`.
-    private static final long RUSAGE_CHILDREN = -1;
+    protected static final long RUSAGE_CHILDREN = -1;
 
     /// Linux `RUSAGE_SELF`.
-    private static final long RUSAGE_SELF = 0;
+    protected static final long RUSAGE_SELF = 0;
 
     /// Linux `RUSAGE_THREAD`.
-    private static final long RUSAGE_THREAD = 1;
+    protected static final long RUSAGE_THREAD = 1;
 
     /// The byte offset of `rlim_cur` inside Linux RISC-V 64-bit `struct rlimit64`.
-    private static final int RLIMIT_CURRENT_OFFSET = 0;
+    protected static final int RLIMIT_CURRENT_OFFSET = 0;
 
     /// The byte offset of `rlim_max` inside Linux RISC-V 64-bit `struct rlimit64`.
-    private static final int RLIMIT_MAXIMUM_OFFSET = Long.BYTES;
+    protected static final int RLIMIT_MAXIMUM_OFFSET = Long.BYTES;
 
     /// Linux `RLIM_INFINITY`.
-    private static final long RLIM_INFINITY = -1L;
+    protected static final long RLIM_INFINITY = -1L;
 
     /// The number of Linux resource limits tracked by this simulator.
-    private static final int RESOURCE_LIMIT_COUNT = 16;
+    protected static final int RESOURCE_LIMIT_COUNT = 16;
 
     /// Linux `RLIMIT_STACK`.
-    private static final int RLIMIT_STACK = 3;
+    protected static final int RLIMIT_STACK = 3;
 
     /// Linux `RLIMIT_NOFILE`.
-    private static final int RLIMIT_NOFILE = 7;
-
-    /// FreeBSD `RLIMIT_NOFILE`.
-    private static final int FREEBSD_RLIMIT_NOFILE = 8;
+    protected static final int RLIMIT_NOFILE = 7;
 
     /// The default stack soft limit exposed through `prlimit64`.
-    private static final long DEFAULT_STACK_LIMIT = 8L * 1024L * 1024L;
+    protected static final long DEFAULT_STACK_LIMIT = 8L * 1024L * 1024L;
 
     /// The default open-file soft and hard limit exposed through `prlimit64`.
-    private static final long DEFAULT_OPEN_FILE_LIMIT = 1024;
+    protected static final long DEFAULT_OPEN_FILE_LIMIT = 1024;
 
     /// Default Linux resource-limit soft values.
-    private static final long @Unmodifiable [] DEFAULT_RESOURCE_LIMIT_CURRENT = initialResourceLimitCurrent();
+    protected static final long @Unmodifiable [] DEFAULT_RESOURCE_LIMIT_CURRENT = initialResourceLimitCurrent();
 
     /// Default Linux resource-limit hard values.
-    private static final long @Unmodifiable [] DEFAULT_RESOURCE_LIMIT_MAXIMUM = initialResourceLimitMaximum();
+    protected static final long @Unmodifiable [] DEFAULT_RESOURCE_LIMIT_MAXIMUM = initialResourceLimitMaximum();
 
     /// The bit mask for Linux `mmap` protection values accepted by this simulator.
-    private static final long SUPPORTED_MMAP_PROTECTION_MASK = 0x7;
+    protected static final long SUPPORTED_MMAP_PROTECTION_MASK = 0x7;
 
     /// Linux `PROT_NONE`.
-    private static final long PROT_NONE = 0x0;
+    protected static final long PROT_NONE = 0x0;
 
     /// Linux `MAP_SHARED`.
-    private static final long MAP_SHARED = 0x01;
+    protected static final long MAP_SHARED = 0x01;
 
     /// Linux `MAP_PRIVATE`.
-    private static final long MAP_PRIVATE = 0x02;
+    protected static final long MAP_PRIVATE = 0x02;
 
     /// Linux `MAP_TYPE`.
-    private static final long MAP_TYPE = 0x0f;
+    protected static final long MAP_TYPE = 0x0f;
 
     /// Linux `MAP_FIXED`.
-    private static final long MAP_FIXED = 0x10;
+    protected static final long MAP_FIXED = 0x10;
 
     /// Linux `MAP_ANONYMOUS`.
-    private static final long MAP_ANONYMOUS = 0x20;
+    protected static final long MAP_ANONYMOUS = 0x20;
 
     /// Linux `MAP_HUGETLB`.
-    private static final long MAP_HUGETLB = 0x40000;
+    protected static final long MAP_HUGETLB = 0x40000;
 
     /// Linux `MAP_FIXED_NOREPLACE`.
-    private static final long MAP_FIXED_NOREPLACE = 0x100000;
-
-    /// FreeBSD `MAP_ANON`.
-    private static final long FREEBSD_MAP_ANON = 0x1000;
-
-    /// FreeBSD `MAP_EXCL`, used with `MAP_FIXED`.
-    private static final long FREEBSD_MAP_EXCL = 0x4000;
+    protected static final long MAP_FIXED_NOREPLACE = 0x100000;
 
     /// Linux `MADV_NORMAL`.
-    private static final long MADV_NORMAL = 0;
+    protected static final long MADV_NORMAL = 0;
 
     /// Linux `MADV_RANDOM`.
-    private static final long MADV_RANDOM = 1;
+    protected static final long MADV_RANDOM = 1;
 
     /// Linux `MADV_SEQUENTIAL`.
-    private static final long MADV_SEQUENTIAL = 2;
+    protected static final long MADV_SEQUENTIAL = 2;
 
     /// Linux `MADV_WILLNEED`.
-    private static final long MADV_WILLNEED = 3;
+    protected static final long MADV_WILLNEED = 3;
 
     /// Linux `MADV_DONTNEED`.
-    private static final long MADV_DONTNEED = 4;
+    protected static final long MADV_DONTNEED = 4;
 
     /// Linux `MADV_FREE`.
-    private static final long MADV_FREE = 8;
+    protected static final long MADV_FREE = 8;
 
     /// Linux `MADV_DONTFORK`.
-    private static final long MADV_DONTFORK = 10;
+    protected static final long MADV_DONTFORK = 10;
 
     /// Linux `MADV_DOFORK`.
-    private static final long MADV_DOFORK = 11;
+    protected static final long MADV_DOFORK = 11;
 
     /// Linux `MADV_MERGEABLE`.
-    private static final long MADV_MERGEABLE = 12;
+    protected static final long MADV_MERGEABLE = 12;
 
     /// Linux `MADV_UNMERGEABLE`.
-    private static final long MADV_UNMERGEABLE = 13;
+    protected static final long MADV_UNMERGEABLE = 13;
 
     /// Linux `MADV_HUGEPAGE`.
-    private static final long MADV_HUGEPAGE = 14;
+    protected static final long MADV_HUGEPAGE = 14;
 
     /// Linux `MADV_NOHUGEPAGE`.
-    private static final long MADV_NOHUGEPAGE = 15;
+    protected static final long MADV_NOHUGEPAGE = 15;
 
     /// Linux `MADV_DONTDUMP`.
-    private static final long MADV_DONTDUMP = 16;
+    protected static final long MADV_DONTDUMP = 16;
 
     /// Linux `MADV_DODUMP`.
-    private static final long MADV_DODUMP = 17;
+    protected static final long MADV_DODUMP = 17;
 
     /// Linux `MADV_WIPEONFORK`.
-    private static final long MADV_WIPEONFORK = 18;
+    protected static final long MADV_WIPEONFORK = 18;
 
     /// Linux `MADV_KEEPONFORK`.
-    private static final long MADV_KEEPONFORK = 19;
+    protected static final long MADV_KEEPONFORK = 19;
 
     /// Linux `MADV_COLD`.
-    private static final long MADV_COLD = 20;
+    protected static final long MADV_COLD = 20;
 
     /// Linux `MADV_PAGEOUT`.
-    private static final long MADV_PAGEOUT = 21;
+    protected static final long MADV_PAGEOUT = 21;
 
     /// Linux `MADV_POPULATE_READ`.
-    private static final long MADV_POPULATE_READ = 22;
+    protected static final long MADV_POPULATE_READ = 22;
 
     /// Linux `MADV_POPULATE_WRITE`.
-    private static final long MADV_POPULATE_WRITE = 23;
+    protected static final long MADV_POPULATE_WRITE = 23;
 
     /// Linux `MADV_DONTNEED_LOCKED`.
-    private static final long MADV_DONTNEED_LOCKED = 24;
+    protected static final long MADV_DONTNEED_LOCKED = 24;
 
     /// Linux `MADV_COLLAPSE`.
-    private static final long MADV_COLLAPSE = 25;
+    protected static final long MADV_COLLAPSE = 25;
 
     /// Linux `MREMAP_MAYMOVE`.
-    private static final long MREMAP_MAYMOVE = 1;
+    protected static final long MREMAP_MAYMOVE = 1;
 
     /// Linux `MREMAP_FIXED`.
-    private static final long MREMAP_FIXED = 2;
+    protected static final long MREMAP_FIXED = 2;
 
     /// Linux `mremap` flags accepted by this simulator.
-    private static final long SUPPORTED_MREMAP_FLAGS = MREMAP_MAYMOVE | MREMAP_FIXED;
+    protected static final long SUPPORTED_MREMAP_FLAGS = MREMAP_MAYMOVE | MREMAP_FIXED;
 
     /// Linux `FUTEX_WAIT`.
-    private static final long FUTEX_WAIT = 0;
+    protected static final long FUTEX_WAIT = 0;
 
     /// Linux `FUTEX_WAKE`.
-    private static final long FUTEX_WAKE = 1;
+    protected static final long FUTEX_WAKE = 1;
 
     /// Linux `FUTEX_WAIT_BITSET`.
-    private static final long FUTEX_WAIT_BITSET = 9;
+    protected static final long FUTEX_WAIT_BITSET = 9;
 
     /// Linux `FUTEX_WAKE_BITSET`.
-    private static final long FUTEX_WAKE_BITSET = 10;
+    protected static final long FUTEX_WAKE_BITSET = 10;
 
     /// Linux futex command mask.
-    private static final long FUTEX_COMMAND_MASK = 0x7f;
+    protected static final long FUTEX_COMMAND_MASK = 0x7f;
 
     /// Linux `FUTEX_PRIVATE_FLAG`.
-    private static final long FUTEX_PRIVATE_FLAG = 128;
+    protected static final long FUTEX_PRIVATE_FLAG = 128;
 
     /// Linux `FUTEX_CLOCK_REALTIME`.
-    private static final long FUTEX_CLOCK_REALTIME = 256;
+    protected static final long FUTEX_CLOCK_REALTIME = 256;
 
     /// Linux futex flags accepted by this simulator.
-    private static final long SUPPORTED_FUTEX_FLAGS = FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME;
+    protected static final long SUPPORTED_FUTEX_FLAGS = FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME;
 
     /// Linux `FUTEX_BITSET_MATCH_ANY`.
-    private static final long FUTEX_BITSET_MATCH_ANY = 0xffff_ffffL;
-
-    /// Linux `CLONE_VM`.
-    private static final long CLONE_VM = 0x00000100L;
-
-    /// Linux `CSIGNAL` clone exit-signal mask.
-    private static final long CLONE_EXIT_SIGNAL_MASK = 0xffL;
-
-    /// Linux `SIGCHLD`.
-    private static final long SIGNAL_CHILD = 17L;
-
-    /// Linux `CLONE_FS`.
-    private static final long CLONE_FS = 0x00000200L;
-
-    /// Linux `CLONE_FILES`.
-    private static final long CLONE_FILES = 0x00000400L;
-
-    /// Linux `CLONE_SIGHAND`.
-    private static final long CLONE_SIGHAND = 0x00000800L;
-
-    /// Linux `CLONE_PIDFD`.
-    private static final long CLONE_PIDFD = 0x00001000L;
-
-    /// Linux `CLONE_THREAD`.
-    private static final long CLONE_THREAD = 0x00010000L;
-
-    /// Linux `CLONE_SYSVSEM`.
-    private static final long CLONE_SYSVSEM = 0x00040000L;
-
-    /// Linux `CLONE_SETTLS`.
-    private static final long CLONE_SETTLS = 0x00080000L;
-
-    /// Linux `CLONE_PARENT_SETTID`.
-    private static final long CLONE_PARENT_SETTID = 0x00100000L;
-
-    /// Linux `CLONE_CHILD_CLEARTID`.
-    private static final long CLONE_CHILD_CLEARTID = 0x00200000L;
-
-    /// Linux `CLONE_DETACHED`.
-    private static final long CLONE_DETACHED = 0x00400000L;
-
-    /// Linux `CLONE_CHILD_SETTID`.
-    private static final long CLONE_CHILD_SETTID = 0x01000000L;
-
-    /// Linux clone flags required for the supported thread-style parent return path.
-    private static final long REQUIRED_THREAD_CLONE_FLAGS =
-            CLONE_VM | CLONE_SIGHAND | CLONE_THREAD;
-
-    /// Linux clone flags accepted by the supported thread-style parent return path.
-    private static final long SUPPORTED_THREAD_CLONE_FLAGS =
-            REQUIRED_THREAD_CLONE_FLAGS
-                    | CLONE_FS
-                    | CLONE_FILES
-                    | CLONE_SYSVSEM
-                    | CLONE_SETTLS
-                    | CLONE_PARENT_SETTID
-                    | CLONE_CHILD_CLEARTID
-                    | CLONE_DETACHED
-                    | CLONE_CHILD_SETTID;
-
-    /// Clone flags accepted for independent child-process creation.
-    private static final long SUPPORTED_PROCESS_CLONE_FLAGS =
-            CLONE_EXIT_SIGNAL_MASK
-                    | CLONE_FS
-                    | CLONE_FILES
-                    | CLONE_SYSVSEM
-                    | CLONE_SETTLS
-                    | CLONE_PARENT_SETTID
-                    | CLONE_CHILD_CLEARTID
-                    | CLONE_CHILD_SETTID;
-
-    /// The minimum supported Linux `struct clone_args` byte size.
-    private static final long CLONE_ARGS_MINIMUM_SIZE = 64;
-
-    /// The known Linux `struct clone_args` byte size.
-    private static final long CLONE_ARGS_KNOWN_SIZE = 88;
-
-    /// The byte offset of `flags` inside `struct clone_args`.
-    private static final long CLONE_ARGS_FLAGS_OFFSET = 0;
-
-    /// The byte offset of `child_tid` inside `struct clone_args`.
-    private static final long CLONE_ARGS_CHILD_TID_OFFSET = 16;
-
-    /// The byte offset of `parent_tid` inside `struct clone_args`.
-    private static final long CLONE_ARGS_PARENT_TID_OFFSET = 24;
-
-    /// The byte offset of `exit_signal` inside `struct clone_args`.
-    private static final long CLONE_ARGS_EXIT_SIGNAL_OFFSET = 32;
-
-    /// The byte offset of `stack` inside `struct clone_args`.
-    private static final long CLONE_ARGS_STACK_OFFSET = 40;
-
-    /// The byte offset of `stack_size` inside `struct clone_args`.
-    private static final long CLONE_ARGS_STACK_SIZE_OFFSET = 48;
-
-    /// The byte offset of `tls` inside `struct clone_args`.
-    private static final long CLONE_ARGS_TLS_OFFSET = 56;
-
-    /// The byte offset of `set_tid` inside `struct clone_args`.
-    private static final long CLONE_ARGS_SET_TID_OFFSET = 64;
-
-    /// The byte offset of `set_tid_size` inside `struct clone_args`.
-    private static final long CLONE_ARGS_SET_TID_SIZE_OFFSET = 72;
-
-    /// The byte offset of `cgroup` inside `struct clone_args`.
-    private static final long CLONE_ARGS_CGROUP_OFFSET = 80;
+    protected static final long FUTEX_BITSET_MATCH_ANY = 0xffff_ffffL;
 
     /// Linux `WNOHANG`.
-    private static final long WAIT_NO_HANG = 0x00000001L;
+    protected static final long WAIT_NO_HANG = 0x00000001L;
 
     /// Linux `WUNTRACED`.
-    private static final long WAIT_UNTRACED = 0x00000002L;
+    protected static final long WAIT_UNTRACED = 0x00000002L;
 
     /// Linux `WCONTINUED`.
-    private static final long WAIT_CONTINUED = 0x00000008L;
+    protected static final long WAIT_CONTINUED = 0x00000008L;
 
     /// Wait options accepted by the simulator.
-    private static final long SUPPORTED_WAIT_OPTIONS = WAIT_NO_HANG | WAIT_UNTRACED | WAIT_CONTINUED;
+    protected static final long SUPPORTED_WAIT_OPTIONS = WAIT_NO_HANG | WAIT_UNTRACED | WAIT_CONTINUED;
 
     /// The byte size of Linux generic 64-bit kernel `sigset_t`.
-    private static final long KERNEL_SIGSET_SIZE = 8;
+    protected static final long KERNEL_SIGSET_SIZE = 8;
 
     /// The byte size of Linux generic 64-bit kernel `struct sigaction`.
-    private static final long KERNEL_SIGACTION_SIZE = 32;
+    protected static final long KERNEL_SIGACTION_SIZE = 32;
 
     /// The byte offset of `ss_sp` inside Linux RISC-V 64-bit `stack_t`.
-    private static final long SIGNAL_STACK_POINTER_OFFSET = 0;
+    protected static final long SIGNAL_STACK_POINTER_OFFSET = 0;
 
     /// The byte offset of `ss_flags` inside Linux RISC-V 64-bit `stack_t`.
-    private static final long SIGNAL_STACK_FLAGS_OFFSET = Long.BYTES;
+    protected static final long SIGNAL_STACK_FLAGS_OFFSET = Long.BYTES;
 
     /// The padding byte offset after `ss_flags` inside Linux RISC-V 64-bit `stack_t`.
-    private static final long SIGNAL_STACK_FLAGS_PADDING_OFFSET = SIGNAL_STACK_FLAGS_OFFSET + Integer.BYTES;
+    protected static final long SIGNAL_STACK_FLAGS_PADDING_OFFSET = SIGNAL_STACK_FLAGS_OFFSET + Integer.BYTES;
 
     /// The byte offset of `ss_size` inside Linux RISC-V 64-bit `stack_t`.
-    private static final long SIGNAL_STACK_SIZE_OFFSET = 2L * Long.BYTES;
+    protected static final long SIGNAL_STACK_SIZE_OFFSET = 2L * Long.BYTES;
 
     /// Linux `MINSIGSTKSZ`.
-    private static final long MINIMUM_SIGNAL_STACK_SIZE = 2048;
+    protected static final long MINIMUM_SIGNAL_STACK_SIZE = 2048;
 
     /// Linux `SS_ONSTACK`.
-    private static final long SS_ONSTACK = 1;
+    protected static final long SS_ONSTACK = 1;
 
     /// Linux `SS_DISABLE`.
-    private static final long SS_DISABLE = 2;
+    protected static final long SS_DISABLE = 2;
 
     /// Linux `SS_AUTODISARM`.
-    private static final long SS_AUTODISARM = 1L << 31;
+    protected static final long SS_AUTODISARM = 1L << 31;
 
     /// Linux flags accepted when registering an alternate signal stack.
-    private static final long SUPPORTED_SIGNAL_STACK_FLAGS = SS_DISABLE | SS_AUTODISARM;
+    protected static final long SUPPORTED_SIGNAL_STACK_FLAGS = SS_DISABLE | SS_AUTODISARM;
 
     /// The byte size of the minimal CPU affinity mask exposed to the guest.
-    private static final long MINIMUM_CPU_AFFINITY_MASK_SIZE = Long.BYTES;
-
-    /// The byte size of Linux `struct riscv_hwprobe`.
-    private static final long RISCV_HWPROBE_PAIR_SIZE = 16;
-
-    /// The byte offset of `key` inside `struct riscv_hwprobe`.
-    private static final long RISCV_HWPROBE_KEY_OFFSET = 0;
-
-    /// The byte offset of `value` inside `struct riscv_hwprobe`.
-    private static final long RISCV_HWPROBE_VALUE_OFFSET = Long.BYTES;
-
-    /// Linux `RISCV_HWPROBE_WHICH_CPUS`.
-    private static final long RISCV_HWPROBE_WHICH_CPUS = 1;
-
-    /// Linux `RISCV_HWPROBE_KEY_MVENDORID`.
-    private static final long RISCV_HWPROBE_KEY_MVENDORID = 0;
-
-    /// Linux `RISCV_HWPROBE_KEY_MARCHID`.
-    private static final long RISCV_HWPROBE_KEY_MARCHID = 1;
-
-    /// Linux `RISCV_HWPROBE_KEY_MIMPID`.
-    private static final long RISCV_HWPROBE_KEY_MIMPID = 2;
-
-    /// Linux `RISCV_HWPROBE_KEY_BASE_BEHAVIOR`.
-    private static final long RISCV_HWPROBE_KEY_BASE_BEHAVIOR = 3;
-
-    /// Linux `RISCV_HWPROBE_BASE_BEHAVIOR_IMA`.
-    private static final long RISCV_HWPROBE_BASE_BEHAVIOR_IMA = 1;
-
-    /// Linux `RISCV_HWPROBE_KEY_IMA_EXT_0`.
-    private static final long RISCV_HWPROBE_KEY_IMA_EXT_0 = 4;
-
-    /// Linux `RISCV_HWPROBE_KEY_CPUPERF_0`.
-    private static final long RISCV_HWPROBE_KEY_CPUPERF_0 = 5;
-
-    /// Linux `RISCV_HWPROBE_MISALIGNED_EMULATED`.
-    private static final long RISCV_HWPROBE_MISALIGNED_EMULATED = 1;
-
-    /// Linux `RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE`.
-    private static final long RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE = 6;
-
-    /// Linux `RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS`.
-    private static final long RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS = 7;
-
-    /// Linux `RISCV_HWPROBE_KEY_TIME_CSR_FREQ`.
-    private static final long RISCV_HWPROBE_KEY_TIME_CSR_FREQ = 8;
-
-    /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF`.
-    private static final long RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF = 9;
-
-    /// Linux `RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED`.
-    private static final long RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED = 1;
-
-    /// Linux `RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF`.
-    private static final long RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF = 10;
-
-    /// Linux `RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW`.
-    private static final long RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW = 2;
-
-    /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0`.
-    private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0 = 11;
-
-    /// Linux `RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE`.
-    private static final long RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE = 12;
-
-    /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0`.
-    private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0 = 13;
-
-    /// Linux `RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0`.
-    private static final long RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0 = 14;
-
-    /// Linux `RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE`.
-    private static final long RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE = 15;
+    protected static final long MINIMUM_CPU_AFFINITY_MASK_SIZE = Long.BYTES;
 
     /// Linux `CLOCK_REALTIME`.
-    private static final long CLOCK_REALTIME = 0;
+    protected static final long CLOCK_REALTIME = 0;
 
     /// Linux `CLOCK_MONOTONIC`.
-    private static final long CLOCK_MONOTONIC = 1;
+    protected static final long CLOCK_MONOTONIC = 1;
 
     /// Linux `CLOCK_PROCESS_CPUTIME_ID`.
-    private static final long CLOCK_PROCESS_CPUTIME_ID = 2;
+    protected static final long CLOCK_PROCESS_CPUTIME_ID = 2;
 
     /// Linux `CLOCK_THREAD_CPUTIME_ID`.
-    private static final long CLOCK_THREAD_CPUTIME_ID = 3;
+    protected static final long CLOCK_THREAD_CPUTIME_ID = 3;
 
     /// Linux `CLOCK_MONOTONIC_RAW`.
-    private static final long CLOCK_MONOTONIC_RAW = 4;
+    protected static final long CLOCK_MONOTONIC_RAW = 4;
 
     /// Linux `CLOCK_REALTIME_COARSE`.
-    private static final long CLOCK_REALTIME_COARSE = 5;
+    protected static final long CLOCK_REALTIME_COARSE = 5;
 
     /// Linux `CLOCK_MONOTONIC_COARSE`.
-    private static final long CLOCK_MONOTONIC_COARSE = 6;
+    protected static final long CLOCK_MONOTONIC_COARSE = 6;
 
     /// Linux `CLOCK_BOOTTIME`.
-    private static final long CLOCK_BOOTTIME = 7;
-
-    /// Linux `MEMBARRIER_CMD_QUERY`.
-    private static final long MEMBARRIER_CMD_QUERY = 0;
-
-    /// The original Linux `struct rseq` byte size including padding.
-    private static final long RSEQ_ORIGINAL_SIZE = 32;
-
-    /// The Linux `struct rseq` alignment used for the original 32-byte layout.
-    private static final long RSEQ_ALIGNMENT = 32;
-
-    /// Linux `RSEQ_FLAG_UNREGISTER`.
-    private static final long RSEQ_FLAG_UNREGISTER = 1;
-
-    /// The byte offset of `cpu_id_start` inside Linux `struct rseq`.
-    private static final long RSEQ_CPU_ID_START_OFFSET = 0;
-
-    /// The byte offset of `cpu_id` inside Linux `struct rseq`.
-    private static final long RSEQ_CPU_ID_OFFSET = Integer.BYTES;
-
-    /// The byte offset of `rseq_cs` inside Linux `struct rseq`.
-    private static final long RSEQ_CRITICAL_SECTION_OFFSET = 2L * Integer.BYTES;
-
-    /// The byte offset of `flags` inside Linux `struct rseq`.
-    private static final long RSEQ_FLAGS_OFFSET = RSEQ_CRITICAL_SECTION_OFFSET + Long.BYTES;
-
-    /// The byte offset of `node_id` inside Linux `struct rseq`.
-    private static final long RSEQ_NODE_ID_OFFSET = RSEQ_FLAGS_OFFSET + Integer.BYTES;
-
-    /// The byte offset of `mm_cid` inside Linux `struct rseq`.
-    private static final long RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET = RSEQ_NODE_ID_OFFSET + Integer.BYTES;
+    protected static final long CLOCK_BOOTTIME = 7;
 
     /// Linux `TIMER_ABSTIME`.
-    private static final long TIMER_ABSTIME = 1;
+    protected static final long TIMER_ABSTIME = 1;
 
     /// Linux flags accepted by `clock_nanosleep`.
-    private static final long SUPPORTED_CLOCK_NANOSLEEP_FLAGS = TIMER_ABSTIME;
+    protected static final long SUPPORTED_CLOCK_NANOSLEEP_FLAGS = TIMER_ABSTIME;
 
     /// The `tv_sec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
-    private static final int TIMESPEC_SECONDS_OFFSET = 0;
+    protected static final int TIMESPEC_SECONDS_OFFSET = 0;
 
     /// The `tv_nsec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
-    private static final int TIMESPEC_NANOSECONDS_OFFSET = Long.BYTES;
+    protected static final int TIMESPEC_NANOSECONDS_OFFSET = Long.BYTES;
 
     /// The byte size of Linux RISC-V 64-bit `struct timespec`.
-    private static final int TIMESPEC_SIZE = Long.BYTES * 2;
+    protected static final int TIMESPEC_SIZE = Long.BYTES * 2;
 
     /// The number of nanoseconds in one second.
-    private static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
+    protected static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
 
     /// The Linux user-space clock ticks per second value used by `times`.
-    private static final long CLOCK_TICKS_PER_SECOND = 100L;
+    protected static final long CLOCK_TICKS_PER_SECOND = 100L;
 
     /// The number of nanoseconds in one millisecond.
-    private static final long NANOSECONDS_PER_MILLISECOND = 1_000_000L;
-
-    /// Linux `PR_SET_PDEATHSIG`.
-    private static final long PR_SET_PDEATHSIG = 1;
-
-    /// Linux `PR_GET_PDEATHSIG`.
-    private static final long PR_GET_PDEATHSIG = 2;
-
-    /// Linux `PR_GET_DUMPABLE`.
-    private static final long PR_GET_DUMPABLE = 3;
-
-    /// Linux `PR_SET_DUMPABLE`.
-    private static final long PR_SET_DUMPABLE = 4;
-
-    /// Linux `PR_SET_NAME`.
-    private static final long PR_SET_NAME = 15;
-
-    /// Linux `PR_GET_NAME`.
-    private static final long PR_GET_NAME = 16;
-
-    /// Linux `PR_SET_TIMERSLACK`.
-    private static final long PR_SET_TIMERSLACK = 29;
-
-    /// Linux `PR_GET_TIMERSLACK`.
-    private static final long PR_GET_TIMERSLACK = 30;
-
-    /// Linux `PR_SET_CHILD_SUBREAPER`.
-    private static final long PR_SET_CHILD_SUBREAPER = 36;
-
-    /// Linux `PR_GET_CHILD_SUBREAPER`.
-    private static final long PR_GET_CHILD_SUBREAPER = 37;
-
-    /// Linux `PR_SET_NO_NEW_PRIVS`.
-    private static final long PR_SET_NO_NEW_PRIVS = 38;
-
-    /// Linux `PR_GET_NO_NEW_PRIVS`.
-    private static final long PR_GET_NO_NEW_PRIVS = 39;
-
-    /// Linux `PR_GET_TID_ADDRESS`.
-    private static final long PR_GET_TID_ADDRESS = 40;
-
-    /// Linux `PR_SET_THP_DISABLE`.
-    private static final long PR_SET_THP_DISABLE = 41;
-
-    /// Linux `PR_GET_THP_DISABLE`.
-    private static final long PR_GET_THP_DISABLE = 42;
-
-    /// Linux `PR_SET_TAGGED_ADDR_CTRL`.
-    private static final long PR_SET_TAGGED_ADDR_CTRL = 55;
-
-    /// Linux `PR_GET_TAGGED_ADDR_CTRL`.
-    private static final long PR_GET_TAGGED_ADDR_CTRL = 56;
-
-    /// Linux `PR_GET_AUXV`.
-    private static final long PR_GET_AUXV = 0x4155_5856L;
+    protected static final long NANOSECONDS_PER_MILLISECOND = 1_000_000L;
 
     /// Linux auxv executable filename pointer type.
-    private static final long AT_EXECFN = 31;
-
-    /// Linux `PR_TAGGED_ADDR_ENABLE`.
-    private static final long PR_TAGGED_ADDR_ENABLE = 1;
-
-    /// Linux `PR_PMLEN_SHIFT`.
-    private static final long PR_PMLEN_SHIFT = 24;
-
-    /// Linux `PR_PMLEN_MASK`.
-    private static final long PR_PMLEN_MASK = 0x7fL << PR_PMLEN_SHIFT;
-
-    /// The default disabled RISC-V userspace pointer mask length.
-    private static final int POINTER_MASK_LENGTH_DISABLED = 0;
-
-    /// The RISC-V userspace pointer mask length implemented by this simulator.
-    private static final int POINTER_MASK_LENGTH_7 = 7;
-
-    /// Linux `PR_SET_VMA`.
-    private static final long PR_SET_VMA = 0x53564d41L;
-
-    /// Linux `PR_SET_VMA_ANON_NAME`.
-    private static final long PR_SET_VMA_ANON_NAME = 0;
+    protected static final long AT_EXECFN = 31;
 
     /// The Linux task command string size used by `PR_SET_NAME` and `PR_GET_NAME`.
-    private static final int TASK_COMMAND_LENGTH = 16;
+    protected static final int TASK_COMMAND_LENGTH = 16;
 
     /// The default timer slack value exposed by `PR_GET_TIMERSLACK`.
-    private static final long DEFAULT_TIMER_SLACK_NANOSECONDS = 50_000L;
+    protected static final long DEFAULT_TIMER_SLACK_NANOSECONDS = 50_000L;
 
     /// The lowest regular Linux signal number accepted by signal syscalls.
-    private static final long MIN_SIGNAL_NUMBER = 1;
+    protected static final long MIN_SIGNAL_NUMBER = 1;
 
     /// The highest regular Linux signal number accepted by signal syscalls.
-    private static final long MAX_SIGNAL_NUMBER = 64;
+    protected static final long MAX_SIGNAL_NUMBER = 64;
 
     /// Linux `SIGKILL`.
-    private static final long SIGKILL = 9;
+    protected static final long SIGKILL = 9;
 
     /// Linux `SIGSTOP`.
-    private static final long SIGSTOP = 19;
+    protected static final long SIGSTOP = 19;
 
     /// Linux `SIG_BLOCK` signal-mask operation.
-    private static final long SIG_BLOCK = 0;
+    protected static final long SIG_BLOCK = 0;
 
     /// Linux `SIG_UNBLOCK` signal-mask operation.
-    private static final long SIG_UNBLOCK = 1;
+    protected static final long SIG_UNBLOCK = 1;
 
     /// Linux `SIG_SETMASK` signal-mask operation.
-    private static final long SIG_SETMASK = 2;
-
-    /// FreeBSD `SIG_BLOCK` signal-mask operation.
-    private static final long FREEBSD_SIG_BLOCK = 1;
-
-    /// FreeBSD `SIG_UNBLOCK` signal-mask operation.
-    private static final long FREEBSD_SIG_UNBLOCK = 2;
-
-    /// FreeBSD `SIG_SETMASK` signal-mask operation.
-    private static final long FREEBSD_SIG_SETMASK = 3;
-
-    /// The byte size of FreeBSD RISC-V `struct sigaction` used by Go.
-    private static final long FREEBSD_SIGACTION_SIZE = Long.BYTES + Integer.BYTES + 4L * Integer.BYTES;
-
-    /// The byte offset of `ss_sp` inside FreeBSD RISC-V `stack_t`.
-    private static final long FREEBSD_SIGNAL_STACK_POINTER_OFFSET = 0;
-
-    /// The byte offset of `ss_size` inside FreeBSD RISC-V `stack_t`.
-    private static final long FREEBSD_SIGNAL_STACK_SIZE_OFFSET = Long.BYTES;
-
-    /// The byte offset of `ss_flags` inside FreeBSD RISC-V `stack_t`.
-    private static final long FREEBSD_SIGNAL_STACK_FLAGS_OFFSET = 2L * Long.BYTES;
-
-    /// FreeBSD `SS_DISABLE`.
-    private static final long FREEBSD_SS_DISABLE = 4;
-
-    /// FreeBSD `_UMTX_OP_WAIT_UINT`.
-    private static final long FREEBSD_UMTX_OP_WAIT_UINT = 0x0b;
-
-    /// FreeBSD `_UMTX_OP_WAIT_UINT_PRIVATE`.
-    private static final long FREEBSD_UMTX_OP_WAIT_UINT_PRIVATE = 0x0f;
-
-    /// FreeBSD `_UMTX_OP_WAKE`.
-    private static final long FREEBSD_UMTX_OP_WAKE = 0x03;
-
-    /// FreeBSD `_UMTX_OP_WAKE_PRIVATE`.
-    private static final long FREEBSD_UMTX_OP_WAKE_PRIVATE = 0x10;
-
-    /// FreeBSD `EAGAIN` as a raw negative syscall result.
-    private static final long FREEBSD_EAGAIN = -35;
-
-    /// FreeBSD `ETIMEDOUT` as a raw negative syscall result.
-    private static final long FREEBSD_ETIMEDOUT = -60;
-
-    /// The byte offset of `start_func` inside FreeBSD `struct thr_param`.
-    private static final long FREEBSD_THR_PARAM_START_FUNC_OFFSET = 0;
-
-    /// The byte offset of `arg` inside FreeBSD `struct thr_param`.
-    private static final long FREEBSD_THR_PARAM_ARG_OFFSET = Long.BYTES;
-
-    /// The byte offset of `stack_base` inside FreeBSD `struct thr_param`.
-    private static final long FREEBSD_THR_PARAM_STACK_BASE_OFFSET = 2L * Long.BYTES;
-
-    /// The byte offset of `stack_size` inside FreeBSD `struct thr_param`.
-    private static final long FREEBSD_THR_PARAM_STACK_SIZE_OFFSET = 3L * Long.BYTES;
-
-    /// The byte offset of `tls_base` inside FreeBSD `struct thr_param`.
-    private static final long FREEBSD_THR_PARAM_TLS_BASE_OFFSET = 4L * Long.BYTES;
-
-    /// The byte offset of `child_tid` inside FreeBSD `struct thr_param`.
-    private static final long FREEBSD_THR_PARAM_CHILD_TID_OFFSET = 6L * Long.BYTES;
-
-    /// The byte offset of `parent_tid` inside FreeBSD `struct thr_param`.
-    private static final long FREEBSD_THR_PARAM_PARENT_TID_OFFSET = 7L * Long.BYTES;
-
-    /// The minimum FreeBSD `struct thr_param` byte size needed by the simulator.
-    private static final long FREEBSD_THR_PARAM_MINIMUM_SIZE = 8L * Long.BYTES;
+    protected static final long SIG_SETMASK = 2;
 
     /// Signal bits that Linux silently excludes from process signal masks.
-    private static final long UNBLOCKABLE_SIGNAL_MASK = signalMask(SIGKILL) | signalMask(SIGSTOP);
+    protected static final long UNBLOCKABLE_SIGNAL_MASK = signalMask(SIGKILL) | signalMask(SIGSTOP);
 
     /// The `st_ino` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_INODE_OFFSET = 8;
+    protected static final int STAT_INODE_OFFSET = 8;
 
     /// The `st_mode` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_MODE_OFFSET = 16;
+    protected static final int STAT_MODE_OFFSET = 16;
 
     /// The `st_nlink` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_LINK_COUNT_OFFSET = 20;
+    protected static final int STAT_LINK_COUNT_OFFSET = 20;
 
     /// The `st_uid` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_UID_OFFSET = 24;
+    protected static final int STAT_UID_OFFSET = 24;
 
     /// The `st_gid` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_GID_OFFSET = 28;
+    protected static final int STAT_GID_OFFSET = 28;
 
     /// The `st_size` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_SIZE_OFFSET = 48;
+    protected static final int STAT_SIZE_OFFSET = 48;
 
     /// The `st_blksize` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_BLOCK_SIZE_OFFSET = 56;
+    protected static final int STAT_BLOCK_SIZE_OFFSET = 56;
 
     /// The `st_blocks` byte offset inside Linux generic 64-bit `struct stat`.
-    private static final int STAT_BLOCK_COUNT_OFFSET = 64;
+    protected static final int STAT_BLOCK_COUNT_OFFSET = 64;
 
     /// The byte offset of `f_type` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_TYPE_OFFSET = 0;
+    protected static final int STATFS_TYPE_OFFSET = 0;
 
     /// The byte offset of `f_bsize` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_BLOCK_SIZE_OFFSET = 8;
+    protected static final int STATFS_BLOCK_SIZE_OFFSET = 8;
 
     /// The byte offset of `f_blocks` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_BLOCKS_OFFSET = 16;
+    protected static final int STATFS_BLOCKS_OFFSET = 16;
 
     /// The byte offset of `f_bfree` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_BLOCKS_FREE_OFFSET = 24;
+    protected static final int STATFS_BLOCKS_FREE_OFFSET = 24;
 
     /// The byte offset of `f_bavail` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_BLOCKS_AVAILABLE_OFFSET = 32;
+    protected static final int STATFS_BLOCKS_AVAILABLE_OFFSET = 32;
 
     /// The byte offset of `f_files` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_FILES_OFFSET = 40;
+    protected static final int STATFS_FILES_OFFSET = 40;
 
     /// The byte offset of `f_ffree` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_FILES_FREE_OFFSET = 48;
+    protected static final int STATFS_FILES_FREE_OFFSET = 48;
 
     /// The byte offset of `f_namelen` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_NAME_LENGTH_OFFSET = 64;
+    protected static final int STATFS_NAME_LENGTH_OFFSET = 64;
 
     /// The byte offset of `f_frsize` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_FRAGMENT_SIZE_OFFSET = 72;
+    protected static final int STATFS_FRAGMENT_SIZE_OFFSET = 72;
 
     /// The byte offset of `f_flags` inside Linux generic 64-bit `struct statfs`.
-    private static final int STATFS_FLAGS_OFFSET = 80;
+    protected static final int STATFS_FLAGS_OFFSET = 80;
 
     /// The byte offset of `stx_mask` inside Linux generic `struct statx`.
-    private static final int STATX_MASK_OFFSET = 0;
+    protected static final int STATX_MASK_OFFSET = 0;
 
     /// The byte offset of `stx_blksize` inside Linux generic `struct statx`.
-    private static final int STATX_BLOCK_SIZE_OFFSET = 4;
+    protected static final int STATX_BLOCK_SIZE_OFFSET = 4;
 
     /// The byte offset of `stx_attributes` inside Linux generic `struct statx`.
-    private static final int STATX_ATTRIBUTES_OFFSET = 8;
+    protected static final int STATX_ATTRIBUTES_OFFSET = 8;
 
     /// The byte offset of `stx_nlink` inside Linux generic `struct statx`.
-    private static final int STATX_LINK_COUNT_OFFSET = 16;
+    protected static final int STATX_LINK_COUNT_OFFSET = 16;
 
     /// The byte offset of `stx_uid` inside Linux generic `struct statx`.
-    private static final int STATX_UID_OFFSET = 20;
+    protected static final int STATX_UID_OFFSET = 20;
 
     /// The byte offset of `stx_gid` inside Linux generic `struct statx`.
-    private static final int STATX_GID_OFFSET = 24;
+    protected static final int STATX_GID_OFFSET = 24;
 
     /// The byte offset of `stx_mode` inside Linux generic `struct statx`.
-    private static final int STATX_MODE_OFFSET = 28;
+    protected static final int STATX_MODE_OFFSET = 28;
 
     /// The byte offset of `stx_ino` inside Linux generic `struct statx`.
-    private static final int STATX_INODE_OFFSET = 32;
+    protected static final int STATX_INODE_OFFSET = 32;
 
     /// The byte offset of `stx_size` inside Linux generic `struct statx`.
-    private static final int STATX_FILE_SIZE_OFFSET = 40;
+    protected static final int STATX_FILE_SIZE_OFFSET = 40;
 
     /// The byte offset of `stx_blocks` inside Linux generic `struct statx`.
-    private static final int STATX_BLOCK_COUNT_OFFSET = 48;
+    protected static final int STATX_BLOCK_COUNT_OFFSET = 48;
 
     /// The byte offset of `stx_attributes_mask` inside Linux generic `struct statx`.
-    private static final int STATX_ATTRIBUTES_MASK_OFFSET = 56;
+    protected static final int STATX_ATTRIBUTES_MASK_OFFSET = 56;
 
     /// The byte offset of `stx_dev_major` inside Linux generic `struct statx`.
-    private static final int STATX_DEVICE_MAJOR_OFFSET = 136;
+    protected static final int STATX_DEVICE_MAJOR_OFFSET = 136;
 
     /// The byte offset of `stx_dev_minor` inside Linux generic `struct statx`.
-    private static final int STATX_DEVICE_MINOR_OFFSET = 140;
+    protected static final int STATX_DEVICE_MINOR_OFFSET = 140;
 
     /// The byte offset of `stx_mnt_id` inside Linux generic `struct statx`.
-    private static final int STATX_MOUNT_ID_OFFSET = 144;
+    protected static final int STATX_MOUNT_ID_OFFSET = 144;
 
     /// The Linux `STATX_BASIC_STATS` bit mask returned by this simulator.
-    private static final int STATX_BASIC_STATS_MASK = 0x0000_07ff;
+    protected static final int STATX_BASIC_STATS_MASK = 0x0000_07ff;
 
     /// The deterministic mount id returned by `statx`.
-    private static final long STATX_SYNTHETIC_MOUNT_ID = 1;
+    protected static final long STATX_SYNTHETIC_MOUNT_ID = 1;
 
     /// The attribute mask returned by `statx`.
-    private static final long STATX_ATTRIBUTES_MASK = 0;
+    protected static final long STATX_ATTRIBUTES_MASK = 0;
 
     /// The Linux `S_IFCHR` file type bit used for character devices.
-    private static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
+    protected static final int STAT_MODE_CHARACTER_DEVICE = 0020000;
 
     /// The Linux `S_IFIFO` file type bit used for pipe endpoints.
-    private static final int STAT_MODE_FIFO = 0010000;
+    protected static final int STAT_MODE_FIFO = 0010000;
 
     /// The Linux `S_IFDIR` file type bit used for directories.
-    private static final int STAT_MODE_DIRECTORY = 0040000;
+    protected static final int STAT_MODE_DIRECTORY = 0040000;
 
     /// The Linux `S_IFLNK` file type bit used for symbolic links.
-    private static final int STAT_MODE_SYMBOLIC_LINK = 0120000;
+    protected static final int STAT_MODE_SYMBOLIC_LINK = 0120000;
 
     /// The Linux `S_IFREG` file type bit used for regular files.
-    private static final int STAT_MODE_REGULAR_FILE = 0100000;
+    protected static final int STAT_MODE_REGULAR_FILE = 0100000;
 
     /// The file permission bits exposed for standard streams.
-    private static final int STAT_MODE_READ_WRITE_ALL = 0666;
+    protected static final int STAT_MODE_READ_WRITE_ALL = 0666;
 
     /// The file permission bits exposed for symbolic links.
-    private static final int STAT_MODE_ALL = 0777;
+    protected static final int STAT_MODE_ALL = 0777;
 
     /// The file permission bits exposed for read-only host files.
-    private static final int STAT_MODE_READ_ALL = 0444;
+    protected static final int STAT_MODE_READ_ALL = 0444;
 
     /// The file permission bits exposed for readable host directories.
-    private static final int STAT_MODE_READ_EXECUTE_ALL = 0555;
+    protected static final int STAT_MODE_READ_EXECUTE_ALL = 0555;
 
     /// The `st_mode` value exposed for the simulator standard streams.
-    private static final int STANDARD_STREAM_STAT_MODE = STAT_MODE_CHARACTER_DEVICE | STAT_MODE_READ_WRITE_ALL;
+    protected static final int STANDARD_STREAM_STAT_MODE = STAT_MODE_CHARACTER_DEVICE | STAT_MODE_READ_WRITE_ALL;
 
     /// The block size exposed for standard streams.
-    private static final int STANDARD_STREAM_BLOCK_SIZE = 4096;
+    protected static final int STANDARD_STREAM_BLOCK_SIZE = 4096;
 
     /// The synthetic filesystem magic returned by `statfs`.
-    private static final long STATFS_MAGIC = 0x0102_1994L;
+    protected static final long STATFS_MAGIC = 0x0102_1994L;
 
     /// The synthetic filesystem block size returned by `statfs`.
-    private static final long STATFS_BLOCK_SIZE = 4096;
+    protected static final long STATFS_BLOCK_SIZE = 4096;
 
     /// The synthetic filesystem block count returned by `statfs`.
-    private static final long STATFS_BLOCK_COUNT = 1_048_576;
+    protected static final long STATFS_BLOCK_COUNT = 1_048_576;
 
     /// The synthetic filesystem file count returned by `statfs`.
-    private static final long STATFS_FILE_COUNT = 1_048_576;
+    protected static final long STATFS_FILE_COUNT = 1_048_576;
 
     /// The maximum guest filename length returned by `statfs`.
-    private static final long STATFS_NAME_MAX = 255;
+    protected static final long STATFS_NAME_MAX = 255;
 
     /// Linux `PROC_SUPER_MAGIC`.
-    private static final long PROC_SUPER_MAGIC = 0x9fa0L;
+    protected static final long PROC_SUPER_MAGIC = 0x9fa0L;
 
     /// The guest path where the built-in virtual proc filesystem is mounted.
-    private static final String PROC_MOUNT_PATH = "/proc";
+    protected static final String PROC_MOUNT_PATH = "/proc";
 
     /// The guest path where the built-in virtual device filesystem is mounted.
-    private static final String DEV_MOUNT_PATH = "/dev";
+    protected static final String DEV_MOUNT_PATH = "/dev";
 
     /// Synthetic inode base used for virtual proc entries.
-    private static final long PROC_INODE_BASE = 0x7000_0000L;
+    protected static final long PROC_INODE_BASE = 0x7000_0000L;
 
     /// The non-cryptographic seed used for deterministic `getrandom` bytes.
-    private static final long RANDOM_SEED = 0x4752_4953_4356_0001L;
+    protected static final long RANDOM_SEED = 0x4752_4953_4356_0001L;
 
     /// Linux `GRND_NONBLOCK`; accepted because simulator randomness never blocks.
-    private static final long GRND_NONBLOCK = 0x0001;
+    protected static final long GRND_NONBLOCK = 0x0001;
 
     /// Linux `GRND_RANDOM`; accepted and mapped to the same deterministic source.
-    private static final long GRND_RANDOM = 0x0002;
+    protected static final long GRND_RANDOM = 0x0002;
 
     /// The supported Linux `getrandom` flags mask.
-    private static final long GETRANDOM_SUPPORTED_FLAGS = GRND_NONBLOCK | GRND_RANDOM;
+    protected static final long GETRANDOM_SUPPORTED_FLAGS = GRND_NONBLOCK | GRND_RANDOM;
 
     /// The guest memory accessed by syscall buffers.
-    private final Memory memory;
+    protected final Memory memory;
 
     /// The host input stream used for guest stdin reads.
-    private final InputStream in;
+    protected final InputStream in;
 
     /// The host output stream used for guest stdout writes.
-    private final OutputStream out;
+    protected final OutputStream out;
 
     /// The host output stream used for guest stderr writes.
-    private final OutputStream err;
+    protected final OutputStream err;
 
     /// The Truffle environment used to start guest threads, or null when unavailable.
-    private final @Nullable TruffleLanguage.Env env;
+    protected final @Nullable TruffleLanguage.Env env;
 
     /// Runs guest thread states created by Linux `clone`.
-    private final @Nullable GuestThreadRunner guestThreadRunner;
+    protected final @Nullable GuestThreadRunner guestThreadRunner;
 
     /// The guest filesystem mount namespace used by sandboxed file syscalls.
-    private final GuestFileSystem fileSystem;
+    protected final GuestFileSystem fileSystem;
 
     /// The filesystem namespace before process-local default virtual mounts are attached.
-    private final GuestFileSystem baseFileSystem;
+    protected final GuestFileSystem baseFileSystem;
 
     /// The process-shared terminal exposed through standard descriptors and `/dev/tty`.
-    private final TerminalDevice terminalDevice;
+    protected final TerminalDevice terminalDevice;
 
     /// The Linux user and group identity exposed to this guest process.
-    private final GuestCredentials credentials;
+    protected final GuestCredentials credentials;
 
     /// The guest-visible current working directory in absolute Linux path syntax.
-    private String guestWorkingDirectory = "/";
+    protected String guestWorkingDirectory = "/";
 
     /// The serialized Linux auxiliary vector returned by `PR_GET_AUXV`.
-    private byte @Unmodifiable [] auxiliaryVectorBytes = encodeAuxiliaryVector(new long[]{0, 0});
+    protected byte @Unmodifiable [] auxiliaryVectorBytes = encodeAuxiliaryVector(new long[]{0, 0});
 
     /// The process command line exposed through `/proc/self/cmdline`.
-    private byte @Unmodifiable [] procCommandLineBytes = new byte[0];
+    protected byte @Unmodifiable [] procCommandLineBytes = new byte[0];
 
     /// The process environment exposed through `/proc/self/environ`.
-    private byte @Unmodifiable [] procEnvironmentBytes = new byte[0];
+    protected byte @Unmodifiable [] procEnvironmentBytes = new byte[0];
 
     /// The executable path exposed through `/proc/self/exe`.
-    private String procExecutablePath = "/";
+    protected String procExecutablePath = "/";
 
     /// The lowest program break accepted by the `brk` syscall.
-    private long initialProgramBreak;
+    protected long initialProgramBreak;
 
     /// The current guest program break returned by `brk`.
-    private long programBreak;
+    protected long programBreak;
 
     /// The highest program-break address that currently has guest memory backing.
-    private long programBreakBackingEnd;
+    protected long programBreakBackingEnd;
 
     /// The active anonymous mappings created by `mmap`.
-    private final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
+    protected final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
 
     /// The guest base page size used for page-based memory syscalls.
-    private final long pageSize;
+    protected final long pageSize;
 
     /// The guest file descriptor table for host files opened by `openat`.
-    private final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
+    protected final ArrayList<@Nullable OpenFile> openFiles = new ArrayList<>();
 
     /// Overrides for standard descriptors when guest code redirects stdin, stdout, or stderr.
-    private final @Nullable OpenFile[] standardFiles = new @Nullable OpenFile[3];
+    protected final @Nullable OpenFile[] standardFiles = new @Nullable OpenFile[3];
 
     /// Allocates process and thread ids for this emulator run.
-    private final GuestProcessRegistry processRegistry;
+    protected final GuestProcessRegistry processRegistry;
 
     /// Process-level state shared by all guest threads.
-    private final GuestProcess process;
+    protected final GuestProcess process;
 
     /// The parent process that can wait for this process, or null for the initial process.
-    private final @Nullable GuestSyscalls parentProcess;
+    protected final @Nullable GuestSyscalls parentProcess;
 
     /// Guards guest thread, futex, and process-exit state.
-    private final Object threadLock = new Object();
+    protected final Object threadLock = new Object();
 
     /// Guards child process exit and reaping state.
-    private final Object childProcessLock = new Object();
+    protected final Object childProcessLock = new Object();
 
     /// Host threads currently executing cloned guest threads.
-    private final ArrayList<Thread> guestThreads = new ArrayList<>();
+    protected final ArrayList<Thread> guestThreads = new ArrayList<>();
 
     /// Child processes created by process-style `clone`.
-    private final ArrayList<ChildProcess> childProcesses = new ArrayList<>();
+    protected final ArrayList<ChildProcess> childProcesses = new ArrayList<>();
 
     /// Futex waiters currently blocked in guest syscalls.
-    private final ArrayList<FutexWaiter> futexWaiters = new ArrayList<>();
+    protected final ArrayList<FutexWaiter> futexWaiters = new ArrayList<>();
 
     /// The number of live guest threads, including the initial thread.
-    private int liveThreadCount = 1;
+    protected int liveThreadCount = 1;
 
     /// Whether a guest `exit_group` has requested process termination.
-    private volatile boolean processExitRequested;
+    protected volatile boolean processExitRequested;
 
     /// The exit code requested by `exit_group` or by the last exiting thread.
-    private volatile long processExitCode;
+    protected volatile long processExitCode;
 
     /// A host exception thrown while executing a guest thread, or null when none has failed.
-    private volatile @Nullable Throwable threadFailure;
+    protected volatile @Nullable Throwable threadFailure;
 
     /// Whether guest dispatch needs to poll process-wide thread and exit state between blocks.
-    private volatile boolean processStatusPollingRequired;
+    protected volatile boolean processStatusPollingRequired;
 
     /// Whether the final process exit has already been reported to the parent process.
-    private boolean parentExitNotified;
+    protected boolean parentExitNotified;
 
     /// The signal reported by `PR_GET_PDEATHSIG`, or zero when unset.
-    private int parentDeathSignal;
+    protected int parentDeathSignal;
 
     /// The dumpable state reported by `PR_GET_DUMPABLE`.
-    private int dumpable = 1;
+    protected int dumpable = 1;
 
     /// The process name reported by `PR_GET_NAME`.
-    private final byte[] processName = initialProcessName();
+    protected final byte[] processName = initialProcessName();
 
     /// The timer slack value reported by `PR_GET_TIMERSLACK`.
-    private long timerSlackNanoseconds = DEFAULT_TIMER_SLACK_NANOSECONDS;
+    protected long timerSlackNanoseconds = DEFAULT_TIMER_SLACK_NANOSECONDS;
 
     /// Whether this single-process guest is marked as a child subreaper.
-    private boolean childSubreaper;
+    protected boolean childSubreaper;
 
     /// Whether `PR_SET_NO_NEW_PRIVS` has been applied.
-    private boolean noNewPrivileges;
+    protected boolean noNewPrivileges;
 
     /// The transparent huge page disable state reported by `PR_GET_THP_DISABLE`.
-    private int transparentHugePagesDisabled;
+    protected int transparentHugePagesDisabled;
 
     /// The current soft resource limits returned by `prlimit64`.
-    private final long[] resourceLimitCurrent = DEFAULT_RESOURCE_LIMIT_CURRENT.clone();
+    protected final long[] resourceLimitCurrent = DEFAULT_RESOURCE_LIMIT_CURRENT.clone();
 
     /// The current hard resource limits returned by `prlimit64`.
-    private final long[] resourceLimitMaximum = DEFAULT_RESOURCE_LIMIT_MAXIMUM.clone();
+    protected final long[] resourceLimitMaximum = DEFAULT_RESOURCE_LIMIT_MAXIMUM.clone();
 
     /// The next deterministic random state used by `getrandom`.
-    private long randomState = RANDOM_SEED;
+    protected long randomState = RANDOM_SEED;
 
     /// The time source exposed to guest time syscalls.
-    private final TimeSource timeSource;
+    protected final TimeSource timeSource;
 
     /// Creates the default process name used by `PR_GET_NAME`.
-    private static byte[] initialProcessName() {
+    protected static byte[] initialProcessName() {
         byte[] name = new byte[TASK_COMMAND_LENGTH];
         byte[] defaultName = RiscVLanguage.ID.getBytes(StandardCharsets.US_ASCII);
         System.arraycopy(defaultName, 0, name, 0, Math.min(defaultName.length, TASK_COMMAND_LENGTH - 1));
@@ -2187,7 +1208,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates the default soft Linux resource-limit table.
-    private static long @Unmodifiable [] initialResourceLimitCurrent() {
+    protected static long @Unmodifiable [] initialResourceLimitCurrent() {
         long[] limits = new long[RESOURCE_LIMIT_COUNT];
         for (int index = 0; index < limits.length; index++) {
             limits[index] = RLIM_INFINITY;
@@ -2198,7 +1219,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates the default hard Linux resource-limit table.
-    private static long @Unmodifiable [] initialResourceLimitMaximum() {
+    protected static long @Unmodifiable [] initialResourceLimitMaximum() {
         long[] limits = new long[RESOURCE_LIMIT_COUNT];
         for (int index = 0; index < limits.length; index++) {
             limits[index] = RLIM_INFINITY;
@@ -2208,7 +1229,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Adds process-local default virtual filesystems unless the user already supplied those mount points.
-    private GuestFileSystem addDefaultVirtualMounts(GuestFileSystem fileSystem) {
+    protected GuestFileSystem addDefaultVirtualMounts(GuestFileSystem fileSystem) {
         return fileSystem
                 .withDefaultVirtualMount(DEV_MOUNT_PATH, new DevFileSystem())
                 .withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem());
@@ -2480,7 +1501,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates a syscall handler with an explicit filesystem namespace.
-    private GuestSyscalls(
+    protected GuestSyscalls(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -2641,1066 +1662,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Creates a child-process syscall handler of the same guest ABI as this handler.
     protected abstract GuestSyscalls createChildSyscalls(Memory childMemory, GuestProcess childProcess);
 
-    /// Executes the Linux syscall described by the guest argument registers at the supplied program counter.
-    protected final void handleLinux(MachineState state, long pc) {
-        long callNumber = state.register(17);
-        if (callNumber != (int) callNumber) {
-            throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
-        }
-
-        long previousMask = state.enterSyscallPointerMask();
-        try {
-            switch ((int) callNumber) {
-                case SYS_GETXATTR -> state.setRegister(10, getxattr(
-                        state.register(10),
-                        state.register(11),
-                        state.register(12),
-                        state.register(13),
-                        true));
-                case SYS_LGETXATTR -> state.setRegister(10, getxattr(
-                        state.register(10),
-                        state.register(11),
-                        state.register(12),
-                        state.register(13),
-                        false));
-                case SYS_FGETXATTR -> state.setRegister(10, fgetxattr(
-                        (int) state.register(10),
-                        state.register(11),
-                        state.register(12),
-                        state.register(13)));
-                case SYS_LISTXATTR -> state.setRegister(10, listxattr(
-                        state.register(10),
-                        state.register(11),
-                        state.register(12),
-                        true));
-                case SYS_LLISTXATTR -> state.setRegister(10, listxattr(
-                        state.register(10),
-                        state.register(11),
-                        state.register(12),
-                        false));
-                case SYS_FLISTXATTR -> state.setRegister(10, flistxattr(
-                        (int) state.register(10),
-                        state.register(11),
-                        state.register(12)));
-                case SYS_GETCWD -> state.setRegister(10, getcwd(state.register(10), state.register(11)));
-            case SYS_EVENTFD2 -> state.setRegister(10, eventfd2(state.register(10), state.register(11)));
-            case SYS_EPOLL_CREATE1 -> state.setRegister(10, epollCreate1(state.register(10)));
-            case SYS_EPOLL_CTL -> state.setRegister(10, epollCtl(
-                    (int) state.register(10),
-                    (int) state.register(11),
-                    (int) state.register(12),
-                    state.register(13)));
-            case SYS_EPOLL_PWAIT -> state.setRegister(10, epollPwait(
-                    state,
-                    (int) state.register(10),
-                    state.register(11),
-                    (int) state.register(12),
-                    (int) state.register(13),
-                    state.register(14),
-                    state.register(15)));
-            case SYS_DUP -> state.setRegister(10, dup((int) state.register(10)));
-            case SYS_DUP3 -> state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
-            case SYS_FCNTL -> state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
-            case SYS_IOCTL -> state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
-            case SYS_MKDIRAT -> state.setRegister(10, mkdirat(state.register(10), state.register(11), state.register(12)));
-            case SYS_UNLINKAT -> state.setRegister(10, unlinkat(state.register(10), state.register(11), state.register(12)));
-            case SYS_RENAMEAT -> state.setRegister(10, renameat(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_STATFS -> state.setRegister(10, statfs(state.register(10), state.register(11)));
-            case SYS_FSTATFS -> state.setRegister(10, fstatfs((int) state.register(10), state.register(11)));
-            case SYS_TRUNCATE -> state.setRegister(10, truncate(state.register(10), state.register(11)));
-            case SYS_FTRUNCATE -> state.setRegister(10, ftruncate((int) state.register(10), state.register(11)));
-            case SYS_FACCESSAT -> state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
-            case SYS_CHDIR -> state.setRegister(10, chdir(state.register(10)));
-            case SYS_FCHDIR -> state.setRegister(10, fchdir((int) state.register(10)));
-            case SYS_FCHOWNAT -> state.setRegister(10, fchownat(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14)));
-            case SYS_OPENAT -> state.setRegister(10, openat(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_CLOSE -> state.setRegister(10, close((int) state.register(10)));
-            case SYS_PIPE2 -> state.setRegister(10, pipe2(state.register(10), state.register(11)));
-            case SYS_GETDENTS64 -> state.setRegister(10, getdents64((int) state.register(10), state.register(11), state.register(12)));
-            case SYS_LSEEK -> state.setRegister(10, lseek((int) state.register(10), state.register(11), (int) state.register(12)));
-            case SYS_READ -> state.setRegister(10, read((int) state.register(10), state.register(11), state.register(12)));
-            case SYS_WRITE -> state.setRegister(10, write((int) state.register(10), state.register(11), state.register(12)));
-            case SYS_READV -> state.setRegister(10, readv((int) state.register(10), state.register(11), state.register(12)));
-            case SYS_WRITEV -> state.setRegister(10, writev((int) state.register(10), state.register(11), state.register(12)));
-            case SYS_PREAD64 -> state.setRegister(10, pread64(
-                    (int) state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_PWRITE64 -> state.setRegister(10, pwrite64(
-                    (int) state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_PSELECT6 -> state.setRegister(10, pselect6(
-                    state,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14),
-                    state.register(15)));
-            case SYS_PPOLL -> state.setRegister(10, ppoll(
-                    state,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14)));
-            case SYS_SPLICE -> state.setRegister(10, splice(
-                    (int) state.register(10),
-                    state.register(11),
-                    (int) state.register(12),
-                    state.register(13),
-                    state.register(14),
-                    state.register(15)));
-            case SYS_READLINKAT -> state.setRegister(10, readlinkat(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_NEWFSTATAT -> state.setRegister(10, newfstatat(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_FSTAT -> state.setRegister(10, fstat((int) state.register(10), state.register(11)));
-            case SYS_SYNC -> state.setRegister(10, sync());
-            case SYS_FSYNC -> state.setRegister(10, fsync((int) state.register(10)));
-            case SYS_FDATASYNC -> state.setRegister(10, fdatasync((int) state.register(10)));
-            case SYS_EXIT_GROUP -> {
-                requestProcessExit(state.register(10));
-                throw new ProgramExitException(state.register(10));
-            }
-            case SYS_EXIT -> exitThread(state, state.register(10));
-            case SYS_SET_TID_ADDRESS -> state.setRegister(10, setTidAddress(state, state.register(10)));
-            case SYS_FUTEX -> state.setRegister(10, futex(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14),
-                    state.register(15)));
-            case SYS_SET_ROBUST_LIST -> state.setRegister(10, setRobustList(state, state.register(10), state.register(11)));
-            case SYS_GET_ROBUST_LIST -> state.setRegister(10, getRobustList(
-                    state,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12)));
-            case SYS_NANOSLEEP -> state.setRegister(10, nanosleep(state.register(10), state.register(11)));
-            case SYS_CLOCK_GETTIME -> state.setRegister(10, clockGettime(state.register(10), state.register(11)));
-            case SYS_CLOCK_GETRES -> state.setRegister(10, clockGetres(state.register(10), state.register(11)));
-            case SYS_CLOCK_NANOSLEEP -> state.setRegister(10, clockNanosleep(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_SCHED_GETAFFINITY -> state.setRegister(10, schedGetaffinity(state.register(10), state.register(11), state.register(12)));
-            case SYS_SCHED_YIELD -> state.setRegister(10, schedYield());
-            case SYS_KILL -> state.setRegister(10, kill(state.register(10), state.register(11)));
-            case SYS_TKILL -> state.setRegister(10, tkill(state.register(10), state.register(11)));
-            case SYS_TGKILL -> state.setRegister(10, tgkill(state.register(10), state.register(11), state.register(12)));
-            case SYS_SIGALTSTACK -> state.setRegister(10, sigaltstack(state, state.register(10), state.register(11)));
-            case SYS_RT_SIGACTION -> state.setRegister(10, rtSigaction(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_RT_SIGPROCMASK -> state.setRegister(10, rtSigprocmask(
-                    state,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_GETRESUID -> state.setRegister(10, getresid(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    credentials.realUserId(),
-                    credentials.effectiveUserId(),
-                    credentials.savedUserId()));
-            case SYS_SETRESUID -> state.setRegister(10, setresid(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    credentials.realUserId(),
-                    credentials.effectiveUserId(),
-                    credentials.savedUserId()));
-            case SYS_GETRESGID -> state.setRegister(10, getresid(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    credentials.realGroupId(),
-                    credentials.effectiveGroupId(),
-                    credentials.savedGroupId()));
-            case SYS_SETRESGID -> state.setRegister(10, setresid(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    credentials.realGroupId(),
-                    credentials.effectiveGroupId(),
-                    credentials.savedGroupId()));
-            case SYS_SETFSUID -> state.setRegister(10, setfsid(
-                    state.register(10),
-                    credentials.effectiveUserId()));
-            case SYS_SETFSGID -> state.setRegister(10, setfsid(
-                    state.register(10),
-                    credentials.effectiveGroupId()));
-            case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
-            case SYS_SETPGID -> state.setRegister(10, setpgid(state.register(10), state.register(11)));
-            case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
-            case SYS_SETSID -> state.setRegister(10, setsid());
-            case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
-            case SYS_UNAME -> state.setRegister(10, uname(state.register(10)));
-            case SYS_GETRUSAGE -> state.setRegister(10, getrusage(state.register(10), state.register(11)));
-            case SYS_PRCTL -> state.setRegister(10, prctl(
-                    state,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14)));
-            case SYS_GETCPU -> state.setRegister(10, getcpu(state.register(10), state.register(11)));
-            case SYS_GETTIMEOFDAY -> state.setRegister(10, gettimeofday(state.register(10), state.register(11)));
-            case SYS_GETPID -> state.setRegister(10, process.id());
-            case SYS_GETTID -> state.setRegister(10, state.threadId());
-            case SYS_GETPPID -> state.setRegister(10, process.parentId());
-            case SYS_GETUID -> state.setRegister(10, credentials.realUserId());
-            case SYS_GETEUID -> state.setRegister(10, credentials.effectiveUserId());
-            case SYS_GETGID -> state.setRegister(10, credentials.realGroupId());
-            case SYS_GETEGID -> state.setRegister(10, credentials.effectiveGroupId());
-            case SYS_SYSINFO -> state.setRegister(10, sysinfo(state.register(10)));
-            case SYS_SOCKET -> state.setRegister(10, socket(state.register(10), state.register(11), state.register(12)));
-            case SYS_GETSOCKNAME, SYS_GETPEERNAME -> state.setRegister(10, ENOTSOCK);
-            case SYS_CLONE -> state.setRegister(10, clone(
-                    state,
-                    pc,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14)));
-            case SYS_CLONE3 -> state.setRegister(10, clone3(
-                    state,
-                    pc,
-                    state.register(10),
-                    state.register(11)));
-            case SYS_EXECVE -> state.setRegister(10, execve(
-                    state,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12)));
-            case SYS_BRK -> state.setRegister(10, brk(state.register(10)));
-            case SYS_MUNMAP -> state.setRegister(10, munmap(state.register(10), state.register(11)));
-            case SYS_MREMAP -> state.setRegister(10, mremap(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14)));
-            case SYS_MMAP -> state.setRegister(10, mmap(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14),
-                    state.register(15)));
-            case SYS_MPROTECT -> state.setRegister(10, mprotect(state.register(10), state.register(11), state.register(12)));
-            case SYS_MINCORE -> state.setRegister(10, mincore(state.register(10), state.register(11), state.register(12)));
-            case SYS_MADVISE -> state.setRegister(10, madvise(state.register(10), state.register(11), state.register(12)));
-            case SYS_RISCV_HWPROBE -> state.setRegister(10, riscvHwprobe(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14),
-                    state));
-            case SYS_WAIT4 -> state.setRegister(10, wait4(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_PRLIMIT64 -> state.setRegister(10, prlimit64(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_SYNCFS -> state.setRegister(10, syncfs((int) state.register(10)));
-            case SYS_RENAMEAT2 -> state.setRegister(10, renameat2(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14)));
-            case SYS_GETRANDOM -> state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
-            case SYS_MEMBARRIER -> state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
-            case SYS_STATX -> state.setRegister(10, statx(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13),
-                    state.register(14)));
-            case SYS_RSEQ -> state.setRegister(10, rseq(
-                    state,
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-            case SYS_FACCESSAT2 -> state.setRegister(10, faccessat(
-                    state.register(10),
-                    state.register(11),
-                    state.register(12),
-                    state.register(13)));
-                default -> throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
-            }
-        } finally {
-            state.restorePointerMask(previousMask);
-        }
-    }
-
-    /// Executes the FreeBSD syscall described by the guest argument registers at the supplied program counter.
-    protected final void handleFreeBsd(MachineState state, long pc) {
-        long callNumber = state.register(5);
-        boolean indirect = callNumber == FREEBSD_SYS_SYSCALL || callNumber == FREEBSD_SYS___SYSCALL;
-        int argumentBaseRegister = indirect ? 11 : 10;
-        if (indirect) {
-            callNumber = state.register(10);
-        }
-        if (callNumber != (int) callNumber) {
-            throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
-        }
-
-        long previousMask = state.enterSyscallPointerMask();
-        try {
-            long result;
-            try {
-                switch ((int) callNumber) {
-                case FREEBSD_SYS_EXIT -> {
-                    long exitCode = freeBsdArgument(state, argumentBaseRegister, 0);
-                    requestProcessExit(exitCode);
-                    throw new ProgramExitException(exitCode);
-                }
-                case FREEBSD_SYS_READ -> result = read(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_WRITE -> result = write(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_OPEN -> result = openat(
-                        AT_FDCWD,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdOpenFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 1)),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_OPENAT -> result = openat(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdOpenFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 2)),
-                        freeBsdArgument(state, argumentBaseRegister, 3));
-                case FREEBSD_SYS_CLOSE -> result = close((int) freeBsdArgument(state, argumentBaseRegister, 0));
-                case FREEBSD_SYS_CHDIR -> result = chdir(freeBsdArgument(state, argumentBaseRegister, 0));
-                case FREEBSD_SYS_FCHDIR -> result = fchdir((int) freeBsdArgument(state, argumentBaseRegister, 0));
-                case FREEBSD_SYS_GETPID -> result = process.id();
-                case FREEBSD_SYS_GETPPID -> result = process.parentId();
-                case FREEBSD_SYS_GETUID -> result = credentials.realUserId();
-                case FREEBSD_SYS_GETEUID -> result = credentials.effectiveUserId();
-                case FREEBSD_SYS_GETGID -> result = credentials.realGroupId();
-                case FREEBSD_SYS_GETEGID -> result = credentials.effectiveGroupId();
-                case FREEBSD_SYS_ACCESS -> result = faccessat(
-                        AT_FDCWD,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        0);
-                case FREEBSD_SYS_FACCESSAT -> result = faccessat(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdAtFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 3)));
-                case FREEBSD_SYS_SYNC -> result = sync();
-                case FREEBSD_SYS_KILL -> result = kill(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_SIGALTSTACK -> result = freeBsdSigaltstack(
-                        state,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_DUP -> result = dup((int) freeBsdArgument(state, argumentBaseRegister, 0));
-                case FREEBSD_SYS_DUP2 -> result = dup3(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        (int) freeBsdArgument(state, argumentBaseRegister, 1),
-                        0);
-                case FREEBSD_SYS_IOCTL -> result = ioctl(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_READLINK -> result = readlinkat(
-                        AT_FDCWD,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_READLINKAT -> result = readlinkat(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3));
-                case FREEBSD_SYS_EXECVE -> result = execve(
-                        state,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_MUNMAP -> result = munmap(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_MPROTECT -> result = mprotect(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_MADVISE -> result = madvise(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_SETPGID -> result = setpgid(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_FCNTL -> result = fcntl(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdFcntlCommandToLinux(freeBsdArgument(state, argumentBaseRegister, 1)),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_FSYNC -> result = fsync((int) freeBsdArgument(state, argumentBaseRegister, 0));
-                case FREEBSD_SYS_FDATASYNC -> result = fdatasync((int) freeBsdArgument(state, argumentBaseRegister, 0));
-                case FREEBSD_SYS_GETTIMEOFDAY -> result = gettimeofday(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_READV -> result = readv(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_WRITEV -> result = writev(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_SETSID -> result = setsid();
-                case FREEBSD_SYS_GETRLIMIT -> result = freeBsdGetrlimit(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS___SYSCTL -> result = freeBsdSysctl(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3),
-                        freeBsdArgument(state, argumentBaseRegister, 4),
-                        freeBsdArgument(state, argumentBaseRegister, 5));
-                case FREEBSD_SYS_CLOCK_GETTIME -> result = clockGettime(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_CLOCK_GETRES -> result = clockGetres(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_NANOSLEEP -> result = nanosleep(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_ISSETUGID -> result = 0;
-                case FREEBSD_SYS___GETCWD -> result = getcwd(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_SCHED_YIELD -> result = schedYield();
-                case FREEBSD_SYS_SIGPROCMASK -> result = freeBsdSigprocmask(
-                        state,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_GETRESUID -> result = getresid(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        credentials.realUserId(),
-                        credentials.effectiveUserId(),
-                        credentials.savedUserId());
-                case FREEBSD_SYS_GETRESGID -> result = getresid(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        credentials.realGroupId(),
-                        credentials.effectiveGroupId(),
-                        credentials.savedGroupId());
-                case FREEBSD_SYS_SIGACTION -> result = freeBsdSigaction(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_THR_EXIT -> {
-                    freeBsdThrExit(state, freeBsdArgument(state, argumentBaseRegister, 0));
-                    result = 0;
-                }
-                case FREEBSD_SYS_THR_SELF -> result = freeBsdThrSelf(
-                        state,
-                        freeBsdArgument(state, argumentBaseRegister, 0));
-                case FREEBSD_SYS_THR_KILL -> result = freeBsdThrKill(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_UMTX_OP -> result = freeBsdUmtxOp(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3),
-                        freeBsdArgument(state, argumentBaseRegister, 4));
-                case FREEBSD_SYS_THR_NEW -> result = freeBsdThrNew(
-                        state,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_PREAD -> result = pread64(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3));
-                case FREEBSD_SYS_PWRITE -> result = pwrite64(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3));
-                case FREEBSD_SYS_MMAP -> {
-                    result = mmap(
-                            freeBsdArgument(state, argumentBaseRegister, 0),
-                            freeBsdArgument(state, argumentBaseRegister, 1),
-                            freeBsdArgument(state, argumentBaseRegister, 2),
-                            freeBsdMmapFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 3)),
-                            freeBsdArgument(state, argumentBaseRegister, 4),
-                            freeBsdArgument(state, argumentBaseRegister, 5));
-                }
-                case FREEBSD_SYS_CPUSET_GETAFFINITY -> result = freeBsdCpusetGetaffinity(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3),
-                        freeBsdArgument(state, argumentBaseRegister, 4));
-                case FREEBSD_SYS_LSEEK -> result = lseek(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        (int) freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_TRUNCATE -> result = truncate(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_FTRUNCATE -> result = ftruncate(
-                        (int) freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1));
-                case FREEBSD_SYS_FCHOWNAT -> result = fchownat(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3),
-                        freeBsdAtFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 4)));
-                case FREEBSD_SYS_MKDIRAT -> result = mkdirat(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2));
-                case FREEBSD_SYS_RENAMEAT -> result = renameat(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3));
-                case FREEBSD_SYS_UNLINKAT -> result = unlinkat(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdAtFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 2)));
-                case FREEBSD_SYS_PIPE2 -> result = pipe2(
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdOpenFlagsToLinux(freeBsdArgument(state, argumentBaseRegister, 1)));
-                case FREEBSD_SYS_PPOLL -> result = ppoll(
-                        state,
-                        freeBsdArgument(state, argumentBaseRegister, 0),
-                        freeBsdArgument(state, argumentBaseRegister, 1),
-                        freeBsdArgument(state, argumentBaseRegister, 2),
-                        freeBsdArgument(state, argumentBaseRegister, 3),
-                        freeBsdArgument(state, argumentBaseRegister, 4));
-                    default -> throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
-                }
-            } catch (RiscVException exception) {
-                throw new RiscVException(freeBsdSyscallFailureMessage(state, pc, callNumber, argumentBaseRegister, exception), exception);
-            }
-            setFreeBsdSyscallResult(state, result);
-        } finally {
-            state.restorePointerMask(previousMask);
-        }
-    }
-
-    /// Reads one FreeBSD syscall argument register after optional syscall-number indirection.
-    private static long freeBsdArgument(MachineState state, int baseRegister, int index) {
-        int register = baseRegister + index;
-        return register <= 17 ? state.register(register) : 0;
-    }
-
-    /// Stores a FreeBSD syscall result and error indicator in guest registers.
-    private static void setFreeBsdSyscallResult(MachineState state, long result) {
-        if (result < 0) {
-            state.setRegister(10, -result);
-            state.setRegister(5, 1);
-            return;
-        }
-        state.setRegister(10, result);
-        state.setRegister(5, 0);
-    }
-
-    /// Builds a diagnostic message for a FreeBSD syscall handler failure.
-    private static String freeBsdSyscallFailureMessage(
-            MachineState state,
-            long pc,
-            long callNumber,
-            int argumentBaseRegister,
-            RiscVException exception) {
-        return "FreeBSD syscall failed: pc=0x"
-                + Long.toUnsignedString(pc, 16)
-                + ", call="
-                + callNumber
-                + ", a0=0x"
-                + Long.toUnsignedString(freeBsdArgument(state, argumentBaseRegister, 0), 16)
-                + ", a1=0x"
-                + Long.toUnsignedString(freeBsdArgument(state, argumentBaseRegister, 1), 16)
-                + ", a2=0x"
-                + Long.toUnsignedString(freeBsdArgument(state, argumentBaseRegister, 2), 16)
-                + ", a3=0x"
-                + Long.toUnsignedString(freeBsdArgument(state, argumentBaseRegister, 3), 16)
-                + ", a4=0x"
-                + Long.toUnsignedString(freeBsdArgument(state, argumentBaseRegister, 4), 16)
-                + ", a5=0x"
-                + Long.toUnsignedString(freeBsdArgument(state, argumentBaseRegister, 5), 16)
-                + ": "
-                + exception.getMessage();
-    }
-
-    /// Handles the small read-only FreeBSD `__sysctl` surface required by Go runtime startup.
-    private long freeBsdSysctl(
-            long mibAddress,
-            long mibLength,
-            long outputAddress,
-            long outputLengthAddress,
-            long newValueAddress,
-            long newValueLength) {
-        if (mibAddress == 0 || mibLength <= 0 || mibLength > 24) {
-            return EINVAL;
-        }
-
-        int[] mib = new int[(int) mibLength];
-        for (int index = 0; index < mib.length; index++) {
-            mib[index] = memory.readInt(mibAddress + (long) index * Integer.BYTES);
-        }
-
-        if (mib.length == 2 && mib[0] == FREEBSD_CTL_QUERY && mib[1] == FREEBSD_CTL_QUERY_MIB) {
-            @Nullable String name = readFreeBsdSysctlName(newValueAddress, newValueLength);
-            if (FREEBSD_SYSCTL_KERN_SMP_MAXCPUS_NAME.equals(name)) {
-                return writeFreeBsdSysctlIntArray(outputAddress, outputLengthAddress, FREEBSD_SYSCTL_KERN_SMP_MAXCPUS);
-            }
-            return ENOENT;
-        }
-
-        if (mib.length == 2 && mib[0] == FREEBSD_CTL_HW && mib[1] == FREEBSD_HW_PAGESIZE) {
-            return writeFreeBsdSysctlInt(outputAddress, outputLengthAddress, memory.pageSize());
-        }
-
-        if (Arrays.equals(mib, FREEBSD_SYSCTL_KERN_SMP_MAXCPUS)) {
-            return writeFreeBsdSysctlInt(outputAddress, outputLengthAddress, 1);
-        }
-
-        return ENOENT;
-    }
-
-    /// Reads the sysctl query name supplied to `CTL_QUERY_MIB`.
-    private @Nullable String readFreeBsdSysctlName(long address, long length) {
-        if (address == 0 || length < 0 || length > Integer.MAX_VALUE) {
-            return null;
-        }
-        byte[] bytes = memory.readBytes(address, length);
-        int end = 0;
-        while (end < bytes.length && bytes[end] != 0) {
-            end++;
-        }
-        return new String(bytes, 0, end, StandardCharsets.US_ASCII);
-    }
-
-    /// Writes a 32-bit sysctl value and updates `oldlenp`.
-    private long writeFreeBsdSysctlInt(long outputAddress, long outputLengthAddress, long value) {
-        return writeFreeBsdSysctlBytes(outputAddress, outputLengthAddress, intBytes(value));
-    }
-
-    /// Writes a 32-bit sysctl MIB array and updates `oldlenp`.
-    private long writeFreeBsdSysctlIntArray(
-            long outputAddress,
-            long outputLengthAddress,
-            int @Unmodifiable [] values) {
-        byte[] bytes = new byte[values.length * Integer.BYTES];
-        for (int index = 0; index < values.length; index++) {
-            writeLittleEndianInt(bytes, index * Integer.BYTES, values[index]);
-        }
-        return writeFreeBsdSysctlBytes(outputAddress, outputLengthAddress, bytes);
-    }
-
-    /// Writes a sysctl byte result while honoring the guest output length pointer.
-    private long writeFreeBsdSysctlBytes(long outputAddress, long outputLengthAddress, byte @Unmodifiable [] bytes) {
-        if (outputLengthAddress == 0) {
-            return outputAddress == 0 ? 0 : EFAULT;
-        }
-
-        long availableLength = memory.readLong(outputLengthAddress);
-        memory.writeLong(outputLengthAddress, bytes.length);
-        if (outputAddress == 0) {
-            return 0;
-        }
-        if (availableLength < bytes.length) {
-            return ENOMEM;
-        }
-
-        memory.writeBytes(outputAddress, bytes, 0, bytes.length);
-        return 0;
-    }
-
-    /// Returns a little-endian byte representation of a 32-bit integer.
-    private static byte[] intBytes(long value) {
-        byte[] bytes = new byte[Integer.BYTES];
-        writeLittleEndianInt(bytes, 0, (int) value);
-        return bytes;
-    }
-
-    /// Writes a little-endian 32-bit integer into a byte array.
-    private static void writeLittleEndianInt(byte[] bytes, int offset, int value) {
-        bytes[offset] = (byte) value;
-        bytes[offset + 1] = (byte) (value >>> Byte.SIZE);
-        bytes[offset + 2] = (byte) (value >>> (2 * Byte.SIZE));
-        bytes[offset + 3] = (byte) (value >>> (3 * Byte.SIZE));
-    }
-
-    /// Writes a single-CPU FreeBSD affinity mask.
-    private long freeBsdCpusetGetaffinity(
-            long level,
-            long which,
-            long id,
-            long setSize,
-            long maskAddress) {
-        if (setSize < Long.BYTES) {
-            return EINVAL;
-        }
-        if (maskAddress == 0) {
-            return EFAULT;
-        }
-
-        memory.clear(maskAddress, setSize);
-        memory.writeLong(maskAddress, 1);
-        return 0;
-    }
-
-    /// Reads and updates the calling guest thread's FreeBSD signal mask.
-    private long freeBsdSigprocmask(MachineState state, long how, long setAddress, long oldSetAddress) {
-        GuestThread thread = state.guestThread();
-        long oldMask = thread.signalMask();
-        if (oldSetAddress != 0) {
-            memory.writeLong(oldSetAddress, oldMask);
-            memory.writeLong(oldSetAddress + Long.BYTES, 0);
-        }
-        if (setAddress == 0) {
-            return 0;
-        }
-        if (how != FREEBSD_SIG_BLOCK && how != FREEBSD_SIG_UNBLOCK && how != FREEBSD_SIG_SETMASK) {
-            return EINVAL;
-        }
-
-        long requestedMask = memory.readLong(setAddress) & ~UNBLOCKABLE_SIGNAL_MASK;
-        long updatedMask = oldMask;
-        if (how == FREEBSD_SIG_BLOCK) {
-            updatedMask |= requestedMask;
-        } else if (how == FREEBSD_SIG_UNBLOCK) {
-            updatedMask &= ~requestedMask;
-        } else {
-            updatedMask = requestedMask;
-        }
-        thread.setSignalMask(updatedMask);
-        return 0;
-    }
-
-    /// Accepts FreeBSD signal action setup for a guest that never receives host signals.
-    private long freeBsdSigaction(long signalNumber, long actionAddress, long oldActionAddress) {
-        if (signalNumber < MIN_SIGNAL_NUMBER || signalNumber > MAX_SIGNAL_NUMBER) {
-            return EINVAL;
-        }
-        if (oldActionAddress != 0) {
-            memory.clear(oldActionAddress, FREEBSD_SIGACTION_SIZE);
-        }
-        return 0;
-    }
-
-    /// Writes the current FreeBSD thread id to the guest pointer.
-    private long freeBsdThrSelf(MachineState state, long threadIdAddress) {
-        if (threadIdAddress == 0) {
-            return EFAULT;
-        }
-        memory.writeLong(threadIdAddress, state.threadId());
-        return 0;
-    }
-
-    /// Exits the current FreeBSD guest thread.
-    private void freeBsdThrExit(MachineState state, long threadIdAddress) {
-        if (threadIdAddress != 0 && memory.isBacked(threadIdAddress, Long.BYTES)) {
-            synchronized (threadLock) {
-                memory.writeLong(threadIdAddress, 0);
-                futexWakeLocked(threadIdAddress, 1, FUTEX_BITSET_MATCH_ANY);
-            }
-        }
-        exitThread(state, 0);
-    }
-
-    /// Accepts FreeBSD thread-directed signal requests for live guest threads.
-    private long freeBsdThrKill(long threadId, long signalNumber) {
-        if (!isValidSignalNumber(signalNumber)) {
-            return EINVAL;
-        }
-        if (threadId != 0 && !isKnownGuestThreadId(threadId)) {
-            return ESRCH;
-        }
-        return 0;
-    }
-
-    /// Handles FreeBSD `_umtx_op` wait and wake operations needed by Go runtime locks.
-    private long freeBsdUmtxOp(long address, long operation, long value, long value2, long timeoutAddress) {
-        return switch ((int) operation) {
-            case (int) FREEBSD_UMTX_OP_WAIT_UINT, (int) FREEBSD_UMTX_OP_WAIT_UINT_PRIVATE ->
-                    freeBsdErrno(futexWait(address, value, timeoutAddress, FUTEX_BITSET_MATCH_ANY, false));
-            case (int) FREEBSD_UMTX_OP_WAKE, (int) FREEBSD_UMTX_OP_WAKE_PRIVATE ->
-                    futexWake(address, value, FUTEX_BITSET_MATCH_ANY);
-            default -> ENOSYS;
-        };
-    }
-
-    /// Converts Linux errno values returned by shared helpers to FreeBSD errno values when they differ.
-    private static long freeBsdErrno(long result) {
-        if (result == EAGAIN) {
-            return FREEBSD_EAGAIN;
-        }
-        if (result == ETIMEDOUT) {
-            return FREEBSD_ETIMEDOUT;
-        }
-        return result;
-    }
-
-    /// Writes the current FreeBSD resource limit for the guest process.
-    private long freeBsdGetrlimit(long resource, long limitAddress) {
-        if (limitAddress == 0) {
-            return EFAULT;
-        }
-        int index = freeBsdResourceLimitIndex(resource);
-        if (index < 0) {
-            return EINVAL;
-        }
-
-        writeResourceLimit(limitAddress, resourceLimitCurrent[index], resourceLimitMaximum[index]);
-        return 0;
-    }
-
-    /// Maps a FreeBSD resource id to the shared resource-limit table index.
-    private static int freeBsdResourceLimitIndex(long resource) {
-        if (resource == FREEBSD_RLIMIT_NOFILE) {
-            return RLIMIT_NOFILE;
-        }
-        return resource >= 0 && resource < RESOURCE_LIMIT_COUNT ? (int) resource : -1;
-    }
-
-    /// Starts a FreeBSD guest thread from `struct thr_param`.
-    private long freeBsdThrNew(MachineState state, long parameterAddress, long size) {
-        if (parameterAddress == 0 || size < FREEBSD_THR_PARAM_MINIMUM_SIZE) {
-            return EINVAL;
-        }
-        if (!memory.isBacked(parameterAddress, FREEBSD_THR_PARAM_MINIMUM_SIZE)) {
-            return EFAULT;
-        }
-        if (!guestThreadingEnabled()) {
-            return EAGAIN;
-        }
-
-        long startFunction = memory.readLong(parameterAddress + FREEBSD_THR_PARAM_START_FUNC_OFFSET);
-        long argument = memory.readLong(parameterAddress + FREEBSD_THR_PARAM_ARG_OFFSET);
-        long stackBase = memory.readLong(parameterAddress + FREEBSD_THR_PARAM_STACK_BASE_OFFSET);
-        long stackSize = memory.readLong(parameterAddress + FREEBSD_THR_PARAM_STACK_SIZE_OFFSET);
-        long tlsBase = memory.readLong(parameterAddress + FREEBSD_THR_PARAM_TLS_BASE_OFFSET);
-        long childTidAddress = memory.readLong(parameterAddress + FREEBSD_THR_PARAM_CHILD_TID_OFFSET);
-        long parentTidAddress = memory.readLong(parameterAddress + FREEBSD_THR_PARAM_PARENT_TID_OFFSET);
-        if (startFunction == 0 || stackBase == 0 || stackSize <= 0 || stackBase > Long.MAX_VALUE - stackSize) {
-            return EINVAL;
-        }
-
-        GuestThread childThread;
-        synchronized (threadLock) {
-            if (processExitRequested || threadFailure != null) {
-                return EAGAIN;
-            }
-            childThread = processRegistry.createChildThread(process);
-            if (childThread == null) {
-                return ENOMEM;
-            }
-            childThread.setSignalMask(state.guestThread().signalMask());
-            childThread.inheritExecutionControlsFrom(state.guestThread());
-        }
-        long threadId = childThread.id();
-
-        MachineState child = state.forkForClone(childThread, startFunction, stackBase + stackSize, tlsBase, true);
-        child.setRegister(10, argument);
-        if (childTidAddress != 0) {
-            childThread.setClearChildTidAddress(childTidAddress);
-        }
-
-        TruffleLanguage.Env currentEnv = env;
-        GuestThreadRunner currentRunner = guestThreadRunner;
-        Thread thread;
-        try {
-            thread = currentEnv.newTruffleThreadBuilder(() -> currentRunner.runGuestThread(memory, child)).build();
-        } catch (RuntimeException exception) {
-            return EAGAIN;
-        }
-        thread.setUncaughtExceptionHandler((failedThread, throwable) -> recordThreadFailure(throwable));
-
-        if (parentTidAddress != 0) {
-            memory.writeLong(parentTidAddress, threadId);
-        }
-        if (childTidAddress != 0) {
-            memory.writeLong(childTidAddress, threadId);
-        }
-
-        synchronized (threadLock) {
-            if (processExitRequested || threadFailure != null) {
-                return EAGAIN;
-            }
-            liveThreadCount++;
-            guestThreads.add(thread);
-            process.registerThread(childThread);
-            processStatusPollingRequired = true;
-        }
-
-        try {
-            thread.start();
-        } catch (RuntimeException exception) {
-            unregisterUnstartedGuestThread(thread, childThread);
-            return EAGAIN;
-        }
-        return 0;
-    }
-
-    /// Registers or reports the FreeBSD alternate signal stack for the current guest thread.
-    private long freeBsdSigaltstack(MachineState state, long stackAddress, long oldStackAddress) {
-        long newStackPointer = 0;
-        long newStackSize = 0;
-        long newStackFlags = 0;
-        if (stackAddress != 0) {
-            newStackPointer = memory.readLong(stackAddress + FREEBSD_SIGNAL_STACK_POINTER_OFFSET);
-            newStackSize = memory.readLong(stackAddress + FREEBSD_SIGNAL_STACK_SIZE_OFFSET);
-            newStackFlags = Integer.toUnsignedLong(memory.readInt(stackAddress + FREEBSD_SIGNAL_STACK_FLAGS_OFFSET));
-            if ((newStackFlags & ~FREEBSD_SS_DISABLE) != 0 || newStackSize < 0) {
-                return EINVAL;
-            }
-            if ((newStackFlags & FREEBSD_SS_DISABLE) == 0 && newStackSize < MINIMUM_SIGNAL_STACK_SIZE) {
-                return ENOMEM;
-            }
-        }
-
-        if (oldStackAddress != 0) {
-            writeFreeBsdSignalStack(state.guestThread(), oldStackAddress);
-        }
-        if (stackAddress != 0) {
-            if ((newStackFlags & FREEBSD_SS_DISABLE) != 0) {
-                state.guestThread().disableAlternateSignalStack();
-            } else {
-                state.guestThread().setAlternateSignalStack(newStackPointer, newStackSize, 0);
-            }
-        }
-        return 0;
-    }
-
-    /// Writes the current FreeBSD RISC-V `stack_t` alternate signal stack.
-    private void writeFreeBsdSignalStack(GuestThread thread, long stackAddress) {
-        memory.writeLong(stackAddress + FREEBSD_SIGNAL_STACK_POINTER_OFFSET, thread.alternateSignalStackPointer());
-        memory.writeLong(stackAddress + FREEBSD_SIGNAL_STACK_SIZE_OFFSET, thread.alternateSignalStackSize());
-        memory.writeInt(
-                stackAddress + FREEBSD_SIGNAL_STACK_FLAGS_OFFSET,
-                thread.alternateSignalStackSize() == 0 ? (int) FREEBSD_SS_DISABLE : 0);
-    }
-
-    /// Translates FreeBSD open flags to the Linux-style internal flag set.
-    private static long freeBsdOpenFlagsToLinux(long freeBsdFlags) {
-        long flags = freeBsdFlags & FREEBSD_O_ACCMODE;
-        if ((freeBsdFlags & FREEBSD_O_NONBLOCK) != 0) {
-            flags |= O_NONBLOCK;
-        }
-        if ((freeBsdFlags & FREEBSD_O_APPEND) != 0) {
-            flags |= O_APPEND;
-        }
-        if ((freeBsdFlags & FREEBSD_O_CREAT) != 0) {
-            flags |= O_CREAT;
-        }
-        if ((freeBsdFlags & FREEBSD_O_TRUNC) != 0) {
-            flags |= O_TRUNC;
-        }
-        if ((freeBsdFlags & FREEBSD_O_EXCL) != 0) {
-            flags |= O_EXCL;
-        }
-        if ((freeBsdFlags & FREEBSD_O_DIRECTORY) != 0) {
-            flags |= O_DIRECTORY;
-        }
-        if ((freeBsdFlags & FREEBSD_O_CLOEXEC) != 0) {
-            flags |= O_CLOEXEC;
-        }
-        return flags;
-    }
-
-    /// Translates FreeBSD `*at` flags to the Linux-style internal flag set.
-    private static long freeBsdAtFlagsToLinux(long freeBsdFlags) {
-        long flags = 0;
-        if ((freeBsdFlags & FREEBSD_AT_EACCESS) != 0) {
-            flags |= AT_EACCESS;
-        }
-        if ((freeBsdFlags & FREEBSD_AT_SYMLINK_NOFOLLOW) != 0) {
-            flags |= AT_SYMLINK_NOFOLLOW;
-        }
-        if ((freeBsdFlags & FREEBSD_AT_REMOVEDIR) != 0) {
-            flags |= AT_REMOVEDIR;
-        }
-        if ((freeBsdFlags & FREEBSD_AT_EMPTY_PATH) != 0) {
-            flags |= AT_EMPTY_PATH;
-        }
-        return flags;
-    }
-
-    /// Translates FreeBSD `mmap` flags to the Linux-style internal flag set.
-    private static long freeBsdMmapFlagsToLinux(long freeBsdFlags) {
-        long flags = freeBsdFlags & (MAP_SHARED | MAP_PRIVATE | MAP_FIXED);
-        if ((freeBsdFlags & FREEBSD_MAP_ANON) != 0) {
-            flags |= MAP_ANONYMOUS;
-        }
-        if ((freeBsdFlags & FREEBSD_MAP_EXCL) != 0) {
-            flags |= MAP_FIXED_NOREPLACE;
-        }
-        return flags;
-    }
-
-    /// Translates FreeBSD `fcntl` commands to the Linux-style internal command set.
-    private static long freeBsdFcntlCommandToLinux(long command) {
-        if (command == 17) {
-            return F_DUPFD_CLOEXEC;
-        }
-        return command;
-    }
-
-    /// Returns true when a syscall may need a full architectural register snapshot.
-    static boolean needsFullRegisterSnapshot(long callNumber) {
-        return callNumber == SYS_CLONE || callNumber == SYS_CLONE3;
-    }
-
     /// Closes all host files opened by guest file descriptors.
     @Override
     public void close() {
@@ -3739,7 +1700,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Requests any still-running child processes to stop and joins their host threads.
-    private void closeChildProcesses() {
+    protected void closeChildProcesses() {
         ChildProcess[] children;
         synchronized (childProcessLock) {
             children = childProcesses.toArray(ChildProcess[]::new);
@@ -3755,7 +1716,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Builds a diagnostic message for a syscall that is not implemented by the simulator.
-    private static String unsupportedEcallMessage(MachineState state, long pc, long callNumber) {
+    protected static String unsupportedEcallMessage(MachineState state, long pc, long callNumber) {
         return "Unsupported ecall number: " + callNumber
                 + ", pc=0x" + unsignedHex(pc)
                 + ", a0=0x" + unsignedHex(state.register(10))
@@ -3769,12 +1730,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Formats a guest register value as an unsigned hexadecimal string.
-    private static String unsignedHex(long value) {
+    protected static String unsignedHex(long value) {
         return Long.toUnsignedString(value, 16);
     }
 
     /// Writes the deterministic guest working directory path.
-    private long getcwd(long bufferAddress, long bufferSize) {
+    protected long getcwd(long bufferAddress, long bufferSize) {
         byte[] pathBytes = guestWorkingDirectory.getBytes(StandardCharsets.UTF_8);
         byte[] currentDirectory = new byte[pathBytes.length + 1];
         System.arraycopy(pathBytes, 0, currentDirectory, 0, pathBytes.length);
@@ -3786,7 +1747,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Duplicates a file descriptor to the lowest available non-standard descriptor.
-    private long dup(int fileDescriptor) {
+    protected long dup(int fileDescriptor) {
         @Nullable OpenFile duplicate = duplicateOpenFile(fileDescriptor);
         if (duplicate == null) {
             return EBADF;
@@ -3796,7 +1757,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Duplicates a file descriptor to an explicit non-standard descriptor.
-    private long dup3(int oldFileDescriptor, int newFileDescriptor, long flags) {
+    protected long dup3(int oldFileDescriptor, int newFileDescriptor, long flags) {
         if ((flags & ~SUPPORTED_DUP3_FLAGS) != 0 || oldFileDescriptor == newFileDescriptor) {
             return EINVAL;
         }
@@ -3823,7 +1784,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates an in-memory Linux `eventfd` counter.
-    private long eventfd2(long initialValue, long flags) {
+    protected long eventfd2(long initialValue, long flags) {
         if ((flags & ~SUPPORTED_EVENTFD2_FLAGS) != 0) {
             return EINVAL;
         }
@@ -3837,7 +1798,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates an in-memory Linux `epoll` descriptor.
-    private long epollCreate1(long flags) {
+    protected long epollCreate1(long flags) {
         if ((flags & ~SUPPORTED_EPOLL_CREATE1_FLAGS) != 0) {
             return EINVAL;
         }
@@ -3845,7 +1806,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Adds, modifies, or removes one descriptor interest from an in-memory `epoll` set.
-    private long epollCtl(int epollFileDescriptor, int operation, int fileDescriptor, long eventAddress) {
+    protected long epollCtl(int epollFileDescriptor, int operation, int fileDescriptor, long eventAddress) {
         @Nullable OpenFile epollFile = openFile(epollFileDescriptor);
         if (epollFile == null) {
             return EBADF;
@@ -3880,7 +1841,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns currently ready events from an in-memory `epoll` descriptor without blocking the host thread.
-    private long epollPwait(
+    protected long epollPwait(
             MachineState state,
             int epollFileDescriptor,
             long eventsAddress,
@@ -3931,7 +1892,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports descriptor readiness through Linux `pselect6` without blocking the host thread.
-    private long pselect6(
+    protected long pselect6(
             MachineState state,
             long fileDescriptorLimit,
             long readFileDescriptorsAddress,
@@ -4024,7 +1985,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the byte width needed for a Linux `fd_set` covering descriptors below `descriptorLimit`.
-    private static long fdSetByteSize(int descriptorLimit) {
+    protected static long fdSetByteSize(int descriptorLimit) {
         if (descriptorLimit == 0) {
             return 0;
         }
@@ -4032,12 +1993,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a nullable `fd_set` pointer is backed for the requested descriptor range.
-    private boolean isBackedFdSet(long fileDescriptorSetAddress, long byteSize) {
+    protected boolean isBackedFdSet(long fileDescriptorSetAddress, long byteSize) {
         return fileDescriptorSetAddress == 0 || byteSize == 0 || memory.isBacked(fileDescriptorSetAddress, byteSize);
     }
 
     /// Reads one nullable Linux `fd_set` into a descriptor-indexed selection array.
-    private boolean[] readFdSet(long fileDescriptorSetAddress, int descriptorLimit) {
+    protected boolean[] readFdSet(long fileDescriptorSetAddress, int descriptorLimit) {
         boolean[] selected = new boolean[descriptorLimit];
         if (fileDescriptorSetAddress == 0) {
             return selected;
@@ -4049,21 +2010,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Clears one nullable Linux `fd_set` over the descriptor range used by `pselect6`.
-    private void clearFdSet(long fileDescriptorSetAddress, long byteSize) {
+    protected void clearFdSet(long fileDescriptorSetAddress, long byteSize) {
         if (fileDescriptorSetAddress != 0 && byteSize != 0) {
             memory.clear(fileDescriptorSetAddress, byteSize);
         }
     }
 
     /// Returns true when one descriptor bit is set in a Linux `fd_set`.
-    private boolean isFdSetBitSet(long fileDescriptorSetAddress, int fileDescriptor) {
+    protected boolean isFdSetBitSet(long fileDescriptorSetAddress, int fileDescriptor) {
         long wordAddress = fileDescriptorSetAddress + (long) (fileDescriptor / FD_SET_BITS_PER_WORD) * Long.BYTES;
         long word = readLongUnaligned(wordAddress);
         return (word & fdSetBit(fileDescriptor)) != 0;
     }
 
     /// Sets one descriptor bit in a nullable Linux `fd_set`.
-    private void setFdSetBit(long fileDescriptorSetAddress, int fileDescriptor) {
+    protected void setFdSetBit(long fileDescriptorSetAddress, int fileDescriptor) {
         if (fileDescriptorSetAddress == 0) {
             return;
         }
@@ -4072,12 +2033,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the word-local bit mask for one descriptor in a Linux `fd_set`.
-    private static long fdSetBit(int fileDescriptor) {
+    protected static long fdSetBit(int fileDescriptor) {
         return 1L << (fileDescriptor % FD_SET_BITS_PER_WORD);
     }
 
     /// Reports descriptor readiness through Linux `ppoll` without blocking the host thread.
-    private long ppoll(
+    protected long ppoll(
             MachineState state,
             long fileDescriptorsAddress,
             long fileDescriptorCount,
@@ -4147,7 +2108,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates an in-memory pipe and writes its read and write descriptors to guest memory.
-    private long pipe2(long pipeAddress, long flags) {
+    protected long pipe2(long pipeAddress, long flags) {
         if ((flags & ~SUPPORTED_PIPE2_FLAGS) != 0) {
             return EINVAL;
         }
@@ -4162,7 +2123,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads Linux `struct linux_dirent64` records from an open directory descriptor.
-    private long getdents64(int fileDescriptor, long bufferAddress, long byteCount) {
+    protected long getdents64(int fileDescriptor, long bufferAddress, long byteCount) {
         if (byteCount <= 0) {
             return EINVAL;
         }
@@ -4206,7 +2167,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the cached entries for an open directory descriptor, loading them on first use.
-    private DirectoryEntry[] directoryEntries(OpenFile openFile) throws IOException {
+    protected DirectoryEntry[] directoryEntries(OpenFile openFile) throws IOException {
         @Nullable DirectoryEntry[] cachedEntries = openFile.directoryEntries();
         if (cachedEntries != null) {
             return cachedEntries;
@@ -4247,7 +2208,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns deterministic directory entries for an open tar directory.
-    private static DirectoryEntry[] tarDirectoryEntries(OpenFile openFile, TarNode directory) throws IOException {
+    protected static DirectoryEntry[] tarDirectoryEntries(OpenFile openFile, TarNode directory) throws IOException {
         @Nullable String guestPath = openFile.guestPath();
         if (guestPath == null) {
             throw new IOException("Tar directory descriptor has no guest path");
@@ -4263,7 +2224,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the parent directory represented by the `..` entry without escaping the selected mount root.
-    private TruffleFile parentDirectoryForDotDot(TruffleFile path) {
+    protected TruffleFile parentDirectoryForDotDot(TruffleFile path) {
         @Nullable HostMount mount = mountForHostFile(path);
         @Nullable TruffleFile parent = path.getParent();
         if (mount != null && parent != null && parent.normalize().startsWith(mount.root())) {
@@ -4273,7 +2234,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the Linux directory entry type for a sandboxed host path.
-    private static byte directoryEntryType(TruffleFile path) {
+    protected static byte directoryEntryType(TruffleFile path) {
         try {
             if (path.isSymbolicLink()) {
                 return DIRECTORY_ENTRY_SYMBOLIC_LINK;
@@ -4291,12 +2252,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Computes the aligned byte length of one Linux `struct linux_dirent64` record.
-    private static int directoryEntryRecordLength(int nameLength) {
+    protected static int directoryEntryRecordLength(int nameLength) {
         return (int) alignUp(DIRENT64_NAME_OFFSET + nameLength + 1L, DIRENT64_RECORD_ALIGNMENT);
     }
 
     /// Writes one Linux `struct linux_dirent64` record to guest memory.
-    private void writeDirectoryEntry(
+    protected void writeDirectoryEntry(
             long address,
             DirectoryEntry entry,
             long nextOffset,
@@ -4311,7 +2272,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Checks access to a sandboxed host path or open file descriptor.
-    private long faccessat(long directoryFileDescriptor, long pathAddress, long mode, long flags) {
+    protected long faccessat(long directoryFileDescriptor, long pathAddress, long mode, long flags) {
         if ((mode & ~ACCESS_MODE_MASK) != 0 || (flags & ~SUPPORTED_FACCESSAT2_FLAGS) != 0) {
             return EINVAL;
         }
@@ -4360,7 +2321,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Checks access bits on an open guest file descriptor.
-    private long accessFileDescriptor(int fileDescriptor, long mode) {
+    protected long accessFileDescriptor(int fileDescriptor, long mode) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor >= 0) {
             if ((mode & W_OK) != 0 && standardFileDescriptor == 0) {
@@ -4392,7 +2353,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Checks access bits on a sandboxed host file.
-    private long accessHostFile(TruffleFile hostFile, long mode) {
+    protected long accessHostFile(TruffleFile hostFile, long mode) {
         try {
             if (!hostFile.exists()) {
                 return ENOENT;
@@ -4416,7 +2377,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates a directory below a configured filesystem mount without applying guest mode bits.
-    private long mkdirat(long directoryFileDescriptor, long pathAddress, long mode) {
+    protected long mkdirat(long directoryFileDescriptor, long pathAddress, long mode) {
         @Nullable String guestPath = readGuestPath(pathAddress);
         if (guestPath == null) {
             return ENAMETOOLONG;
@@ -4464,7 +2425,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates a directory in a writable memory tar mount.
-    private long mkdirTarPath(TarPath tarPath, long mode) {
+    protected long mkdirTarPath(TarPath tarPath, long mode) {
         TarMount mount = tarPath.mount();
         if (mount.readOnly()) {
             return EROFS;
@@ -4479,7 +2440,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Removes a file or empty directory below a configured filesystem mount.
-    private long unlinkat(long directoryFileDescriptor, long pathAddress, long flags) {
+    protected long unlinkat(long directoryFileDescriptor, long pathAddress, long flags) {
         if ((flags & ~AT_REMOVEDIR) != 0) {
             return EINVAL;
         }
@@ -4546,7 +2507,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Removes a file or empty directory from a writable memory tar mount.
-    private long unlinkTarPath(TarPath tarPath, boolean removeDirectory) {
+    protected long unlinkTarPath(TarPath tarPath, boolean removeDirectory) {
         TarMount mount = tarPath.mount();
         if (mount.readOnly()) {
             return EROFS;
@@ -4570,7 +2531,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Renames a sandboxed host path to another sandboxed host path.
-    private long renameat(
+    protected long renameat(
             long oldDirectoryFileDescriptor,
             long oldPathAddress,
             long newDirectoryFileDescriptor,
@@ -4659,7 +2620,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Renames a node inside a writable memory tar mount.
-    private long renameTarPath(TarPath oldTarPath, TarPath newTarPath) {
+    protected long renameTarPath(TarPath oldTarPath, TarPath newTarPath) {
         TarMount mount = oldTarPath.mount();
         if (mount != newTarPath.mount()) {
             return EXDEV;
@@ -4700,7 +2661,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles `renameat2` without Linux-specific nonzero rename flags.
-    private long renameat2(
+    protected long renameat2(
             long oldDirectoryFileDescriptor,
             long oldPathAddress,
             long newDirectoryFileDescriptor,
@@ -4713,7 +2674,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Truncates a sandboxed host file selected by path.
-    private long truncate(long pathAddress, long length) {
+    protected long truncate(long pathAddress, long length) {
         if (length < 0) {
             return EINVAL;
         }
@@ -4771,7 +2732,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Truncates a regular file in a writable memory tar mount.
-    private long truncateTarPath(TarPath tarPath, long length) {
+    protected long truncateTarPath(TarPath tarPath, long length) {
         TarMount mount = tarPath.mount();
         if (mount.readOnly()) {
             return EROFS;
@@ -4796,7 +2757,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Truncates the open host file referenced by a guest file descriptor.
-    private long ftruncate(int fileDescriptor, long length) {
+    protected long ftruncate(int fileDescriptor, long length) {
         if (length < 0) {
             return EINVAL;
         }
@@ -4821,7 +2782,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Changes the guest-visible current working directory to a sandboxed host directory.
-    private long chdir(long pathAddress) {
+    protected long chdir(long pathAddress) {
         @Nullable String guestPath = readGuestPath(pathAddress);
         if (guestPath == null) {
             return ENAMETOOLONG;
@@ -4848,7 +2809,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Changes the guest-visible current working directory to an open directory descriptor.
-    private long fchdir(int fileDescriptor) {
+    protected long fchdir(int fileDescriptor) {
         @Nullable OpenFile openFile = openFile(fileDescriptor);
         if (openFile == null) {
             return EBADF;
@@ -4883,7 +2844,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Applies a host directory as the guest-visible current working directory.
-    private long changeWorkingDirectory(TruffleFile hostFile) {
+    protected long changeWorkingDirectory(TruffleFile hostFile) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -4907,7 +2868,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Applies a tar directory as the guest-visible current working directory.
-    private long changeWorkingDirectory(TarPath tarPath) {
+    protected long changeWorkingDirectory(TarPath tarPath) {
         @Nullable TarNode node = tarPath.node();
         if (node == null) {
             return ENOENT;
@@ -4920,7 +2881,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Applies a proc directory as the guest-visible current working directory.
-    private long changeWorkingDirectory(VirtualPath procPath) {
+    protected long changeWorkingDirectory(VirtualPath procPath) {
         @Nullable VirtualNode node = procPath.node();
         if (node == null) {
             return ENOENT;
@@ -4933,7 +2894,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Accepts a validated no-op ownership update for an open descriptor or sandboxed path.
-    private long fchownat(long directoryFileDescriptor, long pathAddress, long owner, long group, long flags) {
+    protected long fchownat(long directoryFileDescriptor, long pathAddress, long owner, long group, long flags) {
         if ((flags & ~SUPPORTED_FCHOWNAT_FLAGS) != 0 || !isChownId(owner) || !isChownId(group)) {
             return EINVAL;
         }
@@ -4988,12 +2949,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a Linux `chown` uid or gid argument is valid.
-    private static boolean isChownId(long id) {
+    protected static boolean isChownId(long id) {
         return id == -1L || id >= 0 && id <= GuestCredentials.MAX_ID;
     }
 
     /// Accepts a no-op ownership update for an existing open file descriptor.
-    private long chownFileDescriptor(int fileDescriptor) {
+    protected long chownFileDescriptor(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             return 0;
         }
@@ -5003,7 +2964,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Accepts a no-op ownership update for an existing sandboxed host filesystem entry.
-    private long chownHostFile(TruffleFile hostFile, long flags) {
+    protected long chownHostFile(TruffleFile hostFile, long flags) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -5023,7 +2984,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Opens a host file or directory below a configured filesystem mount.
-    private long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
+    protected long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
         long accessMode = flags & O_ACCMODE;
         if (accessMode != O_RDONLY && accessMode != O_WRONLY && accessMode != O_RDWR) {
             return EINVAL;
@@ -5056,7 +3017,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Opens an absolute guest path below its selected filesystem mount.
-    private long openMountedPath(String absoluteGuestPath, long flags, long mode) {
+    protected long openMountedPath(String absoluteGuestPath, long flags, long mode) {
         @Nullable Mount filesystemMount = mountForGuestPath(absoluteGuestPath);
         if (filesystemMount instanceof TarMount tarMount) {
             return openTarPath(tarMount, absoluteGuestPath, flags, mode);
@@ -5072,7 +3033,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Opens a host file or directory below a configured host filesystem mount.
-    private long openHostPath(HostMount hostMount, String absoluteGuestPath, long flags) {
+    protected long openHostPath(HostMount hostMount, String absoluteGuestPath, long flags) {
         long accessMode = flags & O_ACCMODE;
         boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
         boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
@@ -5174,7 +3135,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Opens a file or directory from a tar filesystem mount.
-    private long openTarPath(TarMount mount, String absoluteGuestPath, long flags, long mode) {
+    protected long openTarPath(TarMount mount, String absoluteGuestPath, long flags, long mode) {
         long accessMode = flags & O_ACCMODE;
         boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
         boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
@@ -5241,7 +3202,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Opens a read-only file or directory from a virtual filesystem.
-    private long openVirtualPath(VirtualMount mount, String absoluteGuestPath, long flags) {
+    protected long openVirtualPath(VirtualMount mount, String absoluteGuestPath, long flags) {
         long accessMode = flags & O_ACCMODE;
         boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
         boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
@@ -5295,7 +3256,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Opens one virtual character device node.
-    private long openVirtualCharacterDevice(
+    protected long openVirtualCharacterDevice(
             VirtualNode node,
             VirtualMount mount,
             String guestPath,
@@ -5330,7 +3291,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Opens the target of a virtual symbolic link through normal guest path resolution.
-    private long openVirtualLinkTarget(VirtualMount mount, VirtualNode node, long flags) {
+    protected long openVirtualLinkTarget(VirtualMount mount, VirtualNode node, long flags) {
         String target = mount.fileSystem().linkTarget(node);
         String targetPath = target.startsWith("/")
                 ? target
@@ -5346,7 +3307,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads bytes from guest stdin, an open host file, or a pipe endpoint into guest memory.
-    private long read(int fileDescriptor, long address, long length) {
+    protected long read(int fileDescriptor, long address, long length) {
         if (length < 0) {
             return EINVAL;
         }
@@ -5429,7 +3390,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes guest memory bytes to stdout, stderr, an open host file, or a pipe endpoint.
-    private long write(int fileDescriptor, long address, long length) {
+    protected long write(int fileDescriptor, long address, long length) {
         if (length < 0) {
             return EINVAL;
         }
@@ -5478,7 +3439,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads bytes from guest stdin, an open host file, or a pipe endpoint into a guest `struct iovec` array.
-    private long readv(int fileDescriptor, long iovecAddress, long iovecCount) {
+    protected long readv(int fileDescriptor, long iovecAddress, long iovecCount) {
         if (iovecCount < 0 || iovecCount > IOV_MAX) {
             return EINVAL;
         }
@@ -5518,7 +3479,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes buffers from a guest `struct iovec` array to stdout, stderr, an open host file, or a pipe endpoint.
-    private long writev(int fileDescriptor, long iovecAddress, long iovecCount) {
+    protected long writev(int fileDescriptor, long iovecAddress, long iovecCount) {
         if (iovecCount < 0 || iovecCount > IOV_MAX) {
             return EINVAL;
         }
@@ -5555,7 +3516,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads bytes from a host file at a fixed offset without changing the descriptor offset.
-    private long pread64(int fileDescriptor, long address, long length, long offset) {
+    protected long pread64(int fileDescriptor, long address, long length, long offset) {
         if (length < 0 || offset < 0) {
             return EINVAL;
         }
@@ -5595,7 +3556,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes guest memory bytes to a host file at a fixed offset without changing the descriptor offset.
-    private long pwrite64(int fileDescriptor, long address, long length, long offset) {
+    protected long pwrite64(int fileDescriptor, long address, long length, long offset) {
         if (length < 0 || offset < 0) {
             return EINVAL;
         }
@@ -5628,7 +3589,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Copies bytes between two descriptors for Linux `splice`.
-    private long splice(
+    protected long splice(
             int inputFileDescriptor,
             long inputOffsetAddress,
             int outputFileDescriptor,
@@ -5724,7 +3685,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads a `splice` chunk from a standard stream, pipe, or seekable guest file.
-    private long readSpliceInput(
+    protected long readSpliceInput(
             int fileDescriptor,
             long offsetAddress,
             long offset,
@@ -5789,7 +3750,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a `splice` chunk to a standard stream, pipe, or seekable guest file.
-    private long writeSpliceOutput(
+    protected long writeSpliceOutput(
             int fileDescriptor,
             long offsetAddress,
             long offset,
@@ -5865,14 +3826,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Copies the populated prefix of a reusable transfer buffer.
-    private static byte[] copyBufferPrefix(byte[] buffer, int length) {
+    protected static byte[] copyBufferPrefix(byte[] buffer, int length) {
         byte[] copy = new byte[length];
         System.arraycopy(buffer, 0, copy, 0, length);
         return copy;
     }
 
     /// Writes all bytes to an open host file or pipe endpoint.
-    private static long writeOpenFile(OpenFile openFile, byte[] bytes) throws IOException {
+    protected static long writeOpenFile(OpenFile openFile, byte[] bytes) throws IOException {
         if (openFile.isTerminalDevice()) {
             openFile.terminalDevice().write(bytes, bytes.length);
             return bytes.length;
@@ -5895,7 +3856,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads from one built-in virtual character device into guest memory.
-    private long readDeviceFile(DeviceFile deviceFile, long address, long length) {
+    protected long readDeviceFile(DeviceFile deviceFile, long address, long length) {
         return switch (deviceFile) {
             case NULL -> 0;
             case ZERO -> {
@@ -5908,7 +3869,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads from one built-in virtual character device into a host transfer buffer.
-    private long readDeviceFile(DeviceFile deviceFile, byte[] buffer, int length) {
+    protected long readDeviceFile(DeviceFile deviceFile, byte[] buffer, int length) {
         return switch (deviceFile) {
             case NULL -> 0;
             case ZERO -> {
@@ -5924,7 +3885,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when writes to a built-in character device are accepted and discarded.
-    private static boolean isDiscardingDeviceFile(OpenFile openFile) {
+    protected static boolean isDiscardingDeviceFile(OpenFile openFile) {
         @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
         return deviceFile == DeviceFile.NULL
                 || deviceFile == DeviceFile.ZERO
@@ -5933,7 +3894,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the built-in virtual device file for an open descriptor entry.
-    private static @Nullable DeviceFile deviceFileFor(OpenFile openFile) {
+    protected static @Nullable DeviceFile deviceFileFor(OpenFile openFile) {
         @Nullable VirtualNode node = openFile.virtualNode();
         if (node == null || !node.isCharacterDevice()) {
             return null;
@@ -5943,7 +3904,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads one little-endian counter value from an `eventfd` descriptor.
-    private long readEventFile(EventCounter counter, long address, long length) {
+    protected long readEventFile(EventCounter counter, long address, long length) {
         if (length < Long.BYTES) {
             return EINVAL;
         }
@@ -5956,7 +3917,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes one little-endian counter increment to an `eventfd` descriptor.
-    private long writeEventFile(EventCounter counter, long address, long length) {
+    protected long writeEventFile(EventCounter counter, long address, long length) {
         if (length != Long.BYTES) {
             return EINVAL;
         }
@@ -5966,7 +3927,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Computes the currently ready low-level `epoll` event bits for one guest descriptor.
-    private int readyEventsFor(int fileDescriptor) {
+    protected int readyEventsFor(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor == 0) {
             return EPOLLIN;
@@ -6024,13 +3985,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a packed Linux generic `struct epoll_event` to guest memory.
-    private void writeEpollEvent(long eventAddress, int events, long data) {
+    protected void writeEpollEvent(long eventAddress, int events, long data) {
         memory.writeInt(eventAddress + EPOLL_EVENT_EVENTS_OFFSET, events);
         writeLongUnaligned(eventAddress + EPOLL_EVENT_DATA_OFFSET, data);
     }
 
     /// Reads bytes at a fixed host file offset while preserving the channel position.
-    private static int readHostFileAt(SeekableByteChannel channel, long offset, ByteBuffer buffer) throws IOException {
+    protected static int readHostFileAt(SeekableByteChannel channel, long offset, ByteBuffer buffer) throws IOException {
         long position = channel.position();
         try {
             channel.position(offset);
@@ -6041,7 +4002,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes bytes at a fixed host file offset while preserving the channel position.
-    private static long writeHostFileAt(OpenFile openFile, byte[] bytes, long offset) throws IOException {
+    protected static long writeHostFileAt(OpenFile openFile, byte[] bytes, long offset) throws IOException {
         SeekableByteChannel channel = openFile.channel();
         long position = channel.position();
         try {
@@ -6057,7 +4018,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles `close` for standard streams and guest-opened file descriptors.
-    private long close(int fileDescriptor) {
+    protected long close(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             @Nullable OpenFile openFile = standardFiles[fileDescriptor];
             if (openFile != null) {
@@ -6091,7 +4052,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles `lseek` for guest-opened host files while rejecting standard streams.
-    private long lseek(int fileDescriptor, long offset, int whence) {
+    protected long lseek(int fileDescriptor, long offset, int whence) {
         if (whence < 0 || whence > 2) {
             return EINVAL;
         }
@@ -6133,7 +4094,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads a sandboxed symbolic link target into guest memory.
-    private long readlinkat(long directoryFileDescriptor, long pathAddress, long bufferAddress, long bufferSize) {
+    protected long readlinkat(long directoryFileDescriptor, long pathAddress, long bufferAddress, long bufferSize) {
         if (bufferSize <= 0 || bufferSize > Integer.MAX_VALUE) {
             return EINVAL;
         }
@@ -6187,7 +4148,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports a missing extended attribute for a mounted guest path.
-    private long getxattr(long pathAddress, long nameAddress, long valueAddress, long size, boolean followFinalSymlink) {
+    protected long getxattr(long pathAddress, long nameAddress, long valueAddress, long size, boolean followFinalSymlink) {
         long pathResult = validateXattrPath(pathAddress, followFinalSymlink);
         if (pathResult != 0) {
             return pathResult;
@@ -6196,7 +4157,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports a missing extended attribute for an open guest file descriptor.
-    private long fgetxattr(int fileDescriptor, long nameAddress, long valueAddress, long size) {
+    protected long fgetxattr(int fileDescriptor, long nameAddress, long valueAddress, long size) {
         if (!isOpenFileDescriptor(fileDescriptor)) {
             return EBADF;
         }
@@ -6204,7 +4165,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports an empty extended-attribute list for a mounted guest path.
-    private long listxattr(long pathAddress, long listAddress, long size, boolean followFinalSymlink) {
+    protected long listxattr(long pathAddress, long listAddress, long size, boolean followFinalSymlink) {
         long pathResult = validateXattrPath(pathAddress, followFinalSymlink);
         if (pathResult != 0) {
             return pathResult;
@@ -6213,7 +4174,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports an empty extended-attribute list for an open guest file descriptor.
-    private long flistxattr(int fileDescriptor, long listAddress, long size) {
+    protected long flistxattr(int fileDescriptor, long listAddress, long size) {
         if (!isOpenFileDescriptor(fileDescriptor)) {
             return EBADF;
         }
@@ -6221,7 +4182,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Validates a path argument for extended-attribute queries.
-    private long validateXattrPath(long pathAddress, boolean followFinalSymlink) {
+    protected long validateXattrPath(long pathAddress, boolean followFinalSymlink) {
         String guestPath;
         try {
             @Nullable String path = readGuestPath(pathAddress);
@@ -6252,7 +4213,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports that the requested extended attribute does not exist.
-    private long getMissingXattr(long nameAddress, long valueAddress, long size) {
+    protected long getMissingXattr(long nameAddress, long valueAddress, long size) {
         if (size < 0) {
             return EINVAL;
         }
@@ -6268,12 +4229,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports a mounted guest file with no extended attributes.
-    private static long emptyXattrList(long listAddress, long size) {
+    protected static long emptyXattrList(long listAddress, long size) {
         return size < 0 ? EINVAL : 0;
     }
 
     /// Writes a minimal Linux generic 64-bit `struct stat` for a path or file descriptor.
-    private long newfstatat(long directoryFileDescriptor, long pathAddress, long statAddress, long flags) {
+    protected long newfstatat(long directoryFileDescriptor, long pathAddress, long statAddress, long flags) {
         if ((flags & ~SUPPORTED_NEWFSTATAT_FLAGS) != 0) {
             return EINVAL;
         }
@@ -6331,7 +4292,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a minimal Linux generic 64-bit `struct stat` for a file descriptor.
-    private long fstat(int fileDescriptor, long statAddress) {
+    protected long fstat(int fileDescriptor, long statAddress) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor >= 0) {
             writeStat(statAddress, standardFileDescriptor + 1L, STANDARD_STREAM_STAT_MODE, 0);
@@ -6392,22 +4353,22 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles Linux `sync`, which is a process-wide best-effort flush.
-    private static long sync() {
+    protected static long sync() {
         return 0;
     }
 
     /// Flushes host file metadata and data for a guest file descriptor.
-    private long fsync(int fileDescriptor) {
+    protected long fsync(int fileDescriptor) {
         return syncFileDescriptor(fileDescriptor, true);
     }
 
     /// Flushes host file data for a guest file descriptor.
-    private long fdatasync(int fileDescriptor) {
+    protected long fdatasync(int fileDescriptor) {
         return syncFileDescriptor(fileDescriptor, false);
     }
 
     /// Flushes the sandbox filesystem referenced by a guest file descriptor.
-    private long syncfs(int fileDescriptor) {
+    protected long syncfs(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             return 0;
         }
@@ -6417,7 +4378,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Flushes a regular host file channel when the backing implementation supports it.
-    private long syncFileDescriptor(int fileDescriptor, boolean metadata) {
+    protected long syncFileDescriptor(int fileDescriptor, boolean metadata) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             return EINVAL;
         }
@@ -6451,7 +4412,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic `struct statx` for a path or file descriptor.
-    private long statx(
+    protected long statx(
             long directoryFileDescriptor,
             long pathAddress,
             long flags,
@@ -6516,7 +4477,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic `struct statx` for a file descriptor.
-    private long statxFileDescriptor(int fileDescriptor, long requestedMask, long statxAddress) {
+    protected long statxFileDescriptor(int fileDescriptor, long requestedMask, long statxAddress) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor >= 0) {
             writeStatx(statxAddress, standardFileDescriptor + 1L, STANDARD_STREAM_STAT_MODE, 0, requestedMask);
@@ -6582,7 +4543,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a deterministic Linux generic 64-bit `struct statfs` for a sandboxed path.
-    private long statfs(long pathAddress, long statfsAddress) {
+    protected long statfs(long pathAddress, long statfsAddress) {
         @Nullable String guestPath = readGuestPath(pathAddress);
         if (guestPath == null) {
             return ENAMETOOLONG;
@@ -6609,7 +4570,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a deterministic Linux generic 64-bit `struct statfs` for a file descriptor.
-    private long fstatfs(int fileDescriptor, long statfsAddress) {
+    protected long fstatfs(int fileDescriptor, long statfsAddress) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             writeStatfs(statfsAddress);
             return 0;
@@ -6637,19 +4598,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes `statfs` metadata and returns a successful syscall result.
-    private long writeStatfsResult(long statfsAddress) {
+    protected long writeStatfsResult(long statfsAddress) {
         writeStatfs(statfsAddress);
         return 0;
     }
 
     /// Writes proc `statfs` metadata and returns a successful syscall result.
-    private long writeProcStatfsResult(long statfsAddress) {
+    protected long writeProcStatfsResult(long statfsAddress) {
         writeProcStatfs(statfsAddress);
         return 0;
     }
 
     /// Writes deterministic filesystem metadata for an existing sandboxed host path.
-    private long statfsHostFile(TruffleFile hostFile, long statfsAddress) {
+    protected long statfsHostFile(TruffleFile hostFile, long statfsAddress) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -6665,7 +4626,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a minimal Linux generic 64-bit `struct stat` for a sandboxed host file.
-    private long statHostFile(TruffleFile hostFile, long statAddress) {
+    protected long statHostFile(TruffleFile hostFile, long statAddress) {
         try {
             if (!hostFile.exists()) {
                 return ENOENT;
@@ -6690,7 +4651,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic `struct statx` for a sandboxed host file.
-    private long statxHostFile(TruffleFile hostFile, long statxAddress, long flags, long requestedMask) {
+    protected long statxHostFile(TruffleFile hostFile, long statxAddress, long flags, long requestedMask) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -6739,7 +4700,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Checks access bits on a tar filesystem node.
-    private static long accessTarNode(TarPath tarPath, long mode) {
+    protected static long accessTarNode(TarPath tarPath, long mode) {
         @Nullable TarNode node = tarPath.node();
         if (node == null) {
             return ENOENT;
@@ -6758,7 +4719,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Checks access bits on a virtual proc filesystem node.
-    private static long accessVirtualNode(@Nullable VirtualNode node, long mode) {
+    protected static long accessVirtualNode(@Nullable VirtualNode node, long mode) {
         if (node == null) {
             return ENOENT;
         }
@@ -6776,7 +4737,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads a tar symbolic link target into guest memory.
-    private long readlinkTarPath(@Nullable TarNode node, long bufferAddress, long bufferSize) {
+    protected long readlinkTarPath(@Nullable TarNode node, long bufferAddress, long bufferSize) {
         if (node == null) {
             return ENOENT;
         }
@@ -6792,7 +4753,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads a virtual symbolic link target into guest memory.
-    private long readlinkVirtualPath(
+    protected long readlinkVirtualPath(
             @Nullable VirtualNode node,
             VirtualMount mount,
             long bufferAddress,
@@ -6812,7 +4773,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes tar metadata for a path selected by `newfstatat`.
-    private long statTarNode(@Nullable TarNode node, long statAddress) {
+    protected long statTarNode(@Nullable TarNode node, long statAddress) {
         if (node == null) {
             return ENOENT;
         }
@@ -6821,12 +4782,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic 64-bit `struct stat` for a tar node.
-    private void writeTarStat(TarNode node, long statAddress) {
+    protected void writeTarStat(TarNode node, long statAddress) {
         writeStat(statAddress, node.inode(), node.statMode(), node.size());
     }
 
     /// Writes virtual filesystem metadata for a path selected by `newfstatat`.
-    private long statVirtualNode(@Nullable VirtualNode node, VirtualMount mount, long statAddress) {
+    protected long statVirtualNode(@Nullable VirtualNode node, VirtualMount mount, long statAddress) {
         if (node == null) {
             return ENOENT;
         }
@@ -6835,12 +4796,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic 64-bit `struct stat` for a virtual node.
-    private void writeVirtualStat(VirtualNode node, VirtualMount mount, long statAddress) {
+    protected void writeVirtualStat(VirtualNode node, VirtualMount mount, long statAddress) {
         writeStat(statAddress, node.inode(), node.statMode(), virtualNodeSize(mount, node));
     }
 
     /// Writes tar metadata for a path selected by `statx`.
-    private long statxTarNode(@Nullable TarNode node, long statxAddress, long flags, long requestedMask) {
+    protected long statxTarNode(@Nullable TarNode node, long statxAddress, long flags, long requestedMask) {
         if (node == null) {
             return ENOENT;
         }
@@ -6852,12 +4813,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic `struct statx` for a tar node.
-    private void writeTarStatx(TarNode node, long statxAddress, long requestedMask) {
+    protected void writeTarStatx(TarNode node, long statxAddress, long requestedMask) {
         writeStatx(statxAddress, node.inode(), node.statMode(), node.size(), requestedMask);
     }
 
     /// Writes virtual filesystem metadata for a path selected by `statx`.
-    private long statxVirtualNode(
+    protected long statxVirtualNode(
             @Nullable VirtualNode node,
             VirtualMount mount,
             long statxAddress,
@@ -6870,12 +4831,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic `struct statx` for a virtual node.
-    private void writeVirtualStatx(VirtualNode node, VirtualMount mount, long statxAddress, long requestedMask) {
+    protected void writeVirtualStatx(VirtualNode node, VirtualMount mount, long statxAddress, long requestedMask) {
         writeStatx(statxAddress, node.inode(), node.statMode(), virtualNodeSize(mount, node), requestedMask);
     }
 
     /// Writes the shared subset of Linux generic 64-bit `struct stat` fields.
-    private void writeStat(long statAddress, long inode, int mode, long size) {
+    protected void writeStat(long statAddress, long inode, int mode, long size) {
         memory.clear(statAddress, STAT_SIZE);
         memory.writeLong(statAddress + STAT_INODE_OFFSET, inode);
         memory.writeInt(statAddress + STAT_MODE_OFFSET, mode);
@@ -6888,7 +4849,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes deterministic Linux generic `struct statx` fields.
-    private void writeStatx(long statxAddress, long inode, int mode, long size, long requestedMask) {
+    protected void writeStatx(long statxAddress, long inode, int mode, long size, long requestedMask) {
         int returnedMask = (int) (requestedMask & STATX_BASIC_STATS_MASK);
         if (returnedMask == 0) {
             returnedMask = STATX_BASIC_STATS_MASK;
@@ -6911,7 +4872,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes deterministic Linux generic 64-bit `struct statfs` fields.
-    private void writeStatfs(long statfsAddress) {
+    protected void writeStatfs(long statfsAddress) {
         memory.clear(statfsAddress, STATFS_SIZE);
         memory.writeLong(statfsAddress + STATFS_TYPE_OFFSET, STATFS_MAGIC);
         memory.writeLong(statfsAddress + STATFS_BLOCK_SIZE_OFFSET, STATFS_BLOCK_SIZE);
@@ -6926,7 +4887,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes deterministic procfs Linux generic 64-bit `struct statfs` fields.
-    private void writeProcStatfs(long statfsAddress) {
+    protected void writeProcStatfs(long statfsAddress) {
         memory.clear(statfsAddress, STATFS_SIZE);
         memory.writeLong(statfsAddress + STATFS_TYPE_OFFSET, PROC_SUPER_MAGIC);
         memory.writeLong(statfsAddress + STATFS_BLOCK_SIZE_OFFSET, STATFS_BLOCK_SIZE);
@@ -6941,12 +4902,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns a deterministic synthetic inode number for a sandboxed host path.
-    private static long syntheticInode(TruffleFile hostFile) {
+    protected static long syntheticInode(TruffleFile hostFile) {
         return Integer.toUnsignedLong(hostFile.toString().hashCode()) + 1024L;
     }
 
     /// Handles tty-related ioctls used by common `isatty` and stdio setup paths.
-    private long ioctl(int fileDescriptor, long request, long argument) {
+    protected long ioctl(int fileDescriptor, long request, long argument) {
         @Nullable TerminalDevice terminal = terminalDeviceFor(fileDescriptor);
         if (terminal == null) {
             if (!isOpenFileDescriptor(fileDescriptor)) {
@@ -7017,7 +4978,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Maps a Linux `termios2` set request to the matching legacy `termios` set request.
-    private static long legacyTermiosRequest(long request) {
+    protected static long legacyTermiosRequest(long request) {
         if (request == TCSETS2) {
             return TCSETS;
         }
@@ -7031,14 +4992,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the terminal backing a descriptor that resolves to standard input.
-    private @Nullable TerminalDevice terminalInputFor(int fileDescriptor) {
+    protected @Nullable TerminalDevice terminalInputFor(int fileDescriptor) {
         return standardFileDescriptorFor(fileDescriptor) == 0 && terminalDevice.supportsStandardFileDescriptors()
                 ? terminalDevice
                 : null;
     }
 
     /// Returns the terminal backing a descriptor that resolves to standard output or standard error.
-    private @Nullable TerminalDevice terminalOutputFor(int fileDescriptor) {
+    protected @Nullable TerminalDevice terminalOutputFor(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         return (standardFileDescriptor == 1 || standardFileDescriptor == 2)
                 && terminalDevice.supportsStandardFileDescriptors()
@@ -7047,7 +5008,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the terminal backing a descriptor, or null when the descriptor is not terminal-like.
-    private @Nullable TerminalDevice terminalDeviceFor(int fileDescriptor) {
+    protected @Nullable TerminalDevice terminalDeviceFor(int fileDescriptor) {
         if (standardFileDescriptorFor(fileDescriptor) >= 0) {
             return terminalDevice.supportsStandardFileDescriptors() ? terminalDevice : null;
         }
@@ -7059,7 +5020,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles the minimal `fcntl` subset used by static single-process libc code.
-    private long fcntl(int fileDescriptor, long command, long argument) {
+    protected long fcntl(int fileDescriptor, long command, long argument) {
         if (!isOpenFileDescriptor(fileDescriptor)) {
             return EBADF;
         }
@@ -7107,7 +5068,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Performs the uncommon cross-thread process-status checks after polling has been enabled.
     @CompilerDirectives.TruffleBoundary
-    private void checkProcessStatusSlow() {
+    protected void checkProcessStatusSlow() {
         @Nullable Throwable failure = threadFailure;
         if (failure != null) {
             throw guestThreadFailure(failure);
@@ -7172,7 +5133,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports this process exit to its parent once all guest threads have exited.
-    private void notifyParentProcessExitLocked() {
+    protected void notifyParentProcessExitLocked() {
         if (parentProcess == null || parentExitNotified || !processExitRequested || liveThreadCount != 0) {
             return;
         }
@@ -7220,7 +5181,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Waits until the process exit code is known.
-    private long waitForProcessExit() {
+    protected long waitForProcessExit() {
         synchronized (threadLock) {
             while (!processExitRequested && threadFailure == null) {
                 try {
@@ -7238,7 +5199,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Records that one child process has exited and wakes waiters.
-    private void recordChildProcessExit(int processId, long exitCode) {
+    protected void recordChildProcessExit(int processId, long exitCode) {
         synchronized (childProcessLock) {
             for (ChildProcess child : childProcesses) {
                 if (child.processId() == processId) {
@@ -7251,7 +5212,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Removes a child process whose host thread could not be started.
-    private void removeUnstartedChildProcess(ChildProcess childProcess) {
+    protected void removeUnstartedChildProcess(ChildProcess childProcess) {
         synchronized (childProcessLock) {
             childProcesses.remove(childProcess);
             childProcessLock.notifyAll();
@@ -7259,7 +5220,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a process id names a known child process.
-    private boolean isKnownChildProcessId(long processId) {
+    protected boolean isKnownChildProcessId(long processId) {
         if (processId != (int) processId) {
             return false;
         }
@@ -7269,7 +5230,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns a tracked child process by process id while the child-process lock is held.
-    private @Nullable ChildProcess childProcess(int processId) {
+    protected @Nullable ChildProcess childProcess(int processId) {
         for (ChildProcess child : childProcesses) {
             if (child.processId() == processId) {
                 return child;
@@ -7279,7 +5240,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Joins the host thread that executed a child process.
-    private static void joinChildProcess(ChildProcess childProcess) {
+    protected static void joinChildProcess(ChildProcess childProcess) {
         Thread thread = childProcess.thread();
         if (thread == Thread.currentThread()) {
             return;
@@ -7293,7 +5254,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Clears a thread's child-TID word and wakes one matching futex waiter.
-    private void clearChildTidAndWake(MachineState state) {
+    protected void clearChildTidAndWake(MachineState state) {
         long clearAddress = state.clearChildTidAddress();
         if (clearAddress == 0 || !memory.isBacked(clearAddress, Integer.BYTES)) {
             return;
@@ -7304,7 +5265,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Creates an exception that reports a failed guest worker thread.
-    private static RiscVException guestThreadFailure(Throwable failure) {
+    protected static RiscVException guestThreadFailure(Throwable failure) {
         if (failure instanceof RiscVException exception) {
             return exception;
         }
@@ -7312,13 +5273,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Stores the guest clear-child-TID pointer and returns this guest thread id.
-    private static long setTidAddress(MachineState state, long address) {
+    protected static long setTidAddress(MachineState state, long address) {
         state.setClearChildTidAddress(address);
         return state.threadId();
     }
 
     /// Exits the current guest thread.
-    private void exitThread(MachineState state, long exitCode) {
+    protected void exitThread(MachineState state, long exitCode) {
         synchronized (threadLock) {
             if (liveThreadCount <= 1) {
                 if (!processExitRequested) {
@@ -7334,7 +5295,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles Linux futex wait and wake operations.
-    private long futex(
+    protected long futex(
             long address,
             long operation,
             long expectedValue,
@@ -7374,7 +5335,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles a futex wait, blocking only when guest threading is active.
-    private long futexWait(long address, long expectedValue, long timeoutAddress, long bitset, boolean realtimeTimeout) {
+    protected long futexWait(long address, long expectedValue, long timeoutAddress, long bitset, boolean realtimeTimeout) {
         if ((bitset & 0xffff_ffffL) == 0) {
             return EINVAL;
         }
@@ -7434,7 +5395,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles a futex wake against guest waiters.
-    private long futexWake(long address, long count, long bitset) {
+    protected long futexWake(long address, long count, long bitset) {
         if (count < 0 || (bitset & 0xffff_ffffL) == 0) {
             return EINVAL;
         }
@@ -7449,7 +5410,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Wakes matching futex waiters while `threadLock` is held.
-    private long futexWakeLocked(long address, long count, long bitset) {
+    protected long futexWakeLocked(long address, long count, long bitset) {
         long woken = 0;
         for (FutexWaiter waiter : futexWaiters) {
             if (woken >= count) {
@@ -7467,14 +5428,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Waits on `threadLock` for at most the supplied nanosecond count.
-    private void waitNanos(long nanoseconds) throws InterruptedException {
+    protected void waitNanos(long nanoseconds) throws InterruptedException {
         long millis = nanoseconds / 1_000_000L;
         int nanos = (int) (nanoseconds % 1_000_000L);
         threadLock.wait(millis, nanos);
     }
 
     /// Converts a futex timeout to a relative nanosecond count.
-    private long futexTimeoutNanos(long seconds, long nanoseconds, boolean realtimeTimeout) {
+    protected long futexTimeoutNanos(long seconds, long nanoseconds, boolean realtimeTimeout) {
         long targetNanos = timespecToSaturatedNanoseconds(seconds, nanoseconds);
         if (!realtimeTimeout) {
             return targetNanos;
@@ -7485,7 +5446,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Converts an instant to saturated nanoseconds since the Unix epoch.
-    private static long instantToSaturatedNanoseconds(Instant instant) {
+    protected static long instantToSaturatedNanoseconds(Instant instant) {
         long seconds = instant.getEpochSecond();
         int nanoseconds = instant.getNano();
         if (seconds <= 0) {
@@ -7495,12 +5456,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when clone-created guest threads can be started through the Truffle environment.
-    private boolean guestThreadingEnabled() {
+    protected boolean guestThreadingEnabled() {
         return env != null && guestThreadRunner != null;
     }
 
     /// Replaces the current process image with a mounted guest executable.
-    private long execve(MachineState state, long pathAddress, long argvAddress, long envpAddress) {
+    protected long execve(MachineState state, long pathAddress, long argvAddress, long envpAddress) {
         String rawPath;
         String[] arguments;
         String[] environment;
@@ -7548,7 +5509,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when this process is in a state that can be replaced without racing another guest thread.
-    private boolean canReplaceCurrentProcessImage(MachineState state) {
+    protected boolean canReplaceCurrentProcessImage(MachineState state) {
         synchronized (threadLock) {
             return liveThreadCount == 1
                     && process.threadCount() == 1
@@ -7559,7 +5520,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when every loadable segment in a program fits the current guest memory window.
-    private boolean loadedProgramFitsMemory(LinuxProgramLoader.LoadedProgram program) {
+    protected boolean loadedProgramFitsMemory(LinuxProgramLoader.LoadedProgram program) {
         for (LinuxProgramLoader.LoadedImage loadedImage : program.images()) {
             for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
                 if (segment.memorySize() == 0) {
@@ -7580,7 +5541,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Installs an already loaded executable into the current process state.
-    private void replaceCurrentProcessImage(
+    protected void replaceCurrentProcessImage(
             MachineState state,
             LinuxProgramLoader.LoadedProgram program,
             String @Unmodifiable [] arguments,
@@ -7598,7 +5559,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resets syscall-owned process metadata after a successful `execve`.
-    private void resetForExec(MachineState state, long newInitialProgramBreak, @Nullable String executablePath) {
+    protected void resetForExec(MachineState state, long newInitialProgramBreak, @Nullable String executablePath) {
         initialProgramBreak = newInitialProgramBreak;
         programBreak = newInitialProgramBreak;
         programBreakBackingEnd = newInitialProgramBreak;
@@ -7613,7 +5574,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Updates the Linux task command name from an executable path.
-    private void setProcessNameFromExecutablePath(@Nullable String executablePath) {
+    protected void setProcessNameFromExecutablePath(@Nullable String executablePath) {
         for (int index = 0; index < processName.length; index++) {
             processName[index] = 0;
         }
@@ -7627,7 +5588,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Converts loader diagnostics into Linux `execve` errno values.
-    private static long execveLoadError(RiscVException exception) {
+    protected static long execveLoadError(RiscVException exception) {
         @Nullable String message = exception.getMessage();
         if (message == null) {
             return ENOEXEC;
@@ -7644,275 +5605,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return ENOEXEC;
     }
 
-    /// Handles the parent return path for Linux `clone` requests.
-    private long clone(
-            MachineState state,
-            long pc,
-            long flags,
-            long stackAddress,
-            long parentTidAddress,
-            long tlsAddress,
-            long childTidAddress) {
-        long exitSignal = flags & CLONE_EXIT_SIGNAL_MASK;
-        long controlFlags = flags & ~CLONE_EXIT_SIGNAL_MASK;
-        if ((controlFlags & CLONE_THREAD) != 0) {
-            if (exitSignal != 0) {
-                return EINVAL;
-            }
-            return cloneThread(state, pc, controlFlags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
-        }
-        return cloneProcess(state, pc, flags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
-    }
-
-    /// Handles Linux `clone3` by translating `struct clone_args` to the existing clone implementation.
-    private long clone3(MachineState state, long pc, long argumentsAddress, long size) {
-        if (size < CLONE_ARGS_MINIMUM_SIZE) {
-            return EINVAL;
-        }
-        if (!memory.isBacked(argumentsAddress, Math.min(size, CLONE_ARGS_KNOWN_SIZE))) {
-            return EFAULT;
-        }
-        if (size > CLONE_ARGS_KNOWN_SIZE) {
-            long extraSize = size - CLONE_ARGS_KNOWN_SIZE;
-            if (extraSize > Integer.MAX_VALUE) {
-                return E2BIG;
-            }
-            if (!memory.isBacked(argumentsAddress + CLONE_ARGS_KNOWN_SIZE, extraSize)) {
-                return EFAULT;
-            }
-            byte[] extraBytes = memory.readBytes(argumentsAddress + CLONE_ARGS_KNOWN_SIZE, extraSize);
-            for (byte extraByte : extraBytes) {
-                if (extraByte != 0) {
-                    return E2BIG;
-                }
-            }
-        }
-
-        long flags = memory.readLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET);
-        long exitSignal = memory.readLong(argumentsAddress + CLONE_ARGS_EXIT_SIGNAL_OFFSET);
-        if ((flags & CLONE_EXIT_SIGNAL_MASK) != 0 || (exitSignal & ~CLONE_EXIT_SIGNAL_MASK) != 0) {
-            return EINVAL;
-        }
-
-        long childTidAddress = memory.readLong(argumentsAddress + CLONE_ARGS_CHILD_TID_OFFSET);
-        long parentTidAddress = memory.readLong(argumentsAddress + CLONE_ARGS_PARENT_TID_OFFSET);
-        long stackAddress = memory.readLong(argumentsAddress + CLONE_ARGS_STACK_OFFSET);
-        long stackSize = memory.readLong(argumentsAddress + CLONE_ARGS_STACK_SIZE_OFFSET);
-        long tlsAddress = memory.readLong(argumentsAddress + CLONE_ARGS_TLS_OFFSET);
-        long setTidAddress = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_SET_TID_OFFSET);
-        long setTidSize = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_SET_TID_SIZE_OFFSET);
-        long cgroup = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_CGROUP_OFFSET);
-        if ((flags & CLONE_PIDFD) != 0 || setTidAddress != 0 || setTidSize != 0 || cgroup != 0) {
-            return EINVAL;
-        }
-
-        long childStackAddress = clone3ChildStackAddress(stackAddress, stackSize);
-        if (childStackAddress < 0) {
-            return EINVAL;
-        }
-        return clone(
-                state,
-                pc,
-                flags | exitSignal,
-                childStackAddress,
-                parentTidAddress,
-                tlsAddress,
-                childTidAddress);
-    }
-
-    /// Reads an optional 64-bit `struct clone_args` field when it is present in the supplied size.
-    private long cloneArgumentLong(long argumentsAddress, long size, long offset) {
-        return size >= offset + Long.BYTES ? memory.readLong(argumentsAddress + offset) : 0;
-    }
-
-    /// Converts a `clone3` stack base and size to the child stack pointer expected by `clone`.
-    private static long clone3ChildStackAddress(long stackAddress, long stackSize) {
-        if (stackAddress == 0) {
-            return stackSize == 0 ? 0 : -1;
-        }
-        if (stackSize < 0 || Long.MAX_VALUE - stackAddress < stackSize) {
-            return -1;
-        }
-        return stackSize == 0 ? stackAddress : stackAddress + stackSize;
-    }
-
-    /// Handles the parent return path for Linux thread-style `clone` requests.
-    private long cloneThread(
-            MachineState state,
-            long pc,
-            long flags,
-            long stackAddress,
-            long parentTidAddress,
-            long tlsAddress,
-            long childTidAddress) {
-        if (stackAddress == 0
-                || (flags & REQUIRED_THREAD_CLONE_FLAGS) != REQUIRED_THREAD_CLONE_FLAGS
-                || (flags & ~SUPPORTED_THREAD_CLONE_FLAGS) != 0) {
-            return EINVAL;
-        }
-        if (!guestThreadingEnabled()) {
-            return EAGAIN;
-        }
-
-        GuestThread childThread;
-        synchronized (threadLock) {
-            if (processExitRequested || threadFailure != null) {
-                return EAGAIN;
-            }
-            childThread = processRegistry.createChildThread(process);
-            if (childThread == null) {
-                return ENOMEM;
-            }
-            childThread.setSignalMask(state.guestThread().signalMask());
-            childThread.inheritExecutionControlsFrom(state.guestThread());
-        }
-        long threadId = childThread.id();
-
-        MachineState child = state.forkForClone(
-                childThread,
-                pc + Integer.BYTES,
-                stackAddress,
-                tlsAddress,
-                (flags & CLONE_SETTLS) != 0);
-        if ((flags & CLONE_CHILD_CLEARTID) != 0) {
-            childThread.setClearChildTidAddress(childTidAddress);
-        }
-
-        TruffleLanguage.Env currentEnv = env;
-        GuestThreadRunner currentRunner = guestThreadRunner;
-        Thread thread;
-        try {
-            thread = currentEnv.newTruffleThreadBuilder(() -> currentRunner.runGuestThread(memory, child)).build();
-        } catch (RuntimeException exception) {
-            return EAGAIN;
-        }
-        thread.setUncaughtExceptionHandler((failedThread, throwable) -> recordThreadFailure(throwable));
-
-        if ((flags & CLONE_PARENT_SETTID) != 0) {
-            memory.writeInt(parentTidAddress, (int) threadId);
-        }
-        if ((flags & CLONE_CHILD_SETTID) != 0) {
-            memory.writeInt(childTidAddress, (int) threadId);
-        }
-
-        synchronized (threadLock) {
-            if (processExitRequested || threadFailure != null) {
-                return EAGAIN;
-            }
-            liveThreadCount++;
-            guestThreads.add(thread);
-            process.registerThread(childThread);
-            processStatusPollingRequired = true;
-        }
-
-        try {
-            thread.start();
-        } catch (RuntimeException exception) {
-            unregisterUnstartedGuestThread(thread, childThread);
-            return EAGAIN;
-        }
-        return threadId;
-    }
-
-    /// Handles the parent return path for Linux process-style `clone` requests.
-    private long cloneProcess(
-            MachineState state,
-            long pc,
-            long flags,
-            long stackAddress,
-            long parentTidAddress,
-            long tlsAddress,
-            long childTidAddress) {
-        long exitSignal = flags & CLONE_EXIT_SIGNAL_MASK;
-        if ((flags & ~SUPPORTED_PROCESS_CLONE_FLAGS) != 0
-                || (flags & CLONE_VM) != 0
-                || exitSignal != SIGNAL_CHILD && exitSignal != 0) {
-            return EINVAL;
-        }
-        if (!guestThreadingEnabled()) {
-            return EAGAIN;
-        }
-        synchronized (threadLock) {
-            if (processExitRequested || threadFailure != null) {
-                return EAGAIN;
-            }
-        }
-
-        @Nullable GuestProcess childProcess = processRegistry.createChildProcess(process);
-        if (childProcess == null) {
-            return ENOMEM;
-        }
-
-        Memory childMemory;
-        try {
-            childMemory = memory.fork();
-        } catch (RiscVException exception) {
-            return ENOMEM;
-        }
-
-        GuestSyscalls childSyscalls = createChildSyscalls(childMemory, childProcess);
-        GuestThread childThread = childProcess.initialThread();
-        childThread.setSignalMask(state.guestThread().signalMask());
-        childThread.inheritExecutionControlsFrom(state.guestThread());
-        if ((flags & CLONE_CHILD_CLEARTID) != 0) {
-            childThread.setClearChildTidAddress(childTidAddress);
-        }
-
-        long childStackAddress = stackAddress == 0 ? state.register(2) : stackAddress;
-        MachineState child = state.forkForProcess(
-                childThread,
-                childMemory,
-                childSyscalls,
-                pc + Integer.BYTES,
-                childStackAddress,
-                tlsAddress,
-                (flags & CLONE_SETTLS) != 0);
-
-        if ((flags & CLONE_PARENT_SETTID) != 0) {
-            memory.writeInt(parentTidAddress, childProcess.id());
-        }
-        if ((flags & CLONE_CHILD_SETTID) != 0) {
-            childMemory.writeInt(childTidAddress, childProcess.id());
-        }
-
-        TruffleLanguage.Env currentEnv = env;
-        GuestThreadRunner currentRunner = guestThreadRunner;
-        Thread thread;
-        try {
-            thread = currentEnv.newTruffleThreadBuilder(() -> {
-                try {
-                    currentRunner.runGuestThread(childMemory, child);
-                } finally {
-                    childSyscalls.joinGuestThreads();
-                    childSyscalls.close();
-                    childMemory.close();
-                }
-            }).build();
-        } catch (RuntimeException exception) {
-            childSyscalls.close();
-            childMemory.close();
-            return EAGAIN;
-        }
-        thread.setUncaughtExceptionHandler((failedThread, throwable) -> childSyscalls.recordThreadFailure(throwable));
-
-        ChildProcess childRecord = new ChildProcess(childProcess.id(), childProcess.processGroupId(), childSyscalls, thread);
-        synchronized (childProcessLock) {
-            childProcesses.add(childRecord);
-        }
-
-        try {
-            thread.start();
-        } catch (RuntimeException exception) {
-            removeUnstartedChildProcess(childRecord);
-            childSyscalls.close();
-            childMemory.close();
-            return EAGAIN;
-        }
-        return childProcess.id();
-    }
-
     /// Removes a child thread that failed before it could start running guest code.
-    private void unregisterUnstartedGuestThread(Thread thread, GuestThread guestThread) {
+    protected void unregisterUnstartedGuestThread(Thread thread, GuestThread guestThread) {
         synchronized (threadLock) {
             guestThreads.remove(thread);
             process.unregisterThread(guestThread);
@@ -7923,68 +5617,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
-    /// Accepts a robust futex list registration for the current guest thread.
-    private static long setRobustList(MachineState state, long headAddress, long length) {
-        if (length < 0) {
-            return EINVAL;
-        }
-        state.guestThread().setRobustList(headAddress, length);
-        return 0;
-    }
-
-    /// Reports the robust futex list registered for one guest thread.
-    private long getRobustList(MachineState state, long processId, long headAddress, long lengthAddress) {
-        @Nullable GuestThread thread = guestThread(state, processId);
-        if (thread == null) {
-            return ESRCH;
-        }
-        memory.writeLong(headAddress, thread.robustListHeadAddress());
-        memory.writeLong(lengthAddress, thread.robustListLength());
-        return 0;
-    }
-
-    /// Registers or reports the alternate signal stack for the current guest thread.
-    private long sigaltstack(MachineState state, long stackAddress, long oldStackAddress) {
-        long newStackPointer = 0;
-        long newStackSize = 0;
-        long newStackFlags = 0;
-        if (stackAddress != 0) {
-            newStackPointer = memory.readLong(stackAddress + SIGNAL_STACK_POINTER_OFFSET);
-            newStackFlags = Integer.toUnsignedLong(memory.readInt(stackAddress + SIGNAL_STACK_FLAGS_OFFSET));
-            newStackSize = memory.readLong(stackAddress + SIGNAL_STACK_SIZE_OFFSET);
-            if ((newStackFlags & ~SUPPORTED_SIGNAL_STACK_FLAGS) != 0
-                    || (newStackFlags & SS_ONSTACK) != 0
-                    || newStackSize < 0) {
-                return EINVAL;
-            }
-            if ((newStackFlags & SS_DISABLE) == 0 && newStackSize < MINIMUM_SIGNAL_STACK_SIZE) {
-                return ENOMEM;
-            }
-        }
-
-        if (oldStackAddress != 0) {
-            writeSignalStack(state.guestThread(), oldStackAddress);
-        }
-        if (stackAddress != 0) {
-            if ((newStackFlags & SS_DISABLE) != 0) {
-                state.guestThread().disableAlternateSignalStack();
-            } else {
-                state.guestThread().setAlternateSignalStack(newStackPointer, newStackSize, newStackFlags);
-            }
-        }
-        return 0;
-    }
-
-    /// Writes the current Linux RISC-V 64-bit `stack_t` alternate signal stack.
-    private void writeSignalStack(GuestThread thread, long stackAddress) {
-        memory.writeLong(stackAddress + SIGNAL_STACK_POINTER_OFFSET, thread.alternateSignalStackPointer());
-        memory.writeInt(stackAddress + SIGNAL_STACK_FLAGS_OFFSET, (int) thread.alternateSignalStackFlags());
-        memory.writeInt(stackAddress + SIGNAL_STACK_FLAGS_PADDING_OFFSET, 0);
-        memory.writeLong(stackAddress + SIGNAL_STACK_SIZE_OFFSET, thread.alternateSignalStackSize());
-    }
-
     /// Sleeps for the requested Linux RISC-V 64-bit `struct timespec` duration.
-    private long nanosleep(long requestAddress, long remainingAddress) {
+    protected long nanosleep(long requestAddress, long remainingAddress) {
         long seconds = memory.readLong(requestAddress + TIMESPEC_SECONDS_OFFSET);
         long nanoseconds = memory.readLong(requestAddress + TIMESPEC_NANOSECONDS_OFFSET);
         if (!isValidTimespec(seconds, nanoseconds)) {
@@ -7996,7 +5630,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Sleeps for a Linux `clock_nanosleep` request against a supported guest clock.
-    private long clockNanosleep(long clockId, long flags, long requestAddress, long remainingAddress) {
+    protected long clockNanosleep(long clockId, long flags, long requestAddress, long remainingAddress) {
         if (!isSupportedClock(clockId) || (flags & ~SUPPORTED_CLOCK_NANOSLEEP_FLAGS) != 0) {
             return EINVAL;
         }
@@ -8021,7 +5655,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Sleeps for a relative duration and writes the remaining duration when interrupted.
-    private long sleepNanoseconds(long totalNanoseconds, long remainingAddress) {
+    protected long sleepNanoseconds(long totalNanoseconds, long remainingAddress) {
         if (totalNanoseconds == 0) {
             return 0;
         }
@@ -8044,7 +5678,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the relative wait needed to reach an absolute clock time.
-    private long absoluteClockSleepNanoseconds(long clockId, long targetSeconds, long targetNanoseconds) {
+    protected long absoluteClockSleepNanoseconds(long clockId, long targetSeconds, long targetNanoseconds) {
         if (isRealtimeClock(clockId)) {
             Instant instant = timeSource.realtimeInstant();
             return relativeNanosecondsUntil(targetSeconds, targetNanoseconds, instant.getEpochSecond(), instant.getNano());
@@ -8055,7 +5689,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the saturated non-negative nanosecond distance from one timespec value to another.
-    private static long relativeNanosecondsUntil(
+    protected static long relativeNanosecondsUntil(
             long targetSeconds,
             long targetNanoseconds,
             long currentSeconds,
@@ -8074,157 +5708,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return timespecToSaturatedNanoseconds(seconds, nanoseconds);
     }
 
-    /// Reports a deterministic single-CPU affinity mask for static libc queries.
-    private long schedGetaffinity(long processId, long cpuSetSize, long cpuSetAddress) {
-        if (cpuSetSize < MINIMUM_CPU_AFFINITY_MASK_SIZE) {
-            return EINVAL;
-        }
-
-        memory.clear(cpuSetAddress, cpuSetSize);
-        memory.writeLong(cpuSetAddress, 1);
-        return MINIMUM_CPU_AFFINITY_MASK_SIZE;
-    }
-
     /// Yields the host thread for the Linux `sched_yield` syscall.
-    private static long schedYield() {
+    protected static long schedYield() {
         Thread.yield();
         return 0;
     }
 
-    /// Reports deterministic RISC-V hardware probe values for the single simulated CPU.
-    private long riscvHwprobe(long pairsAddress, long pairCount, long cpuSetSize, long cpuSetAddress, long flags, MachineState state) {
-        if (pairCount < 0
-                || pairCount > Integer.MAX_VALUE
-                || (flags & ~RISCV_HWPROBE_WHICH_CPUS) != 0
-                || pairCount > Long.MAX_VALUE / RISCV_HWPROBE_PAIR_SIZE
-                || (cpuSetAddress == 0 && cpuSetSize != 0)
-                || (cpuSetAddress != 0 && cpuSetSize <= 0)) {
-            return EINVAL;
-        }
-
-        if ((flags & RISCV_HWPROBE_WHICH_CPUS) == 0) {
-            if (cpuSetAddress != 0 && !cpuSetContainsGuestCpu(cpuSetAddress)) {
-                return EINVAL;
-            }
-            populateHwprobePairs(pairsAddress, pairCount, state);
-            return 0;
-        }
-
-        if (cpuSetAddress == 0) {
-            return EINVAL;
-        }
-
-        boolean selected = cpuSetContainsGuestCpu(cpuSetAddress) || cpuSetIsEmpty(cpuSetAddress, cpuSetSize);
-        boolean matches = selected && hwprobePairsMatch(pairsAddress, pairCount, state);
-        memory.clear(cpuSetAddress, cpuSetSize);
-        if (matches) {
-            memory.writeByte(cpuSetAddress, (byte) 1);
-        }
-        return 0;
-    }
-
-    /// Writes values for all requested RISC-V hardware probe pairs.
-    private void populateHwprobePairs(long pairsAddress, long pairCount, MachineState state) {
-        for (long index = 0; index < pairCount; index++) {
-            long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
-            long key = memory.readLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET);
-            if (isSupportedHwprobeKey(key)) {
-                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, hwprobeValue(key, state));
-            } else {
-                memory.writeLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET, -1);
-                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, 0);
-            }
-        }
-    }
-
-    /// Returns true when all supplied RISC-V hardware probe constraints match the simulated CPU.
-    private boolean hwprobePairsMatch(long pairsAddress, long pairCount, MachineState state) {
-        boolean matches = true;
-        for (long index = 0; index < pairCount; index++) {
-            long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
-            long key = memory.readLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET);
-            long requestedValue = memory.readLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET);
-            if (!isSupportedHwprobeKey(key)) {
-                memory.writeLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET, -1);
-                memory.writeLong(pairAddress + RISCV_HWPROBE_VALUE_OFFSET, 0);
-                matches = false;
-                continue;
-            }
-
-            long actualValue = hwprobeValue(key, state);
-            if (isHwprobeBitmaskKey(key)) {
-                if ((actualValue & requestedValue) != requestedValue) {
-                    matches = false;
-                }
-            } else if (actualValue != requestedValue) {
-                matches = false;
-            }
-        }
-        return matches;
-    }
-
-    /// Returns true when a hardware probe key is supported by this simulator.
-    private static boolean isSupportedHwprobeKey(long key) {
-        return key >= RISCV_HWPROBE_KEY_MVENDORID && key <= RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE;
-    }
-
-    /// Returns the deterministic value for a supported RISC-V hardware probe key.
-    private static long hwprobeValue(long key, MachineState state) {
-        return switch ((int) key) {
-            case (int) RISCV_HWPROBE_KEY_MVENDORID,
-                    (int) RISCV_HWPROBE_KEY_MARCHID,
-                    (int) RISCV_HWPROBE_KEY_MIMPID,
-                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0,
-                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0,
-                    (int) RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0 -> 0;
-            case (int) RISCV_HWPROBE_KEY_ZICBOZ_BLOCK_SIZE,
-                    (int) RISCV_HWPROBE_KEY_ZICBOM_BLOCK_SIZE,
-                    (int) RISCV_HWPROBE_KEY_ZICBOP_BLOCK_SIZE -> RiscVExtensions.CACHE_BLOCK_SIZE;
-            case (int) RISCV_HWPROBE_KEY_BASE_BEHAVIOR -> RISCV_HWPROBE_BASE_BEHAVIOR_IMA;
-            case (int) RISCV_HWPROBE_KEY_IMA_EXT_0 -> hwprobeImaExtensions(state);
-            case (int) RISCV_HWPROBE_KEY_CPUPERF_0 -> RISCV_HWPROBE_MISALIGNED_EMULATED;
-            case (int) RISCV_HWPROBE_KEY_MISALIGNED_SCALAR_PERF -> RISCV_HWPROBE_MISALIGNED_SCALAR_EMULATED;
-            case (int) RISCV_HWPROBE_KEY_MISALIGNED_VECTOR_PERF -> RISCV_HWPROBE_MISALIGNED_VECTOR_SLOW;
-            case (int) RISCV_HWPROBE_KEY_HIGHEST_VIRT_ADDRESS -> Long.MAX_VALUE;
-            case (int) RISCV_HWPROBE_KEY_TIME_CSR_FREQ -> NANOSECONDS_PER_SECOND;
-            default -> throw new AssertionError("validated RISC-V hardware probe key");
-        };
-    }
-
-    /// Returns the ISA extension bits visible through Linux `riscv_hwprobe`.
-    private static long hwprobeImaExtensions(MachineState state) {
-        return state.vectorUnit().vlenBits() >= Rva23Profile.MINIMUM_VLEN_BITS
-                ? Rva23Profile.HWPROBE_REPORTED_EXTENSIONS
-                : Rva22Profile.HWPROBE_REPORTED_EXTENSIONS;
-    }
-
-    /// Returns true when a hardware probe key uses bitmask matching.
-    private static boolean isHwprobeBitmaskKey(long key) {
-        return key == RISCV_HWPROBE_KEY_BASE_BEHAVIOR
-                || key == RISCV_HWPROBE_KEY_IMA_EXT_0
-                || key == RISCV_HWPROBE_KEY_CPUPERF_0
-                || key == RISCV_HWPROBE_KEY_VENDOR_EXT_THEAD_0
-                || key == RISCV_HWPROBE_KEY_VENDOR_EXT_SIFIVE_0
-                || key == RISCV_HWPROBE_KEY_VENDOR_EXT_MIPS_0;
-    }
-
-    /// Returns true when the supplied CPU set contains the simulator's only CPU.
-    private boolean cpuSetContainsGuestCpu(long cpuSetAddress) {
-        return (memory.readUnsignedByte(cpuSetAddress) & 1) != 0;
-    }
-
-    /// Returns true when all bytes in a guest CPU set are zero.
-    private boolean cpuSetIsEmpty(long cpuSetAddress, long cpuSetSize) {
-        for (long index = 0; index < cpuSetSize; index++) {
-            if (memory.readUnsignedByte(cpuSetAddress + index) != 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /// Accepts signal sends that target known guest processes.
-    private long kill(long processId, long signalNumber) {
+    protected long kill(long processId, long signalNumber) {
         if (!isValidSignalNumber(signalNumber)) {
             return EINVAL;
         }
@@ -8238,27 +5729,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return ESRCH;
     }
 
-    /// Accepts signal sends that target known guest thread ids.
-    private long tkill(long threadId, long signalNumber) {
-        if (!isValidSignalNumber(signalNumber)) {
-            return EINVAL;
-        }
-        return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
-    }
-
-    /// Accepts signal sends that target known guest thread ids in the current process.
-    private long tgkill(long processId, long threadId, long signalNumber) {
-        if (!isValidSignalNumber(signalNumber)) {
-            return EINVAL;
-        }
-        if (processId != process.id()) {
-            return ESRCH;
-        }
-        return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
-    }
-
     /// Updates the target process group when the target process and group are known to this runtime.
-    private long setpgid(long processId, long processGroupId) {
+    protected long setpgid(long processId, long processGroupId) {
         if (processId < 0
                 || processId != (int) processId
                 || processGroupId < 0
@@ -8296,7 +5768,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Updates the parent process child record for this process when the parent is known.
-    private void updateParentChildProcessGroup(int processGroupId) {
+    protected void updateParentChildProcessGroup(int processGroupId) {
         if (parentProcess == null) {
             return;
         }
@@ -8309,7 +5781,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a process group id names the current process group or a tracked child group.
-    private boolean isKnownOrSelfProcessGroupId(int processGroupId) {
+    protected boolean isKnownOrSelfProcessGroupId(int processGroupId) {
         if (process.processGroupId() == processGroupId) {
             return true;
         }
@@ -8321,45 +5793,28 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return false;
     }
 
-    /// Returns the process group id for the current process or a tracked child process.
-    private long getpgid(long processId) {
-        if (processId == 0 || processId == process.id()) {
-            return process.processGroupId();
-        }
-        if (processId != (int) processId) {
-            return ESRCH;
-        }
-        synchronized (childProcessLock) {
-            @Nullable ChildProcess child = childProcess((int) processId);
-            if (child != null) {
-                return child.processGroupId();
-            }
-        }
-        return ESRCH;
-    }
-
     /// Accepts session creation as a deterministic no-op for the current guest process.
-    private long setsid() {
+    protected long setsid() {
         return process.processGroupId();
     }
 
     /// Returns true when a signal number is zero or a regular Linux signal.
-    private static boolean isValidSignalNumber(long signalNumber) {
+    protected static boolean isValidSignalNumber(long signalNumber) {
         return signalNumber == 0 || (signalNumber >= MIN_SIGNAL_NUMBER && signalNumber <= MAX_SIGNAL_NUMBER);
     }
 
     /// Returns the Linux `sigset_t` bit for a signal number.
-    private static long signalMask(long signalNumber) {
+    protected static long signalMask(long signalNumber) {
         return 1L << (signalNumber - 1L);
     }
 
     /// Returns true when a thread id belongs to a live thread in the current guest process.
-    private boolean isKnownGuestThreadId(long threadId) {
+    protected boolean isKnownGuestThreadId(long threadId) {
         return guestThread(threadId) != null;
     }
 
     /// Returns the requested guest thread, or the current thread when the request id is zero.
-    private @Nullable GuestThread guestThread(MachineState currentState, long threadId) {
+    protected @Nullable GuestThread guestThread(MachineState currentState, long threadId) {
         if (threadId == 0) {
             return currentState.guestThread();
         }
@@ -8367,7 +5822,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the live guest thread with the supplied thread id, or null when none is known.
-    private @Nullable GuestThread guestThread(long threadId) {
+    protected @Nullable GuestThread guestThread(long threadId) {
         if (threadId != (int) threadId) {
             return null;
         }
@@ -8378,25 +5833,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the live guest thread with the supplied thread id while `threadLock` is held.
-    private @Nullable GuestThread guestThreadLocked(int threadId) {
+    protected @Nullable GuestThread guestThreadLocked(int threadId) {
         return process.thread(threadId);
     }
 
-    /// Writes deterministic process CPU times and returns elapsed clock ticks.
-    private long times(long tmsAddress) {
-        long elapsedTicks = elapsedClockTicks();
-        if (tmsAddress != 0) {
-            memory.clear(tmsAddress, TMS_SIZE);
-            memory.writeLong(tmsAddress + TMS_USER_TIME_OFFSET, elapsedTicks);
-            memory.writeLong(tmsAddress + TMS_SYSTEM_TIME_OFFSET, 0);
-            memory.writeLong(tmsAddress + TMS_CHILD_USER_TIME_OFFSET, 0);
-            memory.writeLong(tmsAddress + TMS_CHILD_SYSTEM_TIME_OFFSET, 0);
-        }
-        return elapsedTicks;
-    }
-
     /// Writes deterministic Linux `struct rusage` values for the supported `who` selectors.
-    private long getrusage(long who, long rusageAddress) {
+    protected long getrusage(long who, long rusageAddress) {
         if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN && who != RUSAGE_THREAD) {
             return EINVAL;
         }
@@ -8410,7 +5852,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Waits for an exited child process and reports its Linux wait status.
-    private long wait4(long processId, long statusAddress, long options, long rusageAddress) {
+    protected long wait4(long processId, long statusAddress, long options, long rusageAddress) {
         if ((options & ~SUPPORTED_WAIT_OPTIONS) != 0) {
             return EINVAL;
         }
@@ -8465,7 +5907,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reports the simulated single CPU and NUMA node.
-    private long getcpu(long cpuAddress, long nodeAddress) {
+    protected long getcpu(long cpuAddress, long nodeAddress) {
         if (cpuAddress != 0) {
             memory.writeInt(cpuAddress, 0);
         }
@@ -8475,67 +5917,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 0;
     }
 
-    /// Writes a deterministic Linux `struct utsname` for the simulated guest.
-    private long uname(long utsnameAddress) {
-        memory.clear(utsnameAddress, UTSNAME_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_SYSNAME_OFFSET, "Linux", UTSNAME_FIELD_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_NODENAME_OFFSET, "localhost", UTSNAME_FIELD_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_RELEASE_OFFSET, "6.12.0", UTSNAME_FIELD_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_VERSION_OFFSET, "#1 SMP", UTSNAME_FIELD_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_MACHINE_OFFSET, "riscv64", UTSNAME_FIELD_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_DOMAINNAME_OFFSET, "localdomain", UTSNAME_FIELD_SIZE);
-        return 0;
-    }
-
-    /// Writes deterministic Linux `struct sysinfo` values for libc and coreutils memory queries.
-    private long sysinfo(long sysinfoAddress) {
-        if (sysinfoAddress == 0) {
-            return EFAULT;
-        }
-
-        long totalRam = memory.size();
-        long committedRam = saturatedMultiply(memory.committedPages(), memory.pageSize());
-        long freeRam = Math.max(0, totalRam - committedRam);
-        short processes = (short) Math.min(Short.toUnsignedInt((short) -1), process.threadCount());
-
-        memory.clear(sysinfoAddress, SYSINFO_SIZE);
-        memory.writeLong(sysinfoAddress + SYSINFO_UPTIME_OFFSET, Math.max(0, elapsedDuration().getSeconds()));
-        memory.writeLong(sysinfoAddress + SYSINFO_LOADS_OFFSET, 0);
-        memory.writeLong(sysinfoAddress + SYSINFO_LOADS_OFFSET + Long.BYTES, 0);
-        memory.writeLong(sysinfoAddress + SYSINFO_LOADS_OFFSET + 2L * Long.BYTES, 0);
-        memory.writeLong(sysinfoAddress + SYSINFO_TOTAL_RAM_OFFSET, totalRam);
-        memory.writeLong(sysinfoAddress + SYSINFO_FREE_RAM_OFFSET, freeRam);
-        memory.writeLong(sysinfoAddress + SYSINFO_SHARED_RAM_OFFSET, 0);
-        memory.writeLong(sysinfoAddress + SYSINFO_BUFFER_RAM_OFFSET, 0);
-        memory.writeLong(sysinfoAddress + SYSINFO_TOTAL_SWAP_OFFSET, 0);
-        memory.writeLong(sysinfoAddress + SYSINFO_FREE_SWAP_OFFSET, 0);
-        memory.writeShort(sysinfoAddress + SYSINFO_PROCESSES_OFFSET, processes);
-        memory.writeLong(sysinfoAddress + SYSINFO_TOTAL_HIGH_OFFSET, 0);
-        memory.writeLong(sysinfoAddress + SYSINFO_FREE_HIGH_OFFSET, 0);
-        memory.writeInt(sysinfoAddress + SYSINFO_MEMORY_UNIT_OFFSET, 1);
-        return 0;
-    }
-
-    /// Returns a saturated product of two non-negative byte counts.
-    private static long saturatedMultiply(long left, long right) {
-        if (left <= 0 || right <= 0) {
-            return 0;
-        }
-        if (left > Long.MAX_VALUE / right) {
-            return Long.MAX_VALUE;
-        }
-        return left * right;
-    }
-
-    /// Writes a null-terminated US-ASCII string into a fixed-size guest field.
-    private void writeNullTerminatedAscii(long address, String value, int fieldSize) {
-        byte[] bytes = value.getBytes(StandardCharsets.US_ASCII);
-        int length = Math.min(bytes.length, fieldSize - 1);
-        memory.writeBytes(address, bytes, 0, length);
-    }
-
     /// Writes Linux `struct timeval` and optional `struct timezone` values.
-    private long gettimeofday(long timevalAddress, long timezoneAddress) {
+    protected long gettimeofday(long timevalAddress, long timezoneAddress) {
         if (timevalAddress != 0) {
             Instant instant = timeSource.realtimeInstant();
             memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, instant.getEpochSecond());
@@ -8549,17 +5932,17 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the non-negative elapsed duration since the syscall handler was created.
-    private Duration elapsedDuration() {
+    protected Duration elapsedDuration() {
         return timeSource.elapsedDuration();
     }
 
     /// Returns elapsed Linux clock ticks since the syscall handler was created.
-    private long elapsedClockTicks() {
+    protected long elapsedClockTicks() {
         return durationToClockTicks(elapsedDuration());
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timespec` for common clock ids.
-    private long clockGettime(long clockId, long timespecAddress) {
+    protected long clockGettime(long clockId, long timespecAddress) {
         if (!isSupportedClock(clockId)) {
             return EINVAL;
         }
@@ -8573,7 +5956,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes the resolution for a supported Linux clock.
-    private long clockGetres(long clockId, long timespecAddress) {
+    protected long clockGetres(long clockId, long timespecAddress) {
         if (!isSupportedClock(clockId)) {
             return EINVAL;
         }
@@ -8585,19 +5968,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timeval` from a non-negative elapsed duration.
-    private void writeTimevalFromDuration(long timevalAddress, Duration duration) {
+    protected void writeTimevalFromDuration(long timevalAddress, Duration duration) {
         memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, duration.getSeconds());
         memory.writeLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET, duration.getNano() / 1000L);
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timespec` from a clock instant.
-    private void writeTimespecFromInstant(long timespecAddress, Instant instant) {
+    protected void writeTimespecFromInstant(long timespecAddress, Instant instant) {
         memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, instant.getEpochSecond());
         memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, instant.getNano());
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timespec` from a non-negative elapsed duration.
-    private void writeTimespecFromDuration(long timespecAddress, Duration duration) {
+    protected void writeTimespecFromDuration(long timespecAddress, Duration duration) {
         if (duration.isNegative()) {
             memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, 0);
             memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, 0);
@@ -8609,18 +5992,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timespec` from a non-negative nanosecond count.
-    private void writeTimespecFromNanoseconds(long timespecAddress, long nanoseconds) {
+    protected void writeTimespecFromNanoseconds(long timespecAddress, long nanoseconds) {
         memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, nanoseconds / NANOSECONDS_PER_SECOND);
         memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, nanoseconds % NANOSECONDS_PER_SECOND);
     }
 
     /// Returns true when the supplied timespec fields represent a valid non-negative duration.
-    private static boolean isValidTimespec(long seconds, long nanoseconds) {
+    protected static boolean isValidTimespec(long seconds, long nanoseconds) {
         return seconds >= 0 && nanoseconds >= 0 && nanoseconds < NANOSECONDS_PER_SECOND;
     }
 
     /// Converts a valid timespec to nanoseconds, saturating very large values.
-    private static long timespecToSaturatedNanoseconds(long seconds, long nanoseconds) {
+    protected static long timespecToSaturatedNanoseconds(long seconds, long nanoseconds) {
         if (seconds > (Long.MAX_VALUE - nanoseconds) / NANOSECONDS_PER_SECOND) {
             return Long.MAX_VALUE;
         }
@@ -8628,7 +6011,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Converts a non-negative duration to Linux clock ticks, saturating very large values.
-    private static long durationToClockTicks(Duration duration) {
+    protected static long durationToClockTicks(Duration duration) {
         long seconds = duration.getSeconds();
         long nanoseconds = duration.getNano();
         if (seconds > (Long.MAX_VALUE - CLOCK_TICKS_PER_SECOND) / CLOCK_TICKS_PER_SECOND) {
@@ -8640,7 +6023,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when `clock_gettime` accepts the supplied Linux clock id.
-    private static boolean isSupportedClock(long clockId) {
+    protected static boolean isSupportedClock(long clockId) {
         return clockId == CLOCK_REALTIME
                 || clockId == CLOCK_MONOTONIC
                 || clockId == CLOCK_PROCESS_CPUTIME_ID
@@ -8652,338 +6035,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when the Linux clock id represents a wall-clock source.
-    private static boolean isRealtimeClock(long clockId) {
+    protected static boolean isRealtimeClock(long clockId) {
         return clockId == CLOCK_REALTIME || clockId == CLOCK_REALTIME_COARSE;
     }
 
-    /// Accepts signal action setup for a guest that never delivers host signals.
-    private long rtSigaction(long signalNumber, long actionAddress, long oldActionAddress, long sigsetSize) {
-        if (sigsetSize != KERNEL_SIGSET_SIZE) {
-            return EINVAL;
-        }
-        if (signalNumber < MIN_SIGNAL_NUMBER || signalNumber > MAX_SIGNAL_NUMBER) {
-            return EINVAL;
-        }
-
-        if (oldActionAddress != 0) {
-            memory.clear(oldActionAddress, KERNEL_SIGACTION_SIZE);
-        }
-        return 0;
-    }
-
-    /// Reads and updates the calling guest thread's signal mask.
-    private long rtSigprocmask(MachineState state, long how, long setAddress, long oldSetAddress, long sigsetSize) {
-        if (sigsetSize != KERNEL_SIGSET_SIZE) {
-            return EINVAL;
-        }
-        if (setAddress != 0 && how != SIG_BLOCK && how != SIG_UNBLOCK && how != SIG_SETMASK) {
-            return EINVAL;
-        }
-
-        GuestThread thread = state.guestThread();
-        long oldMask = thread.signalMask();
-        if (oldSetAddress != 0) {
-            memory.writeLong(oldSetAddress, oldMask);
-        }
-        if (setAddress != 0) {
-            long requestedMask = memory.readLong(setAddress) & ~UNBLOCKABLE_SIGNAL_MASK;
-            long updatedMask = oldMask;
-            if (how == SIG_BLOCK) {
-                updatedMask |= requestedMask;
-            } else if (how == SIG_UNBLOCK) {
-                updatedMask &= ~requestedMask;
-            } else {
-                updatedMask = requestedMask;
-            }
-            thread.setSignalMask(updatedMask);
-        }
-        return 0;
-    }
-
-    /// Handles the Linux `prctl` operations needed by single-process user-mode guests.
-    private long prctl(
-            MachineState state,
-            long option,
-            long argument2,
-            long argument3,
-            long argument4,
-            long argument5) {
-        if (option == PR_SET_PDEATHSIG) {
-            return setParentDeathSignal(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_PDEATHSIG) {
-            return getParentDeathSignal(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_DUMPABLE) {
-            return noArguments(argument2, argument3, argument4, argument5) ? dumpable : EINVAL;
-        }
-        if (option == PR_SET_DUMPABLE) {
-            return setDumpable(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_SET_NAME) {
-            return setProcessName(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_NAME) {
-            return getProcessName(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_SET_TIMERSLACK) {
-            return setTimerSlack(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_TIMERSLACK) {
-            return noArguments(argument2, argument3, argument4, argument5) ? timerSlackNanoseconds : EINVAL;
-        }
-        if (option == PR_SET_CHILD_SUBREAPER) {
-            return setChildSubreaper(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_CHILD_SUBREAPER) {
-            return getChildSubreaper(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_SET_NO_NEW_PRIVS) {
-            return setNoNewPrivileges(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_NO_NEW_PRIVS) {
-            return noArguments(argument2, argument3, argument4, argument5) ? (noNewPrivileges ? 1 : 0) : EINVAL;
-        }
-        if (option == PR_GET_TID_ADDRESS) {
-            return getTidAddress(state, argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_SET_THP_DISABLE) {
-            return setTransparentHugePagesDisabled(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_THP_DISABLE) {
-            return noArguments(argument2, argument3, argument4, argument5) ? transparentHugePagesDisabled : EINVAL;
-        }
-        if (option == PR_SET_TAGGED_ADDR_CTRL) {
-            return setTaggedAddressControl(state, argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_TAGGED_ADDR_CTRL) {
-            return getTaggedAddressControl(state, argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_GET_AUXV) {
-            return getAuxiliaryVector(argument2, argument3, argument4, argument5);
-        }
-        if (option == PR_SET_VMA) {
-            return setVirtualMemoryAreaName(argument2, argument3, argument4, argument5);
-        }
-        return EINVAL;
-    }
-
-    /// Stores the parent-death signal value used by `PR_GET_PDEATHSIG`.
-    private long setParentDeathSignal(long signalNumber, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-        if (signalNumber != 0 && (signalNumber < MIN_SIGNAL_NUMBER || signalNumber > MAX_SIGNAL_NUMBER)) {
-            return EINVAL;
-        }
-        parentDeathSignal = (int) signalNumber;
-        return 0;
-    }
-
-    /// Writes the configured parent-death signal to a guest `int` pointer.
-    private long getParentDeathSignal(long address, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-        memory.writeInt(address, parentDeathSignal);
-        return 0;
-    }
-
-    /// Stores the dumpable state exposed by `PR_GET_DUMPABLE`.
-    private long setDumpable(long value, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || (value != 0 && value != 1)) {
-            return EINVAL;
-        }
-        dumpable = (int) value;
-        return 0;
-    }
-
-    /// Copies a Linux task command name from guest memory.
-    private long setProcessName(long address, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-
-        for (int index = 0; index < processName.length; index++) {
-            processName[index] = 0;
-        }
-        for (int index = 0; index < TASK_COMMAND_LENGTH - 1; index++) {
-            int value = memory.readUnsignedByte(address + index);
-            if (value == 0) {
-                return 0;
-            }
-            processName[index] = (byte) value;
-        }
-        return 0;
-    }
-
-    /// Copies the Linux task command name to guest memory.
-    private long getProcessName(long address, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-        memory.writeBytes(address, processName, 0, processName.length);
-        return 0;
-    }
-
-    /// Copies the initial Linux auxiliary vector for `PR_GET_AUXV`.
-    private long getAuxiliaryVector(long address, long byteCount, long argument4, long argument5) {
-        if (argument4 != 0 || argument5 != 0) {
-            return EINVAL;
-        }
-        if (Long.compareUnsigned(byteCount, auxiliaryVectorBytes.length) < 0) {
-            return auxiliaryVectorBytes.length;
-        }
-        if (!memory.isBacked(address, auxiliaryVectorBytes.length)) {
-            return EFAULT;
-        }
-
-        memory.writeBytes(address, auxiliaryVectorBytes, 0, auxiliaryVectorBytes.length);
-        return auxiliaryVectorBytes.length;
-    }
-
-    /// Stores the timer slack value exposed by `PR_GET_TIMERSLACK`.
-    private long setTimerSlack(long value, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || value < 0) {
-            return EINVAL;
-        }
-        timerSlackNanoseconds = value == 0 ? DEFAULT_TIMER_SLACK_NANOSECONDS : value;
-        return 0;
-    }
-
-    /// Stores the child-subreaper flag exposed by `PR_GET_CHILD_SUBREAPER`.
-    private long setChildSubreaper(long value, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || (value != 0 && value != 1)) {
-            return EINVAL;
-        }
-        childSubreaper = value == 1;
-        return 0;
-    }
-
-    /// Writes the child-subreaper flag to a guest `int` pointer.
-    private long getChildSubreaper(long address, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-        memory.writeInt(address, childSubreaper ? 1 : 0);
-        return 0;
-    }
-
-    /// Applies the monotonic `PR_SET_NO_NEW_PRIVS` flag.
-    private long setNoNewPrivileges(long value, long argument3, long argument4, long argument5) {
-        if (value != 1 || !unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-        noNewPrivileges = true;
-        return 0;
-    }
-
-    /// Writes the clear-child-TID address to a guest `long` pointer.
-    private long getTidAddress(MachineState state, long address, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-        memory.writeLong(address, state.clearChildTidAddress());
-        return 0;
-    }
-
-    /// Stores the transparent huge page disable state exposed by `PR_GET_THP_DISABLE`.
-    private long setTransparentHugePagesDisabled(long value, long argument3, long argument4, long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5) || (value != 0 && value != 1)) {
-            return EINVAL;
-        }
-        transparentHugePagesDisabled = (int) value;
-        return 0;
-    }
-
-    /// Stores the Linux RISC-V tagged-address control state for the current guest thread.
-    private static long setTaggedAddressControl(
-            MachineState state,
-            long control,
-            long argument3,
-            long argument4,
-            long argument5) {
-        if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-        if ((control & ~(PR_TAGGED_ADDR_ENABLE | PR_PMLEN_MASK)) != 0) {
-            return EINVAL;
-        }
-
-        long requestedPointerMaskLength = (control & PR_PMLEN_MASK) >>> PR_PMLEN_SHIFT;
-        int pointerMaskLength;
-        if (requestedPointerMaskLength == POINTER_MASK_LENGTH_DISABLED) {
-            pointerMaskLength = POINTER_MASK_LENGTH_DISABLED;
-        } else if (requestedPointerMaskLength <= POINTER_MASK_LENGTH_7) {
-            pointerMaskLength = POINTER_MASK_LENGTH_7;
-        } else {
-            return EINVAL;
-        }
-
-        state.guestThread().setTaggedAddressControl(
-                pointerMaskLength,
-                (control & PR_TAGGED_ADDR_ENABLE) != 0);
-        return 0;
-    }
-
-    /// Returns the Linux RISC-V tagged-address control state for the current guest thread.
-    private static long getTaggedAddressControl(
-            MachineState state,
-            long argument2,
-            long argument3,
-            long argument4,
-            long argument5) {
-        if (!noArguments(argument2, argument3, argument4, argument5)) {
-            return EINVAL;
-        }
-
-        GuestThread thread = state.guestThread();
-        long control = (long) thread.pointerMaskLength() << PR_PMLEN_SHIFT;
-        return thread.taggedAddressAbiEnabled()
-                ? control | PR_TAGGED_ADDR_ENABLE
-                : control;
-    }
-
-    /// Accepts Linux memory-area naming requests as a no-op in the flat guest memory model.
-    private static long setVirtualMemoryAreaName(long suboption, long startAddress, long length, long nameAddress) {
-        if (suboption != PR_SET_VMA_ANON_NAME || startAddress < 0 || length < 0 || nameAddress < 0) {
-            return EINVAL;
-        }
-        return 0;
-    }
-
-    /// Returns true when all `prctl` arguments are unused zero values.
-    private static boolean noArguments(long argument2, long argument3, long argument4, long argument5) {
-        return argument2 == 0 && unusedArgumentsAreZero(argument3, argument4, argument5);
-    }
-
-    /// Returns true when all trailing `prctl` arguments are unused zero values.
-    private static boolean unusedArgumentsAreZero(long argument3, long argument4, long argument5) {
-        return argument3 == 0 && argument4 == 0 && argument5 == 0;
-    }
-
-    /// Implements the Linux `brk` syscall within the simulator memory window.
-    private long brk(long requestedAddress) {
-        if (requestedAddress == 0) {
-            return programBreak;
-        }
-        if (requestedAddress >= initialProgramBreak
-                && requestedAddress <= memory.endAddress()
-                && !overlapsMemoryMappings(initialProgramBreak, requestedAddress - initialProgramBreak)) {
-            if (requestedAddress > programBreakBackingEnd
-                    && !ensureProgramBreakBacking(programBreakBackingEnd, requestedAddress - programBreakBackingEnd)) {
-                return programBreak;
-            }
-            if (requestedAddress > programBreakBackingEnd) {
-                programBreakBackingEnd = requestedAddress;
-            }
-            programBreak = requestedAddress;
-        }
-        return programBreak;
-    }
-
     /// Implements `mmap` allocations and private regular-file mappings in the guest address space.
-    private long mmap(long address, long length, long protection, long flags, long fileDescriptor, long offset) {
+    protected long mmap(long address, long length, long protection, long flags, long fileDescriptor, long offset) {
         if (length <= 0 || offset < 0 || !isPageAligned(offset)) {
             return EINVAL;
         }
@@ -9064,7 +6121,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Copies a private file mapping into guest memory and applies the requested final protection.
-    private long loadFileMapping(
+    protected long loadFileMapping(
             OpenFile mappedFile,
             long mappingAddress,
             long requestedLength,
@@ -9107,7 +6164,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Implements `munmap` by releasing tracked anonymous mappings.
-    private long munmap(long address, long length) {
+    protected long munmap(long address, long length) {
         if (length <= 0 || !isPageAligned(address)) {
             return EINVAL;
         }
@@ -9122,7 +6179,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes the configured real, effective, and saved user or group id values.
-    private long getresid(
+    protected long getresid(
             long realIdAddress,
             long effectiveIdAddress,
             long savedIdAddress,
@@ -9140,139 +6197,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 0;
     }
 
-    /// Accepts no-op real, effective, and saved user or group id updates.
-    private static long setresid(
-            long requestedRealId,
-            long requestedEffectiveId,
-            long requestedSavedId,
-            long currentRealId,
-            long currentEffectiveId,
-            long currentSavedId) {
-        if (!isValidSetresidArgument(requestedRealId)
-                || !isValidSetresidArgument(requestedEffectiveId)
-                || !isValidSetresidArgument(requestedSavedId)) {
-            return EINVAL;
-        }
-        if (!isUnchangedOrCurrentId(requestedRealId, currentRealId)
-                || !isUnchangedOrCurrentId(requestedEffectiveId, currentEffectiveId)
-                || !isUnchangedOrCurrentId(requestedSavedId, currentSavedId)) {
-            return EPERM;
-        }
-        return 0;
-    }
-
-    /// Returns true when an id argument is valid for `setresuid` or `setresgid`.
-    private static boolean isValidSetresidArgument(long requestedId) {
-        return isSetresidUnchanged(requestedId) || requestedId >= 0 && requestedId < GuestCredentials.MAX_ID;
-    }
-
-    /// Returns true for the `(uid_t) -1` sentinel that leaves one id unchanged.
-    private static boolean isSetresidUnchanged(long requestedId) {
-        return requestedId == -1L || requestedId == GuestCredentials.MAX_ID;
-    }
-
-    /// Returns true when a requested id is the no-change sentinel or the current id.
-    private static boolean isUnchangedOrCurrentId(long requestedId, long currentId) {
-        return isSetresidUnchanged(requestedId) || requestedId == currentId;
-    }
-
-    /// Returns the unchanged filesystem user or group id.
-    private static long setfsid(long requestedId, long currentId) {
-        if (!isValidSetresidArgument(requestedId)) {
-            return currentId;
-        }
-        return currentId;
-    }
-
-    /// Writes the configured supplementary group list for identity queries.
-    private long getgroups(long size, long listAddress) {
-        if (size < 0 || size > Integer.MAX_VALUE) {
-            return EINVAL;
-        }
-
-        int groupCount = credentials.supplementaryGroupCount();
-        if (size == 0) {
-            return groupCount;
-        }
-        if (size < groupCount) {
-            return EINVAL;
-        }
-        long bytes = (long) groupCount * Integer.BYTES;
-        if (!memory.isBacked(listAddress, bytes)) {
-            return EFAULT;
-        }
-
-        for (int index = 0; index < groupCount; index++) {
-            memory.writeInt(listAddress + (long) index * Integer.BYTES,
-                    GuestCredentials.idToInt(credentials.supplementaryGroupAt(index)));
-        }
-        return groupCount;
-    }
-
-    /// Rejects socket creation for the current non-networked user-mode runtime.
-    private static long socket(long domain, long type, long protocol) {
-        return EAFNOSUPPORT;
-    }
-
-    /// Implements Linux `mremap` for tracked anonymous mappings.
-    private long mremap(long oldAddress, long oldSize, long newSize, long flags, long newAddress) {
-        if (!isPageAligned(oldAddress) || oldSize <= 0 || newSize <= 0 || (flags & ~SUPPORTED_MREMAP_FLAGS) != 0) {
-            return EINVAL;
-        }
-        boolean fixed = (flags & MREMAP_FIXED) != 0;
-        boolean mayMove = (flags & MREMAP_MAYMOVE) != 0;
-        if (fixed && !mayMove) {
-            return EINVAL;
-        }
-
-        long oldLength = alignUp(oldSize, pageSize);
-        long newLength = alignUp(newSize, pageSize);
-        if (oldLength <= 0 || newLength <= 0
-                || !isValidGuestRange(oldAddress, oldLength)
-                || (fixed && (!isPageAligned(newAddress) || !isValidGuestRange(newAddress, newLength)))) {
-            return ENOMEM;
-        }
-
-        @Nullable MemoryMapping mapping = memoryMappingCovering(oldAddress);
-        if (mapping == null || oldAddress != mapping.address() || oldLength != mapping.length()) {
-            return ENOMEM;
-        }
-        if (fixed && rangesOverlap(oldAddress, oldAddress + oldLength, newAddress, newAddress + newLength)) {
-            return EINVAL;
-        }
-        if (fixed) {
-            removeMemoryMappings(newAddress, newLength);
-        }
-
-        if (!fixed && newLength == oldLength) {
-            return oldAddress;
-        }
-        if (!fixed && newLength < oldLength) {
-            removeMemoryMappings(oldAddress + newLength, oldLength - newLength);
-            return oldAddress;
-        }
-
-        long growthLength = newLength - oldLength;
-        if (!fixed && isMmapRangeAvailable(oldAddress + oldLength, growthLength)) {
-            if (!ensureMemoryBacking(oldAddress + oldLength, growthLength, mapping.protection(), false)) {
-                return ENOMEM;
-            }
-            resizeMemoryMapping(mapping, newLength);
-            return oldAddress;
-        }
-        if (!mayMove) {
-            return ENOMEM;
-        }
-
-        long targetAddress = fixed ? newAddress : findMmapAddress(0, newLength, pageSize);
-        if (targetAddress == 0 || !isMmapRangeAvailable(targetAddress, newLength)) {
-            return ENOMEM;
-        }
-        return moveMemoryMapping(mapping, oldLength, targetAddress, newLength);
-    }
-
     /// Implements `mprotect` for tracked anonymous mappings and the initial memory window.
-    private long mprotect(long address, long length, long protection) {
+    protected long mprotect(long address, long length, long protection) {
         if (!isPageAligned(address) || length < 0 || (protection & ~SUPPORTED_MMAP_PROTECTION_MASK) != 0) {
             return EINVAL;
         }
@@ -9295,41 +6221,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 0;
     }
 
-    /// Reports mapped guest pages as resident for Linux `mincore` probes.
-    private long mincore(long address, long length, long vectorAddress) {
-        if (!isPageAligned(address) || length < 0) {
-            return EINVAL;
-        }
-        if (length == 0) {
-            return 0;
-        }
-
-        long alignedLength = alignUp(length, pageSize);
-        if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
-            return ENOMEM;
-        }
-        if (!isMappedRange(address, alignedLength)) {
-            return ENOMEM;
-        }
-
-        long pageCount = alignedLength / pageSize;
-        if (pageCount > Integer.MAX_VALUE) {
-            throw new RiscVException("Guest mincore vector is too large: " + pageCount);
-        }
-        if (!memory.isBacked(vectorAddress, pageCount)) {
-            return EFAULT;
-        }
-
-        byte[] vector = new byte[(int) pageCount];
-        for (int index = 0; index < vector.length; index++) {
-            vector[index] = 1;
-        }
-        memory.writeBytes(vectorAddress, vector, 0, vector.length);
-        return 0;
-    }
-
     /// Implements Linux `madvise` hints that static runtimes commonly emit.
-    private long madvise(long address, long length, long advice) {
+    protected long madvise(long address, long length, long advice) {
         if (!isPageAligned(address) || length < 0 || !isSupportedMemoryAdvice(advice)) {
             return EINVAL;
         }
@@ -9353,63 +6246,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 0;
     }
 
-    /// Gets or lowers Linux resource limits for the current guest process.
-    private long prlimit64(long processId, long resource, long newLimitAddress, long oldLimitAddress) {
-        if (processId != 0 && processId != process.id()) {
-            return ESRCH;
-        }
-        if (resource < 0 || resource >= RESOURCE_LIMIT_COUNT) {
-            return EINVAL;
-        }
-
-        int index = (int) resource;
-        long oldCurrent = resourceLimitCurrent[index];
-        long oldMaximum = resourceLimitMaximum[index];
-        if (oldLimitAddress != 0) {
-            writeResourceLimit(oldLimitAddress, oldCurrent, oldMaximum);
-        }
-
-        if (newLimitAddress != 0) {
-            long newCurrent = memory.readLong(newLimitAddress + RLIMIT_CURRENT_OFFSET);
-            long newMaximum = memory.readLong(newLimitAddress + RLIMIT_MAXIMUM_OFFSET);
-            if (Long.compareUnsigned(newCurrent, newMaximum) > 0) {
-                return EINVAL;
-            }
-            if (Long.compareUnsigned(newMaximum, oldMaximum) > 0) {
-                return EPERM;
-            }
-            resourceLimitCurrent[index] = newCurrent;
-            resourceLimitMaximum[index] = newMaximum;
-        }
-        return 0;
-    }
-
     /// Writes a Linux RISC-V 64-bit `struct rlimit64`.
-    private void writeResourceLimit(long address, long current, long maximum) {
+    protected void writeResourceLimit(long address, long current, long maximum) {
         memory.writeLong(address + RLIMIT_CURRENT_OFFSET, current);
         memory.writeLong(address + RLIMIT_MAXIMUM_OFFSET, maximum);
     }
 
-    /// Fills a guest buffer with deterministic bytes for the Linux `getrandom` syscall.
-    private long getrandom(long address, long length, long flags) {
-        if ((flags & ~GETRANDOM_SUPPORTED_FLAGS) != 0) {
-            return EINVAL;
-        }
-        if (length < 0) {
-            return EINVAL;
-        }
-        if (length > Integer.MAX_VALUE) {
-            throw new RiscVException("Guest getrandom syscall buffer is too large: " + length);
-        }
-        if (length == 0) {
-            return 0;
-        }
-
-        return writeDeterministicRandomBytes(address, length);
-    }
-
     /// Fills a guest buffer with bytes from the deterministic random source.
-    private long writeDeterministicRandomBytes(long address, long length) {
+    protected long writeDeterministicRandomBytes(long address, long length) {
         byte[] bytes = new byte[(int) length];
         fillDeterministicRandomBytes(bytes, 0, bytes.length);
         memory.writeBytes(address, bytes, 0, bytes.length);
@@ -9417,100 +6261,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Fills a host byte array range from the deterministic random source.
-    private void fillDeterministicRandomBytes(byte[] bytes, int offset, int length) {
+    protected void fillDeterministicRandomBytes(byte[] bytes, int offset, int length) {
         for (int index = 0; index < length; index++) {
             bytes[offset + index] = nextRandomByte();
         }
     }
 
-    /// Reports no supported Linux `membarrier` commands for runtime capability probes.
-    private static long membarrier(long command, long flags, long cpuId) {
-        if (flags != 0 || cpuId != 0) {
-            return EINVAL;
-        }
-        return command == MEMBARRIER_CMD_QUERY ? 0 : EINVAL;
-    }
-
-    /// Handles Linux restartable sequence registration for the current guest thread.
-    private long rseq(MachineState state, long address, long length, long flags, long signature) {
-        long rseqLength = length & 0xffff_ffffL;
-        long rseqFlags = flags & 0xffff_ffffL;
-        long rseqSignature = signature & 0xffff_ffffL;
-        GuestThread thread = state.guestThread();
-        if ((rseqFlags & RSEQ_FLAG_UNREGISTER) != 0) {
-            return unregisterRseq(thread, address, rseqLength, rseqFlags, rseqSignature);
-        }
-
-        if (rseqFlags != 0) {
-            return EINVAL;
-        }
-
-        if (thread.hasRestartableSequence()) {
-            if (thread.restartableSequenceAddress() != address || thread.restartableSequenceLength() != rseqLength) {
-                return EINVAL;
-            }
-            if (thread.restartableSequenceSignature() != rseqSignature) {
-                return EPERM;
-            }
-            return EBUSY;
-        }
-
-        if (rseqLength < RSEQ_ORIGINAL_SIZE || !isAligned(address, RSEQ_ALIGNMENT)) {
-            return EINVAL;
-        }
-        if (!memory.isBacked(address, rseqLength)) {
-            return EFAULT;
-        }
-
-        initializeRseqArea(address);
-        thread.setRestartableSequence(address, rseqLength, rseqSignature);
-        return 0;
-    }
-
-    /// Unregisters the current thread's restartable sequence area.
-    private long unregisterRseq(GuestThread thread, long address, long length, long flags, long signature) {
-        if ((flags & ~RSEQ_FLAG_UNREGISTER) != 0) {
-            return EINVAL;
-        }
-        if (!thread.hasRestartableSequence() || thread.restartableSequenceAddress() != address) {
-            return EINVAL;
-        }
-        if (thread.restartableSequenceLength() != length) {
-            return EINVAL;
-        }
-        if (thread.restartableSequenceSignature() != signature) {
-            return EPERM;
-        }
-        if (!memory.isBacked(address, length)) {
-            return EFAULT;
-        }
-
-        resetRseqArea(address);
-        thread.clearRestartableSequence();
-        return 0;
-    }
-
-    /// Initializes the guest-visible fields that Linux updates while rseq is registered.
-    private void initializeRseqArea(long address) {
-        memory.writeLong(address + RSEQ_CRITICAL_SECTION_OFFSET, 0);
-        memory.writeInt(address + RSEQ_CPU_ID_START_OFFSET, 0);
-        memory.writeInt(address + RSEQ_CPU_ID_OFFSET, 0);
-        memory.writeInt(address + RSEQ_FLAGS_OFFSET, 0);
-        memory.writeInt(address + RSEQ_NODE_ID_OFFSET, 0);
-        memory.writeInt(address + RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET, 0);
-    }
-
-    /// Resets the guest-visible fields that Linux invalidates during rseq unregistration.
-    private void resetRseqArea(long address) {
-        memory.writeLong(address + RSEQ_CRITICAL_SECTION_OFFSET, 0);
-        memory.writeInt(address + RSEQ_CPU_ID_START_OFFSET, -1);
-        memory.writeInt(address + RSEQ_CPU_ID_OFFSET, -1);
-        memory.writeInt(address + RSEQ_NODE_ID_OFFSET, 0);
-        memory.writeInt(address + RSEQ_MEMORY_MAP_CONCURRENCY_ID_OFFSET, 0);
-    }
-
     /// Reads a null-terminated UTF-8 path string from guest memory.
-    private @Nullable String readGuestPath(long address) {
+    protected @Nullable String readGuestPath(long address) {
         byte[] bytes = new byte[PATH_MAX];
         for (int index = 0; index < bytes.length; index++) {
             int value = memory.readUnsignedByte(address + index);
@@ -9523,7 +6281,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads a null-terminated guest pointer vector containing UTF-8 strings for `execve`.
-    private String @Nullable @Unmodifiable [] readGuestStringVector(long vectorAddress) {
+    protected String @Nullable @Unmodifiable [] readGuestStringVector(long vectorAddress) {
         if (vectorAddress == 0) {
             return new String[0];
         }
@@ -9550,12 +6308,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resolves a guest path below a configured virtual filesystem.
-    private @Nullable VirtualPath resolveVirtualPath(long directoryFileDescriptor, String guestPath) {
+    protected @Nullable VirtualPath resolveVirtualPath(long directoryFileDescriptor, String guestPath) {
         return resolveVirtualPath(directoryFileDescriptor, guestPath, true);
     }
 
     /// Resolves a guest path below a configured virtual filesystem.
-    private @Nullable VirtualPath resolveVirtualPath(
+    protected @Nullable VirtualPath resolveVirtualPath(
             long directoryFileDescriptor,
             String guestPath,
             boolean followFinalSymbolicLink) {
@@ -9567,7 +6325,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resolves an absolute guest path below a selected virtual filesystem.
-    private @Nullable VirtualPath resolveVirtualPath(
+    protected @Nullable VirtualPath resolveVirtualPath(
             VirtualMount virtualMount,
             String absoluteGuestPath,
             boolean followFinalSymbolicLink) {
@@ -9575,7 +6333,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads a little-endian 64-bit value without requiring guest alignment.
-    private long readLongUnaligned(long address) {
+    protected long readLongUnaligned(long address) {
         long value = 0;
         for (int index = 0; index < Long.BYTES; index++) {
             value |= (long) memory.readUnsignedByte(address + index) << (index * Byte.SIZE);
@@ -9584,7 +6342,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a little-endian 64-bit value without requiring guest alignment.
-    private void writeLongUnaligned(long address, long value) {
+    protected void writeLongUnaligned(long address, long value) {
         byte[] bytes = new byte[Long.BYTES];
         for (int index = 0; index < bytes.length; index++) {
             bytes[index] = (byte) (value >>> (index * Byte.SIZE));
@@ -9593,7 +6351,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Identifies the built-in virtual device nodes exposed below `/dev`.
-    private enum DeviceFile {
+    protected enum DeviceFile {
         /// The guest controlling terminal.
         TTY,
 
@@ -9614,7 +6372,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Provides the built-in process-local `/dev` filesystem.
-    private static final class DevFileSystem implements GuestFileSystem.VirtualFileSystem {
+    protected static final class DevFileSystem implements GuestFileSystem.VirtualFileSystem {
         /// Returns a device node at an absolute guest path, or null when absent.
         @Override
         public @Nullable VirtualNode node(String absoluteGuestPath) {
@@ -9684,7 +6442,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Identifies proc regular files whose payload is generated on demand.
-    private enum ProcFile {
+    protected enum ProcFile {
         /// `/proc/cpuinfo`.
         CPUINFO,
 
@@ -9726,7 +6484,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the proc node at an absolute guest path, or null when it is absent.
-    private @Nullable VirtualNode procNode(String absoluteGuestPath) {
+    protected @Nullable VirtualNode procNode(String absoluteGuestPath) {
         @Nullable String path = normalizeAbsoluteGuestPath(absoluteGuestPath);
         if (path == null || !guestPathMatchesMount(path, PROC_MOUNT_PATH)) {
             return null;
@@ -9809,7 +6567,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns child proc nodes for a directory.
-    private ArrayList<VirtualNode> procChildNodes(String directoryGuestPath) {
+    protected ArrayList<VirtualNode> procChildNodes(String directoryGuestPath) {
         ArrayList<VirtualNode> children = new ArrayList<>();
         if (PROC_MOUNT_PATH.equals(directoryGuestPath)) {
             addProcChild(children, PROC_MOUNT_PATH + "/" + process.id());
@@ -9854,7 +6612,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Adds an existing proc child to a directory listing.
-    private void addProcChild(ArrayList<VirtualNode> children, String guestPath) {
+    protected void addProcChild(ArrayList<VirtualNode> children, String guestPath) {
         @Nullable VirtualNode node = procNode(guestPath);
         if (node != null) {
             children.add(node);
@@ -9862,7 +6620,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Provides process-local virtual procfs nodes to the shared guest filesystem layer.
-    private final class ProcFileSystem implements GuestFileSystem.VirtualFileSystem {
+    protected final class ProcFileSystem implements GuestFileSystem.VirtualFileSystem {
         /// Returns the proc node at an absolute guest path, or null when absent.
         @Override
         public @Nullable VirtualNode node(String absoluteGuestPath) {
@@ -9889,7 +6647,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns generated file bytes for a proc regular file.
-    private byte @Unmodifiable [] procFileData(VirtualNode node) {
+    protected byte @Unmodifiable [] procFileData(VirtualNode node) {
         Object fileKey = node.fileKey();
         if (!(fileKey instanceof ProcFile file)) {
             return new byte[0];
@@ -9913,7 +6671,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the byte size exposed for a virtual node.
-    private long virtualNodeSize(VirtualMount mount, VirtualNode node) {
+    protected long virtualNodeSize(VirtualMount mount, VirtualNode node) {
         if (node.isFile()) {
             return mount.fileSystem().fileData(node).length;
         }
@@ -9924,13 +6682,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the symbolic-link target for a proc node.
-    private String procLinkTarget(VirtualNode node) {
+    protected String procLinkTarget(VirtualNode node) {
         @Nullable String target = node.linkTarget();
         return target == null ? "" : target;
     }
 
     /// Returns the target exposed by `/proc/self/fd/<n>`.
-    private String procFileDescriptorTarget(int fileDescriptor) {
+    protected String procFileDescriptorTarget(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor >= 0) {
             return "/dev/tty";
@@ -9957,7 +6715,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Parses a decimal file descriptor from a proc path segment.
-    private static @Nullable Integer parseProcFileDescriptor(String value) {
+    protected static @Nullable Integer parseProcFileDescriptor(String value) {
         if (value.isEmpty()) {
             return null;
         }
@@ -9977,12 +6735,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Encodes US-ASCII proc text.
-    private static byte @Unmodifiable [] asciiBytes(String value) {
+    protected static byte @Unmodifiable [] asciiBytes(String value) {
         return value.getBytes(StandardCharsets.US_ASCII);
     }
 
     /// Returns `/proc/cpuinfo` content.
-    private static String procCpuinfo() {
+    protected static String procCpuinfo() {
         return "processor\t: 0\n"
                 + "hart\t\t: 0\n"
                 + "isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"
@@ -9995,12 +6753,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns a host Java system property sanitized for `/proc/cpuinfo`.
-    private static String procCpuinfoProperty(String propertyName) {
+    protected static String procCpuinfoProperty(String propertyName) {
         return sanitizeProcCpuinfoValue(System.getProperty(propertyName, "unknown"));
     }
 
     /// Restricts generated `/proc/cpuinfo` values to one printable ASCII line.
-    private static String sanitizeProcCpuinfoValue(String value) {
+    protected static String sanitizeProcCpuinfoValue(String value) {
         StringBuilder result = new StringBuilder(value.length());
         for (int index = 0; index < value.length(); index++) {
             char ch = value.charAt(index);
@@ -10012,7 +6770,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns `/proc/meminfo` content.
-    private String procMeminfo() {
+    protected String procMeminfo() {
         long totalKiB = Math.max(1L, memory.size() / 1024L);
         long freeKiB = Math.max(1L, (memory.endAddress() - programBreak) / 1024L);
         return "MemTotal:       " + totalKiB + " kB\n"
@@ -10023,7 +6781,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns `/proc/stat` content.
-    private String procStat() {
+    protected String procStat() {
         long ticks = elapsedClockTicks();
         return "cpu  " + ticks + " 0 0 0 0 0 0 0 0 0\n"
                 + "cpu0 " + ticks + " 0 0 0 0 0 0 0 0 0\n"
@@ -10036,7 +6794,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns `/proc/uptime` content.
-    private String procUptime() {
+    protected String procUptime() {
         long nanoseconds = Math.max(0L, elapsedDuration().toNanos());
         long seconds = nanoseconds / NANOSECONDS_PER_SECOND;
         long centiseconds = nanoseconds % NANOSECONDS_PER_SECOND / 10_000_000L;
@@ -10044,7 +6802,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns `/proc/self/maps` content for tracked anonymous mappings.
-    private String procMaps() {
+    protected String procMaps() {
         StringBuilder builder = new StringBuilder();
         for (MemoryMapping mapping : memoryMappings) {
             builder.append(Long.toUnsignedString(mapping.address(), 16))
@@ -10058,17 +6816,17 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns `/proc/self/mountinfo` content for the synthetic guest root mount.
-    private static String procMountinfo() {
+    protected static String procMountinfo() {
         return "1 0 0:1 / / rw,relatime - graalriscv graalriscv rw\n";
     }
 
     /// Returns `/proc/self/mounts` content for the synthetic guest root mount.
-    private static String procMounts() {
+    protected static String procMounts() {
         return "graalriscv / graalriscv rw,relatime 0 0\n";
     }
 
     /// Returns `/proc/self/stat` content.
-    private String procProcessStat() {
+    protected String procProcessStat() {
         long ticks = elapsedClockTicks();
         return process.id() + " (" + processNameString() + ") R "
                 + process.parentId() + ' '
@@ -10080,7 +6838,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns `/proc/self/status` content.
-    private String procStatus() {
+    protected String procStatus() {
         return "Name:\t" + processNameString() + "\n"
                 + "State:\tR (running)\n"
                 + "Tgid:\t" + process.id() + "\n"
@@ -10099,7 +6857,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the current process name without trailing nul bytes.
-    private String processNameString() {
+    protected String processNameString() {
         int length = 0;
         while (length < processName.length && processName[length] != 0) {
             length++;
@@ -10108,12 +6866,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Formats a two-digit non-negative decimal number below 100.
-    private static String twoDigits(long value) {
+    protected static String twoDigits(long value) {
         return value < 10 ? "0" + value : Long.toString(value);
     }
 
     /// Returns Linux `maps` permission text for a memory protection mask.
-    private static String memoryProtectionString(long protection) {
+    protected static String memoryProtectionString(long protection) {
         return ((protection & Memory.PROTECTION_READ) != 0 ? "r" : "-")
                 + ((protection & Memory.PROTECTION_WRITE) != 0 ? "w" : "-")
                 + ((protection & Memory.PROTECTION_EXECUTE) != 0 ? "x" : "-")
@@ -10121,7 +6879,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a non-empty guest path can be resolved from the supplied directory descriptor.
-    private boolean canResolvePathFrom(long directoryFileDescriptor, String guestPath) {
+    protected boolean canResolvePathFrom(long directoryFileDescriptor, String guestPath) {
         if (directoryFileDescriptor == AT_FDCWD || isAbsoluteGuestPath(guestPath)) {
             return true;
         }
@@ -10134,7 +6892,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resolves a guest path below a configured filesystem mount or an open directory descriptor.
-    private @Nullable TruffleFile resolveHostFile(long directoryFileDescriptor, String guestPath) {
+    protected @Nullable TruffleFile resolveHostFile(long directoryFileDescriptor, String guestPath) {
         @Nullable String absoluteGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
         if (absoluteGuestPath == null) {
             return null;
@@ -10144,12 +6902,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resolves a guest path below a configured tar filesystem mount.
-    private @Nullable TarPath resolveTarPath(long directoryFileDescriptor, String guestPath) {
+    protected @Nullable TarPath resolveTarPath(long directoryFileDescriptor, String guestPath) {
         return resolveTarPath(directoryFileDescriptor, guestPath, true);
     }
 
     /// Resolves a guest path below a configured tar filesystem mount with optional final symlink following.
-    private @Nullable TarPath resolveTarPath(
+    protected @Nullable TarPath resolveTarPath(
             long directoryFileDescriptor,
             String guestPath,
             boolean followFinalSymbolicLink) {
@@ -10162,7 +6920,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Converts a guest path and directory descriptor into an absolute normalized Linux path.
-    private @Nullable String absoluteGuestPath(long directoryFileDescriptor, String guestPath) {
+    protected @Nullable String absoluteGuestPath(long directoryFileDescriptor, String guestPath) {
         if (guestPath.indexOf('\\') >= 0 || guestPath.indexOf(':') >= 0) {
             return null;
         }
@@ -10198,17 +6956,17 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when the guest path is absolute in Linux path syntax.
-    private static boolean isAbsoluteGuestPath(String guestPath) {
+    protected static boolean isAbsoluteGuestPath(String guestPath) {
         return GuestFileSystem.isAbsoluteGuestPath(guestPath);
     }
 
     /// Normalizes an absolute Linux guest path without allowing it to escape above `/`.
-    private static @Nullable String normalizeAbsoluteGuestPath(String guestPath) {
+    protected static @Nullable String normalizeAbsoluteGuestPath(String guestPath) {
         return GuestFileSystem.normalizeAbsoluteGuestPath(guestPath);
     }
 
     /// Returns true when a host file's canonical location stays below its selected mount root.
-    private boolean canonicalFileStaysBelowMount(TruffleFile hostFile) throws IOException {
+    protected boolean canonicalFileStaysBelowMount(TruffleFile hostFile) throws IOException {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         if (mount == null) {
             return false;
@@ -10217,13 +6975,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a host file is selected by a read-only bind mount.
-    private boolean hostFileOnReadOnlyMount(TruffleFile hostFile) {
+    protected boolean hostFileOnReadOnlyMount(TruffleFile hostFile) {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         return mount != null && mount.readOnly();
     }
 
     /// Returns the guest-visible permission bits for a host file.
-    private int hostFilePermissions(TruffleFile hostFile, boolean directory) {
+    protected int hostFilePermissions(TruffleFile hostFile, boolean directory) {
         int permissions = 0;
         if (hostFile.isReadable()) {
             permissions |= directory ? STAT_MODE_READ_EXECUTE_ALL : STAT_MODE_READ_ALL;
@@ -10235,12 +6993,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the sandboxed host directory backing the guest-visible current working directory.
-    private @Nullable TruffleFile currentHostWorkingDirectory() {
+    protected @Nullable TruffleFile currentHostWorkingDirectory() {
         return resolveHostFile(AT_FDCWD, guestWorkingDirectory);
     }
 
     /// Converts a sandboxed host path to an absolute guest-visible Linux path.
-    private @Nullable String guestPathForHostFile(TruffleFile hostFile) {
+    protected @Nullable String guestPathForHostFile(TruffleFile hostFile) {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         if (mount == null) {
             return null;
@@ -10264,7 +7022,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Validates that a file's parent directory exists inside the selected filesystem mount.
-    private long validateSandboxedParent(TruffleFile hostFile) {
+    protected long validateSandboxedParent(TruffleFile hostFile) {
         try {
             @Nullable HostMount mount = mountForHostFile(hostFile);
             if (mount == null) {
@@ -10291,12 +7049,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when the host path names an existing entry or a symbolic link.
-    private static boolean pathEntryExists(TruffleFile hostFile) {
+    protected static boolean pathEntryExists(TruffleFile hostFile) {
         return GuestFileSystem.pathEntryExists(hostFile);
     }
 
     /// Encodes Linux auxiliary-vector words as little-endian guest bytes.
-    private static byte @Unmodifiable [] encodeAuxiliaryVector(long @Unmodifiable [] words) {
+    protected static byte @Unmodifiable [] encodeAuxiliaryVector(long @Unmodifiable [] words) {
         byte[] bytes = new byte[words.length * Long.BYTES];
         for (int index = 0; index < words.length; index++) {
             writeLittleEndianLong(bytes, index * Long.BYTES, words[index]);
@@ -10305,7 +7063,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Encodes Linux auxiliary-vector words as little-endian guest bytes.
-    private static byte @Unmodifiable [] encodeAuxiliaryVector(ArrayList<Long> words) {
+    protected static byte @Unmodifiable [] encodeAuxiliaryVector(ArrayList<Long> words) {
         byte[] bytes = new byte[words.size() * Long.BYTES];
         for (int index = 0; index < words.size(); index++) {
             writeLittleEndianLong(bytes, index * Long.BYTES, words.get(index));
@@ -10314,7 +7072,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Encodes guest strings referenced by pointers as nul-separated procfs bytes.
-    private byte @Unmodifiable [] encodeNullSeparatedStrings(ArrayList<Long> pointers) {
+    protected byte @Unmodifiable [] encodeNullSeparatedStrings(ArrayList<Long> pointers) {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         for (long pointer : pointers) {
             byte[] stringBytes = readGuestCStringBytes(pointer, 64 * 1024);
@@ -10325,7 +7083,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads the executable path pointer from a captured auxiliary vector.
-    private String executablePathFromAuxiliaryVector(ArrayList<Long> words) {
+    protected String executablePathFromAuxiliaryVector(ArrayList<Long> words) {
         for (int index = 0; index + 1 < words.size(); index += 2) {
             if (words.get(index) == AT_EXECFN) {
                 byte[] bytes = readGuestCStringBytes(words.get(index + 1), PATH_MAX);
@@ -10336,7 +7094,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads a nul-terminated guest string as raw bytes with a defensive maximum length.
-    private byte @Unmodifiable [] readGuestCStringBytes(long address, int maximumLength) {
+    protected byte @Unmodifiable [] readGuestCStringBytes(long address, int maximumLength) {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         for (int index = 0; index < maximumLength; index++) {
             int value = memory.readUnsignedByte(address + index);
@@ -10349,14 +7107,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes one little-endian 64-bit value into a host byte array.
-    private static void writeLittleEndianLong(byte[] bytes, int offset, long value) {
+    protected static void writeLittleEndianLong(byte[] bytes, int offset, long value) {
         for (int index = 0; index < Long.BYTES; index++) {
             bytes[offset + index] = (byte) (value >>> (index * Byte.SIZE));
         }
     }
 
     /// Resizes a writable host file channel while preserving its current offset.
-    private static void resizeHostChannel(SeekableByteChannel channel, long length) throws IOException {
+    protected static void resizeHostChannel(SeekableByteChannel channel, long length) throws IOException {
         long position = channel.position();
         try {
             long size = channel.size();
@@ -10373,22 +7131,22 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the mount selected for an absolute guest path.
-    private @Nullable Mount mountForGuestPath(String guestPath) {
+    protected @Nullable Mount mountForGuestPath(String guestPath) {
         return fileSystem.mountForGuestPath(guestPath);
     }
 
     /// Returns the mount whose host mount root contains a host path.
-    private @Nullable HostMount mountForHostFile(TruffleFile hostFile) {
+    protected @Nullable HostMount mountForHostFile(TruffleFile hostFile) {
         return fileSystem.mountForHostFile(hostFile);
     }
 
     /// Returns true when an absolute guest path is inside a mount point.
-    private static boolean guestPathMatchesMount(String guestPath, String mountPoint) {
+    protected static boolean guestPathMatchesMount(String guestPath, String mountPoint) {
         return GuestFileSystem.guestPathMatchesMount(guestPath, mountPoint);
     }
 
     /// Adds an open file description to the guest descriptor table.
-    private long addOpenFile(OpenFile openFile) {
+    protected long addOpenFile(OpenFile openFile) {
         for (int index = 0; index < openFiles.size(); index++) {
             if (openFiles.get(index) == null) {
                 openFiles.set(index, openFile);
@@ -10401,7 +7159,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Adds an open file description to the lowest guest descriptor no lower than the requested minimum.
-    private long addOpenFileAtLeast(OpenFile openFile, int minimumFileDescriptor) {
+    protected long addOpenFileAtLeast(OpenFile openFile, int minimumFileDescriptor) {
         int startIndex = Math.max(0, openFileIndex(minimumFileDescriptor));
         for (int index = startIndex; index < openFiles.size(); index++) {
             if (openFiles.get(index) == null) {
@@ -10418,7 +7176,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Stores an open file description at an explicit non-standard descriptor.
-    private void replaceOpenFile(int fileDescriptor, OpenFile openFile) throws IOException {
+    protected void replaceOpenFile(int fileDescriptor, OpenFile openFile) throws IOException {
         @Nullable OpenFile previous = openFile(fileDescriptor);
         if (previous != null) {
             setOpenFile(fileDescriptor, null);
@@ -10428,7 +7186,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Stores an open file description at an explicit descriptor.
-    private void setOpenFile(int fileDescriptor, @Nullable OpenFile openFile) {
+    protected void setOpenFile(int fileDescriptor, @Nullable OpenFile openFile) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             standardFiles[fileDescriptor] = openFile;
             return;
@@ -10442,7 +7200,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Copies the parent's descriptor table using Linux fork-style shared open file descriptions.
-    private void copyStandardFilesFrom(GuestSyscalls parent) {
+    protected void copyStandardFilesFrom(GuestSyscalls parent) {
         for (int index = 0; index < standardFiles.length; index++) {
             @Nullable OpenFile openFile = parent.standardFiles[index];
             if (openFile != null) {
@@ -10453,7 +7211,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Copies the parent's non-standard descriptor table using Linux fork-style shared open file descriptions.
-    private void copyOpenFilesFrom(GuestSyscalls parent) {
+    protected void copyOpenFilesFrom(GuestSyscalls parent) {
         for (@Nullable OpenFile openFile : parent.openFiles) {
             if (openFile != null) {
                 openFile.retain();
@@ -10463,7 +7221,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns a new descriptor entry that duplicates the supplied file descriptor.
-    private @Nullable OpenFile duplicateOpenFile(int fileDescriptor) {
+    protected @Nullable OpenFile duplicateOpenFile(int fileDescriptor) {
         @Nullable OpenFile openFile = openFile(fileDescriptor);
         if (openFile != null) {
             openFile.retain();
@@ -10473,14 +7231,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Releases a descriptor table entry and closes its backing object when it was the last reference.
-    private static void releaseOpenFile(OpenFile openFile) throws IOException {
+    protected static void releaseOpenFile(OpenFile openFile) throws IOException {
         if (openFile.release()) {
             openFile.close();
         }
     }
 
     /// Returns an open file description for a guest file descriptor.
-    private @Nullable OpenFile openFile(int fileDescriptor) {
+    protected @Nullable OpenFile openFile(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             return standardFiles[fileDescriptor];
         }
@@ -10493,12 +7251,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a file descriptor refers to a standard stream or open guest descriptor.
-    private boolean isOpenFileDescriptor(int fileDescriptor) {
+    protected boolean isOpenFileDescriptor(int fileDescriptor) {
         return isStandardFileDescriptor(fileDescriptor) || openFile(fileDescriptor) != null;
     }
 
     /// Returns Linux status flags for a standard stream or open guest descriptor.
-    private long statusFlagsFor(int fileDescriptor) {
+    protected long statusFlagsFor(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor == 0) {
             return O_RDONLY;
@@ -10526,12 +7284,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Converts a guest file descriptor to an open-file table index.
-    private static int openFileIndex(int fileDescriptor) {
+    protected static int openFileIndex(int fileDescriptor) {
         return fileDescriptor - 3;
     }
 
     /// Finds the first free page range for a new anonymous mapping.
-    private long findMmapAddress(long requestedAddress, long length, long alignment) {
+    protected long findMmapAddress(long requestedAddress, long length, long alignment) {
         if (requestedAddress != 0) {
             long alignedAddress = alignUp(requestedAddress, alignment);
             if (alignedAddress > 0 && isMmapRangeAvailable(alignedAddress, length)) {
@@ -10557,7 +7315,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Finds the first free sparse range outside the initial memory window.
-    private long findSparseMmapAddress(long length, long alignment) {
+    protected long findSparseMmapAddress(long length, long alignment) {
         long candidateAddress = alignUp(Math.max(memory.endAddress(), programBreak), alignment);
         while (candidateAddress > 0 && isValidGuestRange(candidateAddress, length)) {
             MemoryMapping overlap = overlappingMemoryMapping(candidateAddress, length);
@@ -10570,7 +7328,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a guest range is suitable for a new anonymous mapping.
-    private boolean isMmapRangeAvailable(long address, long length) {
+    protected boolean isMmapRangeAvailable(long address, long length) {
         return isValidGuestRange(address, length)
                 && address >= programBreak
                 && !overlapsMemoryMappings(address, length)
@@ -10579,7 +7337,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Adds an active anonymous mapping in address order.
-    private void addMemoryMapping(long address, long length, long protection) {
+    protected void addMemoryMapping(long address, long length, long protection) {
         MemoryMapping mapping = new MemoryMapping(address, length, protection);
         int insertionIndex = 0;
         while (insertionIndex < memoryMappings.size()
@@ -10590,7 +7348,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Removes or splits active anonymous mappings overlapped by a guest range.
-    private void removeMemoryMappings(long address, long length) {
+    protected void removeMemoryMappings(long address, long length) {
         long endAddress = address + length;
         for (int index = 0; index < memoryMappings.size(); ) {
             MemoryMapping mapping = memoryMappings.get(index);
@@ -10622,7 +7380,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resizes tracked metadata for a mapping that stayed at the same guest address.
-    private void resizeMemoryMapping(MemoryMapping mapping, long newLength) {
+    protected void resizeMemoryMapping(MemoryMapping mapping, long newLength) {
         int index = memoryMappings.indexOf(mapping);
         if (index < 0) {
             throw new RiscVException("Failed to find guest memory mapping metadata for mremap.");
@@ -10631,7 +7389,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Moves tracked mapping data to a new guest address.
-    private long moveMemoryMapping(MemoryMapping mapping, long oldLength, long newAddress, long newLength) {
+    protected long moveMemoryMapping(MemoryMapping mapping, long oldLength, long newAddress, long newLength) {
         long oldAddress = mapping.address();
         long protection = mapping.protection();
         if (!ensureMemoryBacking(newAddress, newLength, Memory.PROTECTION_READ_WRITE_EXECUTE, false)) {
@@ -10659,12 +7417,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Ensures that the supplied range has native backing for non-`PROT_NONE` access.
-    private boolean ensureMemoryBacking(long address, long length) {
+    protected boolean ensureMemoryBacking(long address, long length) {
         return ensureMemoryBacking(address, length, Memory.PROTECTION_READ_WRITE_EXECUTE, false);
     }
 
     /// Ensures that the supplied range has guest memory backing with the requested protection.
-    private boolean ensureMemoryBacking(long address, long length, long protection, boolean hugeTlb) {
+    protected boolean ensureMemoryBacking(long address, long length, long protection, boolean hugeTlb) {
         if (!isValidGuestRange(address, length)) {
             return false;
         }
@@ -10675,7 +7433,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Ensures the newly grown part of the process heap has native backing.
-    private boolean ensureProgramBreakBacking(long address, long length) {
+    protected boolean ensureProgramBreakBacking(long address, long length) {
         if (length == 0 || memory.isBacked(address, length)) {
             return true;
         }
@@ -10683,7 +7441,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Releases or clears native backing for a removed mapping range.
-    private void releaseRemovedMappingMemory(MemoryMapping mapping, long address, long length) {
+    protected void releaseRemovedMappingMemory(MemoryMapping mapping, long address, long length) {
         if (memory.hasDenseInitialBacking() && fitsGuestMemory(address, length)) {
             if (mapping.isBacked()) {
                 memory.clear(address, length);
@@ -10700,7 +7458,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Allocates native backing needed before changing mappings to a backed protection.
-    private boolean prepareMemoryProtection(long address, long length, long protection) {
+    protected boolean prepareMemoryProtection(long address, long length, long protection) {
         if (!isMemoryBackedProtection(protection)) {
             return true;
         }
@@ -10732,14 +7490,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Rolls back sparse memory backing allocated during a failed protection change.
-    private void rollbackAllocatedMemory(ArrayList<MemoryRange> ranges) {
+    protected void rollbackAllocatedMemory(ArrayList<MemoryRange> ranges) {
         for (MemoryRange range : ranges) {
             memory.unmap(range.address(), range.length());
         }
     }
 
     /// Updates tracked mapping protection metadata, splitting mappings as needed.
-    private void updateMemoryMappingsProtection(long address, long length, long protection) {
+    protected void updateMemoryMappingsProtection(long address, long length, long protection) {
         long endAddress = address + length;
         for (int index = 0; index < memoryMappings.size(); ) {
             MemoryMapping mapping = memoryMappings.get(index);
@@ -10779,7 +7537,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Clears backed anonymous memory ranges covered by discard-style `madvise` hints.
-    private void clearAdvisedMemory(long address, long length) {
+    protected void clearAdvisedMemory(long address, long length) {
         long endAddress = address + length;
         for (MemoryMapping mapping : memoryMappings) {
             if (!mapping.isBacked() || !rangesOverlap(address, endAddress, mapping.address(), mapping.endAddress())) {
@@ -10793,7 +7551,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when an advisory memory hint can be accepted by this simulator.
-    private static boolean isSupportedMemoryAdvice(long advice) {
+    protected static boolean isSupportedMemoryAdvice(long advice) {
         return advice == MADV_NORMAL
                 || advice == MADV_RANDOM
                 || advice == MADV_SEQUENTIAL
@@ -10819,7 +7577,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a guest range is mapped by the initial window or anonymous mappings.
-    private boolean isMappedRange(long address, long length) {
+    protected boolean isMappedRange(long address, long length) {
         if (!isValidGuestRange(address, length)) {
             return false;
         }
@@ -10843,7 +7601,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the anonymous mapping covering a guest address, or null when absent.
-    private @Nullable MemoryMapping memoryMappingCovering(long address) {
+    protected @Nullable MemoryMapping memoryMappingCovering(long address) {
         for (MemoryMapping mapping : memoryMappings) {
             if (address >= mapping.address() && address < mapping.endAddress()) {
                 return mapping;
@@ -10856,12 +7614,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a guest range overlaps an active anonymous mapping.
-    private boolean overlapsMemoryMappings(long address, long length) {
+    protected boolean overlapsMemoryMappings(long address, long length) {
         return overlappingMemoryMapping(address, length) != null;
     }
 
     /// Returns the first active anonymous mapping overlapped by a guest range.
-    private @Nullable MemoryMapping overlappingMemoryMapping(long address, long length) {
+    protected @Nullable MemoryMapping overlappingMemoryMapping(long address, long length) {
         long endAddress = address + length;
         for (MemoryMapping mapping : memoryMappings) {
             if (rangesOverlap(address, endAddress, mapping.address(), mapping.endAddress())) {
@@ -10872,27 +7630,27 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a mapping flag combination requires an exact address.
-    private static boolean requiresFixedMapping(long flags) {
+    protected static boolean requiresFixedMapping(long flags) {
         return (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
     }
 
     /// Returns true when a protection value requires guest memory to be backed.
-    private static boolean isMemoryBackedProtection(long protection) {
+    protected static boolean isMemoryBackedProtection(long protection) {
         return protection != PROT_NONE;
     }
 
     /// Returns true when an address is aligned to the guest page size.
-    private boolean isPageAligned(long address) {
+    protected boolean isPageAligned(long address) {
         return (address & (pageSize - 1L)) == 0;
     }
 
     /// Returns true when an address is aligned to the supplied power-of-two alignment.
-    private static boolean isAligned(long address, long alignment) {
+    protected static boolean isAligned(long address, long alignment) {
         return (address & (alignment - 1L)) == 0;
     }
 
     /// Rounds a positive guest size or address up to a power-of-two alignment.
-    private static long alignUp(long value, long alignment) {
+    protected static long alignUp(long value, long alignment) {
         long mask = alignment - 1;
         if (value > Long.MAX_VALUE - mask) {
             return -1;
@@ -10901,17 +7659,17 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Rounds a non-negative guest address down to a power-of-two alignment.
-    private static long alignDown(long value, long alignment) {
+    protected static long alignDown(long value, long alignment) {
         return value & -alignment;
     }
 
     /// Returns true when the supplied range is non-negative and does not overflow.
-    private static boolean isValidGuestRange(long address, long length) {
+    protected static boolean isValidGuestRange(long address, long length) {
         return address >= 0 && length >= 0 && address <= Long.MAX_VALUE - length;
     }
 
     /// Returns true when the supplied guest range fits in the memory window.
-    private boolean fitsGuestMemory(long address, long length) {
+    protected boolean fitsGuestMemory(long address, long length) {
         return address >= memory.baseAddress()
                 && length >= 0
                 && address <= memory.endAddress()
@@ -10919,28 +7677,28 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when the supplied guest range overlaps the initial memory window.
-    private boolean overlapsInitialMemory(long address, long length) {
+    protected boolean overlapsInitialMemory(long address, long length) {
         return rangesOverlap(address, address + length, memory.baseAddress(), memory.endAddress());
     }
 
     /// Returns the end address of explicit sparse backing overlapped by a range, or the start address when none exists.
-    private long overlappingExplicitBackingEnd(long address, long length) {
+    protected long overlappingExplicitBackingEnd(long address, long length) {
         return memory.hasDenseInitialBacking() ? address : memory.overlappingBackingEnd(address, length);
     }
 
     /// Returns true when two half-open address ranges overlap.
-    private static boolean rangesOverlap(long firstStart, long firstEnd, long secondStart, long secondEnd) {
+    protected static boolean rangesOverlap(long firstStart, long firstEnd, long secondStart, long secondEnd) {
         return firstStart < secondEnd && secondStart < firstEnd;
     }
 
     /// Returns the next deterministic pseudo-random byte.
-    private byte nextRandomByte() {
+    protected byte nextRandomByte() {
         randomState = randomState * 6364136223846793005L + 1442695040888963407L;
         return (byte) (randomState >>> 56);
     }
 
     /// Returns the host output stream mapped to a guest file descriptor.
-    private @Nullable OutputStream outputStreamFor(int fileDescriptor) {
+    protected @Nullable OutputStream outputStreamFor(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor == 1) {
             return out;
@@ -10952,12 +7710,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the host input stream mapped to a guest file descriptor.
-    private @Nullable InputStream inputStreamFor(int fileDescriptor) {
+    protected @Nullable InputStream inputStreamFor(int fileDescriptor) {
         return standardFileDescriptorFor(fileDescriptor) == 0 ? in : null;
     }
 
     /// Returns the underlying standard descriptor number, or `-1` for non-standard descriptors.
-    private int standardFileDescriptorFor(int fileDescriptor) {
+    protected int standardFileDescriptorFor(int fileDescriptor) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             @Nullable OpenFile openFile = standardFiles[fileDescriptor];
             if (openFile != null) {
@@ -10974,12 +7732,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when the file descriptor is one of stdin, stdout, or stderr.
-    private static boolean isStandardFileDescriptor(int fileDescriptor) {
+    protected static boolean isStandardFileDescriptor(int fileDescriptor) {
         return fileDescriptor >= 0 && fileDescriptor <= 2;
     }
 
     /// Stores one process-style `clone` child tracked by its parent process.
-    private static final class ChildProcess {
+    protected static final class ChildProcess {
         /// The Linux process id visible to the parent.
         private final int processId;
 
@@ -10999,7 +7757,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private int exitCode;
 
         /// Creates a tracked child process.
-        private ChildProcess(int processId, int processGroupId, GuestSyscalls syscalls, Thread thread) {
+        protected ChildProcess(int processId, int processGroupId, GuestSyscalls syscalls, Thread thread) {
             this.processId = processId;
             this.processGroupId = processGroupId;
             this.syscalls = syscalls;
@@ -11017,7 +7775,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Returns the Linux process group id visible to wait selectors.
-        private int processGroupId() {
+        protected int processGroupId() {
             return processGroupId;
         }
 
@@ -11069,7 +7827,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// @param address the inclusive guest start address of the mapping
     /// @param length the byte length of the mapping
     /// @param protection the Linux protection flags currently tracked for the mapping
-    private record MemoryMapping(
+    protected record MemoryMapping(
             long address,
             long length,
             long protection) {
@@ -11088,13 +7846,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     ///
     /// @param address the inclusive guest start address of the range
     /// @param length the byte length of the range
-    private record MemoryRange(
+    protected record MemoryRange(
             long address,
             long length) {
     }
 
     /// Stores one guest thread blocked in a futex wait operation.
-    private static final class FutexWaiter {
+    protected static final class FutexWaiter {
         /// The guest futex word address being waited on.
         private final long address;
 
@@ -11112,7 +7870,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Stores the shared counter state for one Linux `eventfd` open-file description.
-    private static final class EventCounter {
+    protected static final class EventCounter {
         /// The current unsigned 64-bit counter value.
         private long value;
 
@@ -11177,14 +7935,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// @param fileDescriptor the watched guest file descriptor
     /// @param events the event mask requested by the guest
     /// @param data the opaque guest data returned with readiness notifications
-    private record EpollInterest(
+    protected record EpollInterest(
             int fileDescriptor,
             int events,
             long data) {
     }
 
     /// Stores descriptor interests for a single in-memory Linux `epoll` descriptor.
-    private static final class EpollSet {
+    protected static final class EpollSet {
         /// Ordered descriptor interests registered by the guest.
         private final ArrayList<EpollInterest> interests = new ArrayList<>();
 
@@ -11242,7 +8000,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Stores buffered bytes for a single in-memory pipe.
-    private static final class PipeBuffer {
+    protected static final class PipeBuffer {
         /// The initial pipe buffer capacity used before the first expansion.
         private static final int INITIAL_CAPACITY = 64;
 
@@ -11363,7 +8121,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Describes an open file description referenced by one or more guest file descriptors.
     @NotNullByDefault
-    private static final class OpenFile {
+    protected static final class OpenFile {
         /// The original standard descriptor number, or `-1` for non-standard entries.
         private final int standardFileDescriptor;
 
