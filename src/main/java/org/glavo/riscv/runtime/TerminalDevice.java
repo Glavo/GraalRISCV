@@ -70,6 +70,18 @@ final class TerminalDevice implements AutoCloseable {
     /// Linux generic `ICRNL`.
     private static final int TERMIOS_INPUT_CARRIAGE_RETURN_TO_NEWLINE = 0x00100;
 
+    /// Linux generic `BRKINT`.
+    private static final int TERMIOS_INPUT_BREAK_INTERRUPT = 0x00002;
+
+    /// Linux generic `IGNBRK`.
+    private static final int TERMIOS_INPUT_IGNORE_BREAK = 0x00001;
+
+    /// Linux generic `PARMRK`.
+    private static final int TERMIOS_INPUT_PARITY_MARK = 0x00008;
+
+    /// Linux generic `ISTRIP`.
+    private static final int TERMIOS_INPUT_STRIP = 0x00020;
+
     /// Linux generic `IXON`.
     private static final int TERMIOS_INPUT_START_STOP_OUTPUT_CONTROL = 0x00400;
 
@@ -90,6 +102,12 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Linux generic `CREAD`.
     private static final int TERMIOS_CONTROL_ENABLE_RECEIVER = 0x00080;
+
+    /// Linux generic `CSIZE`.
+    private static final int TERMIOS_CONTROL_CHARACTER_SIZE_MASK = 0x00030;
+
+    /// Linux generic `PARENB`.
+    private static final int TERMIOS_CONTROL_PARITY_ENABLE = 0x00100;
 
     /// Linux generic `ISIG`.
     private static final int TERMIOS_LOCAL_SIGNALS = 0x00001;
@@ -330,6 +348,21 @@ final class TerminalDevice implements AutoCloseable {
     /// Reads `c_iflag` from a Linux guest `struct termios` image.
     private static int readInputFlags(byte[] buffer) {
         return ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).getInt(TERMIOS_INPUT_FLAGS_OFFSET);
+    }
+
+    /// Reads `c_cflag` from a Linux guest `struct termios` image.
+    private static int readControlFlags(byte[] buffer) {
+        return ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).getInt(TERMIOS_CONTROL_FLAGS_OFFSET);
+    }
+
+    /// Writes `c_iflag` to a Linux guest `struct termios` image.
+    private static void writeInputFlags(byte[] buffer, int inputFlags) {
+        ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).putInt(TERMIOS_INPUT_FLAGS_OFFSET, inputFlags);
+    }
+
+    /// Writes `c_cflag` to a Linux guest `struct termios` image.
+    private static void writeControlFlags(byte[] buffer, int controlFlags) {
+        ByteBuffer.wrap(buffer).order(ByteOrder.nativeOrder()).putInt(TERMIOS_CONTROL_FLAGS_OFFSET, controlFlags);
     }
 
     /// Writes `c_lflag` to a Linux guest `struct termios` image.
@@ -1009,7 +1042,7 @@ final class TerminalDevice implements AutoCloseable {
     ///
     /// @param fileDescriptor the host file descriptor for `/dev/tty`
     /// @param originalTermios the host terminal settings captured before guest changes
-    private record PosixBackend(int fileDescriptor, byte @Nullable [] originalTermios) implements Backend {
+    private record PosixBackend(int fileDescriptor, byte[] originalTermios) implements Backend {
         /// The Linux generic tty `TCGETS` ioctl request.
         private static final long TCGETS = 0x5401;
 
@@ -1040,7 +1073,12 @@ final class TerminalDevice implements AutoCloseable {
                 if (fileDescriptor < 0) {
                     return null;
                 }
-                return new PosixBackend(fileDescriptor, nativeTermios(fileDescriptor));
+                byte @Nullable [] originalTermios = nativeTermios(fileDescriptor);
+                if (originalTermios == null) {
+                    closeQuietly(fileDescriptor);
+                    return null;
+                }
+                return new PosixBackend(fileDescriptor, originalTermios);
             } catch (Throwable exception) {
                 return null;
             }
@@ -1120,7 +1158,13 @@ final class TerminalDevice implements AutoCloseable {
             if (request != TCSETS && request != TCSETSW && request != TCSETSF) {
                 return;
             }
-            writeNativeTermios(fileDescriptor, request, buffer);
+            writeNativeTermios(fileDescriptor, request, transportTermios(buffer));
+        }
+
+        /// Returns true because POSIX tty input is read in transport raw mode.
+        @Override
+        public boolean usesGuestLineDiscipline() {
+            return true;
         }
 
         /// Returns true because `/dev/tty` supplies native terminal mode control.
@@ -1133,7 +1177,7 @@ final class TerminalDevice implements AutoCloseable {
         @Override
         public void close() throws IOException {
             @Nullable IOException failure = null;
-            if (originalTermios != null && !writeNativeTermios(fileDescriptor, TCSETS, originalTermios)) {
+            if (!writeNativeTermios(fileDescriptor, TCSETS, originalTermios)) {
                 failure = new IOException("restore(/dev/tty) failed");
             }
             try {
@@ -1188,6 +1232,39 @@ final class TerminalDevice implements AutoCloseable {
                 return result == 0;
             } catch (Throwable exception) {
                 return false;
+            }
+        }
+
+        /// Builds a host terminal mode that delivers input bytes immediately while preserving guest-visible state.
+        private byte[] transportTermios(byte[] guestTermios) {
+            byte[] bytes = Arrays.copyOf(originalTermios, originalTermios.length);
+            int inputFlags = readInputFlags(bytes);
+            inputFlags &= ~(TERMIOS_INPUT_IGNORE_BREAK
+                    | TERMIOS_INPUT_BREAK_INTERRUPT
+                    | TERMIOS_INPUT_PARITY_MARK
+                    | TERMIOS_INPUT_STRIP
+                    | TERMIOS_INPUT_CARRIAGE_RETURN_TO_NEWLINE
+                    | TERMIOS_INPUT_START_STOP_OUTPUT_CONTROL);
+            writeInputFlags(bytes, inputFlags);
+
+            int controlFlags = readControlFlags(bytes);
+            controlFlags &= ~(TERMIOS_CONTROL_CHARACTER_SIZE_MASK | TERMIOS_CONTROL_PARITY_ENABLE);
+            controlFlags |= TERMIOS_CONTROL_CHARACTER_SIZE_8 | TERMIOS_CONTROL_ENABLE_RECEIVER;
+            writeControlFlags(bytes, controlFlags);
+
+            int localFlags = readLocalFlags(guestTermios);
+            localFlags &= ~(TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO);
+            writeLocalFlags(bytes, localFlags);
+            bytes[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_READ_TIMEOUT_INDEX] = 0;
+            bytes[TERMIOS_CONTROL_CHARS_OFFSET + TERMIOS_MINIMUM_READ_INDEX] = 1;
+            return bytes;
+        }
+
+        /// Closes a POSIX descriptor while ignoring failure during backend probing.
+        private static void closeQuietly(int fileDescriptor) {
+            try {
+                int ignored = (int) PosixHandles.CLOSE.invokeExact(fileDescriptor);
+            } catch (Throwable ignored) {
             }
         }
     }
