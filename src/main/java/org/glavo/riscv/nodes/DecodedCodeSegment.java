@@ -30,6 +30,15 @@ final class DecodedCodeSegment {
     /// Segment-local fast opcode for integer register moves.
     private static final byte MOVE_REGISTER_OPCODE = -3;
 
+    /// Five-bit mask for one packed RISC-V register index.
+    private static final int REGISTER_MASK = 0x1f;
+
+    /// Bit shift for the first source register in a packed operand.
+    private static final int RS1_SHIFT = 5;
+
+    /// Bit shift for the second source register in a packed operand.
+    private static final int RS2_SHIFT = 10;
+
     /// Marks a slot that is the first instruction of a decoded block.
     private static final int FLAG_BLOCK_START = 1;
 
@@ -54,14 +63,8 @@ final class DecodedCodeSegment {
     /// PC-indexed micro-opcode slots.
     private final byte[] opcodes;
 
-    /// Rewritten destination-register operands.
-    private final byte[] destinationRegisters;
-
-    /// Rewritten first-source-register operands.
-    private final byte[] firstSourceRegisters;
-
-    /// Rewritten second-source-register operands.
-    private final byte[] secondSourceRegisters;
+    /// Packed register operands.
+    private final int[] operands;
 
     /// Original raw instruction bits.
     private final int[] raws;
@@ -100,9 +103,7 @@ final class DecodedCodeSegment {
         int slotCount = memoryLayout.pageSize() >>> 1;
         this.opcodes = new byte[slotCount];
         Arrays.fill(opcodes, UNDECODED_OPCODE);
-        this.destinationRegisters = new byte[slotCount];
-        this.firstSourceRegisters = new byte[slotCount];
-        this.secondSourceRegisters = new byte[slotCount];
+        this.operands = new int[slotCount];
         this.raws = new int[slotCount];
         this.addresses = new long[slotCount];
         this.nextPcs = new long[slotCount];
@@ -159,16 +160,16 @@ final class DecodedCodeSegment {
         try {
             for (int index = 0, slot = startSlot; index < instructionCount; index++) {
                 byte opcode = opcodes[slot];
-                int rd = destinationRegisters[slot] & 0xff;
-                int rs1 = firstSourceRegisters[slot] & 0xff;
-                int rs2 = secondSourceRegisters[slot] & 0xff;
-                long immediate = immediates[slot];
+                int operand = operands[slot];
+                int rd = operand & REGISTER_MASK;
+                int rs1 = (operand >>> RS1_SHIFT) & REGISTER_MASK;
+                int rs2 = (operand >>> RS2_SHIFT) & REGISTER_MASK;
                 int nextSlot = slot + (instructionLengths[slot] >>> 1);
 
                 switch (opcode) {
                     case RiscVMicroOpcode.ADVANCE_PC -> slot = nextSlot;
                     case LOAD_IMMEDIATE_OPCODE -> {
-                        writeRegister(registers, rd, immediate);
+                        writeRegister(registers, rd, immediates[slot]);
                         slot = nextSlot;
                     }
                     case MOVE_REGISTER_OPCODE -> {
@@ -176,135 +177,135 @@ final class DecodedCodeSegment {
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LUI -> {
-                        writeRegister(registers, rd, immediate);
+                        writeRegister(registers, rd, immediates[slot]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.AUIPC -> {
                         long address = addresses[slot];
-                        writeRegister(registers, rd, address + immediate);
+                        writeRegister(registers, rd, address + immediates[slot]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.JAL -> {
                         long address = addresses[slot];
                         writeRegister(registers, rd, nextPcs[slot]);
-                        pc = (address + immediate) & pointerMask;
+                        pc = (address + immediates[slot]) & pointerMask;
                     }
                     case RiscVMicroOpcode.JALR -> {
-                        long target = (registers[rs1] + immediate) & ~1L;
+                        long target = (registers[rs1] + immediates[slot]) & ~1L;
                         writeRegister(registers, rd, nextPcs[slot]);
                         pc = target & pointerMask;
                     }
-                    case RiscVMicroOpcode.BEQ -> pc = branch(registers[rs1] == registers[rs2], addresses[slot], immediate, nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BNE -> pc = branch(registers[rs1] != registers[rs2], addresses[slot], immediate, nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BLT -> pc = branch(registers[rs1] < registers[rs2], addresses[slot], immediate, nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BGE -> pc = branch(registers[rs1] >= registers[rs2], addresses[slot], immediate, nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BLTU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) < 0, addresses[slot], immediate, nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BGEU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) >= 0, addresses[slot], immediate, nextPcs[slot] & pointerMask, pointerMask);
+                    case RiscVMicroOpcode.BEQ -> pc = branch(registers[rs1] == registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
+                    case RiscVMicroOpcode.BNE -> pc = branch(registers[rs1] != registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
+                    case RiscVMicroOpcode.BLT -> pc = branch(registers[rs1] < registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
+                    case RiscVMicroOpcode.BGE -> pc = branch(registers[rs1] >= registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
+                    case RiscVMicroOpcode.BLTU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) < 0, addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
+                    case RiscVMicroOpcode.BGEU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) >= 0, addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
                     case RiscVMicroOpcode.LB -> {
                         faultPc = addresses[slot];
-                        writeRegister(registers, rd, access.readByte(loadAddress(registers, rs1, immediate, pointerMask), memoryLayout));
+                        writeRegister(registers, rd, access.readByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LH -> {
                         faultPc = addresses[slot];
-                        writeRegister(registers, rd, readShort(access, loadAddress(registers, rs1, immediate, pointerMask)));
+                        writeRegister(registers, rd, readShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LW -> {
                         faultPc = addresses[slot];
-                        writeRegister(registers, rd, readInt(access, loadAddress(registers, rs1, immediate, pointerMask)));
+                        writeRegister(registers, rd, readInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LD -> {
                         faultPc = addresses[slot];
-                        writeRegister(registers, rd, readLong(access, loadAddress(registers, rs1, immediate, pointerMask)));
+                        writeRegister(registers, rd, readLong(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LBU -> {
                         faultPc = addresses[slot];
-                        writeRegister(registers, rd, access.readUnsignedByte(loadAddress(registers, rs1, immediate, pointerMask), memoryLayout));
+                        writeRegister(registers, rd, access.readUnsignedByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LHU -> {
                         faultPc = addresses[slot];
-                        writeRegister(registers, rd, readUnsignedShort(access, loadAddress(registers, rs1, immediate, pointerMask)));
+                        writeRegister(registers, rd, readUnsignedShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LWU -> {
                         faultPc = addresses[slot];
-                        writeRegister(registers, rd, readUnsignedInt(access, loadAddress(registers, rs1, immediate, pointerMask)));
+                        writeRegister(registers, rd, readUnsignedInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SB -> {
                         faultPc = addresses[slot];
-                        access.writeByte(loadAddress(registers, rs1, immediate, pointerMask), (byte) registers[rs2], memoryLayout);
+                        access.writeByte(loadAddress(registers, rs1, immediates[slot], pointerMask), (byte) registers[rs2], memoryLayout);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SH -> {
                         faultPc = addresses[slot];
-                        writeShort(access, loadAddress(registers, rs1, immediate, pointerMask), (short) registers[rs2]);
+                        writeShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask), (short) registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SW -> {
                         faultPc = addresses[slot];
-                        writeInt(access, loadAddress(registers, rs1, immediate, pointerMask), (int) registers[rs2]);
+                        writeInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask), (int) registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SD -> {
                         faultPc = addresses[slot];
-                        writeLong(access, loadAddress(registers, rs1, immediate, pointerMask), registers[rs2]);
+                        writeLong(access, loadAddress(registers, rs1, immediates[slot], pointerMask), registers[rs2]);
                         slot = nextSlot;
                     }
                 case RiscVMicroOpcode.ADDI -> {
-                    writeRegister(registers, rd, registers[rs1] + immediate);
+                    writeRegister(registers, rd, registers[rs1] + immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLTI -> {
-                    writeRegister(registers, rd, DataIndependent.signedLessThan(registers[rs1], immediate));
+                    writeRegister(registers, rd, DataIndependent.signedLessThan(registers[rs1], immediates[slot]));
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLTIU -> {
-                    writeRegister(registers, rd, DataIndependent.unsignedLessThan(registers[rs1], immediate));
+                    writeRegister(registers, rd, DataIndependent.unsignedLessThan(registers[rs1], immediates[slot]));
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.XORI -> {
-                    writeRegister(registers, rd, registers[rs1] ^ immediate);
+                    writeRegister(registers, rd, registers[rs1] ^ immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ORI -> {
-                    writeRegister(registers, rd, registers[rs1] | immediate);
+                    writeRegister(registers, rd, registers[rs1] | immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ANDI -> {
-                    writeRegister(registers, rd, registers[rs1] & immediate);
+                    writeRegister(registers, rd, registers[rs1] & immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLLI -> {
-                    writeRegister(registers, rd, registers[rs1] << immediate);
+                    writeRegister(registers, rd, registers[rs1] << immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRLI -> {
-                    writeRegister(registers, rd, registers[rs1] >>> immediate);
+                    writeRegister(registers, rd, registers[rs1] >>> immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRAI -> {
-                    writeRegister(registers, rd, registers[rs1] >> immediate);
+                    writeRegister(registers, rd, registers[rs1] >> immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ADDIW -> {
-                    writeRegister(registers, rd, (int) (registers[rs1] + immediate));
+                    writeRegister(registers, rd, (int) (registers[rs1] + immediates[slot]));
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLLIW -> {
-                    writeRegister(registers, rd, (int) registers[rs1] << immediate);
+                    writeRegister(registers, rd, (int) registers[rs1] << immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRLIW -> {
-                    writeRegister(registers, rd, (int) registers[rs1] >>> immediate);
+                    writeRegister(registers, rd, (int) registers[rs1] >>> immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRAIW -> {
-                    writeRegister(registers, rd, (int) registers[rs1] >> immediate);
+                    writeRegister(registers, rd, (int) registers[rs1] >> immediates[slot]);
                     slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ADD -> {
@@ -450,9 +451,10 @@ final class DecodedCodeSegment {
             byte opcode = rewriteOpcode(RiscVMicroBlockCompiler.opcode(instruction.operation()), instruction);
             int slot = slot(instruction.address());
             opcodes[slot] = opcode;
-            destinationRegisters[slot] = (byte) instruction.rd();
-            firstSourceRegisters[slot] = (byte) instruction.rs1();
-            secondSourceRegisters[slot] = (byte) instruction.rs2();
+            operands[slot] = RiscVMicroBlockNode.packRegisters(
+                    instruction.rd(),
+                    instruction.rs1(),
+                    instruction.rs2());
             raws[slot] = instruction.raw();
             addresses[slot] = instruction.address();
             nextPcs[slot] = instruction.nextAddress();
