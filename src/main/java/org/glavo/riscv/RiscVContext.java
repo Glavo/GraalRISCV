@@ -369,7 +369,7 @@ public final class RiscVContext {
                 if (segments.isEmpty()) {
                     throw new RiscVException("Filesystem mount guest path must not escape above `/`: " + guestPath);
                 }
-                segments.remove(segments.size() - 1);
+                segments.removeLast();
                 continue;
             }
             segments.add(segment);
