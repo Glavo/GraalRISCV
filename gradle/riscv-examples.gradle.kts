@@ -2015,6 +2015,7 @@ val coreMarkArchiveRoot = "coremark-$coreMarkRevision"
 val coreMarkArchiveFile = downloadFile("coremark/coremark-$coreMarkRevision.zip")
 val coreMarkSourceDirectory = downloadDirectory("coremark/$coreMarkRevision")
 val coreMarkExampleElf = layout.buildDirectory.file("examples/linux-static/coremark.elf")
+val coreMarkIterations = 12000
 val coreMarkSourcePaths = listOf(
     "core_list_join.c",
     "core_main.c",
@@ -2108,8 +2109,8 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildCoreMarkExample") {
             "-no-pie",
             "-DPERFORMANCE_RUN=1",
             "-DSEED_METHOD=SEED_VOLATILE",
-            "-DITERATIONS=6000",
-            "-DFLAGS_STR=\\\"-O2 -static -DPERFORMANCE_RUN=1 -DSEED_METHOD=SEED_VOLATILE -DITERATIONS=6000\\\"",
+            "-DITERATIONS=$coreMarkIterations",
+            "-DFLAGS_STR=\\\"-O2 -static -DPERFORMANCE_RUN=1 -DSEED_METHOD=SEED_VOLATILE -DITERATIONS=$coreMarkIterations\\\"",
             "-I${coreMarkSourceDirectory.get().asFile.absolutePath}",
             "-I${coreMarkSourceDirectory.get().dir("posix").asFile.absolutePath}"
         )

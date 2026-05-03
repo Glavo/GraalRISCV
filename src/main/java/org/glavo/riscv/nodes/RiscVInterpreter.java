@@ -713,6 +713,9 @@ public final class RiscVInterpreter {
         /// Thread-local decoded page segments.
         private final @Nullable DecodedCodeSegment[] localSegments = new DecodedCodeSegment[LOCAL_SEGMENT_CACHE_SIZE];
 
+        /// Reusable result container for segment fast-slice dispatch.
+        private final DecodedCodeSegment.FastSliceResult fastSliceResult = new DecodedCodeSegment.FastSliceResult();
+
         /// Creates loop-local state for one guest thread.
         private GuestLoopState(Memory memory, RiscVThreadState state, long pc) {
             this.memory = memory;
@@ -752,6 +755,11 @@ public final class RiscVInterpreter {
         /// Returns the reusable memory access facade for decoded block execution.
         private MemoryAccess access() {
             return access;
+        }
+
+        /// Returns the reusable segment fast-slice result container.
+        private DecodedCodeSegment.FastSliceResult fastSliceResult() {
+            return fastSliceResult;
         }
 
         /// Refreshes memory generation-sensitive caches before dispatching another guest block.
@@ -842,33 +850,37 @@ public final class RiscVInterpreter {
             long[] registers = state.decodedRegisters();
             long pointerMask = state.pointerMask();
             long pc = loopState.pc();
-            int retiredInstructions = 0;
+            int remainingBlocks = FAST_BLOCKS_PER_SLICE;
+            DecodedCodeSegment.FastSliceResult result = loopState.fastSliceResult();
 
-            try {
-                for (int blockIndex = 0; blockIndex < FAST_BLOCKS_PER_SLICE; blockIndex++) {
-                    DecodedCodeSegment segment = loopState.segmentFor(pc, instructionFetchGeneration);
-                    int slot = segment.blockSlot(memory, pc);
-                    if (!segment.isFastBlock(slot)) {
-                        if (retiredInstructions != 0) {
-                            state.retireBlock(retiredInstructions);
-                            retiredInstructions = 0;
-                        }
-                        state.setPc(pc);
-                        loopState.setPc(pc);
-                        return fallback.execute(loopState, state);
-                    }
+            while (remainingBlocks > 0) {
+                DecodedCodeSegment segment = loopState.segmentFor(pc, instructionFetchGeneration);
+                segment.executeFastSlice(
+                        memory,
+                        pc,
+                        remainingBlocks,
+                        state,
+                        access,
+                        registers,
+                        pointerMask,
+                        result);
+                pc = result.pc();
+                remainingBlocks -= result.executedBlocks();
 
-                    pc = segment.executeFastBlock(slot, state, access, registers, pointerMask);
-                    retiredInstructions += segment.instructionCount(slot);
+                if (result.hitFallback()) {
+                    state.setPc(pc);
+                    loopState.setPc(pc);
+                    return fallback.execute(loopState, state);
                 }
 
-                state.setPc(pc);
-                return pc;
-            } finally {
-                if (retiredInstructions != 0) {
-                    state.retireBlock(retiredInstructions);
+                if (result.executedBlocks() == 0) {
+                    state.setPc(pc);
+                    return pc;
                 }
             }
+
+            state.setPc(pc);
+            return pc;
         }
     }
 

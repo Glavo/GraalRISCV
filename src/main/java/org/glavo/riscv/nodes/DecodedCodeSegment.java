@@ -141,13 +141,44 @@ final class DecodedCodeSegment {
         return (flags[slot] & FLAG_FAST_BLOCK) != 0;
     }
 
-    /// Returns the decoded instruction count for the block at `slot`.
-    int instructionCount(int slot) {
-        return instructionCounts[slot];
+    /// Executes fast blocks inside this decoded segment until the slice is exhausted or dispatch must leave it.
+    void executeFastSlice(
+            Memory memory,
+            long startPc,
+            int maxBlocks,
+            RiscVThreadState state,
+            MemoryAccess access,
+            long[] registers,
+            long pointerMask,
+            FastSliceResult result) {
+        long pc = startPc;
+        int executedBlocks = 0;
+        int retiredInstructions = 0;
+        boolean hitFallback = false;
+
+        try {
+            while (executedBlocks < maxBlocks && contains(pc)) {
+                int slot = blockSlot(memory, pc);
+                if (!isFastBlock(slot)) {
+                    hitFallback = true;
+                    break;
+                }
+
+                pc = executeFastBlock(slot, state, access, registers, pointerMask);
+                retiredInstructions += instructionCounts[slot];
+                executedBlocks++;
+            }
+        } finally {
+            if (retiredInstructions != 0) {
+                state.retireBlock(retiredInstructions);
+            }
+        }
+
+        result.set(pc, executedBlocks, hitFallback);
     }
 
     /// Executes one previously decoded fast block and returns its next guest PC.
-    long executeFastBlock(
+    private long executeFastBlock(
             int startSlot,
             RiscVThreadState state,
             MemoryAccess access,
@@ -432,6 +463,35 @@ final class DecodedCodeSegment {
             return blockFallThroughPcs[startSlot] & pointerMask;
         }
         return pc & pointerMask;
+    }
+
+    /// Reusable result container for one fast segment slice.
+    static final class FastSliceResult {
+        private long pc;
+        private int executedBlocks;
+        private boolean hitFallback;
+
+        /// Returns the next guest PC after the fast slice.
+        long pc() {
+            return pc;
+        }
+
+        /// Returns the number of fast blocks completed by the slice.
+        int executedBlocks() {
+            return executedBlocks;
+        }
+
+        /// Returns true when execution stopped at a decoded block that needs the fallback dispatcher.
+        boolean hitFallback() {
+            return hitFallback;
+        }
+
+        /// Stores the latest fast slice result.
+        private void set(long pc, int executedBlocks, boolean hitFallback) {
+            this.pc = pc;
+            this.executedBlocks = executedBlocks;
+            this.hitFallback = hitFallback;
+        }
     }
 
     /// Decodes and installs one block into this PC-indexed segment.
