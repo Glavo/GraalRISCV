@@ -179,11 +179,10 @@ final class DecodedCodeSegment {
             for (int index = 0, slot = startSlot; index < instructionCount; index++) {
                 int entry = decoderEntries[slot];
                 byte opcode = (byte) (entry >>> ENTRY_OPCODE_SHIFT);
-                int operand = entry;
-                int rd = operand & REGISTER_MASK;
-                int rs1 = (operand >>> RS1_SHIFT) & REGISTER_MASK;
-                int rs2 = (operand >>> RS2_SHIFT) & REGISTER_MASK;
-                int lengthHalfwords = (operand >>> LENGTH_SHIFT) & LENGTH_MASK;
+                int rd = entry & REGISTER_MASK;
+                int rs1 = (entry >>> RS1_SHIFT) & REGISTER_MASK;
+                int rs2 = (entry >>> RS2_SHIFT) & REGISTER_MASK;
+                int lengthHalfwords = (entry >>> LENGTH_SHIFT) & LENGTH_MASK;
                 int nextSlot = slot + lengthHalfwords;
                 long instructionPc = address(slot);
                 long sequentialPc = instructionPc + ((long) lengthHalfwords << 1);
