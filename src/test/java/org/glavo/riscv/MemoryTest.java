@@ -19,7 +19,7 @@ public final class MemoryTest {
     /// Verifies little-endian 64-bit guest memory access.
     @Test
     public void readsAndWritesLongValues() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             memory.writeLong(Memory.DEFAULT_BASE_ADDRESS + 16, 0x0102_0304_0506_0708L);
 
             assertEquals(0x0102_0304_0506_0708L, memory.readLong(Memory.DEFAULT_BASE_ADDRESS + 16));
@@ -30,7 +30,7 @@ public final class MemoryTest {
     /// Verifies that paged memory supports unaligned data access.
     @Test
     public void supportsMisalignedDataAccess() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             memory.writeInt(Memory.DEFAULT_BASE_ADDRESS + 2, 0x1122_3344);
 
             assertEquals(0x1122_3344, memory.readInt(Memory.DEFAULT_BASE_ADDRESS + 2));
@@ -41,7 +41,7 @@ public final class MemoryTest {
     /// Verifies that instruction fetches can read from 16-bit-aligned addresses.
     @Test
     public void readsInstructionIntFromHalfwordAlignedAddress() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 2, (byte) 0x13);
             memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 3, (byte) 0x05);
             memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + 4, (byte) 0x00);
@@ -54,7 +54,7 @@ public final class MemoryTest {
     /// Verifies pointer masking applies to instruction fetches in an active guest-thread scope.
     @Test
     public void pointerMaskingAppliesToInstructionFetches() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             memory.writeInt(Memory.DEFAULT_BASE_ADDRESS, 0x0000_0513);
             long previousMask = memory.enterPointerMaskLength(7);
             try {
@@ -68,7 +68,7 @@ public final class MemoryTest {
     /// Verifies sparse mappings can be accessed after out-of-order insertion.
     @Test
     public void accessesMultipleSparseMappings() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000)) {
             long firstAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
             long secondAddress = Memory.DEFAULT_BASE_ADDRESS + 0x8000;
             long thirdAddress = Memory.DEFAULT_BASE_ADDRESS + 0xc000;
@@ -90,7 +90,7 @@ public final class MemoryTest {
     /// Verifies heap-backed regions share the same sparse access path as native mappings.
     @Test
     public void accessesHeapBackedMapping() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000)) {
             long mappingAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
 
             assertTrue(memory.mapHeap(mappingAddress, 4096));
@@ -103,7 +103,7 @@ public final class MemoryTest {
     /// Verifies mapped pages are committed lazily on first write.
     @Test
     public void commitsPagesLazily() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE)) {
             assertEquals(0, memory.committedPages());
             assertEquals(0, memory.readLong(Memory.DEFAULT_BASE_ADDRESS));
             assertEquals(0, memory.committedPages());
@@ -125,8 +125,7 @@ public final class MemoryTest {
                 Memory.DEFAULT_PAGE_SIZE,
                 1,
                 Memory.DEFAULT_HUGE_PAGE_SIZE,
-                0,
-                null)) {
+                0)) {
             assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE));
             memory.writeByte(Memory.DEFAULT_BASE_ADDRESS, (byte) 1);
 
@@ -146,8 +145,7 @@ public final class MemoryTest {
                 pageSize,
                 0,
                 Memory.DEFAULT_HUGE_PAGE_SIZE,
-                0,
-                null)) {
+                0)) {
             assertEquals(pageSize, memory.pageSize());
             assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, 2L * pageSize));
 
@@ -168,8 +166,7 @@ public final class MemoryTest {
                 pageSize,
                 0,
                 Memory.DEFAULT_HUGE_PAGE_SIZE,
-                0,
-                null)) {
+                0)) {
             assertEquals(pageSize, memory.pageSize());
             assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, pageSize));
 
@@ -195,8 +192,7 @@ public final class MemoryTest {
                         Memory.MIN_PAGE_SIZE >>> 1,
                         0,
                         Memory.DEFAULT_HUGE_PAGE_SIZE,
-                        0,
-                        null));
+                        0));
     }
 
     /// Verifies MAP_HUGETLB-style mappings reserve and release the configured huge-page pool.
@@ -209,8 +205,7 @@ public final class MemoryTest {
                 Memory.DEFAULT_PAGE_SIZE,
                 0,
                 hugePageSize,
-                1,
-                null)) {
+                1)) {
             assertTrue(memory.mapHuge(Memory.DEFAULT_BASE_ADDRESS, hugePageSize));
             assertEquals(1, memory.reservedHugePages());
             assertFalse(memory.mapHuge(Memory.DEFAULT_BASE_ADDRESS + hugePageSize, hugePageSize));
@@ -225,7 +220,7 @@ public final class MemoryTest {
     /// Verifies the initial contiguous memory is part of the unified region table.
     @Test
     public void rejectsMappingsOverInitialRegion() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             assertFalse(memory.map(Memory.DEFAULT_BASE_ADDRESS + 16, 4096));
             assertFalse(memory.mapHeap(Memory.DEFAULT_BASE_ADDRESS + 16, 4096));
         }
@@ -234,7 +229,7 @@ public final class MemoryTest {
     /// Verifies sparse memory starts without backing for the configured virtual address window.
     @Test
     public void sparseMemoryRequiresExplicitBacking() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
             assertFalse(memory.isBacked(Memory.DEFAULT_BASE_ADDRESS, Long.BYTES));
             assertThrows(RiscVException.class, () -> memory.readLong(Memory.DEFAULT_BASE_ADDRESS));
 
@@ -249,7 +244,7 @@ public final class MemoryTest {
     /// Verifies sparse memory reports the backed range containing an address.
     @Test
     public void reportsSparseBackedRangeEnd() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000)) {
             long firstAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
             long secondAddress = Memory.DEFAULT_BASE_ADDRESS + 0x8000;
 
@@ -265,7 +260,7 @@ public final class MemoryTest {
     /// Verifies unmapping the middle of a sparse mapping keeps the remaining slices addressable.
     @Test
     public void unmapSplitsSparseMapping() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 0x20_000)) {
             long mappingAddress = Memory.DEFAULT_BASE_ADDRESS + 0x4000;
 
             assertTrue(memory.map(mappingAddress, 3 * 4096L));
@@ -285,7 +280,7 @@ public final class MemoryTest {
     @Test
     public void protectSplitsSparseMappingWithoutDroppingOuterRanges() {
         long pageSize = Memory.DEFAULT_PAGE_SIZE;
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize)) {
             long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
 
             assertTrue(memory.map(
@@ -325,7 +320,7 @@ public final class MemoryTest {
     @Test
     public void adviceSplitsSparseMappingWithoutChangingAccess() {
         long pageSize = Memory.DEFAULT_PAGE_SIZE;
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize)) {
             long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
 
             assertTrue(memory.map(
@@ -363,7 +358,7 @@ public final class MemoryTest {
     @Test
     public void adjacentSparseMappingsWithSameAttributesAreMerged() {
         long pageSize = Memory.DEFAULT_PAGE_SIZE;
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 2L * pageSize, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 2L * pageSize)) {
             long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
 
             assertTrue(memory.map(baseAddress, pageSize, Memory.PROTECTION_READ | Memory.PROTECTION_WRITE));
@@ -381,7 +376,7 @@ public final class MemoryTest {
     @Test
     public void unmapAcrossSplitVmasAllowsContiguousRemap() {
         long pageSize = Memory.DEFAULT_PAGE_SIZE;
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4L * pageSize)) {
             long baseAddress = Memory.DEFAULT_BASE_ADDRESS;
 
             assertTrue(memory.map(
@@ -405,7 +400,7 @@ public final class MemoryTest {
     @Test
     public void unmapRemovesCommittedPagesFromGrownPageTable() {
         long pageSize = Memory.DEFAULT_PAGE_SIZE;
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 128 * pageSize, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 128 * pageSize)) {
             assertTrue(memory.map(Memory.DEFAULT_BASE_ADDRESS, 128 * pageSize));
             for (int page = 0; page < 80; page++) {
                 memory.writeByte(Memory.DEFAULT_BASE_ADDRESS + page * pageSize, (byte) page);
@@ -425,7 +420,7 @@ public final class MemoryTest {
     /// Verifies that VMA access protection controls guest data reads and writes.
     @Test
     public void enforcesDataAccessProtection() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE)) {
             assertTrue(memory.map(
                     Memory.DEFAULT_BASE_ADDRESS,
                     Memory.DEFAULT_PAGE_SIZE,
@@ -451,7 +446,7 @@ public final class MemoryTest {
     /// Verifies that instruction fetches require execute permission.
     @Test
     public void enforcesInstructionFetchProtection() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE)) {
             assertTrue(memory.map(
                     Memory.DEFAULT_BASE_ADDRESS,
                     Memory.DEFAULT_PAGE_SIZE,
@@ -470,7 +465,7 @@ public final class MemoryTest {
     /// Verifies that cross-page instruction fetches require execute permission on every touched page.
     @Test
     public void crossPageInstructionFetchRequiresExecuteProtectionOnBothPages() {
-        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE, null)) {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 2L * Memory.DEFAULT_PAGE_SIZE)) {
             long instructionAddress = Memory.DEFAULT_BASE_ADDRESS + Memory.DEFAULT_PAGE_SIZE - Short.BYTES;
             assertTrue(memory.map(
                     Memory.DEFAULT_BASE_ADDRESS,

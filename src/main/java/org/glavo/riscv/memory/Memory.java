@@ -92,9 +92,6 @@ public final class Memory implements AutoCloseable {
     /// Whether the initial virtual memory window is represented as one mapped VMA.
     private final boolean initialWindowMapped;
 
-    /// The current host thread's most recently accessed memory pages.
-    private final @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion;
-
     /// Committed base pages keyed by guest base-page number.
     private final PageTable pages;
 
@@ -111,7 +108,7 @@ public final class Memory implements AutoCloseable {
     private long reservedHugePages;
 
     /// Creates a memory window with one mapped VMA and lazy page commitment.
-    public Memory(long baseAddress, long size, @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion) {
+    public Memory(long baseAddress, long size) {
         this(
                 baseAddress,
                 size,
@@ -119,23 +116,18 @@ public final class Memory implements AutoCloseable {
                 DEFAULT_MAX_COMMITTED_PAGES,
                 DEFAULT_HUGE_PAGE_SIZE,
                 DEFAULT_HUGE_PAGES,
-                cachedMappedRegion,
                 true);
     }
 
     /// Creates a sparse memory window with no initially mapped VMA.
-    public static Memory sparse(
-            long baseAddress,
-            long size,
-            @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion) {
+    public static Memory sparse(long baseAddress, long size) {
         return sparse(
                 baseAddress,
                 size,
                 DEFAULT_PAGE_SIZE,
                 DEFAULT_MAX_COMMITTED_PAGES,
                 DEFAULT_HUGE_PAGE_SIZE,
-                DEFAULT_HUGE_PAGES,
-                cachedMappedRegion);
+                DEFAULT_HUGE_PAGES);
     }
 
     /// Creates a sparse memory window with explicit paging limits.
@@ -145,9 +137,8 @@ public final class Memory implements AutoCloseable {
             long pageSize,
             long maxCommittedPages,
             long hugePageSize,
-            long hugePages,
-            @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion) {
-        return new Memory(baseAddress, size, pageSize, maxCommittedPages, hugePageSize, hugePages, cachedMappedRegion, false);
+            long hugePages) {
+        return new Memory(baseAddress, size, pageSize, maxCommittedPages, hugePageSize, hugePages, false);
     }
 
     /// Creates a memory window with explicit paging limits.
@@ -158,7 +149,6 @@ public final class Memory implements AutoCloseable {
             long maxCommittedPages,
             long hugePageSize,
             long hugePages,
-            @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion,
             boolean initialWindowMapped) {
         if (baseAddress < 0) {
             throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
@@ -189,7 +179,6 @@ public final class Memory implements AutoCloseable {
         this.hugePageSize = validatedHugePageSize;
         this.hugePageCapacity = hugePages;
         this.initialWindowMapped = initialWindowMapped;
-        this.cachedMappedRegion = cachedMappedRegion;
         this.vmas = initialWindowMapped
                 ? VmaTable.single(
                         baseAddress,
@@ -257,8 +246,7 @@ public final class Memory implements AutoCloseable {
 
     /// Creates a memory access facade bound to the current host thread.
     public MemoryAccess newAccess() {
-        @Nullable ThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return new MemoryAccess(this, cache == null ? null : cache.get());
+        return new MemoryAccess(this);
     }
 
     /// Copies bytes from a host array into guest memory.
@@ -275,7 +263,6 @@ public final class Memory implements AutoCloseable {
                 maxCommittedPages,
                 hugePageSize,
                 hugePageCapacity,
-                cachedMappedRegion,
                 initialWindowMapped);
         copy.vmas = vmas;
         copy.reservedHugePages = reservedHugePages;
@@ -740,14 +727,14 @@ public final class Memory implements AutoCloseable {
 
     /// Reads a little-endian value byte-by-byte for cross-page accesses.
     private long readLittleEndianByBytes(long address, int byteCount, boolean instruction) {
-        return readLittleEndianByBytes(address, byteCount, instruction, currentMappedRegionCache(), layout);
+        return readLittleEndianByBytes(address, byteCount, instruction, newMappedRegionCache(), layout);
     }
 
     /// Reads a little-endian value byte-by-byte using the supplied software TLB and page layout.
     long readLittleEndianByBytes(
             long address,
             int byteCount,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             MemoryLayout layout) {
         return readLittleEndianByBytes(address, byteCount, false, cache, layout);
     }
@@ -757,7 +744,7 @@ public final class Memory implements AutoCloseable {
             long address,
             int byteCount,
             boolean instruction,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             MemoryLayout layout) {
         long value = 0;
         for (int index = 0; index < byteCount; index++) {
@@ -772,7 +759,7 @@ public final class Memory implements AutoCloseable {
 
     /// Writes a little-endian value byte-by-byte for cross-page accesses.
     private void writeLittleEndianByBytes(long address, long value, int byteCount) {
-        writeLittleEndianByBytes(address, value, byteCount, currentMappedRegionCache(), layout);
+        writeLittleEndianByBytes(address, value, byteCount, newMappedRegionCache(), layout);
     }
 
     /// Writes a little-endian value byte-by-byte using the supplied software TLB and page layout.
@@ -780,7 +767,7 @@ public final class Memory implements AutoCloseable {
             long address,
             long value,
             int byteCount,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             MemoryLayout layout) {
         for (int index = 0; index < byteCount; index++) {
             long currentAddress = address + index;
@@ -815,7 +802,8 @@ public final class Memory implements AutoCloseable {
 
     /// Returns the committed page for a read access, or the shared zero-fill page for uncommitted mapped memory.
     MemoryPage readPage(long address, int length, boolean instruction) {
-        return readPage(address, length, instruction, currentMappedRegionCache(), null, layout);
+        MappedRegionCache cache = newMappedRegionCache();
+        return readPage(address, length, instruction, cache, null, layout);
     }
 
     /// Returns the committed page for a read access using explicit page-layout constants.
@@ -823,7 +811,7 @@ public final class Memory implements AutoCloseable {
             long address,
             int length,
             boolean instruction,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             @Nullable MemoryAccess access,
             MemoryLayout layout) {
         long requiredProtection = instruction ? PROTECTION_EXECUTE : PROTECTION_READ;
@@ -846,14 +834,15 @@ public final class Memory implements AutoCloseable {
 
     /// Returns a committed page for a write access, allocating it on first write.
     MemoryPage writePage(long address, int length) {
-        return writePage(address, length, currentMappedRegionCache(), null, layout);
+        MappedRegionCache cache = newMappedRegionCache();
+        return writePage(address, length, cache, null, layout);
     }
 
     /// Returns a committed page for a write access using explicit page-layout constants.
     MemoryPage writePage(
             long address,
             int length,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             @Nullable MemoryAccess access,
             MemoryLayout layout) {
         long pageNumber = layout.pageNumber(address);
@@ -943,16 +932,16 @@ public final class Memory implements AutoCloseable {
         return vma == null ? address : vma.endAddress();
     }
 
-    /// Returns the cached committed page for the current context and thread, or null on miss.
+    /// Returns the cached committed page for the supplied software TLB, or null on miss.
     private @Nullable MemoryPage cachedPage(
             long pageNumber,
             long address,
             int length,
             long requiredProtection,
             boolean instruction,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             @Nullable MemoryAccess access) {
-        return cache == null ? null : cache.page(pageNumber, address, length, requiredProtection, generation, instruction, access);
+        return cache.page(pageNumber, address, length, requiredProtection, generation, instruction, access);
     }
 
     /// Stores a committed page in the supplied software TLB and access-local cache.
@@ -961,7 +950,7 @@ public final class Memory implements AutoCloseable {
             MemoryPage page,
             Vma vma,
             boolean instruction,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             @Nullable MemoryAccess access) {
         setCachedPage(pageNumber, page, vma, instruction, vma.protection(), cache, access);
     }
@@ -973,28 +962,25 @@ public final class Memory implements AutoCloseable {
             Vma vma,
             boolean instruction,
             long protection,
-            @Nullable MappedRegionCache cache,
+            MappedRegionCache cache,
             @Nullable MemoryAccess access) {
         long pageStart = pageNumber << layout.pageShift();
         long rangeStart = Math.max(vma.address(), pageStart);
         long rangeEnd = Math.min(vma.endAddress(), pageStart + layout.pageSize());
-        if (cache != null) {
-            cache.setPage(pageNumber, rangeStart, rangeEnd, protection, generation, page, instruction);
-        }
+        cache.setPage(pageNumber, rangeStart, rangeEnd, protection, generation, page, instruction);
         if (!instruction && access != null) {
             access.setDataPage(pageNumber, rangeStart, rangeEnd, protection, generation, page);
         }
     }
 
-    /// Returns the current host thread's software TLB, or null when caching is disabled.
-    private @Nullable MappedRegionCache currentMappedRegionCache() {
-        @Nullable ThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
-        return cache == null ? null : cache.get();
-    }
-
     /// Invalidates every future software TLB lookup by advancing the global generation.
     private void invalidateSoftwareTlb() {
         generation++;
+    }
+
+    /// Creates a short-lived software TLB for direct Memory API calls.
+    private static MappedRegionCache newMappedRegionCache() {
+        return new MappedRegionCache();
     }
 
     /// Returns a RISC-V memory fault for the supplied guest range.

@@ -229,7 +229,7 @@ public final class AtomicInstructionSemanticsTest {
             RiscVThreadState state) implements AutoCloseable {
         /// Creates a test machine initialized at the atomic test address.
         private static TestMachine create() {
-            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
+            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
             GuestSyscalls syscalls = new LinuxGuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),

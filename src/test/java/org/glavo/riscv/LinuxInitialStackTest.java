@@ -45,7 +45,7 @@ public final class LinuxInitialStackTest {
     /// Verifies argc, argv, envp, auxv, and alignment in the generated stack.
     @Test
     public void buildsAlignedLinuxInitialStack() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
             ElfImage image = ElfLoader.load(ElfTestImages.executable(ElfTestImages.ecall()));
             long stackPointer = LinuxInitialStack.initialize(
                     memory,
@@ -89,7 +89,7 @@ public final class LinuxInitialStackTest {
     /// Verifies explicit environment and credentials are reflected in envp and auxv.
     @Test
     public void buildsInitialStackWithConfiguredCredentials() {
-        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
             ElfImage image = ElfLoader.load(ElfTestImages.executable(ElfTestImages.ecall()));
             GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "42", "/home/alice", "/bin/bash");
             long stackPointer = LinuxInitialStack.initialize(

@@ -12,8 +12,8 @@ public final class MemoryAccess {
     /// The memory object that owns page tables and VMA metadata.
     private final Memory memory;
 
-    /// The software TLB for the current host thread.
-    private final @Nullable MappedRegionCache cache;
+    /// The software TLB local to this access facade.
+    private final MappedRegionCache cache;
 
     /// The memory generation observed at the current guest block boundary.
     private long generation;
@@ -60,10 +60,10 @@ public final class MemoryAccess {
     /// The Unsafe byte offset of the writable cache entry's page start.
     private long cachedWriteDataBaseOffset;
 
-    /// Creates an access facade for a memory object and optional software TLB.
-    MemoryAccess(Memory memory, @Nullable MappedRegionCache cache) {
+    /// Creates an access facade for a memory object.
+    MemoryAccess(Memory memory) {
         this.memory = memory;
-        this.cache = cache;
+        this.cache = new MappedRegionCache();
         this.generation = memory.generation;
     }
 

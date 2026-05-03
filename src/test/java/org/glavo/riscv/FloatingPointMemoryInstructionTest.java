@@ -262,7 +262,7 @@ public final class FloatingPointMemoryInstructionTest {
             RiscVThreadState state) implements AutoCloseable {
         /// Creates a test machine initialized at the decoder test address.
         private static TestMachine create() {
-            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
+            Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
             GuestSyscalls syscalls = new LinuxGuestSyscalls(
                     memory,
                     new ByteArrayInputStream(new byte[0]),

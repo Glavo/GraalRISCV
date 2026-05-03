@@ -73,8 +73,7 @@ public final class RiscVInterpreter {
                 context.pageSize(),
                 context.maxCommittedPages(),
                 context.hugePageSize(),
-                context.hugePages(),
-                context.mappedRegionCache())) {
+                context.hugePages())) {
             RiscVThreadState state = createState(context, memory, program);
             try {
                 return executeGuestLoop(memory, state);

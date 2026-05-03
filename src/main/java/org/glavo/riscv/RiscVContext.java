@@ -4,7 +4,6 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
-import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.runtime.FilesystemMountSpec;
 import org.glavo.riscv.runtime.GuestCredentials;
@@ -110,9 +109,6 @@ public final class RiscVContext {
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
-    /// The sparse memory lookup cache scoped by the current host thread.
-    private final ThreadLocal<MappedRegionCache> mappedRegionCache;
-
     /// Creates a simulator context.
     public RiscVContext(
             InputStream in,
@@ -138,8 +134,7 @@ public final class RiscVContext {
             String guestGroups,
             String guestHome,
             String guestShell,
-            String @Unmodifiable [] programArguments,
-            ThreadLocal<MappedRegionCache> mappedRegionCache) {
+            String @Unmodifiable [] programArguments) {
         if (memoryBase < 0 && memoryBase != AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
@@ -197,7 +192,6 @@ public final class RiscVContext {
         this.useHostTty = useHostTty;
         this.guestCredentials = parsedGuestCredentials;
         this.programArguments = programArguments.clone();
-        this.mappedRegionCache = mappedRegionCache;
     }
 
     /// Returns host standard input exposed to guest syscalls.
@@ -293,11 +287,6 @@ public final class RiscVContext {
     /// Returns the guest application arguments supplied after the ELF path.
     public String @Unmodifiable [] programArguments() {
         return programArguments.clone();
-    }
-
-    /// Returns the sparse memory lookup cache for the current host thread.
-    public ThreadLocal<MappedRegionCache> mappedRegionCache() {
-        return mappedRegionCache;
     }
 
     /// Creates the guest time source from the fixed-clock debug option.

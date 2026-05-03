@@ -4,7 +4,6 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
-import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.runtime.FilesystemMountSpec;
 import org.glavo.riscv.runtime.FilesystemMountSpec.Type;
 import org.glavo.riscv.runtime.GuestCredentials;
@@ -126,8 +125,7 @@ public final class Main {
                 options.guestGroups() == null ? "" : options.guestGroups(),
                 options.guestHome() == null ? "" : options.guestHome(),
                 options.guestShell() == null ? GuestCredentials.DEFAULT_SHELL : options.guestShell(),
-                options.applicationArguments(),
-                ThreadLocal.withInitial(MappedRegionCache::new));
+                options.applicationArguments());
     }
 
     /// Parses command-line arguments.
