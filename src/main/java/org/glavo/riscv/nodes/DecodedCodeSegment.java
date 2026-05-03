@@ -4,6 +4,7 @@
 package org.glavo.riscv.nodes;
 
 import org.glavo.riscv.constants.RiscVMicroOpcode;
+import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
@@ -22,6 +23,12 @@ import java.util.Arrays;
 final class DecodedCodeSegment {
     /// Marker used before a PC-indexed instruction slot has been decoded.
     private static final byte UNDECODED_OPCODE = -1;
+
+    /// Segment-local fast opcode for `addi rd, x0, immediate`.
+    private static final byte LOAD_IMMEDIATE_OPCODE = -2;
+
+    /// Segment-local fast opcode for integer register moves.
+    private static final byte MOVE_REGISTER_OPCODE = -3;
 
     /// Marks a slot that is the first instruction of a decoded block.
     private static final int FLAG_BLOCK_START = 1;
@@ -133,32 +140,47 @@ final class DecodedCodeSegment {
         return (flags[slot] & FLAG_FAST_BLOCK) != 0;
     }
 
-    /// Executes one previously decoded fast block and returns its next guest PC.
-    long executeFastBlock(int startSlot, RiscVThreadState state, MemoryAccess access) {
-        long[] registers = state.decodedRegisters();
-        long pointerMask = state.pointerMask();
-        int instructionCount = instructionCounts[startSlot];
-        long pc = addresses[startSlot] & pointerMask;
+    /// Returns the decoded instruction count for the block at `slot`.
+    int instructionCount(int slot) {
+        return instructionCounts[slot];
+    }
 
-        for (int index = 0; index < instructionCount; index++) {
-            int slot = slot(pc);
+    /// Executes one previously decoded fast block and returns its next guest PC.
+    long executeFastBlock(
+            int startSlot,
+            RiscVThreadState state,
+            MemoryAccess access,
+            long[] registers,
+            long pointerMask) {
+        int instructionCount = instructionCounts[startSlot];
+        long pc = blockFallThroughPcs[startSlot] & pointerMask;
+
+        for (int index = 0, slot = startSlot; index < instructionCount; index++) {
             byte opcode = opcodes[slot];
             int rd = destinationRegisters[slot] & 0xff;
             int rs1 = firstSourceRegisters[slot] & 0xff;
             int rs2 = secondSourceRegisters[slot] & 0xff;
             long immediate = immediates[slot];
             long address = addresses[slot];
-            long nextPc = nextPcs[slot] & pointerMask;
+            int nextSlot = slot + (instructionLengths[slot] >>> 1);
 
             switch (opcode) {
-                case RiscVMicroOpcode.ADVANCE_PC -> pc = nextPc;
+                case RiscVMicroOpcode.ADVANCE_PC -> slot = nextSlot;
+                case LOAD_IMMEDIATE_OPCODE -> {
+                    writeRegister(registers, rd, immediate);
+                    slot = nextSlot;
+                }
+                case MOVE_REGISTER_OPCODE -> {
+                    writeRegister(registers, rd, registers[rs1]);
+                    slot = nextSlot;
+                }
                 case RiscVMicroOpcode.LUI -> {
                     writeRegister(registers, rd, immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.AUIPC -> {
                     writeRegister(registers, rd, address + immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.JAL -> {
                     writeRegister(registers, rd, nextPcs[slot]);
@@ -169,240 +191,224 @@ final class DecodedCodeSegment {
                     writeRegister(registers, rd, nextPcs[slot]);
                     pc = target & pointerMask;
                 }
-                case RiscVMicroOpcode.BEQ -> pc = branch(registers[rs1] == registers[rs2], address, immediate, nextPc, pointerMask);
-                case RiscVMicroOpcode.BNE -> pc = branch(registers[rs1] != registers[rs2], address, immediate, nextPc, pointerMask);
-                case RiscVMicroOpcode.BLT -> pc = branch(registers[rs1] < registers[rs2], address, immediate, nextPc, pointerMask);
-                case RiscVMicroOpcode.BGE -> pc = branch(registers[rs1] >= registers[rs2], address, immediate, nextPc, pointerMask);
-                case RiscVMicroOpcode.BLTU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) < 0, address, immediate, nextPc, pointerMask);
-                case RiscVMicroOpcode.BGEU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) >= 0, address, immediate, nextPc, pointerMask);
+                case RiscVMicroOpcode.BEQ -> pc = branch(registers[rs1] == registers[rs2], address, immediate, nextPcs[slot] & pointerMask, pointerMask);
+                case RiscVMicroOpcode.BNE -> pc = branch(registers[rs1] != registers[rs2], address, immediate, nextPcs[slot] & pointerMask, pointerMask);
+                case RiscVMicroOpcode.BLT -> pc = branch(registers[rs1] < registers[rs2], address, immediate, nextPcs[slot] & pointerMask, pointerMask);
+                case RiscVMicroOpcode.BGE -> pc = branch(registers[rs1] >= registers[rs2], address, immediate, nextPcs[slot] & pointerMask, pointerMask);
+                case RiscVMicroOpcode.BLTU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) < 0, address, immediate, nextPcs[slot] & pointerMask, pointerMask);
+                case RiscVMicroOpcode.BGEU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) >= 0, address, immediate, nextPcs[slot] & pointerMask, pointerMask);
                 case RiscVMicroOpcode.LB -> {
-                    state.setPc(address);
-                    writeRegister(registers, rd, access.readByte(loadAddress(registers, rs1, immediate, pointerMask), memoryLayout));
-                    pc = nextPc;
+                    writeRegister(registers, rd, readByte(state, access, address, loadAddress(registers, rs1, immediate, pointerMask)));
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.LH -> {
-                    state.setPc(address);
-                    writeRegister(registers, rd, readShort(access, loadAddress(registers, rs1, immediate, pointerMask)));
-                    pc = nextPc;
+                    writeRegister(registers, rd, readShort(state, access, address, loadAddress(registers, rs1, immediate, pointerMask)));
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.LW -> {
-                    state.setPc(address);
-                    writeRegister(registers, rd, readInt(access, loadAddress(registers, rs1, immediate, pointerMask)));
-                    pc = nextPc;
+                    writeRegister(registers, rd, readInt(state, access, address, loadAddress(registers, rs1, immediate, pointerMask)));
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.LD -> {
-                    state.setPc(address);
-                    writeRegister(registers, rd, readLong(access, loadAddress(registers, rs1, immediate, pointerMask)));
-                    pc = nextPc;
+                    writeRegister(registers, rd, readLong(state, access, address, loadAddress(registers, rs1, immediate, pointerMask)));
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.LBU -> {
-                    state.setPc(address);
-                    writeRegister(registers, rd, access.readUnsignedByte(loadAddress(registers, rs1, immediate, pointerMask), memoryLayout));
-                    pc = nextPc;
+                    writeRegister(registers, rd, readUnsignedByte(state, access, address, loadAddress(registers, rs1, immediate, pointerMask)));
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.LHU -> {
-                    state.setPc(address);
-                    writeRegister(registers, rd, readUnsignedShort(access, loadAddress(registers, rs1, immediate, pointerMask)));
-                    pc = nextPc;
+                    writeRegister(registers, rd, readUnsignedShort(state, access, address, loadAddress(registers, rs1, immediate, pointerMask)));
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.LWU -> {
-                    state.setPc(address);
-                    writeRegister(registers, rd, readUnsignedInt(access, loadAddress(registers, rs1, immediate, pointerMask)));
-                    pc = nextPc;
+                    writeRegister(registers, rd, readUnsignedInt(state, access, address, loadAddress(registers, rs1, immediate, pointerMask)));
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SB -> {
-                    state.setPc(address);
-                    access.writeByte(loadAddress(registers, rs1, immediate, pointerMask), (byte) registers[rs2], memoryLayout);
-                    state.clearReservation();
-                    pc = nextPc;
+                    writeByte(state, access, address, loadAddress(registers, rs1, immediate, pointerMask), (byte) registers[rs2]);
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SH -> {
-                    state.setPc(address);
-                    writeShort(access, loadAddress(registers, rs1, immediate, pointerMask), (short) registers[rs2]);
-                    state.clearReservation();
-                    pc = nextPc;
+                    writeShort(state, access, address, loadAddress(registers, rs1, immediate, pointerMask), (short) registers[rs2]);
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SW -> {
-                    state.setPc(address);
-                    writeInt(access, loadAddress(registers, rs1, immediate, pointerMask), (int) registers[rs2]);
-                    state.clearReservation();
-                    pc = nextPc;
+                    writeInt(state, access, address, loadAddress(registers, rs1, immediate, pointerMask), (int) registers[rs2]);
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SD -> {
-                    state.setPc(address);
-                    writeLong(access, loadAddress(registers, rs1, immediate, pointerMask), registers[rs2]);
-                    state.clearReservation();
-                    pc = nextPc;
+                    writeLong(state, access, address, loadAddress(registers, rs1, immediate, pointerMask), registers[rs2]);
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ADDI -> {
                     writeRegister(registers, rd, registers[rs1] + immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLTI -> {
                     writeRegister(registers, rd, DataIndependent.signedLessThan(registers[rs1], immediate));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLTIU -> {
                     writeRegister(registers, rd, DataIndependent.unsignedLessThan(registers[rs1], immediate));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.XORI -> {
                     writeRegister(registers, rd, registers[rs1] ^ immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ORI -> {
                     writeRegister(registers, rd, registers[rs1] | immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ANDI -> {
                     writeRegister(registers, rd, registers[rs1] & immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLLI -> {
                     writeRegister(registers, rd, registers[rs1] << immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRLI -> {
                     writeRegister(registers, rd, registers[rs1] >>> immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRAI -> {
                     writeRegister(registers, rd, registers[rs1] >> immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ADDIW -> {
                     writeRegister(registers, rd, (int) (registers[rs1] + immediate));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLLIW -> {
                     writeRegister(registers, rd, (int) registers[rs1] << immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRLIW -> {
                     writeRegister(registers, rd, (int) registers[rs1] >>> immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRAIW -> {
                     writeRegister(registers, rd, (int) registers[rs1] >> immediate);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ADD -> {
                     writeRegister(registers, rd, registers[rs1] + registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SUB -> {
                     writeRegister(registers, rd, registers[rs1] - registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLL -> {
                     writeRegister(registers, rd, registers[rs1] << (registers[rs2] & 0x3f));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLT -> {
                     writeRegister(registers, rd, DataIndependent.signedLessThan(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLTU -> {
                     writeRegister(registers, rd, DataIndependent.unsignedLessThan(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.XOR -> {
                     writeRegister(registers, rd, registers[rs1] ^ registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRL -> {
                     writeRegister(registers, rd, registers[rs1] >>> (registers[rs2] & 0x3f));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRA -> {
                     writeRegister(registers, rd, registers[rs1] >> (registers[rs2] & 0x3f));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.OR -> {
                     writeRegister(registers, rd, registers[rs1] | registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.AND -> {
                     writeRegister(registers, rd, registers[rs1] & registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.ADDW -> {
                     writeRegister(registers, rd, (int) registers[rs1] + (int) registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SUBW -> {
                     writeRegister(registers, rd, (int) registers[rs1] - (int) registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SLLW -> {
                     writeRegister(registers, rd, (int) registers[rs1] << (registers[rs2] & 0x1f));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRLW -> {
                     writeRegister(registers, rd, (int) registers[rs1] >>> (registers[rs2] & 0x1f));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.SRAW -> {
                     writeRegister(registers, rd, (int) registers[rs1] >> (registers[rs2] & 0x1f));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.MUL -> {
                     writeRegister(registers, rd, registers[rs1] * registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.MULH -> {
                     writeRegister(registers, rd, DataIndependent.multiplyHighSigned(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.MULHSU -> {
                     writeRegister(registers, rd, DataIndependent.multiplyHighSignedUnsigned(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.MULHU -> {
                     writeRegister(registers, rd, DataIndependent.multiplyHighUnsigned(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.DIV -> {
                     writeRegister(registers, rd, divideSigned(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.DIVU -> {
                     writeRegister(registers, rd, divideUnsigned(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.REM -> {
                     writeRegister(registers, rd, remainderSigned(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.REMU -> {
                     writeRegister(registers, rd, remainderUnsigned(registers[rs1], registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.MULW -> {
                     writeRegister(registers, rd, (int) registers[rs1] * (int) registers[rs2]);
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.DIVW -> {
                     writeRegister(registers, rd, divideSignedWord((int) registers[rs1], (int) registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.DIVUW -> {
                     writeRegister(registers, rd, divideUnsignedWord((int) registers[rs1], (int) registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.REMW -> {
                     writeRegister(registers, rd, remainderSignedWord((int) registers[rs1], (int) registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 case RiscVMicroOpcode.REMUW -> {
                     writeRegister(registers, rd, remainderUnsignedWord((int) registers[rs1], (int) registers[rs2]));
-                    pc = nextPc;
+                    slot = nextSlot;
                 }
                 default -> throw new AssertionError("Unsupported segment fast opcode: " + opcode);
             }
         }
 
-        state.retireBlock(instructionCount);
         if ((flags[startSlot] & FLAG_TERMINATOR) == 0) {
             return blockFallThroughPcs[startSlot] & pointerMask;
         }
@@ -423,7 +429,7 @@ final class DecodedCodeSegment {
                 continue;
             }
 
-            byte opcode = RiscVMicroBlockCompiler.opcode(instruction.operation());
+            byte opcode = rewriteOpcode(RiscVMicroBlockCompiler.opcode(instruction.operation()), instruction);
             int slot = slot(instruction.address());
             opcodes[slot] = opcode;
             destinationRegisters[slot] = (byte) instruction.rd();
@@ -459,7 +465,9 @@ final class DecodedCodeSegment {
     /// Returns true when this micro-op has a direct body in the segment fast loop.
     private static boolean isFastOpcode(byte opcode) {
         return switch (opcode) {
-            case RiscVMicroOpcode.ADVANCE_PC,
+            case LOAD_IMMEDIATE_OPCODE,
+                    MOVE_REGISTER_OPCODE,
+                    RiscVMicroOpcode.ADVANCE_PC,
                     RiscVMicroOpcode.LUI,
                     RiscVMicroOpcode.AUIPC,
                     RiscVMicroOpcode.JAL,
@@ -526,6 +534,24 @@ final class DecodedCodeSegment {
         };
     }
 
+    /// Rewrites common decoded operations into cheaper segment-local fast opcodes.
+    private static byte rewriteOpcode(byte opcode, DecodedInstruction instruction) {
+        if (opcode == RiscVMicroOpcode.ADDI) {
+            if (instruction.rs1() == 0) {
+                return LOAD_IMMEDIATE_OPCODE;
+            }
+            if (instruction.immediate() == 0) {
+                return MOVE_REGISTER_OPCODE;
+            }
+        }
+        if (opcode == RiscVMicroOpcode.ADD) {
+            if (instruction.rs2() == 0) {
+                return MOVE_REGISTER_OPCODE;
+            }
+        }
+        return opcode;
+    }
+
     /// Writes a decoded integer register and preserves the hardwired zero register.
     private static void writeRegister(long[] registers, int index, long value) {
         if (index != 0) {
@@ -543,61 +569,116 @@ final class DecodedCodeSegment {
         return (registers[rs1] + immediate) & pointerMask;
     }
 
+    /// Reads an 8-bit value and materializes fault context only on failure.
+    private byte readByte(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address) {
+        try {
+            return access.readByte(address, memoryLayout);
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
+        }
+    }
+
+    /// Reads an unsigned 8-bit value and materializes fault context only on failure.
+    private int readUnsignedByte(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address) {
+        return readByte(state, access, instructionAddress, address) & 0xff;
+    }
+
     /// Reads a 16-bit value, using the aligned single-page helper when possible.
-    private short readShort(MemoryAccess access, long address) {
-        return (address & (Short.BYTES - 1L)) == 0
-                ? access.readAlignedShort(address, memoryLayout)
-                : access.readShort(address, memoryLayout);
+    private short readShort(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address) {
+        try {
+            return (address & (Short.BYTES - 1L)) == 0
+                    ? access.readAlignedShort(address, memoryLayout)
+                    : access.readShort(address, memoryLayout);
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
+        }
     }
 
     /// Reads an unsigned 16-bit value, using the aligned single-page helper when possible.
-    private int readUnsignedShort(MemoryAccess access, long address) {
-        return readShort(access, address) & 0xffff;
+    private int readUnsignedShort(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address) {
+        return readShort(state, access, instructionAddress, address) & 0xffff;
     }
 
     /// Reads a 32-bit value, using the aligned single-page helper when possible.
-    private int readInt(MemoryAccess access, long address) {
-        return (address & (Integer.BYTES - 1L)) == 0
-                ? access.readAlignedInt(address, memoryLayout)
-                : access.readInt(address, memoryLayout);
+    private int readInt(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address) {
+        try {
+            return (address & (Integer.BYTES - 1L)) == 0
+                    ? access.readAlignedInt(address, memoryLayout)
+                    : access.readInt(address, memoryLayout);
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
+        }
     }
 
     /// Reads an unsigned 32-bit value, using the aligned single-page helper when possible.
-    private long readUnsignedInt(MemoryAccess access, long address) {
-        return readInt(access, address) & 0xffff_ffffL;
+    private long readUnsignedInt(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address) {
+        return readInt(state, access, instructionAddress, address) & 0xffff_ffffL;
     }
 
     /// Reads a 64-bit value, using the aligned single-page helper when possible.
-    private long readLong(MemoryAccess access, long address) {
-        return (address & (Long.BYTES - 1L)) == 0
-                ? access.readAlignedLong(address, memoryLayout)
-                : access.readLong(address, memoryLayout);
+    private long readLong(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address) {
+        try {
+            return (address & (Long.BYTES - 1L)) == 0
+                    ? access.readAlignedLong(address, memoryLayout)
+                    : access.readLong(address, memoryLayout);
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
+        }
+    }
+
+    /// Writes an 8-bit value and materializes fault context only on failure.
+    private void writeByte(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address, byte value) {
+        try {
+            access.writeByte(address, value, memoryLayout);
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
+        }
     }
 
     /// Writes a 16-bit value, using the aligned single-page helper when possible.
-    private void writeShort(MemoryAccess access, long address, short value) {
-        if ((address & (Short.BYTES - 1L)) == 0) {
-            access.writeAlignedShort(address, value, memoryLayout);
-        } else {
-            access.writeShort(address, value, memoryLayout);
+    private void writeShort(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address, short value) {
+        try {
+            if ((address & (Short.BYTES - 1L)) == 0) {
+                access.writeAlignedShort(address, value, memoryLayout);
+            } else {
+                access.writeShort(address, value, memoryLayout);
+            }
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
         }
     }
 
     /// Writes a 32-bit value, using the aligned single-page helper when possible.
-    private void writeInt(MemoryAccess access, long address, int value) {
-        if ((address & (Integer.BYTES - 1L)) == 0) {
-            access.writeAlignedInt(address, value, memoryLayout);
-        } else {
-            access.writeInt(address, value, memoryLayout);
+    private void writeInt(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address, int value) {
+        try {
+            if ((address & (Integer.BYTES - 1L)) == 0) {
+                access.writeAlignedInt(address, value, memoryLayout);
+            } else {
+                access.writeInt(address, value, memoryLayout);
+            }
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
         }
     }
 
     /// Writes a 64-bit value, using the aligned single-page helper when possible.
-    private void writeLong(MemoryAccess access, long address, long value) {
-        if ((address & (Long.BYTES - 1L)) == 0) {
-            access.writeAlignedLong(address, value, memoryLayout);
-        } else {
-            access.writeLong(address, value, memoryLayout);
+    private void writeLong(RiscVThreadState state, MemoryAccess access, long instructionAddress, long address, long value) {
+        try {
+            if ((address & (Long.BYTES - 1L)) == 0) {
+                access.writeAlignedLong(address, value, memoryLayout);
+            } else {
+                access.writeLong(address, value, memoryLayout);
+            }
+        } catch (MemoryAccessException exception) {
+            state.setPc(instructionAddress);
+            throw exception;
         }
     }
 

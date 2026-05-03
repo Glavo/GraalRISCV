@@ -15,7 +15,7 @@
 - The runtime includes Docker-like bind/tar mounts, virtual `/proc`, minimal virtual `/sys` DMI, PCI, and class stubs, Linux-like `/dev`, deterministic `NETLINK_ROUTE` interface and default-route metadata, guest credentials, deterministic time, process/thread state, `clone`/`wait4`, terminal handling, and Gradle-managed example/test tasks.
 - Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.
 - CLI execution runs through the plain Java `RiscVEngine` and `RiscVInterpreter` loop. Decoded blocks and traces use `ExecutableBlock` and `ExecutableTrace`, with `TraceCompiler` reserved as the future bytecode trace compiler boundary.
-- The Java interpreter includes a PC-indexed `DecodedCodeSegment` fast path for batched integer blocks, backed by a local segment cache and aligned scalar memory helpers. Unsupported, checked, traced, syscall, CSR, floating-point, vector, and atomic paths fall back to the existing block interpreter.
+- The Java interpreter includes a PC-indexed `DecodedCodeSegment` fast path for batched integer blocks, backed by a local segment cache, segment-local operand rewrites, batched retire accounting, lazy memory-fault PC materialization, and aligned scalar memory helpers. Unsupported, checked, traced, syscall, CSR, floating-point, vector, atomic, and active LR/SC reservation paths fall back to the existing block interpreter.
 
 ## Maintenance Principles
 

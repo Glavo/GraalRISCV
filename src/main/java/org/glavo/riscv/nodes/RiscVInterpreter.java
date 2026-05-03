@@ -832,29 +832,44 @@ public final class RiscVInterpreter {
 
         /// Executes a fast segment slice, or falls back to the general block dispatcher.
         private long execute(GuestLoopState loopState, RiscVThreadState state, BlockDispatchNode fallback) {
-            if (loopState.executionPolicy() != RiscVMicroBlockNode.BATCHED_FAST_MODE) {
+            if (loopState.executionPolicy() != RiscVMicroBlockNode.BATCHED_FAST_MODE
+                    || state.hasActiveReservation()) {
                 return fallback.execute(loopState, state);
             }
 
             Memory memory = loopState.memory();
             MemoryAccess access = loopState.access();
             long instructionFetchGeneration = state.instructionFetchGeneration();
+            long[] registers = state.decodedRegisters();
+            long pointerMask = state.pointerMask();
             long pc = loopState.pc();
+            int retiredInstructions = 0;
 
-            for (int blockIndex = 0; blockIndex < FAST_BLOCKS_PER_SLICE; blockIndex++) {
-                DecodedCodeSegment segment = loopState.segmentFor(pc, instructionFetchGeneration);
-                int slot = segment.blockSlot(memory, pc);
-                if (!segment.isFastBlock(slot)) {
-                    state.setPc(pc);
-                    loopState.setPc(pc);
-                    return fallback.execute(loopState, state);
+            try {
+                for (int blockIndex = 0; blockIndex < FAST_BLOCKS_PER_SLICE; blockIndex++) {
+                    DecodedCodeSegment segment = loopState.segmentFor(pc, instructionFetchGeneration);
+                    int slot = segment.blockSlot(memory, pc);
+                    if (!segment.isFastBlock(slot)) {
+                        if (retiredInstructions != 0) {
+                            state.retireBlock(retiredInstructions);
+                            retiredInstructions = 0;
+                        }
+                        state.setPc(pc);
+                        loopState.setPc(pc);
+                        return fallback.execute(loopState, state);
+                    }
+
+                    pc = segment.executeFastBlock(slot, state, access, registers, pointerMask);
+                    retiredInstructions += segment.instructionCount(slot);
                 }
 
-                pc = segment.executeFastBlock(slot, state, access);
+                state.setPc(pc);
+                return pc;
+            } finally {
+                if (retiredInstructions != 0) {
+                    state.retireBlock(retiredInstructions);
+                }
             }
-
-            state.setPc(pc);
-            return pc;
         }
     }
 

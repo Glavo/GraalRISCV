@@ -779,6 +779,11 @@ public final class RiscVThreadState {
         }
     }
 
+    /// Returns true when this thread currently holds an LR/SC reservation.
+    public boolean hasActiveReservation() {
+        return reservationAddress != ElfImage.ABSENT_ADDRESS;
+    }
+
     /// Returns true when guest memory stores need simulator side-effect checks.
     public boolean hasStoreSideEffects() {
         return storeSideEffectsEnabled;
