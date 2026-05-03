@@ -569,15 +569,13 @@ public final class RiscVInterpreter {
         }
 
         if (segmentEndAddress > memory.endAddress()) {
-            if (hint.length() == 0) {
+            if (hint.isEmpty()) {
                 hint.append("; Increase --memory-size");
             } else {
                 hint.append("; with that base, use --memory-size");
             }
 
-            long requiredBaseAddress = segmentAddress < memory.baseAddress()
-                    ? segmentAddress
-                    : memory.baseAddress();
+            long requiredBaseAddress = Math.min(segmentAddress, memory.baseAddress());
             long requiredSize = segmentEndAddress - requiredBaseAddress;
             hint.append(" to at least ").append(requiredSize).append(" bytes");
         }
