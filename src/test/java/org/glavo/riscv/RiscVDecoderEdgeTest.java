@@ -334,6 +334,26 @@ public final class RiscVDecoderEdgeTest {
         }
     }
 
+    /// Verifies zero-immediate compressed LUI clears its destination in runtime-generated address sequences.
+    @Test
+    public void decodedCompressedZeroLuiClearsDestination() {
+        try (TestMachine machine = TestMachine.create()) {
+            ByteBuffer code = ByteBuffer.allocate((3 * Short.BYTES) + Integer.BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN);
+            putCompressed(code, cLui(LEFT_REGISTER, 0));
+            putCompressed(code, cSlli(LEFT_REGISTER, 18));
+            putCompressed(code, cMv(RESULT_REGISTER, LEFT_REGISTER));
+            ElfTestImages.putInt(code, ElfTestImages.ecall());
+            loadCode(machine.memory(), code.array());
+            prepareExit(machine.state());
+            machine.state().setRegister(LEFT_REGISTER, 0x1802_2722L);
+
+            runDecodedProgram(machine);
+
+            assertEquals(0, machine.state().register(RESULT_REGISTER));
+        }
+    }
+
     /// Verifies mixed compressed memory instructions with 32-bit instructions at 16-bit-aligned addresses.
     @Test
     public void decodedCompressedMemoryStreamMixesInstructionWidths() {
@@ -684,6 +704,11 @@ public final class RiscVDecoderEdgeTest {
     /// Encodes `c.addi`.
     private static int cAddi(int rd, int immediate) {
         return compressedImmediate(0b000, rd, immediate);
+    }
+
+    /// Encodes `c.lui`.
+    private static int cLui(int rd, int immediate) {
+        return compressedImmediate(0b011, rd, immediate >>> 12);
     }
 
     /// Encodes `c.slli`.

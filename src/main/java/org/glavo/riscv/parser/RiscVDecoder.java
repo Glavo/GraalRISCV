@@ -881,10 +881,8 @@ public final class RiscVDecoder {
 
         long immediate = cLuiImmediate(raw);
         if (immediate == 0) {
-            if (isCompressedMopRegister(rd)) {
-                return compressed(address, raw, RiscVOperation.C_MOP, 0, 0, 0, 0, false);
-            }
-            throw illegalException(address, raw);
+            // HotSpot emits this encoding in RVC address materialization as a compact zeroing LUI.
+            return compressed(address, raw, RiscVOperation.LUI, rd, 0, 0, 0, false);
         }
         return compressed(address, raw, RiscVOperation.LUI, rd, 0, 0, immediate, false);
     }
@@ -1102,11 +1100,6 @@ public final class RiscVDecoder {
     /// Maps a compressed register field to its full register index.
     private static int compressedRegister(int shiftedRaw) {
         return 8 + (shiftedRaw & 0x7);
-    }
-
-    /// Returns true when a zero-immediate compressed LUI encoding is a Zcmop instruction.
-    private static boolean isCompressedMopRegister(int register) {
-        return register < 16 && (register & 1) != 0;
     }
 
     /// Extracts and sign-extends an I-format immediate.
