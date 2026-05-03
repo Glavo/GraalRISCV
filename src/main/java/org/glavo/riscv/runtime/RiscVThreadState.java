@@ -14,9 +14,9 @@ import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicLong;
 
-/// Stores mutable architectural state for one guest execution.
+/// Stores mutable RISC-V execution state for one guest thread.
 @NotNullByDefault
-public final class MachineState {
+public final class RiscVThreadState {
     /// The number of integer registers in RV64I.
     private static final int REGISTER_COUNT = 32;
 
@@ -211,8 +211,8 @@ public final class MachineState {
     /// The value read by the active LR/SC reservation.
     private long reservationValue;
 
-    /// Creates a new architectural state container.
-    public MachineState(
+    /// Creates a new RISC-V thread state container.
+    public RiscVThreadState(
             Memory memory,
             long maxInstructions,
             boolean trace,
@@ -222,8 +222,8 @@ public final class MachineState {
         this(memory, maxInstructions, trace, tohostAddress, fromhostAddress, syscalls, System.err);
     }
 
-    /// Creates a new architectural state container with an explicit trace stream.
-    public MachineState(
+    /// Creates a new RISC-V thread state container with an explicit trace stream.
+    public RiscVThreadState(
             Memory memory,
             long maxInstructions,
             boolean trace,
@@ -234,8 +234,8 @@ public final class MachineState {
         this(memory, maxInstructions, trace, tohostAddress, fromhostAddress, syscalls, traceStream, VectorUnit.DEFAULT_VLEN_BITS);
     }
 
-    /// Creates a new architectural state container with an explicit trace stream and vector register length.
-    public MachineState(
+    /// Creates a new RISC-V thread state container with an explicit trace stream and vector register length.
+    public RiscVThreadState(
             Memory memory,
             long maxInstructions,
             boolean trace,
@@ -256,8 +256,8 @@ public final class MachineState {
                 vectorVlenBits);
     }
 
-    /// Creates a new architectural state container with a prepared trace print stream.
-    private MachineState(
+    /// Creates a new RISC-V thread state container with a prepared trace print stream.
+    private RiscVThreadState(
             Memory memory,
             long maxInstructions,
             boolean trace,
@@ -535,13 +535,13 @@ public final class MachineState {
     }
 
     /// Creates the child architectural state produced by a Linux thread-style `clone`.
-    MachineState forkForClone(
+    RiscVThreadState forkForClone(
             GuestThread childThread,
             long childPc,
             long stackAddress,
             long tlsAddress,
             boolean setThreadPointer) {
-        MachineState child = new MachineState(
+        RiscVThreadState child = new RiscVThreadState(
                 memory,
                 maxInstructions,
                 trace,
@@ -556,7 +556,7 @@ public final class MachineState {
     }
 
     /// Creates the child architectural state produced by a Linux process-style `clone`.
-    MachineState forkForProcess(
+    RiscVThreadState forkForProcess(
             GuestThread childThread,
             Memory childMemory,
             GuestSyscalls childSyscalls,
@@ -564,7 +564,7 @@ public final class MachineState {
             long stackAddress,
             long tlsAddress,
             boolean setThreadPointer) {
-        MachineState child = new MachineState(
+        RiscVThreadState child = new RiscVThreadState(
                 childMemory,
                 maxInstructions,
                 trace,
@@ -580,7 +580,7 @@ public final class MachineState {
 
     /// Copies register and CSR state into a freshly allocated clone child.
     private void copyArchitecturalStateTo(
-            MachineState child,
+            RiscVThreadState child,
             long childPc,
             long stackAddress,
             long tlsAddress,

@@ -17,7 +17,7 @@ final class DecodedBlockTestExecutor {
     }
 
     /// Executes every instruction in the decoded block and returns the materialized PC.
-    static long execute(MachineState state, DecodedBlock block) {
+    static long execute(RiscVThreadState state, DecodedBlock block) {
         for (DecodedInstruction instruction : block.instructions()) {
             RiscVInstructionSemantics.execute(state, instruction);
         }

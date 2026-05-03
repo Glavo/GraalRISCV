@@ -1652,19 +1652,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Makes instruction bytes visible to every guest thread in this process.
     void fenceProcessInstructionFetch() {
-        processInstructionFetchGeneration = MachineState.nextInstructionFetchGeneration();
+        processInstructionFetchGeneration = RiscVThreadState.nextInstructionFetchGeneration();
     }
 
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
-    public abstract void handle(MachineState state, long pc);
+    public abstract void handle(RiscVThreadState state, long pc);
 
     /// Gives an ABI-specific runtime a chance to deliver an illegal-instruction signal.
-    public boolean handleIllegalInstruction(MachineState state, IllegalInstructionException exception) {
+    public boolean handleIllegalInstruction(RiscVThreadState state, IllegalInstructionException exception) {
         return false;
     }
 
     /// Gives an ABI-specific runtime a chance to deliver a memory-access signal.
-    public boolean handleMemoryAccess(MachineState state, MemoryAccessException exception) {
+    public boolean handleMemoryAccess(RiscVThreadState state, MemoryAccessException exception) {
         return false;
     }
 
@@ -1725,7 +1725,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Builds a diagnostic message for a syscall that is not implemented by the simulator.
-    protected static String unsupportedEcallMessage(MachineState state, long pc, long callNumber) {
+    protected static String unsupportedEcallMessage(RiscVThreadState state, long pc, long callNumber) {
         return "Unsupported ecall number: " + callNumber
                 + ", pc=0x" + unsignedHex(pc)
                 + ", a0=0x" + unsignedHex(state.register(10))
@@ -1851,7 +1851,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Returns currently ready events from an in-memory `epoll` descriptor without blocking the host thread.
     protected long epollPwait(
-            MachineState state,
+            RiscVThreadState state,
             int epollFileDescriptor,
             long eventsAddress,
             int maximumEvents,
@@ -1902,7 +1902,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Reports descriptor readiness through Linux `pselect6` without blocking the host thread.
     protected long pselect6(
-            MachineState state,
+            RiscVThreadState state,
             long fileDescriptorLimit,
             long readFileDescriptorsAddress,
             long writeFileDescriptorsAddress,
@@ -2048,7 +2048,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Reports descriptor readiness through Linux `ppoll` without blocking the host thread.
     protected long ppoll(
-            MachineState state,
+            RiscVThreadState state,
             long fileDescriptorsAddress,
             long fileDescriptorCount,
             long timeoutAddress,
@@ -5132,13 +5132,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Records that a guest thread exited and returns the process exit code once it is known.
-    public long completeThreadExit(MachineState state, long exitCode) {
+    public long completeThreadExit(RiscVThreadState state, long exitCode) {
         recordThreadExit(state, exitCode);
         return waitForProcessExit();
     }
 
     /// Records a guest thread exit and performs Linux clear-child-TID wakeup side effects.
-    public void recordThreadExit(MachineState state, long exitCode) {
+    public void recordThreadExit(RiscVThreadState state, long exitCode) {
         synchronized (threadLock) {
             clearChildTidAndWake(state);
             if (liveThreadCount > 0) {
@@ -5292,7 +5292,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Clears a thread's child-TID word and wakes one matching futex waiter.
-    protected void clearChildTidAndWake(MachineState state) {
+    protected void clearChildTidAndWake(RiscVThreadState state) {
         long clearAddress = state.clearChildTidAddress();
         if (clearAddress == 0 || !memory.isBacked(clearAddress, Integer.BYTES)) {
             return;
@@ -5311,13 +5311,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Stores the guest clear-child-TID pointer and returns this guest thread id.
-    protected static long setTidAddress(MachineState state, long address) {
+    protected static long setTidAddress(RiscVThreadState state, long address) {
         state.setClearChildTidAddress(address);
         return state.threadId();
     }
 
     /// Exits the current guest thread.
-    protected void exitThread(MachineState state, long exitCode) {
+    protected void exitThread(RiscVThreadState state, long exitCode) {
         synchronized (threadLock) {
             if (liveThreadCount <= 1) {
                 if (!processExitRequested) {
@@ -5499,7 +5499,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Replaces the current process image with a mounted guest executable.
-    protected long execve(MachineState state, long pathAddress, long argvAddress, long envpAddress) {
+    protected long execve(RiscVThreadState state, long pathAddress, long argvAddress, long envpAddress) {
         String rawPath;
         String[] arguments;
         String[] environment;
@@ -5547,7 +5547,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when this process is in a state that can be replaced without racing another guest thread.
-    protected boolean canReplaceCurrentProcessImage(MachineState state) {
+    protected boolean canReplaceCurrentProcessImage(RiscVThreadState state) {
         synchronized (threadLock) {
             return liveThreadCount == 1
                     && process.threadCount() == 1
@@ -5580,7 +5580,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Installs an already loaded executable into the current process state.
     protected void replaceCurrentProcessImage(
-            MachineState state,
+            RiscVThreadState state,
             LinuxProgramLoader.LoadedProgram program,
             String @Unmodifiable [] arguments,
             String @Unmodifiable [] environment) {
@@ -5597,7 +5597,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resets syscall-owned process metadata after a successful `execve`.
-    protected void resetForExec(MachineState state, long newInitialProgramBreak, @Nullable String executablePath) {
+    protected void resetForExec(RiscVThreadState state, long newInitialProgramBreak, @Nullable String executablePath) {
         initialProgramBreak = newInitialProgramBreak;
         programBreak = newInitialProgramBreak;
         programBreakBackingEnd = newInitialProgramBreak;
@@ -5852,7 +5852,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the requested guest thread, or the current thread when the request id is zero.
-    protected @Nullable GuestThread guestThread(MachineState currentState, long threadId) {
+    protected @Nullable GuestThread guestThread(RiscVThreadState currentState, long threadId) {
         if (threadId == 0) {
             return currentState.guestThread();
         }

@@ -680,7 +680,7 @@ public final class FloatingPointOperationTest {
     }
 
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
-    private static void prepareExit(MachineState state) {
+    private static void prepareExit(RiscVThreadState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
     }
 
@@ -711,17 +711,17 @@ public final class FloatingPointOperationTest {
     }
 
     /// Writes a double-precision value to a floating-point register.
-    private static void writeDouble(MachineState state, int register, double value) {
+    private static void writeDouble(RiscVThreadState state, int register, double value) {
         state.setFloatingPointRegister(register, Double.doubleToRawLongBits(value));
     }
 
     /// Writes raw double-precision bits to a floating-point register.
-    private static void writeDoubleBits(MachineState state, int register, long bits) {
+    private static void writeDoubleBits(RiscVThreadState state, int register, long bits) {
         state.setFloatingPointRegister(register, bits);
     }
 
     /// Writes raw single-precision bits to a NaN-boxed floating-point register.
-    private static void writeSingleBits(MachineState state, int register, int bits) {
+    private static void writeSingleBits(RiscVThreadState state, int register, int bits) {
         state.setFloatingPointRegister(register, boxedSingle(bits));
     }
 
@@ -1069,7 +1069,7 @@ public final class FloatingPointOperationTest {
     private record TestMachine(
             Memory memory,
             GuestSyscalls syscalls,
-            MachineState state) implements AutoCloseable {
+            RiscVThreadState state) implements AutoCloseable {
         /// Creates a test machine initialized at the decoder test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
@@ -1079,7 +1079,7 @@ public final class FloatingPointOperationTest {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress());
-            MachineState state = new MachineState(
+            RiscVThreadState state = new RiscVThreadState(
                     memory,
                     0,
                     false,

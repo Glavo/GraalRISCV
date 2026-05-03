@@ -6,7 +6,7 @@ package org.glavo.riscv.nodes;
 import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
-import org.glavo.riscv.runtime.MachineState;
+import org.glavo.riscv.runtime.RiscVThreadState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
@@ -34,12 +34,12 @@ final class InterpretedTrace implements ExecutableTrace {
 
     /// Executes the trace with the supplied machine state and memory access facade.
     @Override
-    public void execute(MachineState state, MemoryAccess access) {
+    public void execute(RiscVThreadState state, MemoryAccess access) {
         executeTrace(state, access);
     }
 
     /// Runs trace blocks until the trace ends or a side-exit guard fails.
-    private void executeTrace(MachineState state, MemoryAccess access) {
+    private void executeTrace(RiscVThreadState state, MemoryAccess access) {
         for (int index = 0; index < blocks.length; index++) {
             blocks[index].execute(state, access);
             if (index < expectedNextPcs.length && state.pc() != expectedNextPcs[index]) {

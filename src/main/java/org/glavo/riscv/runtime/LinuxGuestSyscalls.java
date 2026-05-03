@@ -601,7 +601,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Handles the parent return path for Linux `clone` requests.
     protected long clone(
-            MachineState state,
+            RiscVThreadState state,
             long pc,
             long flags,
             long stackAddress,
@@ -620,7 +620,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Handles Linux `clone3` by translating `struct clone_args` to the existing clone implementation.
-    protected long clone3(MachineState state, long pc, long argumentsAddress, long size) {
+    protected long clone3(RiscVThreadState state, long pc, long argumentsAddress, long size) {
         if (size < CLONE_ARGS_MINIMUM_SIZE) {
             return EINVAL;
         }
@@ -693,7 +693,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Handles the parent return path for Linux thread-style `clone` requests.
     protected long cloneThread(
-            MachineState state,
+            RiscVThreadState state,
             long pc,
             long flags,
             long stackAddress,
@@ -723,7 +723,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
         long threadId = childThread.id();
 
-        MachineState child = state.forkForClone(
+        RiscVThreadState child = state.forkForClone(
                 childThread,
                 pc + Integer.BYTES,
                 stackAddress,
@@ -775,7 +775,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Handles the parent return path for Linux process-style `clone` requests.
     protected long cloneProcess(
-            MachineState state,
+            RiscVThreadState state,
             long pc,
             long flags,
             long stackAddress,
@@ -818,7 +818,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
 
         long childStackAddress = stackAddress == 0 ? state.register(2) : stackAddress;
-        MachineState child = state.forkForProcess(
+        RiscVThreadState child = state.forkForProcess(
                 childThread,
                 childMemory,
                 childSyscalls,
@@ -876,7 +876,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
 
     /// Accepts a robust futex list registration for the current guest thread.
-    protected static long setRobustList(MachineState state, long headAddress, long length) {
+    protected static long setRobustList(RiscVThreadState state, long headAddress, long length) {
         if (length < 0) {
             return EINVAL;
         }
@@ -885,7 +885,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Reports the robust futex list registered for one guest thread.
-    protected long getRobustList(MachineState state, long processId, long headAddress, long lengthAddress) {
+    protected long getRobustList(RiscVThreadState state, long processId, long headAddress, long lengthAddress) {
         @Nullable GuestThread thread = guestThread(state, processId);
         if (thread == null) {
             return ESRCH;
@@ -896,7 +896,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Registers or reports the alternate signal stack for the current guest thread.
-    protected long sigaltstack(MachineState state, long stackAddress, long oldStackAddress) {
+    protected long sigaltstack(RiscVThreadState state, long stackAddress, long oldStackAddress) {
         long newStackPointer = 0;
         long newStackSize = 0;
         long newStackFlags = 0;
@@ -949,7 +949,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
 
     /// Reports deterministic RISC-V hardware probe values for the single simulated CPU.
-    protected long riscvHwprobe(long pairsAddress, long pairCount, long cpuSetSize, long cpuSetAddress, long flags, MachineState state) {
+    protected long riscvHwprobe(long pairsAddress, long pairCount, long cpuSetSize, long cpuSetAddress, long flags, RiscVThreadState state) {
         if (pairCount < 0
                 || pairCount > Integer.MAX_VALUE
                 || (flags & ~RISCV_HWPROBE_WHICH_CPUS) != 0
@@ -981,7 +981,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Flushes guest instruction-fetch visibility for Linux `riscv_flush_icache`.
-    protected long riscvFlushIcache(MachineState state, long startAddress, long endAddress, long flags) {
+    protected long riscvFlushIcache(RiscVThreadState state, long startAddress, long endAddress, long flags) {
         if ((flags & ~RISCV_FLUSH_ICACHE_LOCAL) != 0 || Long.compareUnsigned(startAddress, endAddress) > 0) {
             return EINVAL;
         }
@@ -994,7 +994,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Writes values for all requested RISC-V hardware probe pairs.
-    protected void populateHwprobePairs(long pairsAddress, long pairCount, MachineState state) {
+    protected void populateHwprobePairs(long pairsAddress, long pairCount, RiscVThreadState state) {
         for (long index = 0; index < pairCount; index++) {
             long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
             long key = memory.readLong(pairAddress + RISCV_HWPROBE_KEY_OFFSET);
@@ -1008,7 +1008,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Returns true when all supplied RISC-V hardware probe constraints match the simulated CPU.
-    protected boolean hwprobePairsMatch(long pairsAddress, long pairCount, MachineState state) {
+    protected boolean hwprobePairsMatch(long pairsAddress, long pairCount, RiscVThreadState state) {
         boolean matches = true;
         for (long index = 0; index < pairCount; index++) {
             long pairAddress = pairsAddress + index * RISCV_HWPROBE_PAIR_SIZE;
@@ -1039,7 +1039,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Returns the deterministic value for a supported RISC-V hardware probe key.
-    protected static long hwprobeValue(long key, MachineState state) {
+    protected static long hwprobeValue(long key, RiscVThreadState state) {
         return switch ((int) key) {
             case (int) RISCV_HWPROBE_KEY_MVENDORID,
                     (int) RISCV_HWPROBE_KEY_MARCHID,
@@ -1062,7 +1062,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Returns the ISA extension bits visible through Linux `riscv_hwprobe`.
-    protected static long hwprobeImaExtensions(MachineState state) {
+    protected static long hwprobeImaExtensions(RiscVThreadState state) {
         return state.vectorUnit().vlenBits() >= Rva23Profile.MINIMUM_VLEN_BITS
                 ? Rva23Profile.HWPROBE_REPORTED_EXTENSIONS
                 : Rva22Profile.HWPROBE_REPORTED_EXTENSIONS;
@@ -1246,7 +1246,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Reads and updates the calling guest thread's signal mask.
-    protected long rtSigprocmask(MachineState state, long how, long setAddress, long oldSetAddress, long sigsetSize) {
+    protected long rtSigprocmask(RiscVThreadState state, long how, long setAddress, long oldSetAddress, long sigsetSize) {
         if (sigsetSize != KERNEL_SIGSET_SIZE) {
             return EINVAL;
         }
@@ -1276,7 +1276,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Delivers synchronous illegal-instruction faults to a registered guest `SIGILL` handler.
     @Override
-    public boolean handleIllegalInstruction(MachineState state, IllegalInstructionException exception) {
+    public boolean handleIllegalInstruction(RiscVThreadState state, IllegalInstructionException exception) {
         @Nullable SignalAction action = signalActions[(int) SIGNAL_ILLEGAL_INSTRUCTION];
         if (action == null
                 || action.handler() == SIGNAL_DEFAULT_HANDLER
@@ -1293,7 +1293,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Delivers synchronous memory-access faults to a registered guest `SIGSEGV` handler.
     @Override
-    public boolean handleMemoryAccess(MachineState state, MemoryAccessException exception) {
+    public boolean handleMemoryAccess(RiscVThreadState state, MemoryAccessException exception) {
         @Nullable SignalAction action = signalActions[(int) SIGNAL_SEGMENTATION_FAULT];
         if (action == null
                 || action.handler() == SIGNAL_DEFAULT_HANDLER
@@ -1307,7 +1307,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Builds a Linux RISC-V `rt_sigframe` and redirects execution to a guest signal handler.
     protected void deliverSignal(
-            MachineState state,
+            RiscVThreadState state,
             long signalNumber,
             int signalCode,
             long faultAddress,
@@ -1344,7 +1344,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Computes the guest stack address used for a new signal frame.
-    protected long signalFrameAddress(MachineState state, SignalAction action) {
+    protected long signalFrameAddress(RiscVThreadState state, SignalAction action) {
         GuestThread thread = state.guestThread();
         long stackPointer = state.register(2);
         if ((action.flags() & SIGNAL_ACTION_ON_STACK) != 0 && thread.alternateSignalStackSize() > 0) {
@@ -1362,7 +1362,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Writes a Linux RISC-V `ucontext_t` for signal delivery.
-    protected void writeSignalContext(MachineState state, long contextAddress) {
+    protected void writeSignalContext(RiscVThreadState state, long contextAddress) {
         GuestThread thread = state.guestThread();
         memory.writeLong(contextAddress + SIGNAL_CONTEXT_FLAGS_OFFSET, 0);
         memory.writeLong(contextAddress + SIGNAL_CONTEXT_LINK_OFFSET, 0);
@@ -1380,7 +1380,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Restores guest state from the Linux RISC-V signal frame at the current stack pointer.
-    protected void rtSigreturn(MachineState state) {
+    protected void rtSigreturn(RiscVThreadState state) {
         long frameAddress = state.register(2);
         if (!memory.isBacked(frameAddress, SIGNAL_FRAME_SIZE)) {
             throw new RiscVException("Guest signal return frame is not backed: address=0x"
@@ -1399,7 +1399,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Ensures an executable guest trampoline for returning from signal handlers.
-    protected long ensureSignalTrampoline(MachineState state) {
+    protected long ensureSignalTrampoline(RiscVThreadState state) {
         if (signalTrampolineAddress != 0) {
             return signalTrampolineAddress;
         }
@@ -1420,7 +1420,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Handles the Linux `prctl` operations needed by single-process user-mode guests.
     protected long prctl(
-            MachineState state,
+            RiscVThreadState state,
             long option,
             long argument2,
             long argument3,
@@ -1597,7 +1597,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Writes the clear-child-TID address to a guest `long` pointer.
-    protected long getTidAddress(MachineState state, long address, long argument3, long argument4, long argument5) {
+    protected long getTidAddress(RiscVThreadState state, long address, long argument3, long argument4, long argument5) {
         if (!unusedArgumentsAreZero(argument3, argument4, argument5)) {
             return EINVAL;
         }
@@ -1616,7 +1616,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Stores the Linux RISC-V tagged-address control state for the current guest thread.
     protected static long setTaggedAddressControl(
-            MachineState state,
+            RiscVThreadState state,
             long control,
             long argument3,
             long argument4,
@@ -1646,7 +1646,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Returns the Linux RISC-V tagged-address control state for the current guest thread.
     protected static long getTaggedAddressControl(
-            MachineState state,
+            RiscVThreadState state,
             long argument2,
             long argument3,
             long argument4,
@@ -2722,7 +2722,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Handles Linux restartable sequence registration for the current guest thread.
-    protected long rseq(MachineState state, long address, long length, long flags, long signature) {
+    protected long rseq(RiscVThreadState state, long address, long length, long flags, long signature) {
         long rseqLength = length & 0xffff_ffffL;
         long rseqFlags = flags & 0xffff_ffffL;
         long rseqSignature = signature & 0xffff_ffffL;
@@ -3163,7 +3163,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Executes the Linux syscall described by the guest argument registers at the supplied program counter.
     @Override
-    public void handle(MachineState state, long pc) {
+    public void handle(RiscVThreadState state, long pc) {
         long callNumber = state.register(17);
         if (callNumber != (int) callNumber) {
             throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));

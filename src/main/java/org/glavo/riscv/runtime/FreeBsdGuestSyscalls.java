@@ -416,7 +416,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
 
     /// Executes the FreeBSD syscall described by the guest argument registers at the supplied program counter.
     @Override
-    public void handle(MachineState state, long pc) {
+    public void handle(RiscVThreadState state, long pc) {
         long callNumber = state.register(5);
         boolean indirect = callNumber == FREEBSD_SYS_SYSCALL || callNumber == FREEBSD_SYS___SYSCALL;
         int argumentBaseRegister = indirect ? 11 : 10;
@@ -681,13 +681,13 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
     }
 
     /// Reads one FreeBSD syscall argument register after optional syscall-number indirection.
-    private static long freeBsdArgument(MachineState state, int baseRegister, int index) {
+    private static long freeBsdArgument(RiscVThreadState state, int baseRegister, int index) {
         int register = baseRegister + index;
         return register <= 17 ? state.register(register) : 0;
     }
 
     /// Stores a FreeBSD syscall result and error indicator in guest registers.
-    private static void setFreeBsdSyscallResult(MachineState state, long result) {
+    private static void setFreeBsdSyscallResult(RiscVThreadState state, long result) {
         if (result < 0) {
             state.setRegister(10, -result);
             state.setRegister(5, 1);
@@ -699,7 +699,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
 
     /// Builds a diagnostic message for a FreeBSD syscall handler failure.
     private static String freeBsdSyscallFailureMessage(
-            MachineState state,
+            RiscVThreadState state,
             long pc,
             long callNumber,
             int argumentBaseRegister,
@@ -844,7 +844,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
     }
 
     /// Reads and updates the calling guest thread's FreeBSD signal mask.
-    private long freeBsdSigprocmask(MachineState state, long how, long setAddress, long oldSetAddress) {
+    private long freeBsdSigprocmask(RiscVThreadState state, long how, long setAddress, long oldSetAddress) {
         GuestThread thread = state.guestThread();
         long oldMask = thread.signalMask();
         if (oldSetAddress != 0) {
@@ -883,7 +883,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
     }
 
     /// Writes the current FreeBSD thread id to the guest pointer.
-    private long freeBsdThrSelf(MachineState state, long threadIdAddress) {
+    private long freeBsdThrSelf(RiscVThreadState state, long threadIdAddress) {
         if (threadIdAddress == 0) {
             return EFAULT;
         }
@@ -892,7 +892,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
     }
 
     /// Exits the current FreeBSD guest thread.
-    private void freeBsdThrExit(MachineState state, long threadIdAddress) {
+    private void freeBsdThrExit(RiscVThreadState state, long threadIdAddress) {
         if (threadIdAddress != 0 && memory.isBacked(threadIdAddress, Long.BYTES)) {
             synchronized (threadLock) {
                 memory.writeLong(threadIdAddress, 0);
@@ -958,7 +958,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
     }
 
     /// Starts a FreeBSD guest thread from `struct thr_param`.
-    private long freeBsdThrNew(MachineState state, long parameterAddress, long size) {
+    private long freeBsdThrNew(RiscVThreadState state, long parameterAddress, long size) {
         if (parameterAddress == 0 || size < FREEBSD_THR_PARAM_MINIMUM_SIZE) {
             return EINVAL;
         }
@@ -994,7 +994,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
         }
         long threadId = childThread.id();
 
-        MachineState child = state.forkForClone(childThread, startFunction, stackBase + stackSize, tlsBase, true);
+        RiscVThreadState child = state.forkForClone(childThread, startFunction, stackBase + stackSize, tlsBase, true);
         child.setRegister(10, argument);
         if (childTidAddress != 0) {
             childThread.setClearChildTidAddress(childTidAddress);
@@ -1041,7 +1041,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
     }
 
     /// Registers or reports the FreeBSD alternate signal stack for the current guest thread.
-    private long freeBsdSigaltstack(MachineState state, long stackAddress, long oldStackAddress) {
+    private long freeBsdSigaltstack(RiscVThreadState state, long stackAddress, long oldStackAddress) {
         long newStackPointer = 0;
         long newStackSize = 0;
         long newStackFlags = 0;

@@ -11,7 +11,7 @@ import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.RiscVDecoder;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxGuestSyscalls;
-import org.glavo.riscv.runtime.MachineState;
+import org.glavo.riscv.runtime.RiscVThreadState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 
@@ -949,7 +949,7 @@ public final class VectorInstructionTest {
     }
 
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
-    private static void prepareExit(MachineState state) {
+    private static void prepareExit(RiscVThreadState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
     }
 
@@ -967,14 +967,14 @@ public final class VectorInstructionTest {
     }
 
     /// Asserts vector byte elements.
-    private static void assertVectorBytes(MachineState state, int register, int... expected) {
+    private static void assertVectorBytes(RiscVThreadState state, int register, int... expected) {
         for (int index = 0; index < expected.length; index++) {
             assertEquals(expected[index], state.vectorUnit().readElement(register, index));
         }
     }
 
     /// Asserts vector elements.
-    private static void assertVectorElements(MachineState state, int register, long... expected) {
+    private static void assertVectorElements(RiscVThreadState state, int register, long... expected) {
         for (int index = 0; index < expected.length; index++) {
             assertEquals(expected[index], state.vectorUnit().readElement(register, index));
         }
@@ -1510,7 +1510,7 @@ public final class VectorInstructionTest {
     private record TestMachine(
             Memory memory,
             GuestSyscalls syscalls,
-            MachineState state) implements AutoCloseable {
+            RiscVThreadState state) implements AutoCloseable {
         /// Creates a test machine initialized at the vector test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
@@ -1520,7 +1520,7 @@ public final class VectorInstructionTest {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress());
-            MachineState state = new MachineState(
+            RiscVThreadState state = new RiscVThreadState(
                     memory,
                     0,
                     false,

@@ -8,7 +8,7 @@ import org.glavo.riscv.parser.ElfImage;
 import org.glavo.riscv.parser.RiscVDecoder;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxGuestSyscalls;
-import org.glavo.riscv.runtime.MachineState;
+import org.glavo.riscv.runtime.RiscVThreadState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.junit.jupiter.api.Test;
 
@@ -163,7 +163,7 @@ public final class RiscVMicroBlockRva23Test {
     private record TestMachine(
             Memory memory,
             GuestSyscalls syscalls,
-            MachineState state) implements AutoCloseable {
+            RiscVThreadState state) implements AutoCloseable {
         /// Creates a test machine initialized at the micro-block test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
@@ -173,7 +173,7 @@ public final class RiscVMicroBlockRva23Test {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress());
-            MachineState state = new MachineState(
+            RiscVThreadState state = new RiscVThreadState(
                     memory,
                     0,
                     false,

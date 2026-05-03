@@ -11,5 +11,5 @@ import org.jetbrains.annotations.NotNullByDefault;
 @NotNullByDefault
 public interface GuestThreadRunner {
     /// Executes the supplied guest thread state with its selected address space.
-    void runGuestThread(Memory memory, MachineState state);
+    void runGuestThread(Memory memory, RiscVThreadState state);
 }

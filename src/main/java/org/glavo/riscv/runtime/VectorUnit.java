@@ -205,7 +205,7 @@ public final class VectorUnit {
     /// @param rs1 the AVL source scalar register
     /// @param vtypeImmediate the immediate `vtype` encoding
     /// @param nextPc the sequential program counter
-    public void executeVsetVli(MachineState state, int rd, int rs1, int vtypeImmediate, long nextPc) {
+    public void executeVsetVli(RiscVThreadState state, int rd, int rs1, int vtypeImmediate, long nextPc) {
         setVectorConfiguration(state, rd, avlFromRegisterForm(state, rd, rs1), vtypeImmediate, nextPc);
     }
 
@@ -216,7 +216,7 @@ public final class VectorUnit {
     /// @param avlImmediate the immediate AVL value
     /// @param vtypeImmediate the immediate `vtype` encoding
     /// @param nextPc the sequential program counter
-    public void executeVsetIVli(MachineState state, int rd, int avlImmediate, int vtypeImmediate, long nextPc) {
+    public void executeVsetIVli(RiscVThreadState state, int rd, int avlImmediate, int vtypeImmediate, long nextPc) {
         setVectorConfiguration(state, rd, avlImmediate & 0x1fL, vtypeImmediate, nextPc);
     }
 
@@ -227,7 +227,7 @@ public final class VectorUnit {
     /// @param rs1 the AVL source scalar register
     /// @param rs2 the scalar register containing the new `vtype`
     /// @param nextPc the sequential program counter
-    public void executeVsetVl(MachineState state, int rd, int rs1, int rs2, long nextPc) {
+    public void executeVsetVl(RiscVThreadState state, int rd, int rs1, int rs2, long nextPc) {
         setVectorConfiguration(state, rd, avlFromRegisterForm(state, rd, rs1), state.decodedRegister(rs2), nextPc);
     }
 
@@ -239,7 +239,7 @@ public final class VectorUnit {
     /// @param vd the destination vector register
     /// @param rs1 the scalar base-address register
     /// @param nextPc the sequential program counter
-    public void executeUnitStrideLoad(MachineState state, Memory memory, int raw, int vd, int rs1, long nextPc) {
+    public void executeUnitStrideLoad(RiscVThreadState state, Memory memory, int raw, int vd, int rs1, long nextPc) {
         requireLegalVectorState();
         VectorMemoryShape shape = decodeMemoryShape(raw, true);
         long baseAddress = state.decodedRegister(rs1);
@@ -306,7 +306,7 @@ public final class VectorUnit {
     /// @param vs3 the source vector register
     /// @param rs1 the scalar base-address register
     /// @param nextPc the sequential program counter
-    public void executeUnitStrideStore(MachineState state, Memory memory, int raw, int vs3, int rs1, long nextPc) {
+    public void executeUnitStrideStore(RiscVThreadState state, Memory memory, int raw, int vs3, int rs1, long nextPc) {
         requireLegalVectorState();
         VectorMemoryShape shape = decodeMemoryShape(raw, false);
         long baseAddress = state.decodedRegister(rs1);
@@ -365,7 +365,7 @@ public final class VectorUnit {
     /// @param rs1 the scalar or vector source field
     /// @param vs2 the second vector source register
     /// @param nextPc the sequential program counter
-    public void executeIntegerArithmetic(MachineState state, int raw, int vd, int rs1, int vs2, long nextPc) {
+    public void executeIntegerArithmetic(RiscVThreadState state, int raw, int vd, int rs1, int vs2, long nextPc) {
         requireLegalVectorState();
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
@@ -534,7 +534,7 @@ public final class VectorUnit {
     }
 
     /// Computes the AVL value for `vsetvli` and `vsetvl`.
-    private long avlFromRegisterForm(MachineState state, int rd, int rs1) {
+    private long avlFromRegisterForm(RiscVThreadState state, int rd, int rs1) {
         if (rs1 != 0) {
             return state.decodedRegister(rs1);
         }
@@ -545,7 +545,7 @@ public final class VectorUnit {
     }
 
     /// Applies a new vector type and vector length.
-    private void setVectorConfiguration(MachineState state, int rd, long avl, long rawVectorType, long nextPc) {
+    private void setVectorConfiguration(RiscVThreadState state, int rd, long avl, long rawVectorType, long nextPc) {
         long normalizedType = rawVectorType & 0xffL;
         if ((rawVectorType & ~0xffL) != 0 || !isSupportedVectorType(normalizedType)) {
             vectorType = VTYPE_VILL;
@@ -732,7 +732,7 @@ public final class VectorUnit {
     }
 
     /// Executes a vector mask store.
-    private void executeMaskStore(MachineState state, Memory memory, int vs3, long baseAddress) {
+    private void executeMaskStore(RiscVThreadState state, Memory memory, int vs3, long baseAddress) {
         if (vs3 < 0 || vs3 >= VECTOR_REGISTER_COUNT) {
             throw new RiscVException("Invalid vector mask store register: v" + vs3);
         }
@@ -755,7 +755,7 @@ public final class VectorUnit {
     }
 
     /// Executes a whole-register vector store.
-    private void executeWholeRegisterStore(MachineState state, Memory memory, int vs3, long baseAddress, VectorMemoryShape shape) {
+    private void executeWholeRegisterStore(RiscVThreadState state, Memory memory, int vs3, long baseAddress, VectorMemoryShape shape) {
         requireWholeRegisterGroup(vs3, shape.fields());
         for (int register = 0; register < shape.fields(); register++) {
             for (int offset = 0; offset < vlenBytes; offset++) {
@@ -920,7 +920,7 @@ public final class VectorUnit {
     }
 
     /// Executes a vector floating-point operation for SEW 32 or 64.
-    private void executeFloatingPoint(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFloatingPoint(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         if (isFloatingPointScalarMove(funct3, funct6, vs1, vs2)) {
@@ -991,7 +991,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector floating-point scalar move operations.
-    private void executeFloatingPointScalarMove(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFloatingPointScalarMove(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         boolean unmasked = ((raw >>> 25) & 0x1) != 0;
         int funct3 = (raw >>> 12) & 0x7;
         if (!unmasked) {
@@ -1013,7 +1013,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector floating-point unary operations.
-    private void executeFloatingPointUnary(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFloatingPointUnary(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct6 = (raw >>> 26) & 0x3f;
         if (funct6 == 0x12 && vs1 >= 8) {
             executeMixedWidthFloatingPointConvert(raw, vd, vs1, vs2, nextPc, state);
@@ -1040,7 +1040,7 @@ public final class VectorUnit {
     }
 
     /// Executes widening and narrowing floating-point conversion operations.
-    private void executeMixedWidthFloatingPointConvert(int raw, int vd, int selector, int vs2, long nextPc, MachineState state) {
+    private void executeMixedWidthFloatingPointConvert(int raw, int vd, int selector, int vs2, long nextPc, RiscVThreadState state) {
         if (sewBits() == Short.SIZE) {
             executeHalfSingleFloatingPointConvert(raw, vd, selector, vs2, nextPc, state);
             return;
@@ -1090,7 +1090,7 @@ public final class VectorUnit {
     }
 
     /// Executes the `Zvfhmin` half/single vector floating-point conversions.
-    private void executeHalfSingleFloatingPointConvert(int raw, int vd, int selector, int vs2, long nextPc, MachineState state) {
+    private void executeHalfSingleFloatingPointConvert(int raw, int vd, int selector, int vs2, long nextPc, RiscVThreadState state) {
         int roundingMode = effectiveFloatingPointRoundingMode(state);
         long halfGroupBytes = groupBytesForElementBits(Short.SIZE);
         long singleGroupBytes = groupBytesForElementBits(Float.SIZE);
@@ -1128,7 +1128,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector floating-point reduction operations.
-    private void executeFloatingPointReduction(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFloatingPointReduction(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         requireRegisterGroup(vd);
         requireRegisterGroup(vs1);
         requireRegisterGroup(vs2);
@@ -1152,7 +1152,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector widening floating-point operations.
-    private void executeWideningFloatingPoint(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeWideningFloatingPoint(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         if (sewBits() != Float.SIZE) {
@@ -1190,7 +1190,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector widening floating-point reduction operations.
-    private void executeWideningFloatingPointReduction(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeWideningFloatingPointReduction(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct6 = (raw >>> 26) & 0x3f;
         if (sewBits() != Float.SIZE) {
             throw new RiscVException("Vector widening floating-point reductions require SEW 32");
@@ -1218,7 +1218,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector widening floating-point fused multiply-add operations.
-    private void executeWideningFloatingPointFusedMultiplyAdd(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeWideningFloatingPointFusedMultiplyAdd(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         if (sewBits() != Float.SIZE) {
@@ -1255,7 +1255,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector floating-point fused multiply-add operations.
-    private void executeFloatingPointFusedMultiplyAdd(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFloatingPointFusedMultiplyAdd(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         requireRegisterGroup(vd);
@@ -1278,7 +1278,7 @@ public final class VectorUnit {
     }
 
     /// Executes floating-point slide1 instructions.
-    private void executeFloatingPointSlide(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFloatingPointSlide(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         requireRegisterGroup(vd);
         requireRegisterGroup(vs2);
         int funct6 = (raw >>> 26) & 0x3f;
@@ -1300,7 +1300,7 @@ public final class VectorUnit {
     }
 
     /// Executes floating-point merge and move instructions.
-    private void executeFloatingPointMerge(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFloatingPointMerge(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         requireRegisterGroup(vd);
         requireRegisterGroup(vs2);
@@ -1421,7 +1421,7 @@ public final class VectorUnit {
     }
 
     /// Executes one floating-point unary operation from the `VFUNARY1` space.
-    private long executeFloatingPointUnary1(int selector, long valueBits, MachineState state) {
+    private long executeFloatingPointUnary1(int selector, long valueBits, RiscVThreadState state) {
         if (sewBits() == Float.SIZE) {
             float value = Float.intBitsToFloat((int) valueBits);
             return switch (selector) {
@@ -1441,7 +1441,7 @@ public final class VectorUnit {
     }
 
     /// Executes one floating-point conversion from the `VFUNARY0` space.
-    private long executeFloatingPointConvert(int selector, long valueBits, MachineState state) {
+    private long executeFloatingPointConvert(int selector, long valueBits, RiscVThreadState state) {
         int roundingMode = effectiveFloatingPointRoundingMode(state);
         if (sewBits() == Float.SIZE) {
             float value = Float.intBitsToFloat((int) valueBits);
@@ -1539,7 +1539,7 @@ public final class VectorUnit {
     }
 
     /// Returns the active floating-point rounding mode for vector conversions.
-    private static int effectiveFloatingPointRoundingMode(MachineState state) {
+    private static int effectiveFloatingPointRoundingMode(RiscVThreadState state) {
         int roundingMode = state.floatingPointRoundingMode();
         if (roundingMode > ROUND_NEAREST_MAX_MAGNITUDE) {
             throw new RiscVException("Unsupported floating-point rounding mode: " + roundingMode);
@@ -1548,7 +1548,7 @@ public final class VectorUnit {
     }
 
     /// Converts a floating-point value to an unsigned integer with saturation.
-    private static long convertFloatingPointToUnsignedInteger(MachineState state, double value, int roundingMode, int bits) {
+    private static long convertFloatingPointToUnsignedInteger(RiscVThreadState state, double value, int roundingMode, int bits) {
         double rounded = roundFloatingPointToInteger(value, roundingMode);
         double exclusiveUpperBound = bits == Long.SIZE ? 0x1.0p64 : (double) (1L << bits);
         if (Double.isNaN(value) || rounded < 0.0d) {
@@ -1568,7 +1568,7 @@ public final class VectorUnit {
     }
 
     /// Converts a floating-point value to a signed integer with saturation.
-    private static long convertFloatingPointToSignedInteger(MachineState state, double value, int roundingMode, int bits) {
+    private static long convertFloatingPointToSignedInteger(RiscVThreadState state, double value, int roundingMode, int bits) {
         double rounded = roundFloatingPointToInteger(value, roundingMode);
         double minimum = bits == Long.SIZE ? Long.MIN_VALUE : -(double) (1L << (bits - 1));
         double exclusiveUpperBound = bits == Long.SIZE ? 0x1.0p63 : (double) (1L << (bits - 1));
@@ -1599,7 +1599,7 @@ public final class VectorUnit {
     }
 
     /// Executes an integer reduction operation.
-    private void executeReduction(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeReduction(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         requireRegisterGroup(vd);
         requireRegisterGroup(vs1);
         requireRegisterGroup(vs2);
@@ -1637,7 +1637,7 @@ public final class VectorUnit {
     }
 
     /// Executes an add-with-carry or subtract-with-borrow operation.
-    private void executeCarryBorrow(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeCarryBorrow(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         boolean unmasked = ((raw >>> 25) & 0x1) != 0;
@@ -1682,7 +1682,7 @@ public final class VectorUnit {
     }
 
     /// Executes a vector register gather operation.
-    private void executeGather(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeGather(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         requireRegisterGroup(vd);
         requireRegisterGroup(vs2);
         int funct3 = (raw >>> 12) & 0x7;
@@ -1710,7 +1710,7 @@ public final class VectorUnit {
     }
 
     /// Executes `vrgatherei16.vv`.
-    private void executeGatherEi16(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeGatherEi16(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         requireRegisterGroup(vd);
         requireRegisterGroup(vs2);
         long indexGroupBytes = groupBytesForElementBits(Short.SIZE);
@@ -1729,7 +1729,7 @@ public final class VectorUnit {
     }
 
     /// Executes a vector slide operation.
-    private void executeSlide(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeSlide(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         requireRegisterGroup(vd);
         requireRegisterGroup(vs2);
         int funct3 = (raw >>> 12) & 0x7;
@@ -1764,7 +1764,7 @@ public final class VectorUnit {
     }
 
     /// Executes `vcompress.vm`.
-    private void executeCompress(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeCompress(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         if (((raw >>> 25) & 0x1) == 0 || vectorStart != 0) {
             throw new RiscVException("Unsupported vector compress instruction encoding");
         }
@@ -1783,7 +1783,7 @@ public final class VectorUnit {
     }
 
     /// Executes integer sign/zero extension unary instructions.
-    private void executeIntegerExtensionUnary(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeIntegerExtensionUnary(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int factor = switch (vs1) {
             case 2, 3 -> 8;
             case 4, 5 -> 4;
@@ -1811,7 +1811,7 @@ public final class VectorUnit {
     }
 
     /// Executes `Zvbb`/`Zvkb` vector bit-manipulation unary instructions.
-    private void executeIntegerBitManipUnary(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeIntegerBitManipUnary(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         requireRegisterGroup(vd);
         requireRegisterGroup(vs2);
         long start = vectorStart;
@@ -1840,7 +1840,7 @@ public final class VectorUnit {
     }
 
     /// Executes `Zvbc` vector carry-less multiplication instructions.
-    private void executeCarrylessMultiply(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeCarrylessMultiply(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         if (sewBits() != Long.SIZE) {
@@ -1890,7 +1890,7 @@ public final class VectorUnit {
     }
 
     /// Executes `vwsll.[vv,vx,vi]`.
-    private void executeWideningShiftLeftLogical(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeWideningShiftLeftLogical(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int sourceBits = sewBits();
         int resultBits = sourceBits * 2;
@@ -1921,7 +1921,7 @@ public final class VectorUnit {
     }
 
     /// Executes a whole-vector-register move.
-    private void executeWholeRegisterMove(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeWholeRegisterMove(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         if (((raw >>> 25) & 0x1) == 0) {
             throw new RiscVException("Whole-register vector move must be unmasked");
         }
@@ -1942,7 +1942,7 @@ public final class VectorUnit {
     }
 
     /// Executes widening integer arithmetic instructions.
-    private void executeWideningInteger(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeWideningInteger(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         int narrowBits = sewBits();
@@ -1995,7 +1995,7 @@ public final class VectorUnit {
     }
 
     /// Executes widening integer reduction instructions.
-    private void executeWideningReduction(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeWideningReduction(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct6 = (raw >>> 26) & 0x3f;
         int narrowBits = sewBits();
         int wideBits = narrowBits * 2;
@@ -2021,7 +2021,7 @@ public final class VectorUnit {
     }
 
     /// Executes single-width and widening integer multiply-add instructions.
-    private void executeIntegerMultiplyAdd(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeIntegerMultiplyAdd(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         boolean widening = funct6 >= 0x3c;
@@ -2064,7 +2064,7 @@ public final class VectorUnit {
     }
 
     /// Executes narrowing integer shift and clip instructions.
-    private void executeNarrowingInteger(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeNarrowingInteger(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         int narrowBits = sewBits();
@@ -2098,7 +2098,7 @@ public final class VectorUnit {
     }
 
     /// Executes fixed-point integer arithmetic instructions.
-    private void executeFixedPointInteger(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeFixedPointInteger(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         int funct6 = (raw >>> 26) & 0x3f;
         requireRegisterGroup(vd);
@@ -2329,7 +2329,7 @@ public final class VectorUnit {
     }
 
     /// Executes a vector mask logical operation.
-    private void executeMaskLogical(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeMaskLogical(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         long start = vectorStart;
         long length = vectorLength;
         int funct6 = (raw >>> 26) & 0x3f;
@@ -2355,7 +2355,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector mask scalar operations and scalar/vector moves.
-    private void executeMaskScalarOrMove(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeMaskScalarOrMove(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         int funct3 = (raw >>> 12) & 0x7;
         boolean unmasked = ((raw >>> 25) & 0x1) != 0;
         if (funct3 == OPMVV && vs1 == 0 && unmasked) {
@@ -2376,7 +2376,7 @@ public final class VectorUnit {
     }
 
     /// Executes `vcpop.m` and `vfirst.m`.
-    private void executeMaskScalar(int raw, int vd, int vs1, int vs2, MachineState state) {
+    private void executeMaskScalar(int raw, int vd, int vs1, int vs2, RiscVThreadState state) {
         long start = vectorStart;
         long length = vectorLength;
         if (vs1 == 16) {
@@ -2400,7 +2400,7 @@ public final class VectorUnit {
     }
 
     /// Executes vector mask prefix, iota, and index-generation operations.
-    private void executeMaskUnary(int raw, int vd, int vs1, int vs2, long nextPc, MachineState state) {
+    private void executeMaskUnary(int raw, int vd, int vs1, int vs2, long nextPc, RiscVThreadState state) {
         if (vectorStart != 0) {
             throw new RiscVException("Unsupported vector mask unary instruction with non-zero vstart");
         }
@@ -2456,7 +2456,7 @@ public final class VectorUnit {
     }
 
     /// Reads an integer vector operand with the requested element width.
-    private long integerOperand(int funct3, int vs1, long element, MachineState state, int bits, boolean unsignedImmediate) {
+    private long integerOperand(int funct3, int vs1, long element, RiscVThreadState state, int bits, boolean unsignedImmediate) {
         return switch (funct3) {
             case OPIVV, OPMVV -> readElementBits(vs1, element, bits);
             case OPIVX, OPMVX -> state.decodedRegister(vs1) & maskForBits(bits);

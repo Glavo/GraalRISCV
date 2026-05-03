@@ -1409,7 +1409,7 @@ public final class GuestSyscallsTest {
     @Test
     public void readReturnsZeroAtEndOfFile() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_READ, 0, memory.baseAddress(), 8);
             state.syscalls().handle(state, TEST_PC);
@@ -1423,7 +1423,7 @@ public final class GuestSyscallsTest {
     public void writeAcceptsZeroLengthInvalidAddress() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     out,
@@ -1443,7 +1443,7 @@ public final class GuestSyscallsTest {
     public void readCopiesPartialInput() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             memory.writeByte(memory.baseAddress() + 2, (byte) 'Z');
-            MachineState state = state(memory, new ByteArrayInputStream("AB".getBytes(StandardCharsets.UTF_8)));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream("AB".getBytes(StandardCharsets.UTF_8)));
 
             setSyscall(state, SYS_READ, 0, memory.baseAddress(), 8);
             state.syscalls().handle(state, TEST_PC);
@@ -1460,7 +1460,7 @@ public final class GuestSyscallsTest {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             ByteArrayOutputStream err = new ByteArrayOutputStream();
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream("A".getBytes(StandardCharsets.UTF_8)),
                     out,
@@ -1486,7 +1486,7 @@ public final class GuestSyscallsTest {
     @Test
     public void syscallBuffersMustFitGuestMemory() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream("A".getBytes(StandardCharsets.UTF_8)));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream("A".getBytes(StandardCharsets.UTF_8)));
 
             setSyscall(state, SYS_READ, 0, memory.endAddress(), 1);
             assertThrows(RiscVException.class, () -> state.syscalls().handle(state, TEST_PC));
@@ -1500,7 +1500,7 @@ public final class GuestSyscallsTest {
     @Test
     public void closeSupportsStandardFileDescriptors() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_CLOSE, 1, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -1519,7 +1519,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -1561,7 +1561,7 @@ public final class GuestSyscallsTest {
     @Test
     public void fstatReportsStandardStreamsAsCharacterDevices() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_FSTAT, 1, memory.baseAddress(), 0);
             state.syscalls().handle(state, TEST_PC);
@@ -1581,7 +1581,7 @@ public final class GuestSyscallsTest {
     @Test
     public void getcwdReportsSandboxRoot() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long bufferAddress = memory.baseAddress() + 64;
 
             setSyscall(state, SYS_GETCWD, bufferAddress, 16, 0);
@@ -1603,7 +1603,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("root.txt"), "root-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -1722,7 +1722,7 @@ public final class GuestSyscallsTest {
         Files.createDirectories(tempDirectory.resolve("directory"));
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -1779,7 +1779,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -1862,7 +1862,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("directory").resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2037,7 +2037,7 @@ public final class GuestSyscallsTest {
         }
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2069,7 +2069,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("readable.txt"), "data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2109,7 +2109,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("readable.txt"), "data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2147,7 +2147,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("output.txt"), "data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2182,7 +2182,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("owned.txt"), "data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2231,7 +2231,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("owned.txt"), "data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2272,7 +2272,7 @@ public final class GuestSyscallsTest {
         }
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2303,7 +2303,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2359,7 +2359,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("subdir").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2429,7 +2429,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("subdir").resolve("message.txt"), "directory-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2513,7 +2513,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("message.txt"), "file-data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2564,7 +2564,7 @@ public final class GuestSyscallsTest {
     public void dupDuplicatesStandardStreams() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream("input".getBytes(StandardCharsets.UTF_8)),
                     out,
@@ -2602,7 +2602,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("second.txt"), "second", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -2655,7 +2655,7 @@ public final class GuestSyscallsTest {
     @Test
     public void pipe2TransfersBytesBetweenDescriptors() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pipeAddress = memory.baseAddress();
             long bufferAddress = memory.baseAddress() + 32;
             long statAddress = memory.baseAddress() + 128;
@@ -2702,7 +2702,7 @@ public final class GuestSyscallsTest {
     public void dup3CanReplaceStandardDescriptors() {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream("host".getBytes(StandardCharsets.UTF_8)),
                     out,
@@ -2770,7 +2770,7 @@ public final class GuestSyscallsTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     out,
@@ -2808,7 +2808,7 @@ public final class GuestSyscallsTest {
     @Test
     public void eventfd2AndEpollReportReadiness() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long bufferAddress = memory.baseAddress();
             long eventAddress = memory.baseAddress() + 128;
             long eventsAddress = memory.baseAddress() + 256;
@@ -2973,7 +2973,7 @@ public final class GuestSyscallsTest {
     @Test
     public void pselect6ReportsDescriptorReadiness() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long readFileDescriptorsAddress = memory.baseAddress() + 64;
             long writeFileDescriptorsAddress = memory.baseAddress() + 256;
             long exceptionFileDescriptorsAddress = memory.baseAddress() + 448;
@@ -3035,7 +3035,7 @@ public final class GuestSyscallsTest {
     @Test
     public void ppollReportsDescriptorReadiness() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pollFileDescriptorsAddress = memory.baseAddress() + 64;
             long timeoutAddress = memory.baseAddress() + 128;
 
@@ -3074,7 +3074,7 @@ public final class GuestSyscallsTest {
     @Test
     public void openatWritesHostFilesBelowRoot() throws Exception {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -3180,7 +3180,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("positioned.txt"), "0123456789", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -3299,7 +3299,7 @@ public final class GuestSyscallsTest {
     @Test
     public void fileMutationSyscallsStaySandboxed() throws Exception {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -3466,7 +3466,7 @@ public final class GuestSyscallsTest {
         Files.createDirectory(tempDirectory.resolve("directory"));
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -3517,7 +3517,7 @@ public final class GuestSyscallsTest {
     @Test
     public void lseekRejectsStandardStreamsAsPipes() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_LSEEK, 1, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -3537,7 +3537,7 @@ public final class GuestSyscallsTest {
     @Test
     public void ioctlRejectsPlainStandardStreamTerminalQueries() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             memory.writeByte(memory.baseAddress(), (byte) 0x7f);
             setSyscall(state, SYS_IOCTL, 1, TCGETS, memory.baseAddress());
@@ -3564,7 +3564,7 @@ public final class GuestSyscallsTest {
     public void openatOpensDevTtyAsTerminalDevice() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[]{'x'}),
                     out,
@@ -3685,7 +3685,7 @@ public final class GuestSyscallsTest {
     public void openatOpensDevNullAsNullDevice() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[]{'x'}),
                     out,
@@ -3724,7 +3724,7 @@ public final class GuestSyscallsTest {
     public void openatOpensDevZeroAndRandomDevices() {
         byte[] randomBytes;
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pathAddress = memory.baseAddress();
             long dataAddress = memory.baseAddress() + 128;
 
@@ -3767,7 +3767,7 @@ public final class GuestSyscallsTest {
         }
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -3781,7 +3781,7 @@ public final class GuestSyscallsTest {
     public void devFilesystemListsDevicesAndStandardAliases() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     out,
@@ -3855,7 +3855,7 @@ public final class GuestSyscallsTest {
     public void writevWritesMultipleBuffers() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             ByteArrayOutputStream err = new ByteArrayOutputStream();
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -3884,7 +3884,7 @@ public final class GuestSyscallsTest {
     @Test
     public void readvReadsMultipleBuffers() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream("ABC".getBytes(StandardCharsets.UTF_8)),
                     new ByteArrayOutputStream(),
@@ -3914,7 +3914,7 @@ public final class GuestSyscallsTest {
     @Test
     public void processIdentitySyscallsReturnStableIds() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_GETPID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -4075,7 +4075,7 @@ public final class GuestSyscallsTest {
         GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "42,43", "/home/alice", "/bin/bash");
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -4168,7 +4168,7 @@ public final class GuestSyscallsTest {
     @Test
     public void wait4WithoutChildrenReportsEchild() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long statusAddress = memory.baseAddress() + 64;
             long rusageAddress = memory.baseAddress() + 128;
 
@@ -4183,7 +4183,7 @@ public final class GuestSyscallsTest {
     @Test
     public void signalSendSyscallsValidateSingleProcessTargets() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_KILL, 1, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -4223,7 +4223,7 @@ public final class GuestSyscallsTest {
     @Test
     public void cloneRequiresThreadCreationContext() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 512;
             long parentTidAddress = memory.baseAddress() + 32;
             long childTidAddress = memory.baseAddress() + 40;
@@ -4250,7 +4250,7 @@ public final class GuestSyscallsTest {
     @Test
     public void cloneRejectsUnsupportedProcessCreationForms() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 512;
 
             setSyscall(state, SYS_CLONE, 17, stackAddress, 0, 0, 0, 0);
@@ -4271,7 +4271,7 @@ public final class GuestSyscallsTest {
     @Test
     public void clone3TranslatesCloneArguments() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long argumentsAddress = memory.baseAddress() + 128;
             long stackBaseAddress = memory.baseAddress() + 512;
             long stackSize = 256;
@@ -4307,7 +4307,7 @@ public final class GuestSyscallsTest {
     @Test
     public void setRobustListAcceptsNonNegativeLength() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long headPointerAddress = memory.baseAddress() + 128;
             long lengthAddress = memory.baseAddress() + 136;
 
@@ -4335,7 +4335,7 @@ public final class GuestSyscallsTest {
     @Test
     public void futexWaitComparesWordAndReturnsImmediately() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long futexAddress = memory.baseAddress() + 64;
             long timeoutAddress = memory.baseAddress() + 80;
 
@@ -4365,7 +4365,7 @@ public final class GuestSyscallsTest {
     @Test
     public void futexWakeReportsNoWaiters() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long futexAddress = memory.baseAddress() + 64;
 
             setSyscall(state, SYS_FUTEX, futexAddress, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0);
@@ -4394,7 +4394,7 @@ public final class GuestSyscallsTest {
     @Test
     public void futexRejectsInvalidOrUnsupportedOperations() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long futexAddress = memory.baseAddress() + 64;
 
             setSyscall(state, SYS_FUTEX, futexAddress + 1, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, 0, 0, 0, 0);
@@ -4427,7 +4427,7 @@ public final class GuestSyscallsTest {
     @Test
     public void nanosleepValidatesTimespec() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long requestAddress = memory.baseAddress() + 64;
             long remainingAddress = memory.baseAddress() + 80;
 
@@ -4459,7 +4459,7 @@ public final class GuestSyscallsTest {
     @Test
     public void nanosleepReportsRemainingTimeOnInterrupt() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long requestAddress = memory.baseAddress() + 64;
             long remainingAddress = memory.baseAddress() + 80;
 
@@ -4483,7 +4483,7 @@ public final class GuestSyscallsTest {
     @Test
     public void schedGetaffinityReportsSingleCpu() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long maskAddress = memory.baseAddress() + 64;
 
             memory.writeByte(maskAddress + Long.BYTES, (byte) 0x7f);
@@ -4503,7 +4503,7 @@ public final class GuestSyscallsTest {
     @Test
     public void schedulingHelpersReportSingleCpu() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long cpuAddress = memory.baseAddress() + 64;
             long nodeAddress = memory.baseAddress() + 72;
 
@@ -4529,7 +4529,7 @@ public final class GuestSyscallsTest {
     @Test
     public void riscvHwprobeReportsSupportedCapabilities() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pairsAddress = memory.baseAddress() + 64;
 
             writeHwprobeKey(memory, pairsAddress, 0, RISCV_HWPROBE_KEY_MVENDORID);
@@ -4593,7 +4593,7 @@ public final class GuestSyscallsTest {
                      new ByteArrayOutputStream(),
                      new ByteArrayOutputStream(),
                      memory.baseAddress())) {
-            MachineState state = new MachineState(
+            RiscVThreadState state = new RiscVThreadState(
                     memory,
                     0,
                     false,
@@ -4617,7 +4617,7 @@ public final class GuestSyscallsTest {
     @Test
     public void riscvHwprobeFiltersWhichCpus() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pairsAddress = memory.baseAddress() + 64;
             long cpuSetAddress = memory.baseAddress() + 256;
 
@@ -4653,7 +4653,7 @@ public final class GuestSyscallsTest {
     @Test
     public void riscvFlushIcacheRefreshesInstructionFetch() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long previousGeneration = state.instructionFetchGeneration();
 
             setSyscall(state, SYS_RISCV_FLUSH_ICACHE, memory.baseAddress(), memory.baseAddress() + 64, 0);
@@ -4675,7 +4675,7 @@ public final class GuestSyscallsTest {
     @Test
     public void unameReportsRiscvLinuxIdentity() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long utsnameAddress = memory.baseAddress() + 64;
 
             setSyscall(state, SYS_UNAME, utsnameAddress, 0, 0);
@@ -4692,7 +4692,7 @@ public final class GuestSyscallsTest {
     @Test
     public void clockGettimeUsesHostTimeByDefault() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long timespecAddress = memory.baseAddress() + 64;
 
             long beforeMillis = System.currentTimeMillis();
@@ -4725,7 +4725,7 @@ public final class GuestSyscallsTest {
     public void clockGettimeUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 123_456_789L));
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long timespecAddress = memory.baseAddress() + 64;
 
             setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_REALTIME, timespecAddress, 0);
@@ -4758,7 +4758,7 @@ public final class GuestSyscallsTest {
     @Test
     public void clockGetresReportsSupportedClockResolution() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long timespecAddress = memory.baseAddress() + 64;
 
             memory.writeLong(timespecAddress, -1);
@@ -4786,7 +4786,7 @@ public final class GuestSyscallsTest {
     public void gettimeofdayUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 987_654_321L));
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long timevalAddress = memory.baseAddress() + 64;
             long timezoneAddress = memory.baseAddress() + 80;
 
@@ -4811,7 +4811,7 @@ public final class GuestSyscallsTest {
     @Test
     public void sysinfoReportsSyntheticSystemMetadata() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long sysinfoAddress = memory.baseAddress() + 128;
 
             setSyscall(state, SYS_SYSINFO, sysinfoAddress, 0, 0);
@@ -4843,7 +4843,7 @@ public final class GuestSyscallsTest {
     public void clockNanosleepHandlesRelativeAndAbsoluteRequests() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 123_456_789L));
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long requestAddress = memory.baseAddress() + 64;
             long remainingAddress = memory.baseAddress() + 80;
 
@@ -4889,7 +4889,7 @@ public final class GuestSyscallsTest {
     public void timesUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long tmsAddress = memory.baseAddress() + 64;
 
             memory.writeLong(tmsAddress + TMS_USER_TIME_OFFSET, -1);
@@ -4916,7 +4916,7 @@ public final class GuestSyscallsTest {
     public void getrusageUsesConfiguredTimeSource() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
             long rusageAddress = memory.baseAddress() + 64;
 
             memory.writeLong(rusageAddress + RUSAGE_USER_TIME_OFFSET, -1);
@@ -4949,7 +4949,7 @@ public final class GuestSyscallsTest {
     @Test
     public void prlimit64ReportsAndUpdatesResourceLimits() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long newLimitAddress = memory.baseAddress() + 64;
             long oldLimitAddress = memory.baseAddress() + 80;
 
@@ -4989,7 +4989,7 @@ public final class GuestSyscallsTest {
     @Test
     public void prctlSupportsProcessName() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long inputAddress = memory.baseAddress() + 64;
             long outputAddress = memory.baseAddress() + 128;
 
@@ -5018,7 +5018,7 @@ public final class GuestSyscallsTest {
     @Test
     public void prctlReturnsInitialAuxiliaryVector() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackPointer = memory.baseAddress() + 64;
             long bufferAddress = memory.baseAddress() + 256;
 
@@ -5056,7 +5056,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("program"), "exe", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -5214,7 +5214,7 @@ public final class GuestSyscallsTest {
     @Test
     public void procCpuinfoExposesJavaRuntimeSummary() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pathAddress = memory.baseAddress();
             long bufferAddress = memory.baseAddress() + 1024;
 
@@ -5249,7 +5249,7 @@ public final class GuestSyscallsTest {
     @Test
     public void defaultSysFilesystemExposesMinimalHardwareTree() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long pathAddress = memory.baseAddress();
             long bufferAddress = memory.baseAddress() + 1024;
             long statfsAddress = memory.baseAddress() + 4096;
@@ -5358,7 +5358,7 @@ public final class GuestSyscallsTest {
     @Test
     public void netlinkRouteSocketReportsLoopbackInterfaceDump() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long sockaddrAddress = memory.baseAddress();
             long lengthAddress = memory.baseAddress() + 64;
             long requestAddress = memory.baseAddress() + 128;
@@ -5473,7 +5473,7 @@ public final class GuestSyscallsTest {
     @Test
     public void networkInterfaceIoctlSocketMapsSyntheticInterfaces() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long ifreqAddress = memory.baseAddress();
 
             setSyscall(state, SYS_SOCKET, AF_UNIX, SOCK_DGRAM | O_CLOEXEC, 0);
@@ -5544,7 +5544,7 @@ public final class GuestSyscallsTest {
         GuestFileSystem fileSystem = GuestFileSystem.empty().withVirtualMount("/virtual", virtualFileSystem);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -5606,7 +5606,7 @@ public final class GuestSyscallsTest {
     @Test
     public void prctlTracksSingleProcessState() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long intAddress = memory.baseAddress() + 64;
             long longAddress = memory.baseAddress() + 72;
             long tidAddress = memory.baseAddress() + 256;
@@ -5692,7 +5692,7 @@ public final class GuestSyscallsTest {
     @Test
     public void prctlControlsRiscvPointerMasking() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long intAddress = memory.baseAddress() + 64;
             long taggedIntAddress = taggedAddress(intAddress);
 
@@ -5739,7 +5739,7 @@ public final class GuestSyscallsTest {
     @Test
     public void prctlAcceptsVirtualMemoryAreaNames() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long nameAddress = memory.baseAddress() + 64;
 
             writeGuestString(memory, nameAddress, "heap");
@@ -5770,7 +5770,7 @@ public final class GuestSyscallsTest {
     public void getrandomFillsDeterministicBytes() {
         byte[] firstBytes;
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 3);
             state.syscalls().handle(state, TEST_PC);
@@ -5788,7 +5788,7 @@ public final class GuestSyscallsTest {
         }
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_GETRANDOM, memory.baseAddress(), 8, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -5801,7 +5801,7 @@ public final class GuestSyscallsTest {
     @Test
     public void optionalRuntimeCapabilitySyscallsReportUnavailable() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
             setSyscall(state, SYS_MEMBARRIER, MEMBARRIER_CMD_QUERY, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -5822,7 +5822,7 @@ public final class GuestSyscallsTest {
     @Test
     public void rseqRegistersAndUnregistersThreadState() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long rseqAddress = memory.baseAddress();
             long signature = 0x5305_3053L;
 
@@ -5886,7 +5886,7 @@ public final class GuestSyscallsTest {
     @Test
     public void propagatesHostIoFailures() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState readState = state(
+            RiscVThreadState readState = state(
                     memory,
                     new FailingInputStream(),
                     new ByteArrayOutputStream(),
@@ -5895,7 +5895,7 @@ public final class GuestSyscallsTest {
             setSyscall(readState, SYS_READ, 0, memory.baseAddress(), 1);
             assertThrows(RiscVException.class, () -> readState.syscalls().handle(readState, TEST_PC));
 
-            MachineState writeState = state(
+            RiscVThreadState writeState = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new FailingOutputStream(),
@@ -5911,7 +5911,7 @@ public final class GuestSyscallsTest {
     @Test
     public void sigaltstackTracksSingleThreadedSignalStack() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 64;
             long oldStackAddress = memory.baseAddress() + 128;
             long alternateStackPointer = memory.baseAddress() + 1024;
@@ -5954,7 +5954,7 @@ public final class GuestSyscallsTest {
     @Test
     public void sigaltstackRejectsInvalidStacks() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long stackAddress = memory.baseAddress() + 64;
             long stackPointer = memory.baseAddress() + 1024;
 
@@ -5979,7 +5979,7 @@ public final class GuestSyscallsTest {
     @Test
     public void rtSigactionAcceptsRuntimeSetup() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long actionAddress = memory.baseAddress() + 64;
             long oldActionAddress = memory.baseAddress() + 128;
             memory.writeLong(oldActionAddress, -1);
@@ -6006,7 +6006,7 @@ public final class GuestSyscallsTest {
             long base = memory.baseAddress();
             assertTrue(memory.map(base, 8192));
 
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6066,7 +6066,7 @@ public final class GuestSyscallsTest {
     @Test
     public void rtSigprocmaskTracksThreadSignalMask() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
-            MachineState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long newSetAddress = memory.baseAddress() + 64;
             long oldSetAddress = memory.baseAddress() + 128;
             long userSignalMask = signalMask(SIGUSR1);
@@ -6124,7 +6124,7 @@ public final class GuestSyscallsTest {
     public void mmapAllocatesAnonymousGuestPages() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6157,7 +6157,7 @@ public final class GuestSyscallsTest {
         Files.writeString(tempDirectory.resolve("mapped.txt"), "mapped-file-data", StandardCharsets.UTF_8);
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6195,7 +6195,7 @@ public final class GuestSyscallsTest {
     public void mmapMapsSharedReadOnlyRegularFilePages() throws Exception {
         Files.writeString(tempDirectory.resolve("shared.txt"), "shared-file-data", StandardCharsets.UTF_8);
         try (Memory memory = new Memory(0, 128 * PAGE_SIZE, null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6251,7 +6251,7 @@ public final class GuestSyscallsTest {
                 Memory.DEFAULT_HUGE_PAGE_SIZE,
                 1,
                 null)) {
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6291,7 +6291,7 @@ public final class GuestSyscallsTest {
     public void munmapReleasesAnonymousGuestPages() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 5 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6347,7 +6347,7 @@ public final class GuestSyscallsTest {
     public void mremapShrinksAndGrowsAnonymousMappings() {
         try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 8 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6388,7 +6388,7 @@ public final class GuestSyscallsTest {
     public void mremapMovesAnonymousMappingWhenGrowthIsBlocked() {
         try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 8 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6438,7 +6438,7 @@ public final class GuestSyscallsTest {
     public void mremapMovesAnonymousMappingToFixedAddress() {
         try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 8 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6493,7 +6493,7 @@ public final class GuestSyscallsTest {
     public void mremapRejectsUnsupportedRequests() {
         try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6538,7 +6538,7 @@ public final class GuestSyscallsTest {
     public void mmapRejectsUnsupportedRequests() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 3 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6604,7 +6604,7 @@ public final class GuestSyscallsTest {
     public void mmapReservesProtNoneAndMapsFixedSparsePages() {
         try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 16 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6648,7 +6648,7 @@ public final class GuestSyscallsTest {
     public void mprotectUpdatesReservedSparseMappings() {
         try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 16 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6693,7 +6693,7 @@ public final class GuestSyscallsTest {
     public void mprotectEnforcesSparseMappingPermissions() {
         try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 16 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6732,7 +6732,7 @@ public final class GuestSyscallsTest {
     public void madviseClearsDiscardedAnonymousPages() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6774,7 +6774,7 @@ public final class GuestSyscallsTest {
     public void mincoreReportsMappedPagesResident() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6814,7 +6814,7 @@ public final class GuestSyscallsTest {
     public void brkDoesNotOverlapAnonymousMappings() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE, null)) {
             long initialBreak = memory.baseAddress() + PAGE_SIZE;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6845,7 +6845,7 @@ public final class GuestSyscallsTest {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
             long initialBreak = memory.baseAddress() + 128;
             long requestedBreak = initialBreak + 64;
-            MachineState state = state(
+            RiscVThreadState state = state(
                     memory,
                     new ByteArrayInputStream(new byte[0]),
                     new ByteArrayOutputStream(),
@@ -6875,8 +6875,8 @@ public final class GuestSyscallsTest {
     public void instructionFetchGenerationsAreGloballyUnique() {
         try (Memory firstMemory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null);
              Memory secondMemory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, Memory.DEFAULT_PAGE_SIZE, null)) {
-            MachineState first = state(firstMemory, new ByteArrayInputStream(new byte[0]));
-            MachineState second = state(secondMemory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState first = state(firstMemory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState second = state(secondMemory, new ByteArrayInputStream(new byte[0]));
 
             long firstInitialGeneration = first.instructionFetchGeneration();
             long secondInitialGeneration = second.instructionFetchGeneration();
@@ -6893,12 +6893,12 @@ public final class GuestSyscallsTest {
     }
 
     /// Creates test machine state with empty output streams.
-    private static MachineState state(Memory memory, ByteArrayInputStream in) {
+    private static RiscVThreadState state(Memory memory, ByteArrayInputStream in) {
         return state(memory, in, new ByteArrayOutputStream(), new ByteArrayOutputStream(), memory.baseAddress());
     }
 
     /// Creates test machine state with a configured guest time source.
-    private static MachineState state(Memory memory, ByteArrayInputStream in, TimeSource timeSource) {
+    private static RiscVThreadState state(Memory memory, ByteArrayInputStream in, TimeSource timeSource) {
         return state(
                 memory,
                 in,
@@ -6910,7 +6910,7 @@ public final class GuestSyscallsTest {
     }
 
     /// Creates test machine state with a syscall handler.
-    private static MachineState state(
+    private static RiscVThreadState state(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -6920,7 +6920,7 @@ public final class GuestSyscallsTest {
     }
 
     /// Creates test machine state with a syscall handler and root mount.
-    private static MachineState state(
+    private static RiscVThreadState state(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -6931,7 +6931,7 @@ public final class GuestSyscallsTest {
     }
 
     /// Creates test machine state with a syscall handler and custom filesystem namespace.
-    private static MachineState state(
+    private static RiscVThreadState state(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -6942,7 +6942,7 @@ public final class GuestSyscallsTest {
     }
 
     /// Creates test machine state with a syscall handler, custom filesystem namespace, and credentials.
-    private static MachineState state(
+    private static RiscVThreadState state(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -6959,7 +6959,7 @@ public final class GuestSyscallsTest {
                 fileSystem,
                 TimeSource.system(),
                 credentials);
-        return new MachineState(
+        return new RiscVThreadState(
                 memory,
                 0,
                 false,
@@ -6969,7 +6969,7 @@ public final class GuestSyscallsTest {
     }
 
     /// Creates test machine state with a syscall handler, root mount, and guest time source.
-    private static MachineState state(
+    private static RiscVThreadState state(
             Memory memory,
             InputStream in,
             OutputStream out,
@@ -6985,7 +6985,7 @@ public final class GuestSyscallsTest {
                 initialProgramBreak,
                 new HostPath(hostRoot),
                 timeSource);
-        return new MachineState(
+        return new RiscVThreadState(
                 memory,
                 0,
                 false,
@@ -7246,23 +7246,23 @@ public final class GuestSyscallsTest {
     }
 
     /// Populates the syscall number and the first three argument registers.
-    private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2) {
+    private static void setSyscall(RiscVThreadState state, long callNumber, long a0, long a1, long a2) {
         setSyscall(state, callNumber, a0, a1, a2, 0);
     }
 
     /// Populates the syscall number and the first four argument registers.
-    private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2, long a3) {
+    private static void setSyscall(RiscVThreadState state, long callNumber, long a0, long a1, long a2, long a3) {
         setSyscall(state, callNumber, a0, a1, a2, a3, 0, 0);
     }
 
     /// Populates the syscall number and the first five argument registers.
-    private static void setSyscall(MachineState state, long callNumber, long a0, long a1, long a2, long a3, long a4) {
+    private static void setSyscall(RiscVThreadState state, long callNumber, long a0, long a1, long a2, long a3, long a4) {
         setSyscall(state, callNumber, a0, a1, a2, a3, a4, 0);
     }
 
     /// Populates the syscall number and the first six argument registers.
     private static void setSyscall(
-            MachineState state,
+            RiscVThreadState state,
             long callNumber,
             long a0,
             long a1,

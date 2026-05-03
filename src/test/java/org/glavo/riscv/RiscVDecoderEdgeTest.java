@@ -428,7 +428,7 @@ public final class RiscVDecoderEdgeTest {
     }
 
     /// Sets the syscall register so a trailing `ecall` exits the decoded test program.
-    private static void prepareExit(MachineState state) {
+    private static void prepareExit(RiscVThreadState state) {
         state.setRegister(SYSCALL_REGISTER, EXIT_SYSCALL);
     }
 
@@ -811,7 +811,7 @@ public final class RiscVDecoderEdgeTest {
     private record TestMachine(
             Memory memory,
             GuestSyscalls syscalls,
-            MachineState state) implements AutoCloseable {
+            RiscVThreadState state) implements AutoCloseable {
         /// Creates a test machine initialized at the decoder test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
@@ -821,7 +821,7 @@ public final class RiscVDecoderEdgeTest {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress());
-            MachineState state = new MachineState(
+            RiscVThreadState state = new RiscVThreadState(
                     memory,
                     0,
                     false,

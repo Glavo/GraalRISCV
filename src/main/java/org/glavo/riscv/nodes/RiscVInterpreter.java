@@ -25,7 +25,7 @@ import org.glavo.riscv.runtime.GuestFileSystem;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxInitialStack;
 import org.glavo.riscv.runtime.LinuxGuestSyscalls;
-import org.glavo.riscv.runtime.MachineState;
+import org.glavo.riscv.runtime.RiscVThreadState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -71,7 +71,7 @@ public final class RiscVInterpreter {
                 context.hugePageSize(),
                 context.hugePages(),
                 context.mappedRegionCache())) {
-            MachineState state = createState(context, memory, program);
+            RiscVThreadState state = createState(context, memory, program);
             try {
                 return executeGuestLoop(memory, state);
             } catch (ProgramExitException exit) {
@@ -89,7 +89,7 @@ public final class RiscVInterpreter {
     }
 
     /// Runs the decoded-block dispatch loop for an initialized guest state.
-    private int executeGuestLoop(Memory memory, MachineState state) {
+    private int executeGuestLoop(Memory memory, RiscVThreadState state) {
         while (true) {
             try {
                 executeDispatchLoop(new GuestLoopState(memory, state, state.pc()));
@@ -115,7 +115,7 @@ public final class RiscVInterpreter {
     }
 
     /// Runs one clone-created guest thread on its host thread.
-    private void runGuestThread(Memory memory, MachineState state) {
+    private void runGuestThread(Memory memory, RiscVThreadState state) {
         try {
             executeGuestThreadLoop(memory, state);
         } catch (ThreadExitException exit) {
@@ -130,7 +130,7 @@ public final class RiscVInterpreter {
     }
 
     /// Runs the decoded-block dispatch loop for a clone-created guest thread.
-    private void executeGuestThreadLoop(Memory memory, MachineState state) {
+    private void executeGuestThreadLoop(Memory memory, RiscVThreadState state) {
         while (true) {
             try {
                 executeDispatchLoop(new GuestLoopState(memory, state, state.pc()));
@@ -164,7 +164,7 @@ public final class RiscVInterpreter {
     }
 
     /// Adds the current architectural state to an unexpected guest failure.
-    private static RiscVException withGuestContext(RiscVException exception, MachineState state) {
+    private static RiscVException withGuestContext(RiscVException exception, RiscVThreadState state) {
         String message = exception.getMessage();
         if (message != null && message.contains("Guest execution context:")) {
             return exception;
@@ -236,7 +236,7 @@ public final class RiscVInterpreter {
     }
 
     /// Creates and initializes architectural state for a guest run.
-    private MachineState createState(RiscVContext context, Memory memory, LoadedProgram program) {
+    private RiscVThreadState createState(RiscVContext context, Memory memory, LoadedProgram program) {
         long initialProgramBreak = memory.baseAddress();
         ArrayList<ProtectionRange> protectionRanges = new ArrayList<>();
         for (LoadedImage loadedImage : program.images()) {
@@ -283,7 +283,7 @@ public final class RiscVInterpreter {
         GuestSyscalls syscalls = createSyscalls(context, memory, initialProgramBreak, program.abi());
         long stackPointer = initializeLinuxStack(memory, context, program);
         syscalls.recordInitialAuxiliaryVector(stackPointer);
-        MachineState state = new MachineState(
+        RiscVThreadState state = new RiscVThreadState(
                 memory,
                 context.maxInstructions(),
                 context.trace(),
@@ -681,7 +681,7 @@ public final class RiscVInterpreter {
         private final MemoryLayout memoryLayout;
 
         /// The architectural state for the running guest thread.
-        private final MachineState state;
+        private final RiscVThreadState state;
 
         /// The syscall handler shared by all guest threads in this process.
         private final GuestSyscalls syscalls;
@@ -705,7 +705,7 @@ public final class RiscVInterpreter {
         private final @Nullable BlockEntry[] localBlocks = new BlockEntry[LOCAL_BLOCK_CACHE_SIZE];
 
         /// Creates loop-local state for one guest thread.
-        private GuestLoopState(Memory memory, MachineState state, long pc) {
+        private GuestLoopState(Memory memory, RiscVThreadState state, long pc) {
             this.memory = memory;
             this.memoryLayout = memory.layout();
             this.state = state;
@@ -726,7 +726,7 @@ public final class RiscVInterpreter {
         }
 
         /// Returns the architectural state for the running guest thread.
-        private MachineState state() {
+        private RiscVThreadState state() {
             return state;
         }
 
@@ -779,7 +779,7 @@ public final class RiscVInterpreter {
         }
 
         /// Selects the guest-loop execution policy from stable machine-state flags.
-        private static byte executionPolicy(MachineState state) {
+        private static byte executionPolicy(RiscVThreadState state) {
             if (!state.canRetireBlock()) {
                 return RiscVMicroBlockNode.CHECKED_MODE;
             }
@@ -836,7 +836,7 @@ public final class RiscVInterpreter {
         }
 
         /// Executes the decoded block for the supplied guest program counter.
-        private long execute(GuestLoopState loopState, MachineState state) {
+        private long execute(GuestLoopState loopState, RiscVThreadState state) {
             long pc = loopState.pc();
             MemoryLayout memoryLayout = loopState.memoryLayout();
             byte executionPolicy = loopState.executionPolicy();
@@ -861,7 +861,7 @@ public final class RiscVInterpreter {
         }
 
         /// Handles a direct trace-call cache miss for the supplied trace.
-        private long executeTraceMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
+        private long executeTraceMiss(GuestLoopState loopState, RiscVThreadState state, TraceEntry trace) {
             if (cachedTrace3 == null) {
                 CachedTraceCallNode cachedTrace = installCachedTrace(trace);
                 if (cachedTrace != null) {
@@ -877,7 +877,7 @@ public final class RiscVInterpreter {
         /// Executes a cached direct block call, or installs and executes a new cache entry.
         private long executeBlockCachedOrMiss(
                 GuestLoopState loopState,
-                MachineState state,
+                RiscVThreadState state,
                 long pc,
                 long instructionFetchGeneration) {
             MemoryLayout memoryLayout = loopState.memoryLayout();
@@ -896,7 +896,7 @@ public final class RiscVInterpreter {
         }
 
         /// Handles a direct-call cache miss for the supplied guest program counter.
-        private long executeBlockMiss(GuestLoopState loopState, MachineState state, long pc) {
+        private long executeBlockMiss(GuestLoopState loopState, RiscVThreadState state, long pc) {
             BlockEntry entry = loopState.blockFor(blocks);
             if (shouldInstallDirectCall(
                             pc,
@@ -1077,7 +1077,7 @@ public final class RiscVInterpreter {
         }
 
         /// Executes the cached decoded trace.
-        private void call(MachineState state, MemoryAccess access) {
+        private void call(RiscVThreadState state, MemoryAccess access) {
             target.execute(state, access);
         }
     }
@@ -1131,7 +1131,7 @@ public final class RiscVInterpreter {
         }
 
         /// Executes the cached decoded block.
-        private void call(MachineState state, MemoryAccess access) {
+        private void call(RiscVThreadState state, MemoryAccess access) {
             target.execute(state, access);
         }
     }

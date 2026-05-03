@@ -300,7 +300,7 @@ public final class RiscVInstructionSemanticsTest {
                     new ByteArrayOutputStream(),
                     memory.baseAddress());
             try {
-                MachineState state = new MachineState(
+                RiscVThreadState state = new RiscVThreadState(
                         memory,
                         0,
                         false,
@@ -332,7 +332,7 @@ public final class RiscVInstructionSemanticsTest {
     }
 
     /// Sets the current guest thread's RISC-V pointer mask length through Linux `prctl`.
-    private static void setPointerMaskLength(MachineState state, int length) {
+    private static void setPointerMaskLength(RiscVThreadState state, int length) {
         state.setRegister(10, PR_SET_TAGGED_ADDR_CTRL);
         state.setRegister(11, (long) length << PR_PMLEN_SHIFT);
         state.setRegister(12, 0);
@@ -358,7 +358,7 @@ public final class RiscVInstructionSemanticsTest {
     private record TestMachine(
             Memory memory,
             GuestSyscalls syscalls,
-            MachineState state) implements AutoCloseable {
+            RiscVThreadState state) implements AutoCloseable {
         /// Creates a test machine initialized at the standalone instruction test address.
         private static TestMachine create() {
             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096, null);
@@ -368,7 +368,7 @@ public final class RiscVInstructionSemanticsTest {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress());
-            MachineState state = new MachineState(
+            RiscVThreadState state = new RiscVThreadState(
                     memory,
                     0,
                     false,

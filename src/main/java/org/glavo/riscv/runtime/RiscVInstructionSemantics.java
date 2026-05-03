@@ -340,13 +340,13 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes an immutable decoded instruction through a temporary semantic helper.
-    public static void execute(MachineState state, DecodedInstruction instruction) {
+    public static void execute(RiscVThreadState state, DecodedInstruction instruction) {
         create(instruction).execute(state);
     }
 
     /// Executes decoded metadata supplied by the custom micro-bytecode interpreter.
     public static void executeMicro(
-            MachineState state,
+            RiscVThreadState state,
             RiscVOperation operation,
             long address,
             int raw,
@@ -362,7 +362,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes a decoded fused floating-point operation without updating `pc` or retiring the instruction.
     public static void executeMicroFusedMultiplyAdd(
-            MachineState state,
+            RiscVThreadState state,
             int rd,
             int rs1,
             int rs2,
@@ -375,7 +375,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes a decoded binary floating-point arithmetic operation without updating `pc` or retiring the instruction.
     public static void executeMicroFloatingPointArithmetic(
-            MachineState state,
+            RiscVThreadState state,
             int rd,
             int rs1,
             int rs2,
@@ -387,7 +387,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes a decoded floating-point square-root operation without updating `pc` or retiring the instruction.
     public static void executeMicroFloatingPointSquareRoot(
-            MachineState state,
+            RiscVThreadState state,
             int rd,
             int rs1,
             long immediate) {
@@ -397,7 +397,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes a decoded `fcvt.s.d` operation without updating `pc` or retiring the instruction.
     public static void executeMicroConvertDoubleToSingle(
-            MachineState state,
+            RiscVThreadState state,
             int rd,
             int rs1,
             long immediate) {
@@ -407,7 +407,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes a decoded `fcvt.d.s` operation without updating `pc` or retiring the instruction.
     public static void executeMicroConvertSingleToDouble(
-            MachineState state,
+            RiscVThreadState state,
             int rd,
             int rs1,
             long immediate) {
@@ -417,7 +417,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes a decoded floating-point to integer conversion without updating `pc` or retiring the instruction.
     public static void executeMicroConvertFloatingPointToInteger(
-            MachineState state,
+            RiscVThreadState state,
             int rd,
             int rs1,
             int rs2,
@@ -428,7 +428,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Executes a decoded integer to floating-point conversion without updating `pc` or retiring the instruction.
     public static void executeMicroConvertIntegerToFloatingPoint(
-            MachineState state,
+            RiscVThreadState state,
             int rd,
             int rs1,
             int rs2,
@@ -458,7 +458,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes this instruction against the supplied architectural state.
-    public final void execute(MachineState state) {
+    public final void execute(RiscVThreadState state) {
         long previousMask = state.enterPointerMask();
         try {
             state.setPc(address);
@@ -474,11 +474,11 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes the operation-specific instruction body.
-    protected abstract void executeInstruction(MachineState state, long nextPc);
+    protected abstract void executeInstruction(RiscVThreadState state, long nextPc);
 
 
     /// Handles store side effects only when the loaded image exposes side-effect addresses.
-    private static void afterStore(MachineState state, long address, int length) {
+    private static void afterStore(RiscVThreadState state, long address, int length) {
         if (state.hasStoreSideEffects()) {
             state.afterStoreWithSideEffects(address, length);
         }
@@ -521,7 +521,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the current decoded operation through the existing shared semantic groups.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             Memory memory = state.memory();
             switch (operation) {
                 case NOP, FENCE, WRS_NTO, WRS_STO, C_MOP, FENCE_I, LUI, AUIPC, JAL, JALR, BEQ, BNE, BLT, BGE, BLTU, BGEU,
@@ -588,7 +588,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Advances the program counter.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             if (operation == RiscVOperation.FENCE) {
                 VarHandle.fullFence();
             }
@@ -605,7 +605,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Writes the upper immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, immediate);
         }
 
@@ -620,7 +620,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Writes the PC-relative upper immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, address + immediate);
         }
 
@@ -635,7 +635,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Writes the link register and jumps to the PC-relative target.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, nextPc);
             state.setPc(address + immediate);
         }
@@ -652,7 +652,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Writes the link register and jumps to the register-relative target.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             long target = (state.decodedRegister(rs1) + immediate) & ~1L;
             state.setDecodedRegister(rd, nextPc);
             state.setPc(target);
@@ -670,7 +670,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Branches when both source registers are equal.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) == state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
 
@@ -686,7 +686,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Branches when both source registers differ.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) != state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
 
@@ -702,7 +702,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Branches when the first source register is signed-less-than the second.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) < state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
 
@@ -718,7 +718,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Branches when the first source register is signed-greater-or-equal to the second.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setPc(state.decodedRegister(rs1) >= state.decodedRegister(rs2) ? address + immediate : nextPc);
         }
 
@@ -734,7 +734,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Branches when the first source register is unsigned-less-than the second.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setPc(Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) < 0 ? address + immediate : nextPc);
         }
 
@@ -750,7 +750,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Branches when the first source register is unsigned-greater-or-equal to the second.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setPc(Long.compareUnsigned(state.decodedRegister(rs1), state.decodedRegister(rs2)) >= 0 ? address + immediate : nextPc);
         }
 
@@ -766,7 +766,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Dispatches the environment call through the syscall handler.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.syscalls().handle(state, address);
             if (state.pc() == address) {
                 state.setPc(nextPc);
@@ -784,7 +784,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Terminates the program with a zero exit status.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             throw new ProgramExitException(0);
         }
 
@@ -799,7 +799,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Adds a sign-extended immediate to a register.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) + immediate);
         }
 
@@ -814,7 +814,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Xors a register with a sign-extended immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ immediate);
         }
 
@@ -829,7 +829,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Ors a register with a sign-extended immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) | immediate);
         }
 
@@ -844,7 +844,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Ands a register with a sign-extended immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) & immediate);
         }
 
@@ -859,7 +859,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a register left by the decoded immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) << immediate);
         }
 
@@ -874,7 +874,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a register right logically by the decoded immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> immediate);
         }
 
@@ -889,7 +889,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a register right arithmetically by the decoded immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >> immediate);
         }
 
@@ -904,7 +904,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Adds an immediate in word width and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) (state.decodedRegister(rs1) + immediate));
         }
 
@@ -919,7 +919,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Sets the destination when the source register is signed-less-than the immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, DataIndependent.signedLessThan(state.decodedRegister(rs1), immediate));
         }
 
@@ -934,7 +934,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Sets the destination when the source register is unsigned-less-than the immediate.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, DataIndependent.unsignedLessThan(state.decodedRegister(rs1), immediate));
         }
 
@@ -949,7 +949,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a word left by the immediate and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) << immediate);
         }
 
@@ -964,7 +964,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a word right logically by the immediate and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >>> immediate);
         }
 
@@ -979,7 +979,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a word right arithmetically by the immediate and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >> immediate);
         }
 
@@ -994,7 +994,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Adds two source registers.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) + state.decodedRegister(rs2));
         }
 
@@ -1009,7 +1009,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Subtracts the second source register from the first.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) - state.decodedRegister(rs2));
         }
 
@@ -1024,7 +1024,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Xors two source registers.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) ^ state.decodedRegister(rs2));
         }
 
@@ -1039,7 +1039,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Ors two source registers.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) | state.decodedRegister(rs2));
         }
 
@@ -1054,7 +1054,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Ands two source registers.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) & state.decodedRegister(rs2));
         }
 
@@ -1069,7 +1069,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts the first source register left by the masked second source register.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x3f));
         }
 
@@ -1084,7 +1084,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts the first source register right logically by the masked second source register.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x3f));
         }
 
@@ -1099,7 +1099,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts the first source register right arithmetically by the masked second source register.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x3f));
         }
 
@@ -1114,7 +1114,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Adds two source registers in word width and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) + (int) state.decodedRegister(rs2));
         }
 
@@ -1129,7 +1129,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Subtracts two source registers in word width and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) - (int) state.decodedRegister(rs2));
         }
 
@@ -1144,7 +1144,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Sets the destination when the first source register is signed-less-than the second.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, DataIndependent.signedLessThan(state.decodedRegister(rs1), state.decodedRegister(rs2)));
         }
 
@@ -1159,7 +1159,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Sets the destination when the first source register is unsigned-less-than the second.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, DataIndependent.unsignedLessThan(state.decodedRegister(rs1), state.decodedRegister(rs2)));
         }
 
@@ -1174,7 +1174,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a word left by the masked second source register and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) << (state.decodedRegister(rs2) & 0x1f));
         }
 
@@ -1189,7 +1189,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a word right logically by the masked second source register and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >>> (state.decodedRegister(rs2) & 0x1f));
         }
 
@@ -1204,7 +1204,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Shifts a word right arithmetically by the masked second source register and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) >> (state.decodedRegister(rs2) & 0x1f));
         }
 
@@ -1219,7 +1219,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Multiplies two source registers and keeps the low 64 bits.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.decodedRegister(rs1) * state.decodedRegister(rs2));
         }
 
@@ -1234,7 +1234,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Multiplies two source registers in word width and sign-extends the result.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, (int) state.decodedRegister(rs1) * (int) state.decodedRegister(rs2));
         }
 
@@ -1249,7 +1249,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Loads a sign-extended byte.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readByte(state.decodedRegister(rs1) + immediate));
         }
 
@@ -1264,7 +1264,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Loads a sign-extended halfword.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readShort(state.decodedRegister(rs1) + immediate));
         }
 
@@ -1279,7 +1279,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Loads a sign-extended word.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readInt(state.decodedRegister(rs1) + immediate));
         }
 
@@ -1294,7 +1294,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Loads a doubleword.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readLong(state.decodedRegister(rs1) + immediate));
         }
 
@@ -1309,7 +1309,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Loads a zero-extended byte.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedByte(state.decodedRegister(rs1) + immediate));
         }
 
@@ -1324,7 +1324,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Loads a zero-extended halfword.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedShort(state.decodedRegister(rs1) + immediate));
         }
 
@@ -1339,7 +1339,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Loads a zero-extended word.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             state.setDecodedRegister(rd, state.memory().readUnsignedInt(state.decodedRegister(rs1) + immediate));
         }
 
@@ -1354,7 +1354,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Stores a byte.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeByte(storeAddress, (byte) state.decodedRegister(rs2));
             afterStore(state, storeAddress, Byte.BYTES);
@@ -1372,7 +1372,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Stores a halfword.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeShort(storeAddress, (short) state.decodedRegister(rs2));
             afterStore(state, storeAddress, Short.BYTES);
@@ -1390,7 +1390,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Stores a word.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeInt(storeAddress, (int) state.decodedRegister(rs2));
             afterStore(state, storeAddress, Integer.BYTES);
@@ -1408,7 +1408,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Stores a doubleword.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             long storeAddress = state.decodedRegister(rs1) + immediate;
             state.memory().writeLong(storeAddress, state.decodedRegister(rs2));
             afterStore(state, storeAddress, Long.BYTES);
@@ -1435,7 +1435,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded control-flow or system instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeControl(state, nextPc);
         }
 
@@ -1459,7 +1459,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded integer load instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeLoad(state, state.memory(), nextPc);
         }
 
@@ -1483,7 +1483,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded floating-point load instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeFloatingPointLoad(state, state.memory(), nextPc);
         }
 
@@ -1507,7 +1507,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded integer store instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeStore(state, state.memory(), nextPc);
         }
 
@@ -1531,7 +1531,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded floating-point store instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeFloatingPointStore(state, state.memory(), nextPc);
         }
 
@@ -1555,7 +1555,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded register-immediate integer instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeImmediateInteger(state, nextPc);
         }
 
@@ -1579,7 +1579,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded register-register integer instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeRegisterInteger(state, nextPc);
         }
 
@@ -1603,7 +1603,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded multiply or divide instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeMultiplyDivide(state, nextPc);
         }
 
@@ -1627,7 +1627,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded RVA22U64 instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeRva22(state, state.memory(), nextPc);
         }
 
@@ -1651,7 +1651,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded RVA23U64 scalar instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeRva23(state, nextPc);
         }
 
@@ -1675,7 +1675,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded vector instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeVector(state, state.memory(), nextPc);
         }
 
@@ -1699,7 +1699,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded floating-point arithmetic or conversion instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeFloatingPointOperation(state, nextPc);
         }
 
@@ -1723,14 +1723,14 @@ public abstract sealed class RiscVInstructionSemantics {
 
         /// Executes the decoded atomic memory instruction.
         @Override
-        protected void executeInstruction(MachineState state, long nextPc) {
+        protected void executeInstruction(RiscVThreadState state, long nextPc) {
             executeAtomic(state, state.memory(), nextPc);
         }
 
     }
 
     /// Executes control-flow and system operations.
-    protected final void executeControl(MachineState state, long nextPc) {
+    protected final void executeControl(RiscVThreadState state, long nextPc) {
         switch (operation) {
             case NOP, WRS_NTO, WRS_STO, C_MOP -> state.setPc(nextPc);
             case FENCE -> {
@@ -1779,7 +1779,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes load operations.
-    protected final void executeLoad(MachineState state, Memory memory, long nextPc) {
+    protected final void executeLoad(RiscVThreadState state, Memory memory, long nextPc) {
         switch (operation) {
             case LB -> loadByte(state, memory, nextPc);
             case LH -> loadShort(state, memory, nextPc);
@@ -1794,7 +1794,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes floating-point load operations.
-    protected final void executeFloatingPointLoad(MachineState state, Memory memory, long nextPc) {
+    protected final void executeFloatingPointLoad(RiscVThreadState state, Memory memory, long nextPc) {
         switch (operation) {
             case FLH -> loadFloatHalf(state, memory, nextPc);
             case FLW -> loadFloatWord(state, memory, nextPc);
@@ -1805,7 +1805,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes store operations.
-    protected final void executeStore(MachineState state, Memory memory, long nextPc) {
+    protected final void executeStore(RiscVThreadState state, Memory memory, long nextPc) {
         switch (operation) {
             case SB -> storeByte(state, memory, nextPc);
             case SH -> storeShort(state, memory, nextPc);
@@ -1817,7 +1817,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes floating-point store operations.
-    protected final void executeFloatingPointStore(MachineState state, Memory memory, long nextPc) {
+    protected final void executeFloatingPointStore(RiscVThreadState state, Memory memory, long nextPc) {
         switch (operation) {
             case FSH -> storeFloatHalf(state, memory, nextPc);
             case FSW -> storeFloatWord(state, memory, nextPc);
@@ -1828,7 +1828,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes integer register-immediate operations.
-    protected final void executeImmediateInteger(MachineState state, long nextPc) {
+    protected final void executeImmediateInteger(RiscVThreadState state, long nextPc) {
         switch (operation) {
             case ADDI -> binaryImmediate(state, nextPc, state.decodedRegister(rs1) + immediate);
             case SLTI -> binaryImmediate(state, nextPc, DataIndependent.signedLessThan(state.decodedRegister(rs1), immediate));
@@ -1849,7 +1849,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes integer register-register operations.
-    protected final void executeRegisterInteger(MachineState state, long nextPc) {
+    protected final void executeRegisterInteger(RiscVThreadState state, long nextPc) {
         switch (operation) {
             case ADD -> binaryRegister(state, nextPc, state.decodedRegister(rs1) + state.decodedRegister(rs2));
             case SUB -> binaryRegister(state, nextPc, state.decodedRegister(rs1) - state.decodedRegister(rs2));
@@ -1872,7 +1872,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes RV64M multiply and divide operations.
-    protected final void executeMultiplyDivide(MachineState state, long nextPc) {
+    protected final void executeMultiplyDivide(RiscVThreadState state, long nextPc) {
         switch (operation) {
             case MUL -> binaryRegister(state, nextPc, state.decodedRegister(rs1) * state.decodedRegister(rs2));
             case MULH -> binaryRegister(state, nextPc, DataIndependent.multiplyHighSigned(state.decodedRegister(rs1), state.decodedRegister(rs2)));
@@ -1893,7 +1893,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes RVA22U64 integer bit-manipulation and cache-block operations.
-    protected final void executeRva22(MachineState state, Memory memory, long nextPc) {
+    protected final void executeRva22(RiscVThreadState state, Memory memory, long nextPc) {
         switch (operation) {
             case SH1ADD -> binaryRegister(state, nextPc, (state.decodedRegister(rs1) << 1) + state.decodedRegister(rs2));
             case SH2ADD -> binaryRegister(state, nextPc, (state.decodedRegister(rs1) << 2) + state.decodedRegister(rs2));
@@ -1942,7 +1942,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes additional RVA23U64 scalar operations that are not part of RVA22U64.
-    protected final void executeRva23(MachineState state, long nextPc) {
+    protected final void executeRva23(RiscVThreadState state, long nextPc) {
         switch (operation) {
             case CZERO_EQZ -> binaryRegister(
                     state,
@@ -1964,7 +1964,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes implemented RVV 1.0 vector operations.
-    protected final void executeVector(MachineState state, Memory memory, long nextPc) {
+    protected final void executeVector(RiscVThreadState state, Memory memory, long nextPc) {
         VectorUnit vector = state.vectorUnit();
         switch (operation) {
             case VSETVLI -> vector.executeVsetVli(state, rd, rs1, (int) immediate, nextPc);
@@ -1979,7 +1979,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes floating-point arithmetic, conversion, move, compare, and classify operations.
-    protected final void executeFloatingPointOperation(MachineState state, long nextPc) {
+    protected final void executeFloatingPointOperation(RiscVThreadState state, long nextPc) {
         switch (operation) {
             case FMADD -> fusedMultiplyAdd(state, nextPc, false, false);
             case FMSUB -> fusedMultiplyAdd(state, nextPc, false, true);
@@ -2072,7 +2072,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes RV64A atomic operations.
-    protected final void executeAtomic(MachineState state, Memory memory, long nextPc) {
+    protected final void executeAtomic(RiscVThreadState state, Memory memory, long nextPc) {
         switch (operation) {
             case LR_W -> lrWord(state, memory, nextPc);
             case LR_D -> lrDouble(state, memory, nextPc);
@@ -2107,12 +2107,12 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Sets the next program counter for a conditional branch.
-    private void branch(MachineState state, boolean taken, long nextPc) {
+    private void branch(RiscVThreadState state, boolean taken, long nextPc) {
         state.setPc(taken ? address + immediate : nextPc);
     }
 
     /// Writes a CSR and returns its old value when the destination register is not `x0`.
-    private void writeControlStatusRegister(MachineState state, long nextPc, long value) {
+    private void writeControlStatusRegister(RiscVThreadState state, long nextPc, long value) {
         long oldValue = rd == 0 ? 0 : state.readControlStatusRegister((int) immediate);
         state.writeControlStatusRegister((int) immediate, value);
         state.setDecodedRegister(rd, oldValue);
@@ -2121,7 +2121,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Sets or clears CSR bits using the supplied mask value.
-    private void setClearControlStatusRegister(MachineState state, long nextPc, long mask, boolean setBits) {
+    private void setClearControlStatusRegister(RiscVThreadState state, long nextPc, long mask, boolean setBits) {
         long oldValue = state.readControlStatusRegister((int) immediate);
         if (mask != 0) {
             state.writeControlStatusRegister((int) immediate, setBits ? oldValue | mask : oldValue & ~mask);
@@ -2132,25 +2132,25 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Writes an immediate arithmetic result and advances the program counter.
-    private void binaryImmediate(MachineState state, long nextPc, long value) {
+    private void binaryImmediate(RiscVThreadState state, long nextPc, long value) {
         state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
 
     /// Writes a sign-extended 32-bit immediate arithmetic result and advances the program counter.
-    private void wordImmediate(MachineState state, long nextPc, int value) {
+    private void wordImmediate(RiscVThreadState state, long nextPc, int value) {
         state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
 
     /// Writes a register arithmetic result and advances the program counter.
-    private void binaryRegister(MachineState state, long nextPc, long value) {
+    private void binaryRegister(RiscVThreadState state, long nextPc, long value) {
         state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
 
     /// Writes a sign-extended 32-bit register arithmetic result and advances the program counter.
-    private void wordRegister(MachineState state, long nextPc, int value) {
+    private void wordRegister(RiscVThreadState state, long nextPc, int value) {
         state.setDecodedRegister(rd, value);
         state.setPc(nextPc);
     }
@@ -2181,7 +2181,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Zeroes the 64-byte cache block containing the supplied base address.
-    private void cacheBlockZero(MachineState state, Memory memory, long nextPc) {
+    private void cacheBlockZero(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1)) & -RiscVExtensions.CACHE_BLOCK_SIZE;
         for (long offset = 0; offset < RiscVExtensions.CACHE_BLOCK_SIZE; offset += Long.BYTES) {
             memory.writeLong(address + offset, 0);
@@ -2192,67 +2192,67 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Loads a sign-extended byte value.
-    private void loadByte(MachineState state, Memory memory, long nextPc) {
+    private void loadByte(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedRegister(rd, memory.readByte(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a sign-extended 16-bit value.
-    private void loadShort(MachineState state, Memory memory, long nextPc) {
+    private void loadShort(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedRegister(rd, memory.readShort(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a sign-extended 32-bit value.
-    private void loadInt(MachineState state, Memory memory, long nextPc) {
+    private void loadInt(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedRegister(rd, memory.readInt(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a 64-bit value.
-    private void loadLong(MachineState state, Memory memory, long nextPc) {
+    private void loadLong(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedRegister(rd, memory.readLong(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a zero-extended byte value.
-    private void loadUnsignedByte(MachineState state, Memory memory, long nextPc) {
+    private void loadUnsignedByte(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedRegister(rd, memory.readUnsignedByte(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a zero-extended 16-bit value.
-    private void loadUnsignedShort(MachineState state, Memory memory, long nextPc) {
+    private void loadUnsignedShort(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedRegister(rd, memory.readUnsignedShort(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a zero-extended 32-bit value.
-    private void loadUnsignedInt(MachineState state, Memory memory, long nextPc) {
+    private void loadUnsignedInt(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedRegister(rd, memory.readUnsignedInt(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a 16-bit floating-point value and NaN-boxes it in a 64-bit FP register.
-    private void loadFloatHalf(MachineState state, Memory memory, long nextPc) {
+    private void loadFloatHalf(RiscVThreadState state, Memory memory, long nextPc) {
         writeHalfBits(state, rd, memory.readUnsignedShort(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a 32-bit floating-point value and NaN-boxes it in a 64-bit FP register.
-    private void loadFloatWord(MachineState state, Memory memory, long nextPc) {
+    private void loadFloatWord(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedFloatingPointRegister(rd, 0xffff_ffff_0000_0000L | memory.readUnsignedInt(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Loads a 64-bit floating-point value as raw bits.
-    private void loadFloatDouble(MachineState state, Memory memory, long nextPc) {
+    private void loadFloatDouble(RiscVThreadState state, Memory memory, long nextPc) {
         state.setDecodedFloatingPointRegister(rd, memory.readLong(state.decodedRegister(rs1) + immediate));
         state.setPc(nextPc);
     }
 
     /// Stores a byte value.
-    private void storeByte(MachineState state, Memory memory, long nextPc) {
+    private void storeByte(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeByte(address, (byte) state.decodedRegister(rs2));
         afterStore(state, address, Byte.BYTES);
@@ -2262,7 +2262,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Stores a 16-bit value.
-    private void storeShort(MachineState state, Memory memory, long nextPc) {
+    private void storeShort(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeShort(address, (short) state.decodedRegister(rs2));
         afterStore(state, address, Short.BYTES);
@@ -2272,7 +2272,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Stores a 32-bit value.
-    private void storeInt(MachineState state, Memory memory, long nextPc) {
+    private void storeInt(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeInt(address, (int) state.decodedRegister(rs2));
         afterStore(state, address, Integer.BYTES);
@@ -2282,7 +2282,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Stores a 64-bit value.
-    private void storeLong(MachineState state, Memory memory, long nextPc) {
+    private void storeLong(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeLong(address, state.decodedRegister(rs2));
         afterStore(state, address, Long.BYTES);
@@ -2292,7 +2292,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Stores the low 16 bits of a floating-point register.
-    private void storeFloatHalf(MachineState state, Memory memory, long nextPc) {
+    private void storeFloatHalf(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeShort(address, (short) state.decodedFloatingPointRegister(rs2));
         afterStore(state, address, Short.BYTES);
@@ -2302,7 +2302,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Stores the low 32 bits of a floating-point register.
-    private void storeFloatWord(MachineState state, Memory memory, long nextPc) {
+    private void storeFloatWord(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeInt(address, (int) state.decodedFloatingPointRegister(rs2));
         afterStore(state, address, Integer.BYTES);
@@ -2312,7 +2312,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Stores a 64-bit floating-point register as raw bits.
-    private void storeFloatDouble(MachineState state, Memory memory, long nextPc) {
+    private void storeFloatDouble(RiscVThreadState state, Memory memory, long nextPc) {
         long address = state.maskPointer(state.decodedRegister(rs1) + immediate);
         memory.writeLong(address, state.decodedFloatingPointRegister(rs2));
         afterStore(state, address, Long.BYTES);
@@ -2322,7 +2322,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes an environment call through the configured syscall handler.
-    private void ecall(MachineState state) {
+    private void ecall(RiscVThreadState state) {
         state.syscalls().handle(state, address);
         if (state.pc() == address) {
             state.setPc(address + length);
@@ -2330,7 +2330,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Loads and reserves a 32-bit memory word.
-    private void lrWord(MachineState state, Memory memory, long nextPc) {
+    private void lrWord(RiscVThreadState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
@@ -2343,7 +2343,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Loads and reserves a 64-bit memory doubleword.
-    private void lrDouble(MachineState state, Memory memory, long nextPc) {
+    private void lrDouble(RiscVThreadState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
@@ -2356,7 +2356,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
-    private void scWord(MachineState state, Memory memory, long nextPc) {
+    private void scWord(RiscVThreadState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
@@ -2375,7 +2375,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
-    private void scDouble(MachineState state, Memory memory, long nextPc) {
+    private void scDouble(RiscVThreadState state, Memory memory, long nextPc) {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
@@ -2394,7 +2394,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes a 32-bit AMO instruction.
-    private void amoWord(MachineState state, Memory memory, long nextPc, AmoKind kind) {
+    private void amoWord(RiscVThreadState state, Memory memory, long nextPc, AmoKind kind) {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
@@ -2425,7 +2425,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes a 64-bit AMO instruction.
-    private void amoDouble(MachineState state, Memory memory, long nextPc, AmoKind kind) {
+    private void amoDouble(RiscVThreadState state, Memory memory, long nextPc, AmoKind kind) {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
@@ -2461,13 +2461,13 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Executes an F or D fused multiply-add operation.
-    private void fusedMultiplyAdd(MachineState state, long nextPc, boolean negateProduct, boolean subtractAddend) {
+    private void fusedMultiplyAdd(RiscVThreadState state, long nextPc, boolean negateProduct, boolean subtractAddend) {
         executeFusedMultiplyAdd(state, negateProduct, subtractAddend);
         state.setPc(nextPc);
     }
 
     /// Executes an F or D fused multiply-add operation without updating `pc`.
-    private void executeFusedMultiplyAdd(MachineState state, boolean negateProduct, boolean subtractAddend) {
+    private void executeFusedMultiplyAdd(RiscVThreadState state, boolean negateProduct, boolean subtractAddend) {
         int roundingMode = effectiveRoundingMode(state);
         int rs3 = thirdFloatingPointSource();
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
@@ -2522,13 +2522,13 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes a basic binary floating-point arithmetic operation.
-    private void floatingPointArithmetic(MachineState state, long nextPc, char operator) {
+    private void floatingPointArithmetic(RiscVThreadState state, long nextPc, char operator) {
         executeFloatingPointArithmetic(state, operator);
         state.setPc(nextPc);
     }
 
     /// Executes a basic binary floating-point arithmetic operation without updating `pc`.
-    private void executeFloatingPointArithmetic(MachineState state, char operator) {
+    private void executeFloatingPointArithmetic(RiscVThreadState state, char operator) {
         int roundingMode = effectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int leftBits = readSingleBits(state, rs1);
@@ -2594,13 +2594,13 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes a floating-point square-root operation.
-    private void floatingPointSquareRoot(MachineState state, long nextPc) {
+    private void floatingPointSquareRoot(RiscVThreadState state, long nextPc) {
         executeFloatingPointSquareRoot(state);
         state.setPc(nextPc);
     }
 
     /// Executes a floating-point square-root operation without updating `pc`.
-    private void executeFloatingPointSquareRoot(MachineState state) {
+    private void executeFloatingPointSquareRoot(RiscVThreadState state) {
         int roundingMode = effectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int bits = readSingleBits(state, rs1);
@@ -2634,7 +2634,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes a floating-point sign-injection operation.
-    private void floatingPointSignInjection(MachineState state, long nextPc, SignInjectionKind kind) {
+    private void floatingPointSignInjection(RiscVThreadState state, long nextPc, SignInjectionKind kind) {
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int left = readSingleBits(state, rs1);
             int right = readSingleBits(state, rs2);
@@ -2658,7 +2658,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes a floating-point minimum or maximum operation.
-    private void floatingPointMinimumMaximum(MachineState state, long nextPc, boolean minimum) {
+    private void floatingPointMinimumMaximum(RiscVThreadState state, long nextPc, boolean minimum) {
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             writeSingleBits(state, rd, minimum
                     ? minimumSingleBits(state, readSingleBits(state, rs1), readSingleBits(state, rs2))
@@ -2672,7 +2672,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes an IEEE 754-2019 floating-point minimum or maximum operation.
-    private void floatingPointMinimumMaximumNumber(MachineState state, long nextPc, boolean minimum) {
+    private void floatingPointMinimumMaximumNumber(RiscVThreadState state, long nextPc, boolean minimum) {
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             writeSingleBits(state, rd, minimum
                     ? minimumNumberSingleBits(state, readSingleBits(state, rs1), readSingleBits(state, rs2))
@@ -2686,7 +2686,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Loads a Zfa floating-point immediate constant.
-    private void loadFloatingPointImmediate(MachineState state) {
+    private void loadFloatingPointImmediate(RiscVThreadState state) {
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             writeSingleBits(state, rd, FLI_SINGLE_BITS[rs1]);
         } else {
@@ -2695,7 +2695,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Executes a floating-point comparison operation.
-    private void floatingPointCompare(MachineState state, long nextPc, CompareKind kind) {
+    private void floatingPointCompare(RiscVThreadState state, long nextPc, CompareKind kind) {
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int leftBits = readSingleBits(state, rs1);
             int rightBits = readSingleBits(state, rs2);
@@ -2732,13 +2732,13 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts a floating-point value to an integer register.
-    private void convertFloatingPointToInteger(MachineState state, long nextPc) {
+    private void convertFloatingPointToInteger(RiscVThreadState state, long nextPc) {
         executeConvertFloatingPointToInteger(state);
         state.setPc(nextPc);
     }
 
     /// Converts a floating-point value to an integer register without updating `pc`.
-    private void executeConvertFloatingPointToInteger(MachineState state) {
+    private void executeConvertFloatingPointToInteger(RiscVThreadState state) {
         int roundingMode = effectiveRoundingMode(state);
         double value = floatingPointFormat() == SINGLE_FLOAT_FORMAT ? readSingle(state, rs1) : readDouble(state, rs1);
         switch (rs2) {
@@ -2751,7 +2751,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Converts a double-precision value to a modular signed 32-bit integer result.
-    private void convertDoubleToModularWord(MachineState state) {
+    private void convertDoubleToModularWord(RiscVThreadState state) {
         double value = readDouble(state, rs1);
         convertToSignedInteger(state, value, ROUND_TOWARD_ZERO, Integer.MIN_VALUE, 0x1.0p31);
         if (Double.isNaN(value) || Double.isInfinite(value)) {
@@ -2764,13 +2764,13 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts an integer register value to a floating-point register.
-    private void convertIntegerToFloatingPoint(MachineState state, long nextPc) {
+    private void convertIntegerToFloatingPoint(RiscVThreadState state, long nextPc) {
         executeConvertIntegerToFloatingPoint(state);
         state.setPc(nextPc);
     }
 
     /// Converts an integer register value to a floating-point register without updating `pc`.
-    private void executeConvertIntegerToFloatingPoint(MachineState state) {
+    private void executeConvertIntegerToFloatingPoint(RiscVThreadState state) {
         int roundingMode = effectiveRoundingMode(state);
         long value = state.decodedRegister(rs1);
         ExactBinaryValue exact = switch (rs2) {
@@ -2791,7 +2791,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts a double-precision value to a single-precision value without updating `pc`.
-    private void convertDoubleToSingle(MachineState state) {
+    private void convertDoubleToSingle(RiscVThreadState state) {
         int roundingMode = effectiveRoundingMode(state);
         long bits = state.decodedFloatingPointRegister(rs1);
         if (isSignalingDoubleNaN(bits)) {
@@ -2803,7 +2803,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts a half-precision value to a single-precision value without updating `pc`.
-    private void convertHalfToSingle(MachineState state) {
+    private void convertHalfToSingle(RiscVThreadState state) {
         checkEffectiveRoundingMode(state);
         int bits = readHalfBits(state, rs1);
         if (isSignalingHalfNaN(bits)) {
@@ -2814,7 +2814,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts a single-precision value to a double-precision value without updating `pc`.
-    private void convertSingleToDouble(MachineState state) {
+    private void convertSingleToDouble(RiscVThreadState state) {
         checkEffectiveRoundingMode(state);
         int bits = readSingleBits(state, rs1);
         if (isSignalingSingleNaN(bits)) {
@@ -2825,7 +2825,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts a half-precision value to a double-precision value without updating `pc`.
-    private void convertHalfToDouble(MachineState state) {
+    private void convertHalfToDouble(RiscVThreadState state) {
         checkEffectiveRoundingMode(state);
         int bits = readHalfBits(state, rs1);
         if (isSignalingHalfNaN(bits)) {
@@ -2836,7 +2836,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts a single-precision value to a half-precision value without updating `pc`.
-    private void convertSingleToHalf(MachineState state) {
+    private void convertSingleToHalf(RiscVThreadState state) {
         int roundingMode = effectiveRoundingMode(state);
         int bits = readSingleBits(state, rs1);
         writeHalfBits(state, rd, convertSingleBitsToHalfBits(state, bits, roundingMode));
@@ -2844,7 +2844,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Converts a double-precision value to a half-precision value without updating `pc`.
-    private void convertDoubleToHalf(MachineState state) {
+    private void convertDoubleToHalf(RiscVThreadState state) {
         int roundingMode = effectiveRoundingMode(state);
         long bits = state.decodedFloatingPointRegister(rs1);
         writeHalfBits(state, rd, convertDoubleBitsToHalfBits(state, bits, roundingMode));
@@ -2852,7 +2852,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Rounds a floating-point value to an integral floating-point value without updating `pc`.
-    private void roundFloatingPointToIntegral(MachineState state, boolean exact) {
+    private void roundFloatingPointToIntegral(RiscVThreadState state, boolean exact) {
         int roundingMode = effectiveRoundingMode(state);
         if (floatingPointFormat() == SINGLE_FLOAT_FORMAT) {
             int bits = readSingleBits(state, rs1);
@@ -2897,35 +2897,35 @@ public abstract sealed class RiscVInstructionSemantics {
 
 
     /// Updates invalid-operation flags for signaling single-precision NaN inputs.
-    private static void updateInvalidFlagForSignalingSingleNaNs(MachineState state, int first, int second) {
+    private static void updateInvalidFlagForSignalingSingleNaNs(RiscVThreadState state, int first, int second) {
         if (isSignalingSingleNaN(first) || isSignalingSingleNaN(second)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
     }
 
     /// Updates invalid-operation flags for signaling single-precision NaN inputs.
-    private static void updateInvalidFlagForSignalingSingleNaNs(MachineState state, int first, int second, int third) {
+    private static void updateInvalidFlagForSignalingSingleNaNs(RiscVThreadState state, int first, int second, int third) {
         if (isSignalingSingleNaN(first) || isSignalingSingleNaN(second) || isSignalingSingleNaN(third)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
     }
 
     /// Updates invalid-operation flags for signaling double-precision NaN inputs.
-    private static void updateInvalidFlagForSignalingDoubleNaNs(MachineState state, long first, long second) {
+    private static void updateInvalidFlagForSignalingDoubleNaNs(RiscVThreadState state, long first, long second) {
         if (isSignalingDoubleNaN(first) || isSignalingDoubleNaN(second)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
     }
 
     /// Updates invalid-operation flags for signaling double-precision NaN inputs.
-    private static void updateInvalidFlagForSignalingDoubleNaNs(MachineState state, long first, long second, long third) {
+    private static void updateInvalidFlagForSignalingDoubleNaNs(RiscVThreadState state, long first, long second, long third) {
         if (isSignalingDoubleNaN(first) || isSignalingDoubleNaN(second) || isSignalingDoubleNaN(third)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
     }
 
     /// Updates invalid-operation flags for arithmetic indeterminate forms.
-    private static void updateInvalidFlagForArithmetic(MachineState state, float left, float right, char operator) {
+    private static void updateInvalidFlagForArithmetic(RiscVThreadState state, float left, float right, char operator) {
         if (switch (operator) {
             case '+', '-' -> Float.isInfinite(left) && Float.isInfinite(right)
                     && Math.copySign(1.0f, left) != Math.copySign(1.0f, operator == '-' ? -right : right);
@@ -2938,7 +2938,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Updates invalid-operation flags for arithmetic indeterminate forms.
-    private static void updateInvalidFlagForArithmetic(MachineState state, double left, double right, char operator) {
+    private static void updateInvalidFlagForArithmetic(RiscVThreadState state, double left, double right, char operator) {
         if (switch (operator) {
             case '+', '-' -> Double.isInfinite(left) && Double.isInfinite(right)
                     && Math.copySign(1.0d, left) != Math.copySign(1.0d, operator == '-' ? -right : right);
@@ -2951,7 +2951,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Updates invalid-operation flags for fused multiply-add indeterminate forms.
-    private static void updateInvalidFlagForFusedMultiplyAdd(MachineState state, float left, float right, float addend) {
+    private static void updateInvalidFlagForFusedMultiplyAdd(RiscVThreadState state, float left, float right, float addend) {
         if ((left == 0.0f && Float.isInfinite(right)) || (Float.isInfinite(left) && right == 0.0f)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             return;
@@ -2964,7 +2964,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Updates invalid-operation flags for fused multiply-add indeterminate forms.
-    private static void updateInvalidFlagForFusedMultiplyAdd(MachineState state, double left, double right, double addend) {
+    private static void updateInvalidFlagForFusedMultiplyAdd(RiscVThreadState state, double left, double right, double addend) {
         if ((left == 0.0d && Double.isInfinite(right)) || (Double.isInfinite(left) && right == 0.0d)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
             return;
@@ -2987,7 +2987,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Rounds a single-precision arithmetic result and records single-precision arithmetic flags.
-    private static float roundSingleResult(MachineState state, double exact, float nearest, int roundingMode) {
+    private static float roundSingleResult(RiscVThreadState state, double exact, float nearest, int roundingMode) {
         if (Double.isNaN(exact) || Double.isInfinite(exact)) {
             return nearest;
         }
@@ -2997,7 +2997,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Rounds a finite exact binary value to single precision and records arithmetic flags.
     private static float roundSingleExactBinaryResult(
-            MachineState state,
+            RiscVThreadState state,
             ExactBinaryValue exact,
             float nearest,
             int roundingMode) {
@@ -3076,7 +3076,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Rounds a finite exact rational value to single precision and records arithmetic flags.
     private static float roundSingleRationalResult(
-            MachineState state,
+            RiscVThreadState state,
             ExactRationalValue exact,
             float nearest,
             int roundingMode) {
@@ -3144,7 +3144,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Records single-precision flags for an exact binary source value.
     private static void updateSingleExactArithmeticFlags(
-            MachineState state,
+            RiscVThreadState state,
             int exactSign,
             float rounded,
             boolean inexact,
@@ -3164,7 +3164,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Rounds a finite single-precision square root and records arithmetic flags.
     private static float roundSingleSquareRootResult(
-            MachineState state,
+            RiscVThreadState state,
             ExactBinaryValue radicand,
             float nearest,
             int roundingMode) {
@@ -3207,7 +3207,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Rounds a finite exact binary value to double precision and records arithmetic flags.
     private static double roundDoubleResult(
-            MachineState state,
+            RiscVThreadState state,
             ExactBinaryValue exact,
             double nearest,
             int roundingMode) {
@@ -3286,7 +3286,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Rounds a finite double-precision square root and records arithmetic flags.
     private static double roundDoubleSquareRootResult(
-            MachineState state,
+            RiscVThreadState state,
             ExactBinaryValue radicand,
             double nearest,
             int roundingMode) {
@@ -3329,7 +3329,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Rounds a finite exact rational value to double precision and records arithmetic flags.
     private static double roundDoubleRationalResult(
-            MachineState state,
+            RiscVThreadState state,
             ExactRationalValue exact,
             double nearest,
             int roundingMode) {
@@ -3397,7 +3397,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Records double-precision flags for an exact binary source value.
     private static void updateDoubleExactArithmeticFlags(
-            MachineState state,
+            RiscVThreadState state,
             int exactSign,
             double rounded,
             boolean inexact,
@@ -3416,7 +3416,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Records conservative double-precision arithmetic flags for binary operations.
-    private static void updateDoubleArithmeticFlags(MachineState state, double left, double right, char operator, double result) {
+    private static void updateDoubleArithmeticFlags(RiscVThreadState state, double left, double right, char operator, double result) {
         if (Double.isNaN(result)) {
             return;
         }
@@ -3436,7 +3436,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Records conservative double-precision arithmetic flags for fused multiply-add operations.
-    private static void updateDoubleArithmeticFlags(MachineState state, double left, double right, double addend, double result) {
+    private static void updateDoubleArithmeticFlags(RiscVThreadState state, double left, double right, double addend, double result) {
         if (Double.isNaN(result)) {
             return;
         }
@@ -3739,39 +3739,39 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Reads a half-precision register as raw bits, applying NaN-boxing rules.
-    private static int readHalfBits(MachineState state, int register) {
+    private static int readHalfBits(RiscVThreadState state, int register) {
         long value = state.decodedFloatingPointRegister(register);
         return (value & HALF_NAN_BOX_MASK) == HALF_NAN_BOX_MASK ? (int) value & 0xffff : CANONICAL_HALF_NAN;
     }
 
     /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
-    private static int readSingleBits(MachineState state, int register) {
+    private static int readSingleBits(RiscVThreadState state, int register) {
         long value = state.decodedFloatingPointRegister(register);
         return (value & SINGLE_NAN_BOX_MASK) == SINGLE_NAN_BOX_MASK ? (int) value : CANONICAL_SINGLE_NAN;
     }
 
     /// Reads a single-precision register as a Java float.
-    private static float readSingle(MachineState state, int register) {
+    private static float readSingle(RiscVThreadState state, int register) {
         return Float.intBitsToFloat(readSingleBits(state, register));
     }
 
     /// Reads a double-precision register as a Java double.
-    private static double readDouble(MachineState state, int register) {
+    private static double readDouble(RiscVThreadState state, int register) {
         return Double.longBitsToDouble(state.decodedFloatingPointRegister(register));
     }
 
     /// Writes raw half-precision bits to a NaN-boxed floating-point register.
-    private static void writeHalfBits(MachineState state, int register, int bits) {
+    private static void writeHalfBits(RiscVThreadState state, int register, int bits) {
         state.setDecodedFloatingPointRegister(register, HALF_NAN_BOX_MASK | (bits & 0xffffL));
     }
 
     /// Writes raw single-precision bits to a NaN-boxed floating-point register.
-    private static void writeSingleBits(MachineState state, int register, int bits) {
+    private static void writeSingleBits(RiscVThreadState state, int register, int bits) {
         state.setDecodedFloatingPointRegister(register, SINGLE_NAN_BOX_MASK | (bits & 0xffff_ffffL));
     }
 
     /// Writes raw double-precision bits to a floating-point register.
-    private static void writeDoubleBits(MachineState state, int register, long bits) {
+    private static void writeDoubleBits(RiscVThreadState state, int register, long bits) {
         state.setDecodedFloatingPointRegister(register, bits);
     }
 
@@ -3786,7 +3786,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Converts raw half-precision bits to canonical raw single-precision bits.
-    static int convertHalfBitsToSingleBits(MachineState state, int bits) {
+    static int convertHalfBitsToSingleBits(RiscVThreadState state, int bits) {
         if (isSignalingHalfNaN(bits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -3794,7 +3794,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Converts raw single-precision bits to raw half-precision bits.
-    static int convertSingleBitsToHalfBits(MachineState state, int bits, int roundingMode) {
+    static int convertSingleBitsToHalfBits(RiscVThreadState state, int bits, int roundingMode) {
         int sign = (bits >>> 16) & 0x8000;
         int magnitude = bits & 0x7fff_ffff;
         if (isSignalingSingleNaN(bits)) {
@@ -3810,7 +3810,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Converts raw double-precision bits to raw half-precision bits.
-    private static int convertDoubleBitsToHalfBits(MachineState state, long bits, int roundingMode) {
+    private static int convertDoubleBitsToHalfBits(RiscVThreadState state, long bits, int roundingMode) {
         int sign = (int) ((bits >>> 48) & 0x8000);
         long magnitude = bits & 0x7fff_ffff_ffff_ffffL;
         if (isSignalingDoubleNaN(bits)) {
@@ -3827,7 +3827,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Rounds a finite exact binary value to half precision and records arithmetic flags.
     private static int roundHalfExactBinaryResult(
-            MachineState state,
+            RiscVThreadState state,
             ExactBinaryValue exact,
             int zeroSign,
             int roundingMode) {
@@ -3929,7 +3929,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Records half-precision flags for an inexact finite source value.
-    private static void updateHalfExactArithmeticFlags(MachineState state, int roundedBits, boolean overflow) {
+    private static void updateHalfExactArithmeticFlags(RiscVThreadState state, int roundedBits, boolean overflow) {
         if (overflow || (roundedBits & 0x7fff) == HALF_POSITIVE_INFINITY) {
             state.addFloatingPointFlags(FLOATING_POINT_OVERFLOW | FLOATING_POINT_INEXACT);
             return;
@@ -3942,7 +3942,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V single-precision minimum bits.
-    private static int minimumSingleBits(MachineState state, int leftBits, int rightBits) {
+    private static int minimumSingleBits(RiscVThreadState state, int leftBits, int rightBits) {
         if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -3964,7 +3964,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V single-precision maximum bits.
-    private static int maximumSingleBits(MachineState state, int leftBits, int rightBits) {
+    private static int maximumSingleBits(RiscVThreadState state, int leftBits, int rightBits) {
         if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -3986,7 +3986,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V Zfa single-precision IEEE 754-2019 minimum bits.
-    private static int minimumNumberSingleBits(MachineState state, int leftBits, int rightBits) {
+    private static int minimumNumberSingleBits(RiscVThreadState state, int leftBits, int rightBits) {
         if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -4002,7 +4002,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V Zfa single-precision IEEE 754-2019 maximum bits.
-    private static int maximumNumberSingleBits(MachineState state, int leftBits, int rightBits) {
+    private static int maximumNumberSingleBits(RiscVThreadState state, int leftBits, int rightBits) {
         if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -4018,7 +4018,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V double-precision minimum bits.
-    private static long minimumDoubleBits(MachineState state, long leftBits, long rightBits) {
+    private static long minimumDoubleBits(RiscVThreadState state, long leftBits, long rightBits) {
         if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -4040,7 +4040,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V double-precision maximum bits.
-    private static long maximumDoubleBits(MachineState state, long leftBits, long rightBits) {
+    private static long maximumDoubleBits(RiscVThreadState state, long leftBits, long rightBits) {
         if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -4062,7 +4062,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V Zfa double-precision IEEE 754-2019 minimum bits.
-    private static long minimumNumberDoubleBits(MachineState state, long leftBits, long rightBits) {
+    private static long minimumNumberDoubleBits(RiscVThreadState state, long leftBits, long rightBits) {
         if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -4078,7 +4078,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Computes RISC-V Zfa double-precision IEEE 754-2019 maximum bits.
-    private static long maximumNumberDoubleBits(MachineState state, long leftBits, long rightBits) {
+    private static long maximumNumberDoubleBits(RiscVThreadState state, long leftBits, long rightBits) {
         if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -4172,14 +4172,14 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Updates divide-by-zero flags for single-precision division.
-    private static void updateDivideByZeroFlag(MachineState state, float dividend, float divisor) {
+    private static void updateDivideByZeroFlag(RiscVThreadState state, float dividend, float divisor) {
         if (divisor == 0.0f && !Float.isNaN(dividend) && !Float.isInfinite(dividend) && dividend != 0.0f) {
             state.addFloatingPointFlags(FLOATING_POINT_DIVIDE_BY_ZERO);
         }
     }
 
     /// Updates divide-by-zero flags for double-precision division.
-    private static void updateDivideByZeroFlag(MachineState state, double dividend, double divisor) {
+    private static void updateDivideByZeroFlag(RiscVThreadState state, double dividend, double divisor) {
         if (divisor == 0.0d && !Double.isNaN(dividend) && !Double.isInfinite(dividend) && dividend != 0.0d) {
             state.addFloatingPointFlags(FLOATING_POINT_DIVIDE_BY_ZERO);
         }
@@ -4187,7 +4187,7 @@ public abstract sealed class RiscVInstructionSemantics {
 
     /// Converts a floating-point value to a signed integer with saturation.
     private static long convertToSignedInteger(
-            MachineState state,
+            RiscVThreadState state,
             double value,
             int roundingMode,
             long minimum,
@@ -4208,7 +4208,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Converts a floating-point value to an unsigned integer with saturation.
-    private static long convertToUnsignedInteger(MachineState state, double value, int roundingMode, double exclusiveUpperBound) {
+    private static long convertToUnsignedInteger(RiscVThreadState state, double value, int roundingMode, double exclusiveUpperBound) {
         double rounded = roundToInteger(value, roundingMode);
         if (Double.isNaN(value) || rounded >= exclusiveUpperBound) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
@@ -4240,7 +4240,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Returns the effective rounding mode for this instruction.
-    private int effectiveRoundingMode(MachineState state) {
+    private int effectiveRoundingMode(RiscVThreadState state) {
         int roundingMode = (int) (immediate & 0x7);
         if (roundingMode == ROUND_DYNAMIC) {
             roundingMode = state.floatingPointRoundingMode();
@@ -4252,7 +4252,7 @@ public abstract sealed class RiscVInstructionSemantics {
     }
 
     /// Validates and discards the effective rounding mode.
-    private void checkEffectiveRoundingMode(MachineState state) {
+    private void checkEffectiveRoundingMode(RiscVThreadState state) {
         effectiveRoundingMode(state);
     }
 

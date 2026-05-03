@@ -11,7 +11,7 @@ import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.DataIndependent;
-import org.glavo.riscv.runtime.MachineState;
+import org.glavo.riscv.runtime.RiscVThreadState;
 import org.glavo.riscv.runtime.RiscVInstructionSemantics;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
@@ -125,7 +125,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes the block with the supplied machine state and memory access facade.
     @Override
-    public void execute(MachineState state, MemoryAccess access) {
+    public void execute(RiscVThreadState state, MemoryAccess access) {
         Memory memory = state.memory();
         long[] registers = state.decodedRegisters();
         long pointerMask = state.pointerMask();
@@ -139,7 +139,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes this block when every instruction can retire without per-instruction checks.
     private void executeBatchedFast(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -155,7 +155,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes this block when every instruction can retire without per-instruction checks.
     private void executePreciseFast(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -167,7 +167,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes this block when tracing or instruction-budget checks are active.
     private void executeChecked(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -179,7 +179,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes one micro-op by decoding its packed operand.
     private void executeInstruction(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -471,7 +471,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes a canonical operation that does not yet need a dedicated opcode value.
-    private void executeOperation(MachineState state, int index, int operand) {
+    private void executeOperation(RiscVThreadState state, int index, int operand) {
         RiscVOperation operation = operations[index];
         RiscVInstructionSemantics.executeMicro(
                 state,
@@ -486,7 +486,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Records the current instruction before running a direct micro-op body.
-    private void beginInstruction(MachineState state, int index, byte mode) {
+    private void beginInstruction(RiscVThreadState state, int index, byte mode) {
         if (mode == BATCHED_FAST_MODE) {
             return;
         }
@@ -500,7 +500,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Records the current instruction when a batched block instruction can still fault.
-    private void beginMemoryInstruction(MachineState state, int index, byte mode) {
+    private void beginMemoryInstruction(RiscVThreadState state, int index, byte mode) {
         beginInstruction(state, index, mode);
         if (mode == BATCHED_FAST_MODE) {
             state.setPc(addresses[index]);
@@ -508,7 +508,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Writes the sequential PC unless the block fast path will materialize it at block exit.
-    private void finishInstruction(MachineState state, int index, byte mode) {
+    private void finishInstruction(RiscVThreadState state, int index, byte mode) {
         if (mode != BATCHED_FAST_MODE) {
             state.setPc(nextPcs[index]);
         }
@@ -522,7 +522,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Writes a conditional branch target.
-    private void branch(MachineState state, boolean taken, int index) {
+    private void branch(RiscVThreadState state, boolean taken, int index) {
         state.setPcFromInstruction(
                 addresses[index],
                 taken ? addresses[index] + immediates[index] : nextPcs[index]);
@@ -534,21 +534,21 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Writes the result of an immediate integer operation.
-    private void binaryImmediate(MachineState state, long[] registers, int index, int operand, byte mode, long value) {
+    private void binaryImmediate(RiscVThreadState state, long[] registers, int index, int operand, byte mode, long value) {
         beginInstruction(state, index, mode);
         writeRegister(registers, rd(operand), value);
         finishInstruction(state, index, mode);
     }
 
     /// Writes the result of a register integer operation.
-    private void binaryRegister(MachineState state, long[] registers, int index, int operand, byte mode, long value) {
+    private void binaryRegister(RiscVThreadState state, long[] registers, int index, int operand, byte mode, long value) {
         beginInstruction(state, index, mode);
         writeRegister(registers, rd(operand), value);
         finishInstruction(state, index, mode);
     }
 
     /// Writes a CSR and returns the old value when the destination register is not `x0`.
-    private void writeControlStatusRegister(MachineState state, long[] registers, int index, int operand, byte mode, long value) {
+    private void writeControlStatusRegister(RiscVThreadState state, long[] registers, int index, int operand, byte mode, long value) {
         int rd = rd(operand);
         long oldValue = rd == 0 ? 0 : state.readControlStatusRegister((int) immediates[index]);
         state.writeControlStatusRegister((int) immediates[index], value);
@@ -558,7 +558,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Sets or clears CSR bits using the supplied mask value.
     private void setClearControlStatusRegister(
-            MachineState state,
+            RiscVThreadState state,
             long[] registers,
             int index,
             int operand,
@@ -575,7 +575,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes a bit-level floating-point sign-injection instruction.
     private void floatingPointSignInjection(
-            MachineState state,
+            RiscVThreadState state,
             int index,
             int operand,
             byte mode,
@@ -604,7 +604,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes a floating-point classify instruction.
-    private void floatingPointClassify(MachineState state, long[] registers, int index, int operand, byte mode) {
+    private void floatingPointClassify(RiscVThreadState state, long[] registers, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         long result = switch (floatingPointFormat(index)) {
             case HALF_FLOAT_FORMAT -> classifyHalf(readHalfBits(state, rs1(operand)));
@@ -616,7 +616,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes a raw floating-point-to-integer register move instruction.
-    private void moveFloatingPointToInteger(MachineState state, long[] registers, int index, int operand, byte mode) {
+    private void moveFloatingPointToInteger(RiscVThreadState state, long[] registers, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         long value = switch (floatingPointFormat(index)) {
             case HALF_FLOAT_FORMAT -> (short) state.decodedFloatingPointRegister(rs1(operand));
@@ -628,7 +628,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes a raw integer-to-floating-point register move instruction.
-    private void moveIntegerToFloatingPoint(MachineState state, long[] registers, int index, int operand, byte mode) {
+    private void moveIntegerToFloatingPoint(RiscVThreadState state, long[] registers, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         switch (floatingPointFormat(index)) {
             case HALF_FLOAT_FORMAT -> writeHalfBits(state, rd(operand), (int) registers[rs1(operand)]);
@@ -640,7 +640,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes a floating-point comparison instruction.
     private void floatingPointCompare(
-            MachineState state,
+            RiscVThreadState state,
             long[] registers,
             int index,
             int operand,
@@ -679,7 +679,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes a floating-point minimum or maximum instruction.
     private void floatingPointMinimumMaximum(
-            MachineState state,
+            RiscVThreadState state,
             int index,
             int operand,
             byte mode,
@@ -701,7 +701,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes a fused floating-point multiply-add instruction.
     private void floatingPointFusedMultiplyAdd(
-            MachineState state,
+            RiscVThreadState state,
             int index,
             int operand,
             byte mode,
@@ -721,7 +721,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes a binary floating-point arithmetic instruction.
     private void floatingPointArithmetic(
-            MachineState state,
+            RiscVThreadState state,
             int index,
             int operand,
             byte mode,
@@ -738,7 +738,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes a floating-point square-root instruction.
-    private void floatingPointSquareRoot(MachineState state, int index, int operand, byte mode) {
+    private void floatingPointSquareRoot(RiscVThreadState state, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         RiscVInstructionSemantics.executeMicroFloatingPointSquareRoot(
                 state,
@@ -749,7 +749,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes `fcvt.s.d`.
-    private void convertDoubleToSingle(MachineState state, int index, int operand, byte mode) {
+    private void convertDoubleToSingle(RiscVThreadState state, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         RiscVInstructionSemantics.executeMicroConvertDoubleToSingle(
                 state,
@@ -760,7 +760,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes `fcvt.d.s`.
-    private void convertSingleToDouble(MachineState state, int index, int operand, byte mode) {
+    private void convertSingleToDouble(RiscVThreadState state, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         RiscVInstructionSemantics.executeMicroConvertSingleToDouble(
                 state,
@@ -771,7 +771,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes a floating-point to integer conversion instruction.
-    private void convertFloatingPointToInteger(MachineState state, int index, int operand, byte mode) {
+    private void convertFloatingPointToInteger(RiscVThreadState state, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         RiscVInstructionSemantics.executeMicroConvertFloatingPointToInteger(
                 state,
@@ -783,7 +783,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Executes an integer to floating-point conversion instruction.
-    private void convertIntegerToFloatingPoint(MachineState state, int index, int operand, byte mode) {
+    private void convertIntegerToFloatingPoint(RiscVThreadState state, int index, int operand, byte mode) {
         beginInstruction(state, index, mode);
         RiscVInstructionSemantics.executeMicroConvertIntegerToFloatingPoint(
                 state,
@@ -796,7 +796,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Loads and reserves a 32-bit memory word.
     private void lrWord(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -817,7 +817,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Loads and reserves a 64-bit memory doubleword.
     private void lrDouble(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -838,7 +838,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Conditionally stores a 32-bit memory word through an LR/SC reservation.
     private void scWord(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -865,7 +865,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Conditionally stores a 64-bit memory doubleword through an LR/SC reservation.
     private void scDouble(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -892,7 +892,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes a 32-bit AMO instruction.
     private void amoWord(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -932,7 +932,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
 
     /// Executes a 64-bit AMO instruction.
     private void amoDouble(
-            MachineState state,
+            RiscVThreadState state,
             Memory memory,
             MemoryAccess access,
             long[] registers,
@@ -976,7 +976,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Handles optional simulator side effects after a store.
-    private static void afterStore(MachineState state, long address, int length, byte mode) {
+    private static void afterStore(RiscVThreadState state, long address, int length, byte mode) {
         if (mode != BATCHED_FAST_MODE && state.hasStoreSideEffects()) {
             state.afterStoreWithSideEffects(address, length);
         }
@@ -1052,24 +1052,24 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Reads a half-precision register as raw bits, applying NaN-boxing rules.
-    private static int readHalfBits(MachineState state, int register) {
+    private static int readHalfBits(RiscVThreadState state, int register) {
         long value = state.decodedFloatingPointRegister(register);
         return (value & HALF_NAN_BOX_MASK) == HALF_NAN_BOX_MASK ? (int) value & 0xffff : CANONICAL_HALF_NAN;
     }
 
     /// Reads a single-precision register as raw bits, applying NaN-boxing rules.
-    private static int readSingleBits(MachineState state, int register) {
+    private static int readSingleBits(RiscVThreadState state, int register) {
         long value = state.decodedFloatingPointRegister(register);
         return (value & SINGLE_NAN_BOX_MASK) == SINGLE_NAN_BOX_MASK ? (int) value : CANONICAL_SINGLE_NAN;
     }
 
     /// Writes raw half-precision bits to a NaN-boxed floating-point register.
-    private static void writeHalfBits(MachineState state, int register, int bits) {
+    private static void writeHalfBits(RiscVThreadState state, int register, int bits) {
         state.setDecodedFloatingPointRegister(register, HALF_NAN_BOX_MASK | (bits & 0xffffL));
     }
 
     /// Writes raw single-precision bits to a NaN-boxed floating-point register.
-    private static void writeSingleBits(MachineState state, int register, int bits) {
+    private static void writeSingleBits(RiscVThreadState state, int register, int bits) {
         state.setDecodedFloatingPointRegister(register, SINGLE_NAN_BOX_MASK | (bits & 0xffff_ffffL));
     }
 
@@ -1157,7 +1157,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Computes RISC-V single-precision minimum bits.
-    private static int minimumSingleBits(MachineState state, int leftBits, int rightBits) {
+    private static int minimumSingleBits(RiscVThreadState state, int leftBits, int rightBits) {
         if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -1179,7 +1179,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Computes RISC-V single-precision maximum bits.
-    private static int maximumSingleBits(MachineState state, int leftBits, int rightBits) {
+    private static int maximumSingleBits(RiscVThreadState state, int leftBits, int rightBits) {
         if (isSignalingSingleNaN(leftBits) || isSignalingSingleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -1201,7 +1201,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Computes RISC-V double-precision minimum bits.
-    private static long minimumDoubleBits(MachineState state, long leftBits, long rightBits) {
+    private static long minimumDoubleBits(RiscVThreadState state, long leftBits, long rightBits) {
         if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
@@ -1223,7 +1223,7 @@ final class RiscVMicroBlockNode implements ExecutableBlock {
     }
 
     /// Computes RISC-V double-precision maximum bits.
-    private static long maximumDoubleBits(MachineState state, long leftBits, long rightBits) {
+    private static long maximumDoubleBits(RiscVThreadState state, long leftBits, long rightBits) {
         if (isSignalingDoubleNaN(leftBits) || isSignalingDoubleNaN(rightBits)) {
             state.addFloatingPointFlags(FLOATING_POINT_INVALID_OPERATION);
         }
