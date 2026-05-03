@@ -20,6 +20,6 @@ final class TraceCompiler {
             byte executionPolicy,
             DecodedBlock @Unmodifiable [] decodedBlocks,
             long @Unmodifiable [] expectedNextPcs) {
-        return new RiscVMicroTraceRootNode(memoryLayout, executionPolicy, decodedBlocks, expectedNextPcs);
+        return new InterpretedTrace(memoryLayout, executionPolicy, decodedBlocks, expectedNextPcs);
     }
 }

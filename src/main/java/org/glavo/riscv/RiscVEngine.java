@@ -3,7 +3,7 @@
 
 package org.glavo.riscv;
 
-import org.glavo.riscv.nodes.RiscVRootNode;
+import org.glavo.riscv.nodes.RiscVInterpreter;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
@@ -15,6 +15,6 @@ public final class RiscVEngine {
 
     /// Executes the supplied ELF image or the executable selected by the runtime context.
     public static int run(byte @Unmodifiable [] sourceBytes, RiscVContext context) {
-        return new RiscVRootNode(sourceBytes).execute(context);
+        return new RiscVInterpreter(sourceBytes).execute(context);
     }
 }

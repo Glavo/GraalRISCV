@@ -1,6 +1,6 @@
 # GraalRISCV
 
-GraalRISCV is a pure Java RV64 user-mode emulator built with GraalVM’s Truffle framework.
+GraalRISCV is a pure Java RV64 user-mode emulator.
 Its long-term goal is to run every Linux and FreeBSD RISC-V 64-bit user-space program without a guest kernel.
 
 Today it can already run real Linux RISC-V userland without a Linux kernel:
@@ -62,7 +62,7 @@ Options:
   --shell <path>             Guest shell path used by the default environment.
   --debug-fixed-clock-nanos <nanos>
                               Fixed epoch nanoseconds for deterministic guest time.
-  --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
+  --debug-trace-compilation  Accepted for compatibility; currently ignored.
   --trace                    Print guest instruction trace lines.
   -h, --help                 Print this help message.
 ```
@@ -254,9 +254,9 @@ JVM mode is the primary path for current performance work.
 ## Performance Work
 
 CoreMark and the freestanding hot-loop example are useful probes for dispatch
-and block-cache performance. The CLI includes `--debug-trace-compilation` for
-Truffle compilation diagnostics, and the Gradle task below runs the hot-loop
-example with those diagnostics enabled:
+and block-cache performance. The CLI still accepts `--debug-trace-compilation`
+as a compatibility option for existing scripts; it is currently a no-op until
+trace compiler diagnostics are added:
 
 ```text
 ./gradlew runHotLoopCompilationTrace

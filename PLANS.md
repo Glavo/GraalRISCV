@@ -14,6 +14,7 @@
 - FreeBSD support currently covers static user-mode programs needed by the FreeBSD Go hello-world smoke workload.
 - The runtime includes Docker-like bind/tar mounts, virtual `/proc`, minimal virtual `/sys` DMI, PCI, and class stubs, Linux-like `/dev`, deterministic `NETLINK_ROUTE` interface and default-route metadata, guest credentials, deterministic time, process/thread state, `clone`/`wait4`, terminal handling, and Gradle-managed example/test tasks.
 - Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.
+- CLI execution runs through the plain Java `RiscVEngine` and `RiscVInterpreter` loop. Decoded blocks and traces use `ExecutableBlock` and `ExecutableTrace`, with `TraceCompiler` reserved as the future bytecode trace compiler boundary.
 
 ## Maintenance Principles
 

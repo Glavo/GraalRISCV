@@ -34,7 +34,7 @@ import java.util.ArrayList;
 
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
-public final class RiscVRootNode {
+public final class RiscVInterpreter {
     /// The initial Linux user stack backing size.
     private static final long INITIAL_STACK_SIZE = 8L * 1024L * 1024L;
 
@@ -54,7 +54,7 @@ public final class RiscVRootNode {
     private final BlockDispatchNode dispatch;
 
     /// Creates a runner for a RISC-V ELF source.
-    public RiscVRootNode(byte @Unmodifiable [] sourceBytes) {
+    public RiscVInterpreter(byte @Unmodifiable [] sourceBytes) {
         this.sourceBytes = sourceBytes.clone();
         this.blocks = new BlockCache();
         this.dispatch = new BlockDispatchNode(blocks);

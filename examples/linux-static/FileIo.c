@@ -1,7 +1,7 @@
 /*
  * This static musl example validates basic mounted file I/O through libc. It
  * creates a file, writes data, reopens the same path for reading, and confirms
- * the simulator's TruffleFile-backed path mapping preserves the contents.
+ * the simulator's mounted host path mapping preserves the contents.
  */
 
 #include <stdio.h>

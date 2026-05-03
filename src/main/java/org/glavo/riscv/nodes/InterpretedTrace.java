@@ -12,15 +12,15 @@ import org.jetbrains.annotations.Unmodifiable;
 
 /// Executes a hot linear sequence of decoded RISC-V basic blocks through embedded block nodes.
 @NotNullByDefault
-final class RiscVMicroTraceRootNode implements ExecutableTrace {
+final class InterpretedTrace implements ExecutableTrace {
     /// Block nodes selected into this trace.
     private final RiscVMicroBlockNode @Unmodifiable [] blocks;
 
     /// Expected successor PCs between adjacent trace blocks.
     private final long @Unmodifiable [] expectedNextPcs;
 
-    /// Creates a trace root from decoded blocks, side-exit guards, and a stable execution policy.
-    RiscVMicroTraceRootNode(
+    /// Creates an interpreter trace from decoded blocks, side-exit guards, and a stable execution policy.
+    InterpretedTrace(
             MemoryLayout memoryLayout,
             byte executionPolicy,
             DecodedBlock @Unmodifiable [] decodedBlocks,
