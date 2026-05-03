@@ -39,6 +39,12 @@ final class DecodedCodeSegment {
     /// Bit shift for the second source register in a packed operand.
     private static final int RS2_SHIFT = 10;
 
+    /// Bit shift for the instruction length in halfwords in a packed operand.
+    private static final int LENGTH_SHIFT = 15;
+
+    /// Two-bit mask for the instruction length in halfwords.
+    private static final int LENGTH_MASK = 0x3;
+
     /// Marks a slot that is the first instruction of a decoded block.
     private static final int FLAG_BLOCK_START = 1;
 
@@ -47,6 +53,18 @@ final class DecodedCodeSegment {
 
     /// Marks an instruction that terminates the decoded block.
     private static final int FLAG_TERMINATOR = 1 << 2;
+
+    /// Bit shift for a block's instruction count in a packed decoder entry.
+    private static final int BLOCK_INSTRUCTION_COUNT_SHIFT = 3;
+
+    /// Eight-bit mask for a packed block instruction count.
+    private static final int BLOCK_INSTRUCTION_COUNT_MASK = 0xff;
+
+    /// Bit shift for a block's byte length in a packed decoder entry.
+    private static final int BLOCK_BYTES_SHIFT = 11;
+
+    /// Ten-bit mask for a packed block byte length.
+    private static final int BLOCK_BYTES_MASK = 0x3ff;
 
     /// Inclusive first guest PC covered by this segment.
     private final long startPc;
@@ -66,32 +84,11 @@ final class DecodedCodeSegment {
     /// Packed register operands.
     private final int[] operands;
 
-    /// Original raw instruction bits.
-    private final int[] raws;
-
-    /// Decoded instruction start PCs.
-    private final long[] addresses;
-
-    /// Decoded sequential next PCs.
-    private final long[] nextPcs;
-
     /// Decoded immediate operands.
     private final long[] immediates;
 
-    /// Instruction byte lengths.
-    private final byte[] instructionLengths;
-
-    /// Per-slot flags for block starts, fast blocks, and terminators.
-    private final int[] flags;
-
-    /// Decoded block byte counts stored at block-start slots.
-    private final int[] blockBytes;
-
-    /// Decoded block instruction counts stored at block-start slots.
-    private final int[] instructionCounts;
-
-    /// Decoded block fall-through PCs stored at block-start slots.
-    private final long[] blockFallThroughPcs;
+    /// Packed per-slot decoder metadata.
+    private final int[] metadata;
 
     /// Creates a decoded page segment for the supplied PC and generation.
     DecodedCodeSegment(Memory memory, long pc, long instructionFetchGeneration) {
@@ -104,15 +101,8 @@ final class DecodedCodeSegment {
         this.opcodes = new byte[slotCount];
         Arrays.fill(opcodes, UNDECODED_OPCODE);
         this.operands = new int[slotCount];
-        this.raws = new int[slotCount];
-        this.addresses = new long[slotCount];
-        this.nextPcs = new long[slotCount];
         this.immediates = new long[slotCount];
-        this.instructionLengths = new byte[slotCount];
-        this.flags = new int[slotCount];
-        this.blockBytes = new int[slotCount];
-        this.instructionCounts = new int[slotCount];
-        this.blockFallThroughPcs = new long[slotCount];
+        this.metadata = new int[slotCount];
     }
 
     /// Returns true when this segment matches the supplied PC, layout, and instruction-fetch generation.
@@ -131,7 +121,7 @@ final class DecodedCodeSegment {
     /// Ensures that a block starting at `pc` has been decoded and returns its start slot.
     int blockSlot(Memory memory, long pc) {
         int slot = slot(pc);
-        if ((flags[slot] & FLAG_BLOCK_START) == 0) {
+        if ((metadata[slot] & FLAG_BLOCK_START) == 0) {
             decodeBlock(memory, pc, slot);
         }
         return slot;
@@ -139,7 +129,7 @@ final class DecodedCodeSegment {
 
     /// Returns true when the decoded block at `slot` can run through this segment.
     boolean isFastBlock(int slot) {
-        return (flags[slot] & FLAG_FAST_BLOCK) != 0;
+        return (metadata[slot] & FLAG_FAST_BLOCK) != 0;
     }
 
     /// Executes fast blocks inside this decoded segment until the slice is exhausted or dispatch must leave it.
@@ -165,8 +155,9 @@ final class DecodedCodeSegment {
                     break;
                 }
 
-                pc = executeFastBlock(slot, state, access, registers, pointerMask);
-                retiredInstructions += instructionCounts[slot];
+                int blockMetadata = metadata[slot];
+                pc = executeFastBlock(slot, blockMetadata, state, access, registers, pointerMask);
+                retiredInstructions += blockInstructionCount(blockMetadata);
                 executedBlocks++;
             }
         } finally {
@@ -181,13 +172,15 @@ final class DecodedCodeSegment {
     /// Executes one previously decoded fast block and returns its next guest PC.
     private long executeFastBlock(
             int startSlot,
+            int blockMetadata,
             RiscVThreadState state,
             MemoryAccess access,
             long[] registers,
             long pointerMask) {
-        int instructionCount = instructionCounts[startSlot];
-        long pc = blockFallThroughPcs[startSlot] & pointerMask;
-        long faultPc = addresses[startSlot];
+        int instructionCount = blockInstructionCount(blockMetadata);
+        long blockFallThroughPc = (address(startSlot) + blockBytes(blockMetadata)) & pointerMask;
+        long pc = blockFallThroughPc;
+        long faultPc = address(startSlot);
 
         try {
             for (int index = 0, slot = startSlot; index < instructionCount; index++) {
@@ -196,7 +189,10 @@ final class DecodedCodeSegment {
                 int rd = operand & REGISTER_MASK;
                 int rs1 = (operand >>> RS1_SHIFT) & REGISTER_MASK;
                 int rs2 = (operand >>> RS2_SHIFT) & REGISTER_MASK;
-                int nextSlot = slot + (instructionLengths[slot] >>> 1);
+                int lengthHalfwords = (operand >>> LENGTH_SHIFT) & LENGTH_MASK;
+                int nextSlot = slot + lengthHalfwords;
+                long instructionPc = address(slot);
+                long sequentialPc = instructionPc + ((long) lengthHalfwords << 1);
 
                 switch (opcode) {
                     case RiscVMicroOpcode.ADVANCE_PC -> slot = nextSlot;
@@ -213,78 +209,76 @@ final class DecodedCodeSegment {
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.AUIPC -> {
-                        long address = addresses[slot];
-                        writeRegister(registers, rd, address + immediates[slot]);
+                        writeRegister(registers, rd, instructionPc + immediates[slot]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.JAL -> {
-                        long address = addresses[slot];
-                        writeRegister(registers, rd, nextPcs[slot]);
-                        pc = (address + immediates[slot]) & pointerMask;
+                        writeRegister(registers, rd, sequentialPc);
+                        pc = (instructionPc + immediates[slot]) & pointerMask;
                     }
                     case RiscVMicroOpcode.JALR -> {
                         long target = (registers[rs1] + immediates[slot]) & ~1L;
-                        writeRegister(registers, rd, nextPcs[slot]);
+                        writeRegister(registers, rd, sequentialPc);
                         pc = target & pointerMask;
                     }
-                    case RiscVMicroOpcode.BEQ -> pc = branch(registers[rs1] == registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BNE -> pc = branch(registers[rs1] != registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BLT -> pc = branch(registers[rs1] < registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BGE -> pc = branch(registers[rs1] >= registers[rs2], addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BLTU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) < 0, addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
-                    case RiscVMicroOpcode.BGEU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) >= 0, addresses[slot], immediates[slot], nextPcs[slot] & pointerMask, pointerMask);
+                    case RiscVMicroOpcode.BEQ -> pc = branch(registers[rs1] == registers[rs2], instructionPc, immediates[slot], sequentialPc, pointerMask);
+                    case RiscVMicroOpcode.BNE -> pc = branch(registers[rs1] != registers[rs2], instructionPc, immediates[slot], sequentialPc, pointerMask);
+                    case RiscVMicroOpcode.BLT -> pc = branch(registers[rs1] < registers[rs2], instructionPc, immediates[slot], sequentialPc, pointerMask);
+                    case RiscVMicroOpcode.BGE -> pc = branch(registers[rs1] >= registers[rs2], instructionPc, immediates[slot], sequentialPc, pointerMask);
+                    case RiscVMicroOpcode.BLTU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) < 0, instructionPc, immediates[slot], sequentialPc, pointerMask);
+                    case RiscVMicroOpcode.BGEU -> pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) >= 0, instructionPc, immediates[slot], sequentialPc, pointerMask);
                     case RiscVMicroOpcode.LB -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeRegister(registers, rd, access.readByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LH -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeRegister(registers, rd, readShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LW -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeRegister(registers, rd, readInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LD -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeRegister(registers, rd, readLong(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LBU -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeRegister(registers, rd, access.readUnsignedByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LHU -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeRegister(registers, rd, readUnsignedShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LWU -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeRegister(registers, rd, readUnsignedInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SB -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         access.writeByte(loadAddress(registers, rs1, immediates[slot], pointerMask), (byte) registers[rs2], memoryLayout);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SH -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask), (short) registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SW -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask), (int) registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SD -> {
-                        faultPc = addresses[slot];
+                        faultPc = instructionPc;
                         writeLong(access, loadAddress(registers, rs1, immediates[slot], pointerMask), registers[rs2]);
                         slot = nextSlot;
                     }
@@ -460,8 +454,8 @@ final class DecodedCodeSegment {
             throw exception;
         }
 
-        if ((flags[startSlot] & FLAG_TERMINATOR) == 0) {
-            return blockFallThroughPcs[startSlot] & pointerMask;
+        if ((blockMetadata & FLAG_TERMINATOR) == 0) {
+            return blockFallThroughPc;
         }
         return pc & pointerMask;
     }
@@ -512,35 +506,55 @@ final class DecodedCodeSegment {
             byte opcode = rewriteOpcode(RiscVMicroBlockCompiler.opcode(instruction.operation()), instruction);
             int slot = slot(instruction.address());
             opcodes[slot] = opcode;
-            operands[slot] = RiscVMicroBlockNode.packRegisters(
+            operands[slot] = packOperand(
                     instruction.rd(),
                     instruction.rs1(),
-                    instruction.rs2());
-            raws[slot] = instruction.raw();
-            addresses[slot] = instruction.address();
-            nextPcs[slot] = instruction.nextAddress();
+                    instruction.rs2(),
+                    instruction.length());
             immediates[slot] = instruction.immediate();
-            instructionLengths[slot] = (byte) instruction.length();
-            flags[slot] = instruction.terminator() ? FLAG_TERMINATOR : 0;
+            metadata[slot] = instruction.terminator() ? FLAG_TERMINATOR : 0;
 
             fastBlock &= isFastOpcode(opcode);
         }
 
-        flags[startSlot] |= FLAG_BLOCK_START;
+        int blockMetadata = metadata[startSlot] | FLAG_BLOCK_START;
         if (block.endsWithTerminator()) {
-            flags[startSlot] |= FLAG_TERMINATOR;
+            blockMetadata |= FLAG_TERMINATOR;
         }
         if (fastBlock) {
-            flags[startSlot] |= FLAG_FAST_BLOCK;
+            blockMetadata |= FLAG_FAST_BLOCK;
         }
-        blockBytes[startSlot] = totalBlockBytes;
-        instructionCounts[startSlot] = instructions.length;
-        blockFallThroughPcs[startSlot] = block.fallThroughPc();
+        metadata[startSlot] = blockMetadata
+                | (instructions.length << BLOCK_INSTRUCTION_COUNT_SHIFT)
+                | (totalBlockBytes << BLOCK_BYTES_SHIFT);
     }
 
     /// Converts a guest PC to a halfword-indexed segment slot.
     private int slot(long pc) {
         return (int) ((pc - startPc) >>> 1);
+    }
+
+    /// Reconstructs a guest instruction address from a segment slot.
+    private long address(int slot) {
+        return startPc + ((long) slot << 1);
+    }
+
+    /// Returns the instruction count stored in a decoded block-start entry.
+    private static int blockInstructionCount(int metadata) {
+        return (metadata >>> BLOCK_INSTRUCTION_COUNT_SHIFT) & BLOCK_INSTRUCTION_COUNT_MASK;
+    }
+
+    /// Returns the byte count stored in a decoded block-start entry.
+    private static int blockBytes(int metadata) {
+        return (metadata >>> BLOCK_BYTES_SHIFT) & BLOCK_BYTES_MASK;
+    }
+
+    /// Packs register operands and instruction length into one decoder entry word.
+    private static int packOperand(int rd, int rs1, int rs2, int length) {
+        return rd
+                | (rs1 << RS1_SHIFT)
+                | (rs2 << RS2_SHIFT)
+                | ((length >>> 1) << LENGTH_SHIFT);
     }
 
     /// Returns true when this micro-op has a direct body in the segment fast loop.
