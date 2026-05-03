@@ -30,7 +30,7 @@ You can also package it as a Shadow JAR:
 
 ```text
 ./gradlew shadowJar
-java --sun-misc-unsafe-memory-access=allow -jar build/libs/JRISC-V-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
+java -jar build/libs/riscv-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
 ```
 
 ## CLI Options

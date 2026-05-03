@@ -34,7 +34,6 @@ val nativeImageModuleArgs = listOf(
 val nativeImageBuilderJvmArgs = listOf(
     "-J--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED",
     "-J--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
-    "-J--sun-misc-unsafe-memory-access=allow"
 )
 val configuredNativeImageHome = providers.gradleProperty("nativeImageGraalVmHome")
     .orElse(providers.gradleProperty("graalVmHome"))

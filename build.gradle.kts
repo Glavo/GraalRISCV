@@ -21,7 +21,6 @@ java {
 
 val mainClassName = "org.glavo.riscv.Main"
 val unsafeModuleArgs = listOf(
-    "--enable-native-access=ALL-UNNAMED",
     "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED",
     "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
 )
