@@ -3,7 +3,6 @@
 
 package org.glavo.riscv.memory;
 
-import com.oracle.truffle.api.ContextThreadLocal;
 import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -93,8 +92,8 @@ public final class Memory implements AutoCloseable {
     /// Whether the initial virtual memory window is represented as one mapped VMA.
     private final boolean initialWindowMapped;
 
-    /// The current Truffle context and host thread's most recently accessed memory pages.
-    private final @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion;
+    /// The current host thread's most recently accessed memory pages.
+    private final @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion;
 
     /// Committed base pages keyed by guest base-page number.
     private final PageTable pages;
@@ -112,7 +111,7 @@ public final class Memory implements AutoCloseable {
     private long reservedHugePages;
 
     /// Creates a memory window with one mapped VMA and lazy page commitment.
-    public Memory(long baseAddress, long size, @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
+    public Memory(long baseAddress, long size, @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion) {
         this(
                 baseAddress,
                 size,
@@ -128,7 +127,7 @@ public final class Memory implements AutoCloseable {
     public static Memory sparse(
             long baseAddress,
             long size,
-            @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
+            @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion) {
         return sparse(
                 baseAddress,
                 size,
@@ -147,7 +146,7 @@ public final class Memory implements AutoCloseable {
             long maxCommittedPages,
             long hugePageSize,
             long hugePages,
-            @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion) {
+            @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion) {
         return new Memory(baseAddress, size, pageSize, maxCommittedPages, hugePageSize, hugePages, cachedMappedRegion, false);
     }
 
@@ -159,7 +158,7 @@ public final class Memory implements AutoCloseable {
             long maxCommittedPages,
             long hugePageSize,
             long hugePages,
-            @Nullable ContextThreadLocal<MappedRegionCache> cachedMappedRegion,
+            @Nullable ThreadLocal<MappedRegionCache> cachedMappedRegion,
             boolean initialWindowMapped) {
         if (baseAddress < 0) {
             throw new RiscVException("Guest memory base address must be non-negative: " + baseAddress);
@@ -256,9 +255,9 @@ public final class Memory implements AutoCloseable {
         return initialWindowMapped;
     }
 
-    /// Creates a memory access facade bound to the current Truffle context and host thread.
+    /// Creates a memory access facade bound to the current host thread.
     public MemoryAccess newAccess() {
-        @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
+        @Nullable ThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         return new MemoryAccess(this, cache == null ? null : cache.get());
     }
 
@@ -987,9 +986,9 @@ public final class Memory implements AutoCloseable {
         }
     }
 
-    /// Returns the current Truffle context and host thread's software TLB, or null outside a Truffle context.
+    /// Returns the current host thread's software TLB, or null when caching is disabled.
     private @Nullable MappedRegionCache currentMappedRegionCache() {
-        @Nullable ContextThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
+        @Nullable ThreadLocal<MappedRegionCache> cache = cachedMappedRegion;
         return cache == null ? null : cache.get();
     }
 

@@ -498,7 +498,7 @@ tasks.register<JavaExec>("runHotLoopExample") {
 
 tasks.register<JavaExec>("runHotLoopCompilationTrace") {
     group = "verification"
-    description = "Runs the freestanding hot-loop example with Truffle compilation diagnostics enabled."
+    description = "Runs the freestanding hot-loop example with the compatibility trace-compilation option."
 
     dependsOn("classes", "buildHotLoopExample")
     classpath = sourceSets.named("main").get().runtimeClasspath

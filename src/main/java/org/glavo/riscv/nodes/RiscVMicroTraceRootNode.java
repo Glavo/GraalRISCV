@@ -3,12 +3,6 @@
 
 package org.glavo.riscv.nodes;
 
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
-import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.ExplodeLoop;
-import com.oracle.truffle.api.nodes.Node.Children;
-import com.oracle.truffle.api.nodes.RootNode;
-import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.memory.MemoryAccess;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
@@ -18,22 +12,19 @@ import org.jetbrains.annotations.Unmodifiable;
 
 /// Executes a hot linear sequence of decoded RISC-V basic blocks through embedded block nodes.
 @NotNullByDefault
-final class RiscVMicroTraceRootNode extends RootNode {
+final class RiscVMicroTraceRootNode implements ExecutableTrace {
     /// Block nodes selected into this trace.
-    @Children private final RiscVMicroBlockNode @Unmodifiable [] blocks;
+    private final RiscVMicroBlockNode @Unmodifiable [] blocks;
 
     /// Expected successor PCs between adjacent trace blocks.
-    @CompilationFinal(dimensions = 1)
     private final long @Unmodifiable [] expectedNextPcs;
 
     /// Creates a trace root from decoded blocks, side-exit guards, and a stable execution policy.
     RiscVMicroTraceRootNode(
-            RiscVLanguage language,
             MemoryLayout memoryLayout,
             byte executionPolicy,
             DecodedBlock @Unmodifiable [] decodedBlocks,
             long @Unmodifiable [] expectedNextPcs) {
-        super(language);
         this.blocks = new RiscVMicroBlockNode[decodedBlocks.length];
         for (int index = 0; index < decodedBlocks.length; index++) {
             this.blocks[index] = RiscVMicroBlockCompiler.compileNode(decodedBlocks[index], memoryLayout, executionPolicy);
@@ -41,16 +32,13 @@ final class RiscVMicroTraceRootNode extends RootNode {
         this.expectedNextPcs = expectedNextPcs.clone();
     }
 
-    /// Executes the trace with the `MachineState` and `MemoryAccess` supplied as block-call arguments.
+    /// Executes the trace with the supplied machine state and memory access facade.
     @Override
-    public Object execute(VirtualFrame frame) {
-        Object[] arguments = frame.getArguments();
-        executeTrace((MachineState) arguments[0], (MemoryAccess) arguments[1]);
-        return null;
+    public void execute(MachineState state, MemoryAccess access) {
+        executeTrace(state, access);
     }
 
     /// Runs trace blocks until the trace ends or a side-exit guard fails.
-    @ExplodeLoop
     private void executeTrace(MachineState state, MemoryAccess access) {
         for (int index = 0; index < blocks.length; index++) {
             blocks[index].execute(state, access);

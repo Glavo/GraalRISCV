@@ -3,25 +3,64 @@
 
 package org.glavo.riscv;
 
-import com.oracle.truffle.api.ContextThreadLocal;
-import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.runtime.FilesystemMountSpec;
 import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.TimeSource;
+import org.glavo.riscv.runtime.VectorUnit;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 
-/// Stores per-context simulator configuration derived from Truffle language options.
+/// Stores simulator configuration for one guest execution.
 @NotNullByDefault
 public final class RiscVContext {
-    /// The Truffle environment associated with this context.
-    private final TruffleLanguage.Env env;
+    /// The command-line name used for default guest process metadata.
+    public static final String ID = "riscv";
+
+    /// The default guest virtual address window size in bytes.
+    public static final long DEFAULT_MEMORY_SIZE = 4L * 1024L * 1024L * 1024L;
+
+    /// The default guest memory base address.
+    public static final long DEFAULT_MEMORY_BASE = 0L;
+
+    /// The default guest base page size in bytes.
+    public static final long DEFAULT_PAGE_SIZE = Memory.DEFAULT_PAGE_SIZE;
+
+    /// The default committed-page limit, where zero means unlimited.
+    public static final long DEFAULT_MAX_COMMITTED_PAGES = Memory.DEFAULT_MAX_COMMITTED_PAGES;
+
+    /// The default HugeTLB page size in bytes.
+    public static final long DEFAULT_HUGE_PAGE_SIZE = Memory.DEFAULT_HUGE_PAGE_SIZE;
+
+    /// The default HugeTLB page pool size.
+    public static final long DEFAULT_HUGE_PAGES = Memory.DEFAULT_HUGE_PAGES;
+
+    /// The default vector register length in bits.
+    public static final long DEFAULT_VECTOR_VLEN = VectorUnit.DEFAULT_VLEN_BITS;
+
+    /// The sentinel value that asks the runtime to infer the memory base from ELF load segments.
+    public static final long AUTO_MEMORY_BASE = -1L;
+
+    /// The sentinel fixed-clock value that asks the runtime to use the host clock.
+    public static final long HOST_CLOCK_NANOS = -1L;
+
+    /// Host standard input exposed to guest syscalls.
+    private final InputStream in;
+
+    /// Host standard output exposed to guest syscalls.
+    private final OutputStream out;
+
+    /// Host standard error exposed to guest syscalls.
+    private final OutputStream err;
 
     /// The guest memory base address.
     private final long memoryBase;
@@ -71,12 +110,14 @@ public final class RiscVContext {
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
-    /// The sparse memory lookup cache scoped by the current Truffle context and host thread.
-    private final ContextThreadLocal<MappedRegionCache> mappedRegionCache;
+    /// The sparse memory lookup cache scoped by the current host thread.
+    private final ThreadLocal<MappedRegionCache> mappedRegionCache;
 
     /// Creates a simulator context.
     public RiscVContext(
-            TruffleLanguage.Env env,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
             long memoryBase,
             long memorySize,
             long pageSize,
@@ -97,14 +138,15 @@ public final class RiscVContext {
             String guestGroups,
             String guestHome,
             String guestShell,
-            ContextThreadLocal<MappedRegionCache> mappedRegionCache) {
-        if (memoryBase < 0 && memoryBase != RiscVLanguage.AUTO_MEMORY_BASE) {
+            String @Unmodifiable [] programArguments,
+            ThreadLocal<MappedRegionCache> mappedRegionCache) {
+        if (memoryBase < 0 && memoryBase != AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
         if (memorySize <= 0) {
             throw new RiscVException("riscv.memorySize must be positive: " + memorySize);
         }
-        if (memoryBase != RiscVLanguage.AUTO_MEMORY_BASE && memoryBase > Long.MAX_VALUE - memorySize) {
+        if (memoryBase != AUTO_MEMORY_BASE && memoryBase > Long.MAX_VALUE - memorySize) {
             throw new RiscVException("Guest memory range overflows: base=" + memoryBase + ", size=" + memorySize);
         }
         validatePageSize("riscv.pageSize", pageSize);
@@ -118,13 +160,13 @@ public final class RiscVContext {
         if (vectorVlenBits < Integer.MIN_VALUE || vectorVlenBits > Integer.MAX_VALUE) {
             throw new RiscVException("riscv.vectorVlen is outside the supported int range: " + vectorVlenBits);
         }
-        org.glavo.riscv.runtime.VectorUnit.validateVectorLength((int) vectorVlenBits);
+        VectorUnit.validateVectorLength((int) vectorVlenBits);
         if (maxInstructions < 0) {
             throw new RiscVException("riscv.maxInstructions must be non-negative: " + maxInstructions);
         }
 
         String[] parsedFilesystemMounts = parseFilesystemMounts(hostRoot, filesystemMounts);
-        validateFilesystemMounts(env, parsedFilesystemMounts);
+        validateFilesystemMounts(parsedFilesystemMounts);
         @Nullable String normalizedGuestProgramPath = guestProgramPath.isEmpty()
                 ? null
                 : normalizeMountGuestPath(guestProgramPath);
@@ -136,7 +178,9 @@ public final class RiscVContext {
                 guestHome,
                 guestShell);
 
-        this.env = env;
+        this.in = in;
+        this.out = out;
+        this.err = err;
         this.memoryBase = memoryBase;
         this.memorySize = memorySize;
         this.pageSize = pageSize;
@@ -152,13 +196,23 @@ public final class RiscVContext {
         this.guestProgramPath = normalizedGuestProgramPath;
         this.useHostTty = useHostTty;
         this.guestCredentials = parsedGuestCredentials;
-        this.programArguments = env.getApplicationArguments().clone();
+        this.programArguments = programArguments.clone();
         this.mappedRegionCache = mappedRegionCache;
     }
 
-    /// Returns the Truffle environment associated with this context.
-    public TruffleLanguage.Env env() {
-        return env;
+    /// Returns host standard input exposed to guest syscalls.
+    public InputStream in() {
+        return in;
+    }
+
+    /// Returns host standard output exposed to guest syscalls.
+    public OutputStream out() {
+        return out;
+    }
+
+    /// Returns host standard error exposed to guest syscalls.
+    public OutputStream err() {
+        return err;
     }
 
     /// Returns the configured guest memory base address.
@@ -241,9 +295,22 @@ public final class RiscVContext {
         return programArguments.clone();
     }
 
-    /// Returns the sparse memory lookup cache for the current Truffle context and host thread.
-    public ContextThreadLocal<MappedRegionCache> mappedRegionCache() {
+    /// Returns the sparse memory lookup cache for the current host thread.
+    public ThreadLocal<MappedRegionCache> mappedRegionCache() {
         return mappedRegionCache;
+    }
+
+    /// Creates the guest time source from the fixed-clock debug option.
+    public static TimeSource timeSourceFromDebugFixedClockNanos(long debugFixedClockNanos) {
+        if (debugFixedClockNanos == HOST_CLOCK_NANOS) {
+            return TimeSource.system();
+        }
+        if (debugFixedClockNanos < HOST_CLOCK_NANOS) {
+            throw new RiscVException("riscv.debugFixedClockNanos must be non-negative or -1 for host clocks: "
+                    + debugFixedClockNanos);
+        }
+
+        return TimeSource.fixedEpochNanoseconds(debugFixedClockNanos);
     }
 
     /// Validates a configured guest page size.
@@ -285,15 +352,13 @@ public final class RiscVContext {
         return result.toArray(String[]::new);
     }
 
-    /// Validates configured mount paths through the Truffle environment.
-    private static void validateFilesystemMounts(
-            TruffleLanguage.Env env,
-            String @Unmodifiable [] filesystemMounts) {
+    /// Validates configured mount host paths.
+    private static void validateFilesystemMounts(String @Unmodifiable [] filesystemMounts) {
         for (String mount : filesystemMounts) {
             FilesystemMountSpec spec = FilesystemMountSpec.parse(mount);
             try {
-                env.getPublicTruffleFile(spec.hostPath());
-            } catch (IllegalArgumentException exception) {
+                Path.of(spec.hostPath());
+            } catch (InvalidPathException exception) {
                 throw new RiscVException("Filesystem mount source is invalid for "
                         + spec.guestPath() + ": " + spec.hostPath(), exception);
             }

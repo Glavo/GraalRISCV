@@ -3,10 +3,7 @@
 
 package org.glavo.riscv.runtime;
 
-import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.TruffleFile;
-import com.oracle.truffle.api.TruffleLanguage;
-import org.glavo.riscv.RiscVLanguage;
+import org.glavo.riscv.RiscVContext;
 import org.glavo.riscv.exception.IllegalInstructionException;
 import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.ProgramExitException;
@@ -1081,9 +1078,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The host output stream used for guest stderr writes.
     protected final OutputStream err;
 
-    /// The Truffle environment used to start guest threads, or null when unavailable.
-    protected final @Nullable TruffleLanguage.Env env;
-
     /// Runs guest thread states created by Linux `clone`.
     protected final @Nullable GuestThreadRunner guestThreadRunner;
 
@@ -1216,7 +1210,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Creates the default process name used by `PR_GET_NAME`.
     protected static byte[] initialProcessName() {
         byte[] name = new byte[TASK_COMMAND_LENGTH];
-        byte[] defaultName = RiscVLanguage.ID.getBytes(StandardCharsets.US_ASCII);
+        byte[] defaultName = RiscVContext.ID.getBytes(StandardCharsets.US_ASCII);
         System.arraycopy(defaultName, 0, name, 0, Math.min(defaultName.length, TASK_COMMAND_LENGTH - 1));
         return name;
     }
@@ -1264,7 +1258,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 err,
                 initialProgramBreak,
                 GuestFileSystem.empty(),
-                null,
                 TimeSource.system(),
                 false,
                 GuestCredentials.defaultUser(),
@@ -1278,7 +1271,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable TruffleFile hostRoot) {
+            @Nullable HostPath hostRoot) {
         this(memory, in, out, err, initialProgramBreak, hostRoot, TimeSource.system());
     }
 
@@ -1289,7 +1282,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable TruffleFile hostRoot,
+            @Nullable HostPath hostRoot,
             TimeSource timeSource) {
         this(
                 memory,
@@ -1298,7 +1291,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 err,
                 initialProgramBreak,
                 GuestFileSystem.forHostRoot(hostRoot),
-                null,
                 timeSource,
                 false,
                 GuestCredentials.defaultUser(),
@@ -1321,7 +1313,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 err,
                 initialProgramBreak,
                 fileSystem,
-                null,
                 timeSource,
                 false,
                 GuestCredentials.defaultUser(),
@@ -1338,7 +1329,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             GuestFileSystem fileSystem,
             TimeSource timeSource,
             GuestCredentials credentials) {
-        this(memory, in, out, err, initialProgramBreak, fileSystem, null, timeSource, false, credentials, null);
+        this(memory, in, out, err, initialProgramBreak, fileSystem, timeSource, false, credentials, null);
     }
 
     /// Creates a syscall handler backed by the supplied host streams, heap boundary, and lazy root mount.
@@ -1348,9 +1339,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath) {
-        this(memory, in, out, err, initialProgramBreak, env, hostRootPath, TimeSource.system());
+        this(memory, in, out, err, initialProgramBreak, hostRootPath, TimeSource.system());
     }
 
     /// Creates a syscall handler backed by the supplied streams, lazy root mount, and guest time source.
@@ -1360,7 +1350,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath,
             TimeSource timeSource) {
         this(
@@ -1369,10 +1358,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 out,
                 err,
                 initialProgramBreak,
-                GuestFileSystem.forMountSpecs(env, new String[]{
+                GuestFileSystem.forMountSpecs(new String[]{
                         new FilesystemMountSpec("/", hostRootPath, FilesystemMountSpec.Type.BIND, null, false).encode()
                 }),
-                env,
                 timeSource,
                 false,
                 GuestCredentials.defaultUser(),
@@ -1386,11 +1374,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath,
             TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
-        this(memory, in, out, err, initialProgramBreak, env, hostRootPath, timeSource, false, guestThreadRunner);
+        this(memory, in, out, err, initialProgramBreak, hostRootPath, timeSource, false, guestThreadRunner);
     }
 
     /// Creates a syscall handler backed by streams, lazy root mount, guest time source, terminal option,
@@ -1401,7 +1388,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath,
             TimeSource timeSource,
             boolean useHostTty,
@@ -1412,10 +1398,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 out,
                 err,
                 initialProgramBreak,
-                GuestFileSystem.forMountSpecs(env, new String[]{
+                GuestFileSystem.forMountSpecs(new String[]{
                         new FilesystemMountSpec("/", hostRootPath, FilesystemMountSpec.Type.BIND, null, false).encode()
                 }),
-                env,
                 timeSource,
                 useHostTty,
                 GuestCredentials.defaultUser(),
@@ -1429,7 +1414,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource) {
         this(
@@ -1438,8 +1422,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 out,
                 err,
                 initialProgramBreak,
-                GuestFileSystem.forMountSpecs(env, filesystemMountSpecs),
-                env,
+                GuestFileSystem.forMountSpecs(filesystemMountSpecs),
                 timeSource,
                 false,
                 GuestCredentials.defaultUser(),
@@ -1453,11 +1436,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
-        this(memory, in, out, err, initialProgramBreak, env, filesystemMountSpecs, timeSource, false, guestThreadRunner);
+        this(memory, in, out, err, initialProgramBreak, filesystemMountSpecs, timeSource, false, guestThreadRunner);
     }
 
     /// Creates a syscall handler backed by streams, lazy filesystem mounts, guest time source, terminal option,
@@ -1468,7 +1450,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             boolean useHostTty,
@@ -1479,7 +1460,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 out,
                 err,
                 initialProgramBreak,
-                env,
                 filesystemMountSpecs,
                 timeSource,
                 useHostTty,
@@ -1495,7 +1475,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             boolean useHostTty,
@@ -1507,8 +1486,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 out,
                 err,
                 initialProgramBreak,
-                GuestFileSystem.forMountSpecs(env, filesystemMountSpecs),
-                env,
+                GuestFileSystem.forMountSpecs(filesystemMountSpecs),
                 timeSource,
                 useHostTty,
                 credentials,
@@ -1523,7 +1501,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream err,
             long initialProgramBreak,
             GuestFileSystem fileSystem,
-            @Nullable TruffleLanguage.Env env,
             TimeSource timeSource,
             boolean useHostTty,
             GuestCredentials credentials,
@@ -1537,7 +1514,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.in = in;
         this.out = out;
         this.err = err;
-        this.env = env;
         this.guestThreadRunner = guestThreadRunner;
         this.baseFileSystem = fileSystem;
         this.terminalDevice = TerminalDevice.open(in, out, useHostTty);
@@ -1559,7 +1535,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.in = parent.in;
         this.out = parent.out;
         this.err = parent.err;
-        this.env = parent.env;
         this.guestThreadRunner = parent.guestThreadRunner;
         this.baseFileSystem = parent.baseFileSystem;
         this.terminalDevice = parent.terminalDevice.retain();
@@ -1660,10 +1635,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Reads a regular file from the configured guest filesystem mounts.
     public static byte @Unmodifiable [] readMountedFile(
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             String guestPath) {
-        return GuestFileSystem.readMountedFile(env, filesystemMountSpecs, guestPath);
+        return GuestFileSystem.readMountedFile(filesystemMountSpecs, guestPath);
     }
 
     /// Returns the process-leader thread state used by the initial architectural state.
@@ -2208,7 +2182,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return cachedEntries;
         }
 
-        @Nullable TruffleFile path = openFile.path();
+        @Nullable HostPath path = openFile.path();
         @Nullable TarNode tarNode = openFile.tarNode();
         @Nullable VirtualNode virtualNode = openFile.virtualNode();
         @Nullable VirtualMount virtualMount = openFile.virtualMount();
@@ -2231,7 +2205,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         entries.add(new DirectoryEntry("..", syntheticInode(parentDirectoryForDotDot(path)), DIRECTORY_ENTRY_DIRECTORY));
 
         ArrayList<DirectoryEntry> childEntries = new ArrayList<>();
-        for (TruffleFile child : path.list()) {
+        for (HostPath child : path.list()) {
             childEntries.add(new DirectoryEntry(child.getName(), syntheticInode(child), directoryEntryType(child)));
         }
         childEntries.sort((left, right) -> left.name().compareTo(right.name()));
@@ -2259,9 +2233,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the parent directory represented by the `..` entry without escaping the selected mount root.
-    protected TruffleFile parentDirectoryForDotDot(TruffleFile path) {
+    protected HostPath parentDirectoryForDotDot(HostPath path) {
         @Nullable HostMount mount = mountForHostFile(path);
-        @Nullable TruffleFile parent = path.getParent();
+        @Nullable HostPath parent = path.getParent();
         if (mount != null && parent != null && parent.normalize().startsWith(mount.root())) {
             return parent.normalize();
         }
@@ -2269,7 +2243,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the Linux directory entry type for a sandboxed host path.
-    protected static byte directoryEntryType(TruffleFile path) {
+    protected static byte directoryEntryType(HostPath path) {
         try {
             if (path.isSymbolicLink()) {
                 return DIRECTORY_ENTRY_SYMBOLIC_LINK;
@@ -2322,7 +2296,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null ? EACCES : accessHostFile(currentDirectory, mode);
             }
             return accessFileDescriptor((int) directoryFileDescriptor, mode);
@@ -2348,7 +2322,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return accessVirtualNode(procPath.node(), mode);
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2388,7 +2362,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Checks access bits on a sandboxed host file.
-    protected long accessHostFile(TruffleFile hostFile, long mode) {
+    protected long accessHostFile(HostPath hostFile, long mode) {
         try {
             if (!hostFile.exists()) {
                 return ENOENT;
@@ -2433,7 +2407,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2503,7 +2477,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2607,8 +2581,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable TruffleFile oldHostFile = resolveHostFile(oldDirectoryFileDescriptor, oldGuestPath);
-        @Nullable TruffleFile newHostFile = resolveHostFile(newDirectoryFileDescriptor, newGuestPath);
+        @Nullable HostPath oldHostFile = resolveHostFile(oldDirectoryFileDescriptor, oldGuestPath);
+        @Nullable HostPath newHostFile = resolveHostFile(newDirectoryFileDescriptor, newGuestPath);
         if (oldHostFile == null || newHostFile == null) {
             return EACCES;
         }
@@ -2730,7 +2704,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2836,7 +2810,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return changeWorkingDirectory(procPath);
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2871,7 +2845,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
 
-        @Nullable TruffleFile path = openFile.path();
+        @Nullable HostPath path = openFile.path();
         if (path == null) {
             return EBADF;
         }
@@ -2879,7 +2853,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Applies a host directory as the guest-visible current working directory.
-    protected long changeWorkingDirectory(TruffleFile hostFile) {
+    protected long changeWorkingDirectory(HostPath hostFile) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -2947,7 +2921,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null ? EACCES : chownHostFile(currentDirectory, flags);
             }
             if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
@@ -2976,7 +2950,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return procPath.node() == null ? ENOENT : 0;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2999,7 +2973,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Accepts a no-op ownership update for an existing sandboxed host filesystem entry.
-    protected long chownHostFile(TruffleFile hostFile, long flags) {
+    protected long chownHostFile(HostPath hostFile, long flags) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -3082,7 +3056,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable TruffleFile hostFile = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
+        @Nullable HostPath hostFile = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
         if (hostFile == null) {
             return EACCES;
         }
@@ -3107,13 +3081,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (mount == null) {
                 return EACCES;
             }
-            TruffleFile realMountRoot = mount.root().getCanonicalFile();
+            HostPath realMountRoot = mount.root().getCanonicalFile();
             if (exists) {
                 if (!hostFile.getCanonicalFile().startsWith(realMountRoot)) {
                     return EACCES;
                 }
             } else {
-                @Nullable TruffleFile parent = hostFile.getParent();
+                @Nullable HostPath parent = hostFile.getParent();
                 if (parent == null
                         || !parent.isDirectory()
                         || !parent.getCanonicalFile().startsWith(realMountRoot)) {
@@ -4156,7 +4130,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return readlinkVirtualPath(procPath.node(), procPath.mount(), bufferAddress, bufferSize);
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -4243,7 +4217,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return virtualPath.node() == null ? ENOENT : 0;
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
         return hostFile == null ? EACCES : accessHostFile(hostFile, F_OK);
     }
 
@@ -4293,7 +4267,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null ? EACCES : statHostFile(currentDirectory, statAddress);
             }
             return fstat((int) directoryFileDescriptor, statAddress);
@@ -4319,7 +4293,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return statVirtualNode(procPath.node(), procPath.mount(), statAddress);
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -4476,7 +4450,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable TruffleFile currentDirectory = currentHostWorkingDirectory();
+                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null
                         ? EACCES
                         : statxHostFile(currentDirectory, statxAddress, flags, requestedMask);
@@ -4504,7 +4478,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return statxVirtualNode(procPath.node(), procPath.mount(), statxAddress, requestedMask);
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -4597,7 +4571,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return virtualPath.node() == null ? ENOENT : writeVirtualStatfsResult(virtualPath.mount(), statfsAddress);
         }
 
-        @Nullable TruffleFile hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -4632,7 +4606,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
 
-        @Nullable TruffleFile path = openFile.path();
+        @Nullable HostPath path = openFile.path();
         return path == null ? EACCES : statfsHostFile(path, statfsAddress);
     }
 
@@ -4649,7 +4623,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes deterministic filesystem metadata for an existing sandboxed host path.
-    protected long statfsHostFile(TruffleFile hostFile, long statfsAddress) {
+    protected long statfsHostFile(HostPath hostFile, long statfsAddress) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -4665,7 +4639,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a minimal Linux generic 64-bit `struct stat` for a sandboxed host file.
-    protected long statHostFile(TruffleFile hostFile, long statAddress) {
+    protected long statHostFile(HostPath hostFile, long statAddress) {
         try {
             if (!hostFile.exists()) {
                 return ENOENT;
@@ -4690,7 +4664,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a Linux generic `struct statx` for a sandboxed host file.
-    protected long statxHostFile(TruffleFile hostFile, long statxAddress, long flags, long requestedMask) {
+    protected long statxHostFile(HostPath hostFile, long statxAddress, long flags, long requestedMask) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -4967,7 +4941,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns a deterministic synthetic inode number for a sandboxed host path.
-    protected static long syntheticInode(TruffleFile hostFile) {
+    protected static long syntheticInode(HostPath hostFile) {
         return Integer.toUnsignedLong(hostFile.toString().hashCode()) + 1024L;
     }
 
@@ -5132,7 +5106,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Performs the uncommon cross-thread process-status checks after polling has been enabled.
-    @CompilerDirectives.TruffleBoundary
     protected void checkProcessStatusSlow() {
         @Nullable Throwable failure = threadFailure;
         if (failure != null) {
@@ -5520,9 +5493,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return timespecToSaturatedNanoseconds(seconds, nanoseconds);
     }
 
-    /// Returns true when clone-created guest threads can be started through the Truffle environment.
+    /// Returns true when clone-created guest threads can be started.
     protected boolean guestThreadingEnabled() {
-        return env != null && guestThreadRunner != null;
+        return guestThreadRunner != null;
     }
 
     /// Replaces the current process image with a mounted guest executable.
@@ -7108,7 +7081,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resolves a guest path below a configured filesystem mount or an open directory descriptor.
-    protected @Nullable TruffleFile resolveHostFile(long directoryFileDescriptor, String guestPath) {
+    protected @Nullable HostPath resolveHostFile(long directoryFileDescriptor, String guestPath) {
         @Nullable String absoluteGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
         if (absoluteGuestPath == null) {
             return null;
@@ -7154,7 +7127,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (descriptorGuestPath != null) {
                 basePath = descriptorGuestPath;
             } else {
-                @Nullable TruffleFile path = directory.path();
+                @Nullable HostPath path = directory.path();
                 if (path == null) {
                     return null;
                 }
@@ -7182,7 +7155,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a host file's canonical location stays below its selected mount root.
-    protected boolean canonicalFileStaysBelowMount(TruffleFile hostFile) throws IOException {
+    protected boolean canonicalFileStaysBelowMount(HostPath hostFile) throws IOException {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         if (mount == null) {
             return false;
@@ -7191,13 +7164,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a host file is selected by a read-only bind mount.
-    protected boolean hostFileOnReadOnlyMount(TruffleFile hostFile) {
+    protected boolean hostFileOnReadOnlyMount(HostPath hostFile) {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         return mount != null && mount.readOnly();
     }
 
     /// Returns the guest-visible permission bits for a host file.
-    protected int hostFilePermissions(TruffleFile hostFile, boolean directory) {
+    protected int hostFilePermissions(HostPath hostFile, boolean directory) {
         int permissions = 0;
         if (hostFile.isReadable()) {
             permissions |= directory ? STAT_MODE_READ_EXECUTE_ALL : STAT_MODE_READ_ALL;
@@ -7209,19 +7182,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the sandboxed host directory backing the guest-visible current working directory.
-    protected @Nullable TruffleFile currentHostWorkingDirectory() {
+    protected @Nullable HostPath currentHostWorkingDirectory() {
         return resolveHostFile(AT_FDCWD, guestWorkingDirectory);
     }
 
     /// Converts a sandboxed host path to an absolute guest-visible Linux path.
-    protected @Nullable String guestPathForHostFile(TruffleFile hostFile) {
+    protected @Nullable String guestPathForHostFile(HostPath hostFile) {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         if (mount == null) {
             return null;
         }
 
-        TruffleFile normalizedRoot = mount.root().normalize();
-        TruffleFile normalizedHostFile = hostFile.normalize();
+        HostPath normalizedRoot = mount.root().normalize();
+        HostPath normalizedHostFile = hostFile.normalize();
         if (!normalizedHostFile.startsWith(normalizedRoot)) {
             return null;
         }
@@ -7238,14 +7211,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Validates that a file's parent directory exists inside the selected filesystem mount.
-    protected long validateSandboxedParent(TruffleFile hostFile) {
+    protected long validateSandboxedParent(HostPath hostFile) {
         try {
             @Nullable HostMount mount = mountForHostFile(hostFile);
             if (mount == null) {
                 return EACCES;
             }
 
-            @Nullable TruffleFile parent = hostFile.getParent();
+            @Nullable HostPath parent = hostFile.getParent();
             if (parent == null) {
                 return EACCES;
             }
@@ -7265,7 +7238,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when the host path names an existing entry or a symbolic link.
-    protected static boolean pathEntryExists(TruffleFile hostFile) {
+    protected static boolean pathEntryExists(HostPath hostFile) {
         return GuestFileSystem.pathEntryExists(hostFile);
     }
 
@@ -7352,7 +7325,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the mount whose host mount root contains a host path.
-    protected @Nullable HostMount mountForHostFile(TruffleFile hostFile) {
+    protected @Nullable HostMount mountForHostFile(HostPath hostFile) {
         return fileSystem.mountForHostFile(hostFile);
     }
 
@@ -8385,7 +8358,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private final int standardFileDescriptor;
 
         /// The resolved host path backing the guest file descriptor.
-        private final @Nullable TruffleFile path;
+        private final @Nullable HostPath path;
 
         /// The guest-visible absolute path backing this descriptor, or null when none exists.
         private final @Nullable String guestPath;
@@ -8453,7 +8426,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Creates a non-socket file descriptor entry.
         private OpenFile(
                 int standardFileDescriptor,
-                @Nullable TruffleFile path,
+                @Nullable HostPath path,
                 @Nullable String guestPath,
                 @Nullable TarNode tarNode,
                 @Nullable VirtualNode virtualNode,
@@ -8497,7 +8470,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Creates a file descriptor entry.
         private OpenFile(
                 int standardFileDescriptor,
-                @Nullable TruffleFile path,
+                @Nullable HostPath path,
                 @Nullable String guestPath,
                 @Nullable TarNode tarNode,
                 @Nullable VirtualNode virtualNode,
@@ -8540,7 +8513,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         /// Creates an entry backed by a host file channel.
         static OpenFile hostFile(
-                TruffleFile path,
+                HostPath path,
                 @Nullable String guestPath,
                 SeekableByteChannel channel,
                 boolean readable,
@@ -8569,7 +8542,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Creates an entry backed by a host directory path.
-        static OpenFile hostDirectory(TruffleFile path, String guestPath) {
+        static OpenFile hostDirectory(HostPath path, String guestPath) {
             return new OpenFile(
                     -1,
                     path,
@@ -9034,7 +9007,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Returns the host path backing this descriptor.
-        @Nullable TruffleFile path() {
+        @Nullable HostPath path() {
             return path;
         }
 

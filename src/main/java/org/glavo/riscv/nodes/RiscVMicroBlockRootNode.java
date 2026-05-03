@@ -3,13 +3,6 @@
 
 package org.glavo.riscv.nodes;
 
-import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
-import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.ExplodeLoop;
-import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.nodes.Node.Child;
-import com.oracle.truffle.api.nodes.RootNode;
-import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.constants.RiscVMicroOpcode;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
@@ -25,7 +18,7 @@ import org.jetbrains.annotations.Unmodifiable;
 
 /// Executes one decoded RISC-V basic block through the custom micro-bytecode interpreter.
 @NotNullByDefault
-final class RiscVMicroBlockNode extends Node {
+final class RiscVMicroBlockNode implements ExecutableBlock {
     /// Execution mode used when tracing or instruction-budget checks are active.
     static final byte CHECKED_MODE = 0;
 
@@ -71,36 +64,28 @@ final class RiscVMicroBlockNode extends Node {
     /// The floating-point invalid-operation exception flag.
     private static final int FLOATING_POINT_INVALID_OPERATION = 0x10;
 
-    /// Immutable page-layout constants captured by this block for Truffle partial evaluation.
-    @CompilationFinal
+    /// Immutable page-layout constants captured by this block.
     private final MemoryLayout memoryLayout;
 
     /// The compact opcode stream for this block.
-    @CompilationFinal(dimensions = 1)
     private final byte @Unmodifiable [] opcodes;
 
     /// Canonical operations for opcodes that still share a generic execution body.
-    @CompilationFinal(dimensions = 1)
     private final RiscVOperation @Unmodifiable [] operations;
 
     /// Packed register operands for each opcode.
-    @CompilationFinal(dimensions = 1)
     private final int @Unmodifiable [] operands;
 
     /// Original raw instruction bits for direct opcodes.
-    @CompilationFinal(dimensions = 1)
     private final int @Unmodifiable [] raws;
 
     /// Guest instruction addresses for direct opcodes.
-    @CompilationFinal(dimensions = 1)
     private final long @Unmodifiable [] addresses;
 
     /// Sequential PCs for direct opcodes.
-    @CompilationFinal(dimensions = 1)
     private final long @Unmodifiable [] nextPcs;
 
     /// Immediate operands for direct opcodes.
-    @CompilationFinal(dimensions = 1)
     private final long @Unmodifiable [] immediates;
 
     /// The sequential PC after the final decoded instruction.
@@ -139,7 +124,8 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Executes the block with the supplied machine state and memory access facade.
-    void execute(MachineState state, MemoryAccess access) {
+    @Override
+    public void execute(MachineState state, MemoryAccess access) {
         Memory memory = state.memory();
         long[] registers = state.decodedRegisters();
         long pointerMask = state.pointerMask();
@@ -152,7 +138,6 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Executes this block when every instruction can retire without per-instruction checks.
-    @ExplodeLoop
     private void executeBatchedFast(
             MachineState state,
             Memory memory,
@@ -169,7 +154,6 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Executes this block when every instruction can retire without per-instruction checks.
-    @ExplodeLoop
     private void executePreciseFast(
             MachineState state,
             Memory memory,
@@ -182,7 +166,6 @@ final class RiscVMicroBlockNode extends Node {
     }
 
     /// Executes this block when tracing or instruction-budget checks are active.
-    @ExplodeLoop
     private void executeChecked(
             MachineState state,
             Memory memory,
@@ -1321,26 +1304,5 @@ final class RiscVMicroBlockNode extends Node {
     /// Extracts the second source register from a packed operand.
     private static int rs2(int operand) {
         return (operand >>> RS2_SHIFT) & REGISTER_MASK;
-    }
-}
-
-/// Wraps one micro-bytecode block node in a Truffle root call target.
-@NotNullByDefault
-final class RiscVMicroBlockRootNode extends RootNode {
-    /// The executable micro-bytecode block body.
-    @Child private RiscVMicroBlockNode block;
-
-    /// Creates a root node for one decoded RISC-V basic block.
-    RiscVMicroBlockRootNode(RiscVLanguage language, RiscVMicroBlockNode block) {
-        super(language);
-        this.block = block;
-    }
-
-    /// Executes the block with the `MachineState` and `MemoryAccess` supplied as arguments.
-    @Override
-    public Object execute(VirtualFrame frame) {
-        Object[] arguments = frame.getArguments();
-        block.execute((MachineState) arguments[0], (MemoryAccess) arguments[1]);
-        return null;
     }
 }

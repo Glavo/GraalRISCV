@@ -12,7 +12,7 @@ public final class MemoryAccess {
     /// The memory object that owns page tables and VMA metadata.
     private final Memory memory;
 
-    /// The software TLB for the current Truffle context and host thread.
+    /// The software TLB for the current host thread.
     private final @Nullable MappedRegionCache cache;
 
     /// The memory generation observed at the current guest block boundary.

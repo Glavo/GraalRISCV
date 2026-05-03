@@ -3,20 +3,7 @@
 
 package org.glavo.riscv.nodes;
 
-import com.oracle.truffle.api.CompilerDirectives;
-import com.oracle.truffle.api.RootCallTarget;
-import com.oracle.truffle.api.Truffle;
-import com.oracle.truffle.api.TruffleLanguage;
-import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.DirectCallNode;
-import com.oracle.truffle.api.nodes.IndirectCallNode;
-import com.oracle.truffle.api.nodes.LoopNode;
-import com.oracle.truffle.api.nodes.Node;
-import com.oracle.truffle.api.nodes.Node.Child;
-import com.oracle.truffle.api.nodes.RepeatingNode;
-import com.oracle.truffle.api.nodes.RootNode;
 import org.glavo.riscv.RiscVContext;
-import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.exception.IllegalInstructionException;
 import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.ProcessImageReplacedException;
@@ -43,9 +30,11 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
+import java.util.ArrayList;
+
 /// Executes one loaded RISC-V ELF image.
 @NotNullByDefault
-public final class RiscVRootNode extends RootNode {
+public final class RiscVRootNode {
     /// The initial Linux user stack backing size.
     private static final long INITIAL_STACK_SIZE = 8L * 1024L * 1024L;
 
@@ -55,31 +44,24 @@ public final class RiscVRootNode extends RootNode {
     /// The alignment used when assigning load bias values to `ET_DYN` images.
     private static final long DYNAMIC_LOAD_ALIGNMENT = 0x0020_0000L;
 
-    /// Resolves the current RISC-V context for this root node.
-    private static final TruffleLanguage.ContextReference<RiscVContext> CONTEXT_REFERENCE =
-            TruffleLanguage.ContextReference.create(RiscVLanguage.class);
-
     /// The host-supplied source bytes, or an empty array when the executable is read from guest mounts.
     private final byte @Unmodifiable [] sourceBytes;
 
     /// The lazily populated block cache for this execution root.
     private final BlockCache blocks;
 
-    /// The Truffle loop root used by the main thread and clone-created guest threads.
-    private final RootCallTarget guestLoopTarget;
+    /// The decoded block and trace dispatch state for this execution root.
+    private final BlockDispatchNode dispatch;
 
-    /// Creates a root node for a RISC-V ELF source.
-    public RiscVRootNode(RiscVLanguage language, byte @Unmodifiable [] sourceBytes) {
-        super(language);
+    /// Creates a runner for a RISC-V ELF source.
+    public RiscVRootNode(byte @Unmodifiable [] sourceBytes) {
         this.sourceBytes = sourceBytes.clone();
-        this.blocks = new BlockCache(language);
-        this.guestLoopTarget = new GuestLoopRootNode(language, blocks).getCallTarget();
+        this.blocks = new BlockCache();
+        this.dispatch = new BlockDispatchNode(blocks);
     }
 
     /// Executes the guest program and returns its exit code.
-    @Override
-    public Object execute(VirtualFrame frame) {
-        RiscVContext context = CONTEXT_REFERENCE.get(this);
+    public int execute(RiscVContext context) {
         LoadedProgram program = loadProgram(context);
         try (Memory memory = Memory.sparse(
                 resolveMemoryBase(context, program),
@@ -95,7 +77,7 @@ public final class RiscVRootNode extends RootNode {
             } catch (ProgramExitException exit) {
                 state.syscalls().requestProcessExit(exit.exitCode());
                 state.syscalls().recordThreadExit(state, exit.exitCode());
-                return exit.exitCode();
+                return (int) exit.exitCode();
             } catch (RuntimeException | Error throwable) {
                 state.syscalls().requestProcessExit(1);
                 throw throwable;
@@ -110,7 +92,7 @@ public final class RiscVRootNode extends RootNode {
     private int executeGuestLoop(Memory memory, MachineState state) {
         while (true) {
             try {
-                guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
+                executeDispatchLoop(new GuestLoopState(memory, state, state.pc()));
                 throw new AssertionError("Guest loop returned without an exit signal");
             } catch (ProcessImageReplacedException ignored) {
                 continue;
@@ -132,7 +114,7 @@ public final class RiscVRootNode extends RootNode {
         }
     }
 
-    /// Runs one clone-created guest thread on its Truffle host thread.
+    /// Runs one clone-created guest thread on its host thread.
     private void runGuestThread(Memory memory, MachineState state) {
         try {
             executeGuestThreadLoop(memory, state);
@@ -151,7 +133,7 @@ public final class RiscVRootNode extends RootNode {
     private void executeGuestThreadLoop(Memory memory, MachineState state) {
         while (true) {
             try {
-                guestLoopTarget.call(new GuestLoopState(memory, state, state.pc()));
+                executeDispatchLoop(new GuestLoopState(memory, state, state.pc()));
                 throw new AssertionError("Guest loop returned without an exit signal");
             } catch (ProcessImageReplacedException ignored) {
                 continue;
@@ -168,6 +150,16 @@ public final class RiscVRootNode extends RootNode {
             } catch (RiscVException exception) {
                 throw withGuestContext(exception, state);
             }
+        }
+    }
+
+    /// Runs guest blocks until the guest exits by throwing an execution-control exception.
+    private void executeDispatchLoop(GuestLoopState loopState) {
+        while (true) {
+            loopState.syscalls().checkProcessStatus();
+            loopState.refreshMemoryAccess();
+            long pc = dispatch.execute(loopState, loopState.state());
+            loopState.setPc(pc);
         }
     }
 
@@ -193,7 +185,6 @@ public final class RiscVRootNode extends RootNode {
         @Nullable String interpreterPath = executable.interpreterPath();
         if (interpreterPath != null) {
             byte[] interpreterBytes = GuestFileSystem.readMountedFile(
-                    context.env(),
                     context.filesystemMounts(),
                     interpreterPath);
             ElfImage interpreter = ElfLoader.load(interpreterBytes);
@@ -219,7 +210,7 @@ public final class RiscVRootNode extends RootNode {
         if (guestProgramPath == null) {
             return sourceBytes.clone();
         }
-        return GuestFileSystem.readMountedFile(context.env(), context.filesystemMounts(), guestProgramPath);
+        return GuestFileSystem.readMountedFile(context.filesystemMounts(), guestProgramPath);
     }
 
     /// Assigns a load bias to an ELF image.
@@ -247,6 +238,7 @@ public final class RiscVRootNode extends RootNode {
     /// Creates and initializes architectural state for a guest run.
     private MachineState createState(RiscVContext context, Memory memory, LoadedProgram program) {
         long initialProgramBreak = memory.baseAddress();
+        ArrayList<ProtectionRange> protectionRanges = new ArrayList<>();
         for (LoadedImage loadedImage : program.images()) {
             for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
                 if (segment.memorySize() == 0) {
@@ -260,6 +252,7 @@ public final class RiscVRootNode extends RootNode {
                 if (!memory.hasDenseInitialBacking()) {
                     mapLoadSegment(memory, pageStart, pageLength);
                 }
+                addProtectionRange(protectionRanges, pageStart, pageEnd, segmentProtection(segment));
             }
         }
 
@@ -280,19 +273,10 @@ public final class RiscVRootNode extends RootNode {
             }
         }
 
-        for (LoadedImage loadedImage : program.images()) {
-            for (ElfImage.LoadSegment segment : loadedImage.image().loadSegments()) {
-                if (segment.memorySize() == 0) {
-                    continue;
-                }
-                long runtimeAddress = loadedImage.runtimeAddress(segment.virtualAddress());
-                long pageStart = alignDown(runtimeAddress, context.pageSize());
-                long pageEnd = alignUp(runtimeAddress + segment.memorySize(), context.pageSize());
-                long pageLength = pageEnd - pageStart;
-                if (!memory.protect(pageStart, pageLength, segmentProtection(segment))) {
-                    throw new RiscVException("Failed to protect ELF segment page range: segment="
-                            + formatRange(pageStart, pageEnd));
-                }
+        for (ProtectionRange range : protectionRanges) {
+            if (!memory.protect(range.startAddress(), range.endAddress() - range.startAddress(), range.protection())) {
+                throw new RiscVException("Failed to protect ELF segment page range: segment="
+                        + formatRange(range.startAddress(), range.endAddress()));
             }
         }
 
@@ -306,7 +290,7 @@ public final class RiscVRootNode extends RootNode {
                 program.executable().runtimeOptionalAddress(program.executable().image().tohostAddress()),
                 program.executable().runtimeOptionalAddress(program.executable().image().fromhostAddress()),
                 syscalls,
-                context.env().err(),
+                context.err(),
                 context.vectorVlenBits());
         state.setPc(program.entryPoint());
         state.setRegister(2, stackPointer);
@@ -325,11 +309,10 @@ public final class RiscVRootNode extends RootNode {
         return switch (abi) {
             case LINUX -> new LinuxGuestSyscalls(
                     memory,
-                    context.env().in(),
-                    context.env().out(),
-                    context.env().err(),
+                    context.in(),
+                    context.out(),
+                    context.err(),
                     initialProgramBreak,
-                    context.env(),
                     context.filesystemMounts(),
                     context.timeSource(),
                     context.useHostTty(),
@@ -337,11 +320,10 @@ public final class RiscVRootNode extends RootNode {
                     this::runGuestThread);
             case FREEBSD -> new FreeBsdGuestSyscalls(
                     memory,
-                    context.env().in(),
-                    context.env().out(),
-                    context.env().err(),
+                    context.in(),
+                    context.out(),
+                    context.err(),
                     initialProgramBreak,
-                    context.env(),
                     context.filesystemMounts(),
                     context.timeSource(),
                     context.useHostTty(),
@@ -368,6 +350,85 @@ public final class RiscVRootNode extends RootNode {
                         + ", memory=" + formatRange(memory.baseAddress(), memory.endAddress()));
             }
         }
+    }
+
+    /// Adds one page-aligned ELF protection range, unioning permissions across overlapped segment pages.
+    private static void addProtectionRange(
+            ArrayList<ProtectionRange> ranges,
+            long startAddress,
+            long endAddress,
+            long protection) {
+        if (startAddress == endAddress) {
+            return;
+        }
+
+        ArrayList<Long> boundaries = new ArrayList<>(2 + ranges.size() * 2);
+        boundaries.add(startAddress);
+        boundaries.add(endAddress);
+        for (ProtectionRange range : ranges) {
+            boundaries.add(range.startAddress());
+            boundaries.add(range.endAddress());
+        }
+        boundaries.sort(Long::compare);
+
+        ArrayList<ProtectionRange> updated = new ArrayList<>(boundaries.size());
+        @Nullable Long previousBoundary = null;
+        for (long boundary : boundaries) {
+            if (previousBoundary == null) {
+                previousBoundary = boundary;
+                continue;
+            }
+            long intervalStart = previousBoundary;
+            long intervalEnd = boundary;
+            previousBoundary = boundary;
+            if (intervalStart == intervalEnd) {
+                continue;
+            }
+
+            long intervalProtection = 0;
+            if (intervalStart >= startAddress && intervalEnd <= endAddress) {
+                intervalProtection |= protection;
+            }
+            for (ProtectionRange range : ranges) {
+                if (intervalStart >= range.startAddress() && intervalEnd <= range.endAddress()) {
+                    intervalProtection |= range.protection();
+                }
+            }
+            appendProtectionRange(updated, intervalStart, intervalEnd, intervalProtection);
+        }
+
+        ranges.clear();
+        ranges.addAll(updated);
+    }
+
+    /// Appends one protection range, merging adjacent intervals with identical permissions.
+    private static void appendProtectionRange(
+            ArrayList<ProtectionRange> ranges,
+            long startAddress,
+            long endAddress,
+            long protection) {
+        if (protection == Memory.PROTECTION_NONE) {
+            return;
+        }
+
+        int lastIndex = ranges.size() - 1;
+        if (lastIndex >= 0) {
+            ProtectionRange last = ranges.get(lastIndex);
+            if (last.endAddress() == startAddress && last.protection() == protection) {
+                ranges.set(lastIndex, new ProtectionRange(last.startAddress(), endAddress, protection));
+                return;
+            }
+        }
+        ranges.add(new ProtectionRange(startAddress, endAddress, protection));
+    }
+
+    /// Stores one page-aligned memory protection range.
+    ///
+    /// @param startAddress inclusive guest start address
+    /// @param endAddress exclusive guest end address
+    /// @param protection combined `Memory.PROTECTION_*` flags
+    @NotNullByDefault
+    private record ProtectionRange(long startAddress, long endAddress, long protection) {
     }
 
     /// Initializes the Linux user stack at the top of the contiguous guest memory segment.
@@ -413,7 +474,7 @@ public final class RiscVRootNode extends RootNode {
 
     /// Resolves the memory base from context options or the lowest ELF load segment address.
     private long resolveMemoryBase(RiscVContext context, LoadedProgram program) {
-        if (context.memoryBase() != RiscVLanguage.AUTO_MEMORY_BASE) {
+        if (context.memoryBase() != RiscVContext.AUTO_MEMORY_BASE) {
             return context.memoryBase();
         }
 
@@ -609,7 +670,7 @@ public final class RiscVRootNode extends RootNode {
         }
     }
 
-    /// Holds per-thread guest loop state while a Truffle loop root is executing.
+    /// Holds per-thread guest loop state while a host loop is executing.
     @NotNullByDefault
     private static final class GuestLoopState {
         /// Number of entries in the thread-local decoded-block lookup cache.
@@ -630,8 +691,8 @@ public final class RiscVRootNode extends RootNode {
         /// The execution policy shared by decoded blocks in this guest loop.
         private final byte executionPolicy;
 
-        /// Reusable block call arguments used to avoid per-block varargs allocation.
-        private final Object[] blockArguments;
+        /// Reusable memory access facade for this host thread.
+        private final MemoryAccess access;
 
         /// The next guest program counter to dispatch.
         private long pc;
@@ -652,7 +713,7 @@ public final class RiscVRootNode extends RootNode {
             this.state = state;
             this.syscalls = state.syscalls();
             this.executionPolicy = executionPolicy(state);
-            this.blockArguments = new Object[] { state, memory };
+            this.access = memory.newAccess();
             this.pc = pc;
         }
 
@@ -681,19 +742,14 @@ public final class RiscVRootNode extends RootNode {
             return executionPolicy;
         }
 
-        /// Returns the reusable arguments array passed to decoded block call targets.
-        private Object[] blockArguments() {
-            return blockArguments;
-        }
-
-        /// Initializes block-call memory access inside an entered Truffle context.
-        private void initializeMemoryAccess() {
-            blockArguments[1] = memory.newAccess();
+        /// Returns the reusable memory access facade for decoded block execution.
+        private MemoryAccess access() {
+            return access;
         }
 
         /// Refreshes memory generation-sensitive caches before dispatching another guest block.
         private void refreshMemoryAccess() {
-            ((MemoryAccess) blockArguments[1]).refreshGeneration();
+            access.refreshGeneration();
         }
 
         /// Returns the next guest program counter to dispatch.
@@ -742,53 +798,9 @@ public final class RiscVRootNode extends RootNode {
         }
     }
 
-    /// Executes the guest dispatch loop as a Truffle loop root.
-    @NotNullByDefault
-    private static final class GuestLoopRootNode extends RootNode {
-        /// The loop node that repeatedly dispatches one decoded guest block.
-        @Child private LoopNode loop;
-
-        /// Creates a root for guest-thread execution.
-        private GuestLoopRootNode(RiscVLanguage language, BlockCache blocks) {
-            super(language);
-            this.loop = Truffle.getRuntime().createLoopNode(new GuestLoopRepeatingNode(blocks));
-        }
-
-        /// Runs guest blocks until the guest exits by throwing an execution-control exception.
-        @Override
-        public Object execute(VirtualFrame frame) {
-            ((GuestLoopState) frame.getArguments()[0]).initializeMemoryAccess();
-            loop.execute(frame);
-            throw new AssertionError("Guest loop returned without an exit signal");
-        }
-    }
-
-    /// Dispatches one guest block per Truffle loop iteration.
-    @NotNullByDefault
-    private static final class GuestLoopRepeatingNode extends Node implements RepeatingNode {
-        /// The block dispatch node used by this loop.
-        @Child private BlockDispatchNode dispatch;
-
-        /// Creates a repeating node backed by the supplied decoded-block cache.
-        private GuestLoopRepeatingNode(BlockCache blocks) {
-            this.dispatch = new BlockDispatchNode(blocks);
-        }
-
-        /// Executes one decoded guest block and continues looping.
-        @Override
-        public boolean executeRepeating(VirtualFrame frame) {
-            GuestLoopState loopState = (GuestLoopState) frame.getArguments()[0];
-            loopState.syscalls().checkProcessStatus();
-            loopState.refreshMemoryAccess();
-            long pc = dispatch.execute(loopState, loopState.state());
-            loopState.setPc(pc);
-            return true;
-        }
-    }
-
     /// Dispatches decoded blocks through a small direct-call inline cache.
     @NotNullByDefault
-    private static final class BlockDispatchNode extends Node {
+    private static final class BlockDispatchNode {
         /// Consecutive executions required before a guest PC is promoted to a direct call.
         private static final int DIRECT_CALL_INSTALL_THRESHOLD = 128;
 
@@ -799,22 +811,19 @@ public final class RiscVRootNode extends RootNode {
         private final TraceCache traces;
 
         /// First direct-call entry for a stable hot guest trace.
-        @Child private @Nullable CachedTraceCallNode cachedTrace0;
+        private @Nullable CachedTraceCallNode cachedTrace0;
 
         /// Second direct-call entry for a stable hot guest trace.
-        @Child private @Nullable CachedTraceCallNode cachedTrace1;
+        private @Nullable CachedTraceCallNode cachedTrace1;
 
         /// Third direct-call entry for a stable hot guest trace.
-        @Child private @Nullable CachedTraceCallNode cachedTrace2;
+        private @Nullable CachedTraceCallNode cachedTrace2;
 
         /// Fourth direct-call entry for a stable hot guest trace.
-        @Child private @Nullable CachedTraceCallNode cachedTrace3;
+        private @Nullable CachedTraceCallNode cachedTrace3;
 
         /// Direct-call entry for a stable self-looping guest block.
-        @Child private @Nullable CachedBlockCallNode cachedCall;
-
-        /// Fallback call node used after the direct-call cache is full.
-        @Child private IndirectCallNode indirectCall = IndirectCallNode.create();
+        private @Nullable CachedBlockCallNode cachedCall;
 
         /// The guest PC currently being considered for direct-call promotion.
         private long candidatePc;
@@ -825,7 +834,7 @@ public final class RiscVRootNode extends RootNode {
         /// Creates a block dispatch node backed by the supplied decoded-block cache.
         private BlockDispatchNode(BlockCache blocks) {
             this.blocks = blocks;
-            this.traces = new TraceCache(blocks.language());
+            this.traces = new TraceCache();
         }
 
         /// Executes the decoded block for the supplied guest program counter.
@@ -841,7 +850,7 @@ public final class RiscVRootNode extends RootNode {
                         executionPolicy,
                         instructionFetchGeneration);
                 if (cachedTrace != null) {
-                    cachedTrace.call(loopState.blockArguments());
+                    cachedTrace.call(state, loopState.access());
                     return state.pc();
                 }
 
@@ -855,15 +864,15 @@ public final class RiscVRootNode extends RootNode {
 
         /// Handles a direct trace-call cache miss for the supplied trace.
         private long executeTraceMiss(GuestLoopState loopState, MachineState state, TraceEntry trace) {
-            if (CompilerDirectives.inInterpreter() && cachedTrace3 == null) {
+            if (cachedTrace3 == null) {
                 CachedTraceCallNode cachedTrace = installCachedTrace(trace);
                 if (cachedTrace != null) {
-                    cachedTrace.call(loopState.blockArguments());
+                    cachedTrace.call(state, loopState.access());
                     return state.pc();
                 }
             }
 
-            indirectCall.call(trace.target(), loopState.blockArguments());
+            trace.target().execute(state, loopState.access());
             return state.pc();
         }
 
@@ -874,13 +883,13 @@ public final class RiscVRootNode extends RootNode {
                 long pc,
                 long instructionFetchGeneration) {
             MemoryLayout memoryLayout = loopState.memoryLayout();
-            CachedBlockCallNode cachedCall = this.cachedCall;
+                CachedBlockCallNode cachedCall = this.cachedCall;
             if (cachedCall != null && cachedCall.matches(
                     pc,
                     memoryLayout,
                     loopState.executionPolicy(),
                     instructionFetchGeneration)) {
-                cachedCall.call(loopState.blockArguments());
+                cachedCall.call(state, loopState.access());
                 long nextPc = state.pc();
                 observeTransition(loopState.memory(), cachedCall.entry(), nextPc);
                 return nextPc;
@@ -891,22 +900,21 @@ public final class RiscVRootNode extends RootNode {
         /// Handles a direct-call cache miss for the supplied guest program counter.
         private long executeBlockMiss(GuestLoopState loopState, MachineState state, long pc) {
             BlockEntry entry = loopState.blockFor(blocks);
-            if (CompilerDirectives.inInterpreter()
-                    && shouldInstallDirectCall(
+            if (shouldInstallDirectCall(
                             pc,
                             loopState.memoryLayout(),
                             loopState.executionPolicy(),
                             entry.instructionFetchGeneration())) {
                 CachedBlockCallNode cachedCall = installCachedCall(entry);
                 if (cachedCall != null) {
-                    cachedCall.call(loopState.blockArguments());
+                    cachedCall.call(state, loopState.access());
                     long nextPc = state.pc();
                     observeTransition(loopState.memory(), entry, nextPc);
                     return nextPc;
                 }
             }
 
-            indirectCall.call(entry.target(), loopState.blockArguments());
+            entry.target().execute(state, loopState.access());
             long nextPc = state.pc();
             observeTransition(loopState.memory(), entry, nextPc);
             return nextPc;
@@ -915,7 +923,7 @@ public final class RiscVRootNode extends RootNode {
         /// Records a block transition and compiles a trace when the successor edge is hot.
         private void observeTransition(Memory memory, BlockEntry entry, long nextPc) {
             entry.recordSuccessor(nextPc);
-            if (entry.executionPolicy() != RiscVMicroBlockNode.CHECKED_MODE && CompilerDirectives.inInterpreter()) {
+            if (entry.executionPolicy() != RiscVMicroBlockNode.CHECKED_MODE) {
                 traces.compileIfHot(memory, blocks, entry);
             }
         }
@@ -947,7 +955,6 @@ public final class RiscVRootNode extends RootNode {
 
         /// Installs a direct trace call node for a newly observed hot trace.
         private @Nullable CachedTraceCallNode installCachedTrace(TraceEntry trace) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
             synchronized (this) {
                 @Nullable CachedTraceCallNode cachedTrace = cachedTrace(
                         trace.startPc(),
@@ -959,16 +966,16 @@ public final class RiscVRootNode extends RootNode {
                 }
 
                 if (cachedTrace0 == null) {
-                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace = new CachedTraceCallNode(trace);
                     cachedTrace0 = cachedTrace;
                 } else if (cachedTrace1 == null) {
-                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace = new CachedTraceCallNode(trace);
                     cachedTrace1 = cachedTrace;
                 } else if (cachedTrace2 == null) {
-                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace = new CachedTraceCallNode(trace);
                     cachedTrace2 = cachedTrace;
                 } else if (cachedTrace3 == null) {
-                    cachedTrace = insert(new CachedTraceCallNode(trace));
+                    cachedTrace = new CachedTraceCallNode(trace);
                     cachedTrace3 = cachedTrace;
                 } else {
                     return null;
@@ -1013,7 +1020,6 @@ public final class RiscVRootNode extends RootNode {
 
         /// Installs a direct call node for a newly observed guest block when capacity remains.
         private @Nullable CachedBlockCallNode installCachedCall(BlockEntry entry) {
-            CompilerDirectives.transferToInterpreterAndInvalidate();
             synchronized (this) {
                 CachedBlockCallNode cachedCall = this.cachedCall;
                 if (cachedCall != null) {
@@ -1026,16 +1032,16 @@ public final class RiscVRootNode extends RootNode {
                             : null;
                 }
 
-                cachedCall = insert(new CachedBlockCallNode(entry));
+                cachedCall = new CachedBlockCallNode(entry);
                 this.cachedCall = cachedCall;
                 return cachedCall;
             }
         }
     }
 
-    /// Calls one hot decoded trace through a direct Truffle call node.
+    /// Calls one hot decoded trace through a cached executable.
     @NotNullByDefault
-    private static final class CachedTraceCallNode extends Node {
+    private static final class CachedTraceCallNode {
         /// The guest program counter handled by this cached trace.
         private final long pc;
 
@@ -1048,8 +1054,8 @@ public final class RiscVRootNode extends RootNode {
         /// The instruction-fetch generation handled by this cached trace.
         private final long instructionFetchGeneration;
 
-        /// The direct call node for the decoded trace target.
-        @Child private DirectCallNode call;
+        /// The decoded trace target.
+        private final ExecutableTrace target;
 
         /// Creates a cached direct call for one decoded trace.
         private CachedTraceCallNode(TraceEntry trace) {
@@ -1057,7 +1063,7 @@ public final class RiscVRootNode extends RootNode {
             this.memoryLayout = trace.memoryLayout();
             this.executionPolicy = trace.executionPolicy();
             this.instructionFetchGeneration = trace.instructionFetchGeneration();
-            this.call = DirectCallNode.create(trace.target());
+            this.target = trace.target();
         }
 
         /// Returns true when this node handles the supplied trace start PC, layout, policy, and generation.
@@ -1073,14 +1079,14 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Executes the cached decoded trace.
-        private void call(Object[] arguments) {
-            call.call(arguments);
+        private void call(MachineState state, MemoryAccess access) {
+            target.execute(state, access);
         }
     }
 
-    /// Calls one decoded block through a direct Truffle call node.
+    /// Calls one decoded block through a cached executable.
     @NotNullByDefault
-    private static final class CachedBlockCallNode extends Node {
+    private static final class CachedBlockCallNode {
         /// The decoded block entry handled by this cached call.
         private final BlockEntry entry;
 
@@ -1096,8 +1102,8 @@ public final class RiscVRootNode extends RootNode {
         /// The instruction-fetch generation handled by this cached direct call.
         private final long instructionFetchGeneration;
 
-        /// The direct call node for the decoded block target.
-        @Child private DirectCallNode call;
+        /// The decoded block target.
+        private final ExecutableBlock target;
 
         /// Creates a cached direct call for one decoded block.
         private CachedBlockCallNode(BlockEntry entry) {
@@ -1106,7 +1112,7 @@ public final class RiscVRootNode extends RootNode {
             this.memoryLayout = entry.memoryLayout();
             this.executionPolicy = entry.executionPolicy();
             this.instructionFetchGeneration = entry.instructionFetchGeneration();
-            this.call = DirectCallNode.create(entry.target());
+            this.target = entry.target();
         }
 
         /// Returns the decoded block entry handled by this cached call.
@@ -1127,8 +1133,8 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Executes the cached decoded block.
-        private void call(Object[] arguments) {
-            call.call(arguments);
+        private void call(MachineState state, MemoryAccess access) {
+            target.execute(state, access);
         }
     }
 
@@ -1157,7 +1163,7 @@ public final class RiscVRootNode extends RootNode {
         private final DecodedBlock decodedBlock;
 
         /// The executable block target.
-        private final RootCallTarget target;
+        private final ExecutableBlock target;
 
         /// The most recently stable successor PC observed after executing this block.
         private long successorPc;
@@ -1172,7 +1178,7 @@ public final class RiscVRootNode extends RootNode {
                 byte executionPolicy,
                 long instructionFetchGeneration,
                 DecodedBlock decodedBlock,
-                RootCallTarget target) {
+                ExecutableBlock target) {
             this.pc = pc;
             this.memoryLayout = memoryLayout;
             this.executionPolicy = executionPolicy;
@@ -1207,7 +1213,7 @@ public final class RiscVRootNode extends RootNode {
         }
 
         /// Returns the executable block target.
-        private RootCallTarget target() {
+        private ExecutableBlock target() {
             return target;
         }
 
@@ -1262,7 +1268,7 @@ public final class RiscVRootNode extends RootNode {
             MemoryLayout memoryLayout,
             byte executionPolicy,
             long instructionFetchGeneration,
-            RootCallTarget target) {
+            ExecutableTrace target) {
     }
 
     /// Stores compiled hot traces in a PC and memory-layout keyed open-addressing map.
@@ -1279,9 +1285,6 @@ public final class RiscVRootNode extends RootNode {
 
         /// The resize threshold denominator for the trace cache load factor.
         private static final int LOAD_FACTOR_DENOMINATOR = 2;
-
-        /// The language instance used to create trace roots.
-        private final RiscVLanguage language;
 
         /// Guest program counters stored in cache slots.
         private volatile long[] keys = new long[INITIAL_CAPACITY];
@@ -1302,10 +1305,6 @@ public final class RiscVRootNode extends RootNode {
         private int size;
 
         /// Creates a trace cache for one dispatch node.
-        private TraceCache(RiscVLanguage language) {
-            this.language = language;
-        }
-
         /// Returns the compiled trace for a guest program counter, or null on miss.
         private @Nullable TraceEntry get(
                 long pc,
@@ -1367,7 +1366,6 @@ public final class RiscVRootNode extends RootNode {
                 return;
             }
 
-            CompilerDirectives.transferToInterpreter();
             if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
                 grow();
                 slot = findSlot(
@@ -1387,12 +1385,11 @@ public final class RiscVRootNode extends RootNode {
                     memoryLayout,
                     start.executionPolicy(),
                     start.instructionFetchGeneration(),
-                    new RiscVMicroTraceRootNode(
-                            language,
+                    TraceCompiler.compile(
                             memoryLayout,
                             start.executionPolicy(),
                             result.decodedBlocks(),
-                            result.expectedNextPcs()).getCallTarget());
+                            result.expectedNextPcs()));
             keys[slot] = start.pc();
             layouts[slot] = memoryLayout;
             executionPolicies[slot] = start.executionPolicy();
@@ -1566,9 +1563,6 @@ public final class RiscVRootNode extends RootNode {
         /// The resize threshold denominator for the cache load factor.
         private static final int LOAD_FACTOR_DENOMINATOR = 2;
 
-        /// The language instance used to create micro-bytecode block roots.
-        private final RiscVLanguage language;
-
         /// Guest program counters stored in cache slots.
         private volatile long[] keys = new long[INITIAL_CAPACITY];
 
@@ -1588,15 +1582,6 @@ public final class RiscVRootNode extends RootNode {
         private int size;
 
         /// Creates a decoded block cache for one root node.
-        private BlockCache(RiscVLanguage language) {
-            this.language = language;
-        }
-
-        /// Returns the language instance used to compile blocks and traces.
-        private RiscVLanguage language() {
-            return language;
-        }
-
         /// Returns the cached block for a guest program counter, layout, and execution policy.
         private BlockEntry getOrDecode(
                 Memory memory,
@@ -1649,7 +1634,6 @@ public final class RiscVRootNode extends RootNode {
                 return block;
             }
 
-            CompilerDirectives.transferToInterpreter();
             if ((size + 1) * LOAD_FACTOR_DENOMINATOR >= values.length * LOAD_FACTOR_NUMERATOR) {
                 grow();
                 slot = findSlot(
@@ -1671,7 +1655,7 @@ public final class RiscVRootNode extends RootNode {
                     executionPolicy,
                     instructionFetchGeneration,
                     decodedBlock,
-                    RiscVMicroBlockCompiler.compile(language, decodedBlock, memoryLayout, executionPolicy));
+                    RiscVMicroBlockCompiler.compile(decodedBlock, memoryLayout, executionPolicy));
             keys[slot] = pc;
             layouts[slot] = memoryLayout;
             executionPolicies[slot] = executionPolicy;

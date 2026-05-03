@@ -4,14 +4,10 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.memory.MappedRegionCache;
 import org.glavo.riscv.runtime.FilesystemMountSpec;
 import org.glavo.riscv.runtime.FilesystemMountSpec.Type;
 import org.glavo.riscv.runtime.GuestCredentials;
-import org.graalvm.polyglot.Context;
-import org.graalvm.polyglot.Source;
-import org.graalvm.polyglot.Value;
-import org.graalvm.polyglot.io.ByteSequence;
-import org.graalvm.polyglot.io.IOAccess;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -57,7 +53,7 @@ public final class Main {
               --shell <path>             Guest shell path used by the default environment.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
-              --debug-trace-compilation  Print Truffle compilation diagnostics with synchronous debug compilation.
+              --debug-trace-compilation  Accepted for compatibility; currently ignored.
               --trace                    Print guest instruction trace lines.
               -h, --help                 Print this help message.
             """;
@@ -67,12 +63,6 @@ public final class Main {
 
     /// The process exit code used for host-side execution failures.
     private static final int HOST_ERROR = 1;
-
-    /// The Truffle system property that controls attach-library diagnostics.
-    private static final String ATTACH_LIBRARY_FAILURE_ACTION_PROPERTY = "polyglotimpl.AttachLibraryFailureAction";
-
-    /// The default attach-library diagnostic behavior used by the CLI.
-    private static final String DEFAULT_ATTACH_LIBRARY_FAILURE_ACTION = "ignore";
 
     /// Prevents construction of this utility class.
     private Main() {
@@ -98,16 +88,8 @@ public final class Main {
             byte[] elf = options.hostProgramPath() == null
                     ? new byte[0]
                     : Files.readAllBytes(options.hostProgramPath());
-            try (Context context = createContext(options, in, out, err)) {
-                Source source = Source.newBuilder(
-                                RiscVLanguage.ID,
-                                ByteSequence.create(elf),
-                                options.programPath())
-                        .mimeType(RiscVLanguage.ELF_MIME_TYPE)
-                        .build();
-                Value value = context.eval(source);
-                return normalizeExitCode(value.asLong());
-            }
+            RiscVContext context = createContext(options, in, out, err);
+            return normalizeExitCode(RiscVEngine.run(elf, context));
         } catch (IOException exception) {
             errorStream.println("Failed to read ELF file: " + exception.getMessage());
             return HOST_ERROR;
@@ -117,91 +99,35 @@ public final class Main {
         }
     }
 
-    /// Creates the Polyglot context used for guest execution.
-    private static Context createContext(CliOptions options, InputStream in, OutputStream out, OutputStream err) {
-        configurePolyglotDefaults();
-
-        Context.Builder builder = Context.newBuilder(RiscVLanguage.ID)
-                .in(in)
-                .out(out)
-                .err(err)
-                .allowIO(IOAccess.ALL)
-                .allowCreateThread(true)
-                .arguments(RiscVLanguage.ID, options.applicationArguments())
-                .option("engine.WarnInterpreterOnly", "false");
-
-        if (options.memoryBase() != null) {
-            builder.option("riscv.memoryBase", options.memoryBase());
-        }
-        if (options.memorySize() != null) {
-            builder.option("riscv.memorySize", options.memorySize());
-        }
-        if (options.pageSize() != null) {
-            builder.option("riscv.pageSize", options.pageSize());
-        }
-        if (options.maxCommittedPages() != null) {
-            builder.option("riscv.maxCommittedPages", options.maxCommittedPages());
-        }
-        if (options.hugePageSize() != null) {
-            builder.option("riscv.hugePageSize", options.hugePageSize());
-        }
-        if (options.hugePages() != null) {
-            builder.option("riscv.hugePages", options.hugePages());
-        }
-        if (options.vectorVlen() != null) {
-            builder.option("riscv.vectorVlen", options.vectorVlen());
-        }
-        if (options.maxInstructions() != null) {
-            builder.option("riscv.maxInstructions", options.maxInstructions());
-        }
-        if (options.debugFixedClockNanos() != null) {
-            builder.option("riscv.debugFixedClockNanos", options.debugFixedClockNanos());
-        }
-        if (options.debugTraceCompilation()) {
-            builder.allowExperimentalOptions(true)
-                    .option("engine.Compilation", "true")
-                    .option("engine.BackgroundCompilation", "false")
-                    .option("engine.FirstTierCompilationThreshold", "10000")
-                    .option("engine.OSRCompilationThreshold", "10000")
-                    .option("engine.TraceCompilation", "true");
-        }
-        builder.option("riscv.mounts", encodeMounts(options.mounts()));
-        if (options.guestProgramPath() != null) {
-            builder.option("riscv.guestProgramPath", options.guestProgramPath());
-        }
-        if (options.useHostTty()) {
-            builder.option("riscv.useHostTty", "true");
-        }
-        if (options.guestUserName() != null) {
-            builder.option("riscv.guestUserName", options.guestUserName());
-        }
-        if (options.guestUid() != null) {
-            builder.option("riscv.guestUid", options.guestUid());
-        }
-        if (options.guestGid() != null) {
-            builder.option("riscv.guestGid", options.guestGid());
-        }
-        if (options.guestGroups() != null) {
-            builder.option("riscv.guestGroups", options.guestGroups());
-        }
-        if (options.guestHome() != null) {
-            builder.option("riscv.guestHome", options.guestHome());
-        }
-        if (options.guestShell() != null) {
-            builder.option("riscv.guestShell", options.guestShell());
-        }
-        if (options.trace()) {
-            builder.option("riscv.trace", "true");
-        }
-
-        return builder.build();
-    }
-
-    /// Applies CLI defaults for Polyglot runtime behavior without overriding user-supplied properties.
-    private static void configurePolyglotDefaults() {
-        if (System.getProperty(ATTACH_LIBRARY_FAILURE_ACTION_PROPERTY) == null) {
-            System.setProperty(ATTACH_LIBRARY_FAILURE_ACTION_PROPERTY, DEFAULT_ATTACH_LIBRARY_FAILURE_ACTION);
-        }
+    /// Creates the plain Java simulator context used for guest execution.
+    private static RiscVContext createContext(CliOptions options, InputStream in, OutputStream out, OutputStream err) {
+        return new RiscVContext(
+                in,
+                out,
+                err,
+                longOptionOrDefault(options.memoryBase(), RiscVContext.DEFAULT_MEMORY_BASE),
+                longOptionOrDefault(options.memorySize(), RiscVContext.DEFAULT_MEMORY_SIZE),
+                longOptionOrDefault(options.pageSize(), RiscVContext.DEFAULT_PAGE_SIZE),
+                longOptionOrDefault(options.maxCommittedPages(), RiscVContext.DEFAULT_MAX_COMMITTED_PAGES),
+                longOptionOrDefault(options.hugePageSize(), RiscVContext.DEFAULT_HUGE_PAGE_SIZE),
+                longOptionOrDefault(options.hugePages(), RiscVContext.DEFAULT_HUGE_PAGES),
+                longOptionOrDefault(options.vectorVlen(), RiscVContext.DEFAULT_VECTOR_VLEN),
+                longOptionOrDefault(options.maxInstructions(), 0L),
+                options.trace(),
+                RiscVContext.timeSourceFromDebugFixedClockNanos(
+                        longOptionOrDefault(options.debugFixedClockNanos(), RiscVContext.HOST_CLOCK_NANOS)),
+                ".",
+                encodeMounts(options.mounts()),
+                options.guestProgramPath() == null ? "" : options.guestProgramPath(),
+                options.useHostTty(),
+                options.guestUserName() == null ? GuestCredentials.DEFAULT_USER_NAME : options.guestUserName(),
+                longOptionOrDefault(options.guestUid(), GuestCredentials.DEFAULT_USER_ID),
+                longOptionOrDefault(options.guestGid(), GuestCredentials.DEFAULT_GROUP_ID),
+                options.guestGroups() == null ? "" : options.guestGroups(),
+                options.guestHome() == null ? "" : options.guestHome(),
+                options.guestShell() == null ? GuestCredentials.DEFAULT_SHELL : options.guestShell(),
+                options.applicationArguments(),
+                ThreadLocal.withInitial(MappedRegionCache::new));
     }
 
     /// Parses command-line arguments.
@@ -559,7 +485,7 @@ public final class Main {
     /// Parses a signed long option and returns its normalized decimal string value.
     private static @Nullable String parseLongOption(String optionName, String value, PrintStream err) {
         if ("--memory-base".equals(optionName) && "auto".equalsIgnoreCase(value)) {
-            return Long.toString(RiscVLanguage.AUTO_MEMORY_BASE);
+            return Long.toString(RiscVContext.AUTO_MEMORY_BASE);
         }
 
         try {
@@ -568,6 +494,11 @@ public final class Main {
             err.println("Invalid value for " + optionName + ": " + value);
             return null;
         }
+    }
+
+    /// Returns a parsed normalized long option value or the supplied default.
+    private static long longOptionOrDefault(@Nullable String value, long defaultValue) {
+        return value == null ? defaultValue : Long.parseLong(value);
     }
 
     /// Parses a Linux uid or gid option and returns its normalized decimal string value.
@@ -658,7 +589,7 @@ public final class Main {
         return segments.isEmpty() ? "/" : "/" + String.join("/", segments);
     }
 
-    /// Encodes mount options for the Truffle language option.
+    /// Encodes mount options for the runtime context.
     private static String encodeMounts(MountOption @Unmodifiable [] mounts) {
         StringBuilder builder = new StringBuilder();
         for (MountOption mount : mounts) {
@@ -736,7 +667,7 @@ public final class Main {
     /// @param guestGroups the optional supplementary guest gid list option value
     /// @param guestHome the optional guest home directory option value
     /// @param guestShell the optional guest shell option value
-    /// @param debugTraceCompilation whether Truffle compilation diagnostics should be enabled
+    /// @param debugTraceCompilation whether trace compilation diagnostics were requested
     /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
     private record CliOptions(

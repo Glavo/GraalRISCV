@@ -3,8 +3,6 @@
 
 package org.glavo.riscv.runtime;
 
-import com.oracle.truffle.api.TruffleFile;
-import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.IllegalInstructionException;
 import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.ProgramExitException;
@@ -42,7 +40,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable TruffleFile hostRoot) {
+            @Nullable HostPath hostRoot) {
         super(memory, in, out, err, initialProgramBreak, hostRoot);
     }
 
@@ -53,7 +51,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable TruffleFile hostRoot,
+            @Nullable HostPath hostRoot,
             TimeSource timeSource) {
         super(memory, in, out, err, initialProgramBreak, hostRoot, timeSource);
     }
@@ -90,9 +88,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath) {
-        super(memory, in, out, err, initialProgramBreak, env, hostRootPath);
+        super(memory, in, out, err, initialProgramBreak, hostRootPath);
     }
 
     /// Creates a Linux syscall handler backed by the supplied streams, lazy root mount, and guest time source.
@@ -102,10 +99,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath,
             TimeSource timeSource) {
-        super(memory, in, out, err, initialProgramBreak, env, hostRootPath, timeSource);
+        super(memory, in, out, err, initialProgramBreak, hostRootPath, timeSource);
     }
 
     /// Creates a Linux syscall handler backed by streams, lazy root mount, guest time source, and guest thread runner.
@@ -115,11 +111,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath,
             TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
-        super(memory, in, out, err, initialProgramBreak, env, hostRootPath, timeSource, guestThreadRunner);
+        super(memory, in, out, err, initialProgramBreak, hostRootPath, timeSource, guestThreadRunner);
     }
 
     /// Creates a Linux syscall handler backed by streams, lazy root mount, guest time source, terminal option,
@@ -130,12 +125,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String hostRootPath,
             TimeSource timeSource,
             boolean useHostTty,
             GuestThreadRunner guestThreadRunner) {
-        super(memory, in, out, err, initialProgramBreak, env, hostRootPath, timeSource, useHostTty, guestThreadRunner);
+        super(memory, in, out, err, initialProgramBreak, hostRootPath, timeSource, useHostTty, guestThreadRunner);
     }
 
     /// Creates a Linux syscall handler backed by the supplied streams, lazy filesystem mounts, and guest time source.
@@ -145,10 +139,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource) {
-        super(memory, in, out, err, initialProgramBreak, env, filesystemMountSpecs, timeSource);
+        super(memory, in, out, err, initialProgramBreak, filesystemMountSpecs, timeSource);
     }
 
     /// Creates a Linux syscall handler backed by streams, lazy filesystem mounts, guest time source,
@@ -159,11 +152,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             GuestThreadRunner guestThreadRunner) {
-        super(memory, in, out, err, initialProgramBreak, env, filesystemMountSpecs, timeSource, guestThreadRunner);
+        super(memory, in, out, err, initialProgramBreak, filesystemMountSpecs, timeSource, guestThreadRunner);
     }
 
     /// Creates a Linux syscall handler backed by streams, lazy filesystem mounts, guest time source,
@@ -174,7 +166,6 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             boolean useHostTty,
@@ -185,7 +176,6 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 out,
                 err,
                 initialProgramBreak,
-                env,
                 filesystemMountSpecs,
                 timeSource,
                 useHostTty,
@@ -200,7 +190,6 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             boolean useHostTty,
@@ -212,7 +201,6 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 out,
                 err,
                 initialProgramBreak,
-                env,
                 filesystemMountSpecs,
                 timeSource,
                 useHostTty,
@@ -745,11 +733,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             childThread.setClearChildTidAddress(childTidAddress);
         }
 
-        TruffleLanguage.Env currentEnv = env;
         GuestThreadRunner currentRunner = guestThreadRunner;
+        if (currentRunner == null) {
+            return EAGAIN;
+        }
         Thread thread;
         try {
-            thread = currentEnv.newTruffleThreadBuilder(() -> currentRunner.runGuestThread(memory, child)).build();
+            thread = new Thread(
+                    () -> currentRunner.runGuestThread(memory, child),
+                    "riscv-guest-thread-" + threadId);
         } catch (RuntimeException exception) {
             return EAGAIN;
         }
@@ -842,11 +834,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             childMemory.writeInt(childTidAddress, childProcess.id());
         }
 
-        TruffleLanguage.Env currentEnv = env;
         GuestThreadRunner currentRunner = guestThreadRunner;
+        if (currentRunner == null) {
+            childSyscalls.close();
+            childMemory.close();
+            return EAGAIN;
+        }
         Thread thread;
         try {
-            thread = currentEnv.newTruffleThreadBuilder(() -> {
+            thread = new Thread(() -> {
                 try {
                     currentRunner.runGuestThread(childMemory, child);
                 } finally {
@@ -854,7 +850,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     childSyscalls.close();
                     childMemory.close();
                 }
-            }).build();
+            }, "riscv-guest-process-" + childProcess.id());
         } catch (RuntimeException exception) {
             childSyscalls.close();
             childMemory.close();

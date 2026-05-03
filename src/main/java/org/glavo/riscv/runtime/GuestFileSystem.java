@@ -3,8 +3,6 @@
 
 package org.glavo.riscv.runtime;
 
-import com.oracle.truffle.api.TruffleFile;
-import com.oracle.truffle.api.TruffleLanguage;
 import kala.compress.archivers.tar.TarArchiveEntry;
 import kala.compress.archivers.tar.TarArchiveInputStream;
 import kala.compress.archivers.tar.TarArchiveReader;
@@ -84,48 +82,41 @@ public final class GuestFileSystem {
     /// Eagerly resolved non-virtual mounts, or null when mounts must be resolved from specs.
     private final Mount @Nullable [] eagerMounts;
 
-    /// The Truffle environment used to resolve lazy mount specs, or null for eager-only filesystems.
-    private final @Nullable TruffleLanguage.Env env;
-
     /// Lazy mount specs in Docker-like key-value form.
     private final String @Unmodifiable [] mountSpecs;
 
     /// Virtual mounts appended to the mount namespace.
     private final VirtualMount @Unmodifiable [] virtualMounts;
 
-    /// The resolved immutable mount snapshot, initialized lazily for Truffle-backed mounts.
+    /// The resolved immutable mount snapshot, initialized lazily for spec-backed mounts.
     private volatile Mount @Nullable [] resolvedMounts;
 
     /// Creates a guest filesystem from eager mounts, lazy specs, and virtual mounts.
     private GuestFileSystem(
             Mount @Nullable [] eagerMounts,
-            @Nullable TruffleLanguage.Env env,
             String @Unmodifiable [] mountSpecs,
             VirtualMount @Unmodifiable [] virtualMounts) {
         this.eagerMounts = eagerMounts == null ? null : eagerMounts.clone();
-        this.env = env;
         this.mountSpecs = mountSpecs.clone();
         this.virtualMounts = virtualMounts.clone();
     }
 
     /// Creates a filesystem with only explicitly added virtual mounts.
     public static GuestFileSystem empty() {
-        return new GuestFileSystem(null, null, new String[0], new VirtualMount[0]);
+        return new GuestFileSystem(null, new String[0], new VirtualMount[0]);
     }
 
     /// Creates a filesystem with an eager host root mount when one is supplied.
-    public static GuestFileSystem forHostRoot(@Nullable TruffleFile hostRoot) {
+    public static GuestFileSystem forHostRoot(@Nullable HostPath hostRoot) {
         Mount @Nullable [] mounts = hostRoot == null
                 ? null
                 : new Mount[]{new HostMount("/", hostRoot.getAbsoluteFile().normalize(), false)};
-        return new GuestFileSystem(mounts, null, new String[0], new VirtualMount[0]);
+        return new GuestFileSystem(mounts, new String[0], new VirtualMount[0]);
     }
 
-    /// Creates a filesystem whose host and tar mounts are resolved through a Truffle environment.
-    public static GuestFileSystem forMountSpecs(
-            TruffleLanguage.Env env,
-            String @Unmodifiable [] mountSpecs) {
-        return new GuestFileSystem(null, env, mountSpecs, new VirtualMount[0]);
+    /// Creates a filesystem whose host and tar mounts are resolved from mount specs.
+    public static GuestFileSystem forMountSpecs(String @Unmodifiable [] mountSpecs) {
+        return new GuestFileSystem(null, mountSpecs, new VirtualMount[0]);
     }
 
     /// Returns a filesystem with an additional virtual mount at the supplied guest path.
@@ -137,7 +128,7 @@ public final class GuestFileSystem {
 
         VirtualMount[] mounts = Arrays.copyOf(virtualMounts, virtualMounts.length + 1);
         mounts[virtualMounts.length] = new VirtualMount(normalizedGuestPath, fileSystem);
-        return new GuestFileSystem(eagerMounts, env, mountSpecs, mounts);
+        return new GuestFileSystem(eagerMounts, mountSpecs, mounts);
     }
 
     /// Returns a filesystem with a virtual mount unless another mount already uses the same guest path.
@@ -151,10 +142,9 @@ public final class GuestFileSystem {
 
     /// Reads a regular file from a filesystem described by lazy mount specs.
     public static byte @Unmodifiable [] readMountedFile(
-            TruffleLanguage.Env env,
             String @Unmodifiable [] mountSpecs,
             String guestPath) {
-        return forMountSpecs(env, mountSpecs).readFile(guestPath);
+        return forMountSpecs(mountSpecs).readFile(guestPath);
     }
 
     /// Reads a regular file from the configured guest filesystem mounts.
@@ -190,7 +180,7 @@ public final class GuestFileSystem {
             return virtualPath.mount().fileSystem().fileData(virtualPath.node()).clone();
         }
         if (mount instanceof HostMount hostMount) {
-            @Nullable TruffleFile hostFile = resolveHostFile(absoluteGuestPath, hostMount);
+            @Nullable HostPath hostFile = resolveHostFile(absoluteGuestPath, hostMount);
             if (hostFile == null) {
                 throw new RiscVException("Guest file is outside configured mounts: " + absoluteGuestPath);
             }
@@ -217,14 +207,14 @@ public final class GuestFileSystem {
     }
 
     /// Returns the mount whose host mount root contains a host path.
-    public @Nullable HostMount mountForHostFile(TruffleFile hostFile) {
-        TruffleFile normalizedHostFile = hostFile.normalize();
+    public @Nullable HostMount mountForHostFile(HostPath hostFile) {
+        HostPath normalizedHostFile = hostFile.normalize();
         @Nullable HostMount best = null;
         for (Mount filesystemMount : currentMounts()) {
             if (!(filesystemMount instanceof HostMount mount)) {
                 continue;
             }
-            TruffleFile normalizedRoot = mount.root().normalize();
+            HostPath normalizedRoot = mount.root().normalize();
             if (normalizedHostFile.startsWith(normalizedRoot)
                     && (best == null || normalizedRoot.getPath().length() > best.root().normalize().getPath().length())) {
                 best = mount;
@@ -234,7 +224,7 @@ public final class GuestFileSystem {
     }
 
     /// Resolves an absolute guest path below a host-directory mount.
-    public @Nullable TruffleFile resolveHostFile(String absoluteGuestPath) {
+    public @Nullable HostPath resolveHostFile(String absoluteGuestPath) {
         @Nullable Mount mount = mountForGuestPath(absoluteGuestPath);
         if (!(mount instanceof HostMount hostMount)) {
             return null;
@@ -437,10 +427,10 @@ public final class GuestFileSystem {
     }
 
     /// Resolves an absolute guest path below a host-directory mount.
-    public static @Nullable TruffleFile resolveHostFile(String absoluteGuestPath, HostMount mount) {
+    public static @Nullable HostPath resolveHostFile(String absoluteGuestPath, HostMount mount) {
         String relativePath = relativeGuestPath(absoluteGuestPath, mount.guestPath());
         try {
-            TruffleFile hostFile = mount.root().resolve(relativePath).normalize();
+            HostPath hostFile = mount.root().resolve(relativePath).normalize();
             return hostFile.startsWith(mount.root()) ? hostFile : null;
         } catch (InvalidPathException exception) {
             return null;
@@ -541,11 +531,11 @@ public final class GuestFileSystem {
     }
 
     /// Returns true when the host path names an existing entry or a symbolic link.
-    public static boolean pathEntryExists(TruffleFile hostFile) {
+    public static boolean pathEntryExists(HostPath hostFile) {
         return hostFile.exists() || hostFile.isSymbolicLink();
     }
 
-    /// Returns resolved filesystem mounts, resolving lazy Truffle files when needed.
+    /// Returns resolved filesystem mounts.
     public Mount @Unmodifiable [] currentMounts() {
         Mount[] mounts = resolvedMounts;
         if (mounts != null) {
@@ -566,9 +556,9 @@ public final class GuestFileSystem {
         ArrayList<Mount> mounts = new ArrayList<>();
         if (eagerMounts != null) {
             mounts.addAll(Arrays.asList(eagerMounts));
-        } else if (env != null) {
+        } else {
             for (String spec : mountSpecs) {
-                @Nullable Mount mount = resolveMountSpec(env, spec);
+                @Nullable Mount mount = resolveMountSpec(spec);
                 if (mount != null) {
                     mounts.add(mount);
                 }
@@ -601,15 +591,11 @@ public final class GuestFileSystem {
     }
 
     /// Resolves one configured filesystem mount spec.
-    private static @Nullable Mount resolveMountSpec(@Nullable TruffleLanguage.Env env, String spec) {
-        if (env == null) {
-            return null;
-        }
-
+    private static @Nullable Mount resolveMountSpec(String spec) {
         FilesystemMountSpec mountSpec = FilesystemMountSpec.parse(spec);
 
         try {
-            TruffleFile root = env.getPublicTruffleFile(mountSpec.hostPath()).getAbsoluteFile().normalize();
+            HostPath root = HostPath.of(mountSpec.hostPath()).getAbsoluteFile().normalize();
             FilesystemMountSpec.Type type = mountSpec.type();
             if (type == FilesystemMountSpec.Type.AUTO) {
                 type = root.isRegularFile() ? FilesystemMountSpec.Type.TAR : FilesystemMountSpec.Type.BIND;
@@ -682,7 +668,7 @@ public final class GuestFileSystem {
     /// @param guestPath the absolute guest-visible mount point
     /// @param root the resolved host path backing the mount point
     /// @param readOnly whether guest writes through this mount are rejected
-    public record HostMount(String guestPath, TruffleFile root, boolean readOnly) implements Mount {
+    public record HostMount(String guestPath, HostPath root, boolean readOnly) implements Mount {
     }
 
     /// Describes one resolved tar filesystem mount.
@@ -839,7 +825,7 @@ public final class GuestFileSystem {
         }
 
         /// Reads a tar archive into an in-memory filesystem tree.
-        static TarFileSystem readMemory(TruffleFile archive) throws IOException {
+        static TarFileSystem readMemory(HostPath archive) throws IOException {
             TarFileSystem fileSystem = new TarFileSystem(null);
             ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();
             try (InputStream input = archive.newInputStream();
@@ -876,7 +862,7 @@ public final class GuestFileSystem {
         }
 
         /// Reads tar metadata while leaving regular file contents in the archive.
-        static TarFileSystem readLazy(TruffleFile archive) throws IOException {
+        static TarFileSystem readLazy(HostPath archive) throws IOException {
             TarArchiveReader reader = new TarArchiveReader(archive.newByteChannel(EnumSet.of(StandardOpenOption.READ)));
             TarFileSystem fileSystem = new TarFileSystem(reader);
             ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();

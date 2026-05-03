@@ -3,7 +3,6 @@
 
 package org.glavo.riscv.runtime;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
@@ -810,7 +809,6 @@ public final class MachineState {
     }
 
     /// Writes a single trace line for a guest instruction.
-    @CompilerDirectives.TruffleBoundary
     private static void traceInstruction(PrintStream stream, long address, int raw) {
         stream.println("pc=0x" + Long.toUnsignedString(address, 16) + " raw=0x" + Integer.toUnsignedString(raw, 16));
     }

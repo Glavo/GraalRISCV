@@ -3,8 +3,6 @@
 
 package org.glavo.riscv.nodes;
 
-import com.oracle.truffle.api.RootCallTarget;
-import org.glavo.riscv.RiscVLanguage;
 import org.glavo.riscv.constants.RiscVMicroOpcode;
 import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
@@ -13,23 +11,19 @@ import org.glavo.riscv.parser.RiscVOperation;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
-/// Compiles decoded RISC-V basic blocks into custom micro-bytecode call targets.
+/// Compiles decoded RISC-V basic blocks into custom micro-bytecode executables.
 @NotNullByDefault
 final class RiscVMicroBlockCompiler {
     /// Prevents construction of this utility class.
     private RiscVMicroBlockCompiler() {
     }
 
-    /// Builds a Truffle call target backed by the custom micro-bytecode interpreter and execution policy.
-    static RootCallTarget compile(
-            RiscVLanguage language,
+    /// Builds an executable backed by the custom micro-bytecode interpreter and execution policy.
+    static ExecutableBlock compile(
             DecodedBlock block,
             MemoryLayout memoryLayout,
             byte executionPolicy) {
-        RiscVMicroBlockRootNode root = new RiscVMicroBlockRootNode(
-                language,
-                compileNode(block, memoryLayout, executionPolicy));
-        return root.getCallTarget();
+        return compileNode(block, memoryLayout, executionPolicy);
     }
 
     /// Builds an executable micro-bytecode block node for direct embedding in a root.

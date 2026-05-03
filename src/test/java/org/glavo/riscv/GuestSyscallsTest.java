@@ -8,8 +8,6 @@ import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
-import com.oracle.truffle.api.TruffleFile;
-import org.graalvm.polyglot.io.FileSystem;
 import org.glavo.riscv.constants.Rva22Profile;
 import org.glavo.riscv.constants.Rva23Profile;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -23,7 +21,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -4222,7 +4219,7 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that thread-style `clone` requires a Truffle environment that can create threads.
+    /// Verifies that thread-style `clone` requires a guest thread runner.
     @Test
     public void cloneRequiresThreadCreationContext() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024, null)) {
@@ -6986,7 +6983,7 @@ public final class GuestSyscallsTest {
                 out,
                 err,
                 initialProgramBreak,
-                testTruffleFile(hostRoot),
+                new HostPath(hostRoot),
                 timeSource);
         return new MachineState(
                 memory,
@@ -6995,22 +6992,6 @@ public final class GuestSyscallsTest {
                 ElfImage.ABSENT_ADDRESS,
                 ElfImage.ABSENT_ADDRESS,
                 syscalls);
-    }
-
-    /// Creates a test `TruffleFile` backed by the default host file system.
-    private static TruffleFile testTruffleFile(Path path) {
-        try {
-            Class<?> contextClass = Class.forName("com.oracle.truffle.api.TruffleFile$FileSystemContext");
-            Constructor<?> contextConstructor = contextClass.getDeclaredConstructor(Object.class, FileSystem.class);
-            contextConstructor.setAccessible(true);
-            Object fileSystemContext = contextConstructor.newInstance(new Object(), FileSystem.newDefaultFileSystem());
-
-            Constructor<TruffleFile> fileConstructor = TruffleFile.class.getDeclaredConstructor(contextClass, Path.class);
-            fileConstructor.setAccessible(true);
-            return fileConstructor.newInstance(fileSystemContext, path);
-        } catch (ReflectiveOperationException exception) {
-            throw new AssertionError("Failed to create a test TruffleFile", exception);
-        }
     }
 
     /// Writes a null-terminated UTF-8 string into guest memory.

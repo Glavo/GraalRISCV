@@ -3,11 +3,10 @@
 
 package org.glavo.riscv.memory;
 
-import com.oracle.truffle.api.CompilerDirectives;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
-/// Stores immutable page-layout parameters that can be captured by Truffle nodes.
+/// Stores immutable page-layout parameters.
 ///
 /// @param pageSize the base page size in bytes
 /// @param pageShift the right shift converting a guest address to a base-page number
@@ -24,7 +23,6 @@ public record MemoryLayout(
         long maxIntPageOffset,
         long maxLongPageOffset) {
     /// Canonical layouts for all positive power-of-two `int` page sizes.
-    @CompilerDirectives.CompilationFinal(dimensions = 1)
     private static final MemoryLayout @Unmodifiable [] CANONICAL_LAYOUTS = createCanonicalLayouts();
 
     /// Creates the canonical layout table indexed by page shift.

@@ -6,7 +6,7 @@ package org.glavo.riscv.memory;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 
-/// Stores mutable software TLB state for one Truffle context and host thread.
+/// Stores mutable software TLB state for one host thread.
 @NotNullByDefault
 public final class MappedRegionCache {
     /// The number of cached data pages.

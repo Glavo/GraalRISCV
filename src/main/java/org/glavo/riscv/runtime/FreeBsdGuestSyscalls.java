@@ -3,7 +3,6 @@
 
 package org.glavo.riscv.runtime;
 
-import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
@@ -27,7 +26,6 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            TruffleLanguage.Env env,
             String @Unmodifiable [] filesystemMountSpecs,
             TimeSource timeSource,
             boolean useHostTty,
@@ -39,7 +37,6 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
                 out,
                 err,
                 initialProgramBreak,
-                env,
                 filesystemMountSpecs,
                 timeSource,
                 useHostTty,
@@ -1003,11 +1000,15 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
             childThread.setClearChildTidAddress(childTidAddress);
         }
 
-        TruffleLanguage.Env currentEnv = env;
         GuestThreadRunner currentRunner = guestThreadRunner;
+        if (currentRunner == null) {
+            return EAGAIN;
+        }
         Thread thread;
         try {
-            thread = currentEnv.newTruffleThreadBuilder(() -> currentRunner.runGuestThread(memory, child)).build();
+            thread = new Thread(
+                    () -> currentRunner.runGuestThread(memory, child),
+                    "riscv-guest-thread-" + threadId);
         } catch (RuntimeException exception) {
             return EAGAIN;
         }
