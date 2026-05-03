@@ -861,7 +861,7 @@ final class TerminalDevice implements AutoCloseable {
                 }
                 Thread shutdownHook = new Thread(
                         () -> restoreConsoleModes(handle, mode, outputHandle, outputMode),
-                        "GraalRISCV Windows console restore");
+                        "JRISC-V Windows console restore");
                 Runtime.getRuntime().addShutdownHook(shutdownHook);
                 return new WindowsConsoleMode(handle, mode, outputHandle, outputMode, shutdownHook);
             } catch (Throwable exception) {

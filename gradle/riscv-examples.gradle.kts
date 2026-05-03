@@ -32,7 +32,8 @@ val goInstallDirectory = layout.buildDirectory.dir("tools/go/${GoUtils.getGoDist
 val goExecutableFile = goInstallDirectory.map {
     it.file("go/bin/${GoUtils.getGoExecutableName()}")
 }
-val configuredGoExecutablePath = providers.gradleProperty("graalriscv.goExecutable")
+val configuredGoExecutablePath = providers.gradleProperty("jriscv.goExecutable")
+    .orElse(providers.gradleProperty("graalriscv.goExecutable"))
     .orElse(providers.gradleProperty("goExecutable"))
     .orElse(providers.environmentVariable("GO_EXECUTABLE"))
 val shadowJarFile = tasks.named<Jar>("shadowJar").flatMap { it.archiveFile }
@@ -181,7 +182,7 @@ tasks.register<JavaExec>("testGoHelloWorldExample") {
 
 tasks.register<JavaExec>("runGoHelloWorldExample") {
     group = "verification"
-    description = "Runs the static linux/riscv64 Go hello-world example with the GraalRISCV CLI."
+    description = "Runs the static linux/riscv64 Go hello-world example with the JRISC-V CLI."
 
     dependsOn("classes", "buildGoHelloWorldExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -240,7 +241,7 @@ tasks.register<JavaExec>("testFreeBsdGoHelloWorldExample") {
 
 tasks.register<JavaExec>("runFreeBsdGoHelloWorldExample") {
     group = "verification"
-    description = "Runs the static freebsd/riscv64 Go hello-world example with the GraalRISCV CLI."
+    description = "Runs the static freebsd/riscv64 Go hello-world example with the JRISC-V CLI."
 
     dependsOn("classes", "buildFreeBsdGoHelloWorldExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -302,7 +303,7 @@ tasks.register<JavaExec>("testGoShowcaseExample") {
 
 tasks.register<JavaExec>("runGoShowcaseExample") {
     group = "verification"
-    description = "Runs the static linux/riscv64 Go showcase workload with the GraalRISCV CLI."
+    description = "Runs the static linux/riscv64 Go showcase workload with the JRISC-V CLI."
 
     dependsOn("classes", "buildGoShowcaseExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -331,7 +332,7 @@ tasks.register<RiscVFreestandingZigCCTask>("buildHelloWorldExample") {
 
 tasks.register<JavaExec>("testHelloWorldExample") {
     group = "verification"
-    description = "Compiles Hello World and verifies the GraalRISCV CLI output."
+    description = "Compiles Hello World and verifies the JRISC-V CLI output."
 
     dependsOn("classes", "buildHelloWorldExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -364,7 +365,7 @@ tasks.register<JavaExec>("testHelloWorldExample") {
 
 tasks.register<JavaExec>("runHelloWorldExample") {
     group = "verification"
-    description = "Runs the compiled Hello World RISC-V example with the GraalRISCV CLI."
+    description = "Runs the compiled Hello World RISC-V example with the JRISC-V CLI."
 
     dependsOn("classes", "buildHelloWorldExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -384,11 +385,11 @@ tasks.register<Exec>("runHelloWorldInstalledExample") {
 
     doFirst {
         val scriptName = if (isWindowsHost) {
-            "graalriscv.bat"
+            "jriscv.bat"
         } else {
-            "graalriscv"
+            "jriscv"
         }
-        val script = layout.buildDirectory.file("install/graalriscv/bin/$scriptName").get().asFile
+        val script = layout.buildDirectory.file("install/jriscv/bin/$scriptName").get().asFile
         val elf = helloWorldExampleElf.get().asFile
 
         if (isWindowsHost) {
@@ -484,7 +485,7 @@ tasks.register<JavaExec>("testHotLoopExample") {
 
 tasks.register<JavaExec>("runHotLoopExample") {
     group = "verification"
-    description = "Runs the freestanding hot-loop example with the GraalRISCV CLI."
+    description = "Runs the freestanding hot-loop example with the JRISC-V CLI."
 
     dependsOn("classes", "buildHotLoopExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -522,7 +523,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticPrintfExample") {
 
 tasks.register<JavaExec>("testLinuxStaticPrintfExample") {
     group = "verification"
-    description = "Compiles a static musl printf Hello World and verifies the GraalRISCV CLI output."
+    description = "Compiles a static musl printf Hello World and verifies the JRISC-V CLI output."
 
     dependsOn("classes", "buildLinuxStaticPrintfExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -555,7 +556,7 @@ tasks.register<JavaExec>("testLinuxStaticPrintfExample") {
 
 tasks.register<JavaExec>("runLinuxStaticPrintfExample") {
     group = "verification"
-    description = "Runs the static musl printf Hello World example with the GraalRISCV CLI."
+    description = "Runs the static musl printf Hello World example with the JRISC-V CLI."
 
     dependsOn("classes", "buildLinuxStaticPrintfExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -579,7 +580,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticArgvExample") {
 
 tasks.register<JavaExec>("testLinuxStaticArgvExample") {
     group = "verification"
-    description = "Compiles a static musl argv example and verifies the GraalRISCV CLI output."
+    description = "Compiles a static musl argv example and verifies the JRISC-V CLI output."
 
     dependsOn("classes", "buildLinuxStaticArgvExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -1333,7 +1334,7 @@ tasks.register<JavaExec>("testSQLiteShowcaseExample") {
 
 tasks.register<JavaExec>("runSQLiteShowcaseExample") {
     group = "verification"
-    description = "Runs the downloaded SQLite showcase example with the GraalRISCV CLI."
+    description = "Runs the downloaded SQLite showcase example with the JRISC-V CLI."
 
     dependsOn("classes", "buildSQLiteShowcaseExample")
     classpath = sourceSets.named("main").get().runtimeClasspath
@@ -1898,7 +1899,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildRvvCrcExample") {
 
 registerRvvExampleRunTask(
     "runRvvVectorAddExample",
-    "Runs the downloaded RVV vector-add example with the GraalRISCV CLI.",
+    "Runs the downloaded RVV vector-add example with the JRISC-V CLI.",
     "buildRvvVectorAddExample",
     rvvVectorAddExampleElf
 )
@@ -1913,7 +1914,7 @@ registerRvvExampleTestTask(
 
 registerRvvExampleRunTask(
     "runRvvMatrixTransposeExample",
-    "Runs the RVV matrix-transpose smoke example with the GraalRISCV CLI.",
+    "Runs the RVV matrix-transpose smoke example with the JRISC-V CLI.",
     "buildRvvMatrixTransposeExample",
     rvvMatrixTransposeExampleElf
 )
@@ -1932,7 +1933,7 @@ registerRvvExampleTestTask(
 
 registerRvvExampleRunTask(
     "runRvvReductionExample",
-    "Runs the RVV reduction smoke example with the GraalRISCV CLI.",
+    "Runs the RVV reduction smoke example with the JRISC-V CLI.",
     "buildRvvReductionExample",
     rvvReductionExampleElf
 )
@@ -1947,7 +1948,7 @@ registerRvvExampleTestTask(
 
 registerRvvExampleRunTask(
     "runRvvSoftmaxExample",
-    "Runs the RVV softmax example with the GraalRISCV CLI.",
+    "Runs the RVV softmax example with the JRISC-V CLI.",
     "buildRvvSoftmaxExample",
     rvvSoftmaxExampleElf
 )
@@ -1962,7 +1963,7 @@ registerRvvExampleTestTask(
 
 registerRvvExampleRunTask(
     "runRvvPolynomialBasicExample",
-    "Runs the RVV polynomial basic example with the GraalRISCV CLI.",
+    "Runs the RVV polynomial basic example with the JRISC-V CLI.",
     "buildRvvPolynomialBasicExample",
     rvvPolynomialBasicExampleElf
 )
@@ -1977,7 +1978,7 @@ registerRvvExampleTestTask(
 
 registerRvvExampleRunTask(
     "runRvvUbenchExample",
-    "Runs the RVV micro-benchmark example with the GraalRISCV CLI.",
+    "Runs the RVV micro-benchmark example with the JRISC-V CLI.",
     "buildRvvUbenchExample",
     rvvUbenchExampleElf
 )
@@ -1992,7 +1993,7 @@ registerRvvExampleTestTask(
 
 registerRvvExampleRunTask(
     "runRvvCrcExample",
-    "Runs the RVV CRC smoke example with the GraalRISCV CLI.",
+    "Runs the RVV CRC smoke example with the JRISC-V CLI.",
     "buildRvvCrcExample",
     rvvCrcExampleElf
 )
@@ -2119,7 +2120,7 @@ tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildCoreMarkExample") {
 
 tasks.register<JavaExec>("runCoreMarkExample") {
     group = "verification"
-    description = "Runs the downloaded static CoreMark example with the GraalRISCV CLI."
+    description = "Runs the downloaded static CoreMark example with the JRISC-V CLI."
 
     dependsOn("classes", "buildCoreMarkExample")
     classpath = sourceSets.named("main").get().runtimeClasspath

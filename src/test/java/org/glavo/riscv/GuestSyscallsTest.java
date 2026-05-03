@@ -5118,7 +5118,7 @@ public final class GuestSyscallsTest {
             int mountinfoFileDescriptor = (int) state.register(10);
             assertEquals(5, mountinfoFileDescriptor);
 
-            byte[] mountinfo = "1 0 0:1 / / rw,relatime - graalriscv graalriscv rw\n".getBytes(StandardCharsets.UTF_8);
+            byte[] mountinfo = "1 0 0:1 / / rw,relatime - jriscv jriscv rw\n".getBytes(StandardCharsets.UTF_8);
             setSyscall(state, SYS_READ, mountinfoFileDescriptor, bufferAddress, mountinfo.length);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(mountinfo.length, state.register(10));
@@ -5134,7 +5134,7 @@ public final class GuestSyscallsTest {
             int mountsFileDescriptor = (int) state.register(10);
             assertEquals(5, mountsFileDescriptor);
 
-            byte[] mounts = "graalriscv / graalriscv rw,relatime 0 0\n".getBytes(StandardCharsets.UTF_8);
+            byte[] mounts = "jriscv / jriscv rw,relatime 0 0\n".getBytes(StandardCharsets.UTF_8);
             setSyscall(state, SYS_READ, mountsFileDescriptor, bufferAddress, mounts.length);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(mounts.length, state.register(10));
@@ -5233,7 +5233,7 @@ public final class GuestSyscallsTest {
             assertTrue(cpuinfo.contains("processor\t: 0\n"));
             assertTrue(cpuinfo.contains("isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"));
             assertTrue(cpuinfo.contains("mmu\t\t: sv48\n"));
-            assertTrue(cpuinfo.contains("uarch\t\t: glavo,graalriscv\n"));
+            assertTrue(cpuinfo.contains("uarch\t\t: glavo,jriscv\n"));
             assertTrue(cpuinfo.contains("java_version\t: "));
             assertTrue(cpuinfo.contains("java_vm_name\t: "));
             assertTrue(cpuinfo.contains("java_vm_version\t: "));
@@ -5330,8 +5330,8 @@ public final class GuestSyscallsTest {
 
             setSyscall(state, SYS_READ, productNameFileDescriptor, bufferAddress, 64);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals("GraalRISCV\n".length(), state.register(10));
-            assertEquals("GraalRISCV\n", readGuestString(memory, bufferAddress, "GraalRISCV\n".length()));
+            assertEquals("JRISC-V\n".length(), state.register(10));
+            assertEquals("JRISC-V\n", readGuestString(memory, bufferAddress, "JRISC-V\n".length()));
 
             setSyscall(state, SYS_CLOSE, productNameFileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);

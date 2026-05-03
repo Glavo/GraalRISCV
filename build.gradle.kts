@@ -27,7 +27,7 @@ val unsafeModuleArgs = listOf(
 )
 
 application {
-    applicationName = "graalriscv"
+    applicationName = "jriscv"
     mainClass = "org.glavo.riscv.Main"
 
     applicationDefaultJvmArgs = unsafeModuleArgs + listOf(
@@ -73,6 +73,12 @@ tasks.withType<JavaExec>().configureEach {
 
 tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.add("--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED")
+}
+
+tasks.named<org.gradle.jvm.application.tasks.CreateStartScripts>("startScripts") {
+    doFirst {
+        delete(outputDir)
+    }
 }
 
 apply(from = "gradle/riscv-examples.gradle.kts")

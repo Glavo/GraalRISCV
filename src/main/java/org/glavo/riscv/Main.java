@@ -26,8 +26,8 @@ import java.util.List;
 public final class Main {
     /// The usage text printed for invalid arguments or `--help`.
     private static final String USAGE = """
-            Usage: graalriscv [options] <program.elf> [program-args...]
-                   graalriscv [options] --guest-program <path> [program-args...]
+            Usage: jriscv [options] <program.elf> [program-args...]
+                   jriscv [options] --guest-program <path> [program-args...]
 
             Options:
               --guest-program <path>    Load the executable from an absolute guest path resolved through --mount.

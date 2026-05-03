@@ -8,7 +8,7 @@ val sourceSets = extensions.getByType<SourceSetContainer>()
 val javaToolchains = extensions.getByType<JavaToolchainService>()
 
 val nativeImageMainClassName = "org.glavo.riscv.Main"
-val nativeImageBaseName = "graalriscv"
+val nativeImageBaseName = "jriscv"
 val nativeImageExecutableName = if (System.getProperty("os.name").lowercase().contains("win")) {
     "$nativeImageBaseName.exe"
 } else {
@@ -79,7 +79,7 @@ fun verifyNativeImageSmokeOutput(taskName: String, stdout: ByteArrayOutputStream
 
 tasks.register<Exec>("nativeCompile") {
     group = "build"
-    description = "Builds a native GraalRISCV executable with GraalVM native-image."
+    description = "Builds a native JRISC-V executable with GraalVM native-image."
 
     dependsOn("classes")
     inputs.files(sourceSets.named("main").get().runtimeClasspath)
@@ -117,7 +117,7 @@ tasks.register<Exec>("nativeCompile") {
 
 tasks.register<Exec>("runNativeImageSmoke") {
     group = "verification"
-    description = "Runs the generated smoke ELF through the native GraalRISCV executable."
+    description = "Runs the generated smoke ELF through the native JRISC-V executable."
 
     dependsOn("nativeCompile", "generateSmokeElf")
     inputs.file(nativeImageExecutableFile)

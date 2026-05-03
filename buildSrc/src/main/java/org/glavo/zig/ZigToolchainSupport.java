@@ -19,7 +19,7 @@ import java.io.File;
 @NotNullByDefault
 public final class ZigToolchainSupport {
     /// The project extension name used to store the shared Zig toolchain support instance.
-    private static final String EXTENSION_NAME = "graalRiscVZigToolchain";
+    private static final String EXTENSION_NAME = "jRiscVZigToolchain";
 
     /// Prevents instantiation.
     private ZigToolchainSupport() {
@@ -43,7 +43,8 @@ public final class ZigToolchainSupport {
         Provider<RegularFile> executableFile = installDirectory.map(directory ->
                 directory.file(ZigUtils.getZigExecutableName()));
         Provider<String> configuredExecutablePath = project.getProviders()
-                .gradleProperty("graalriscv.zigExecutable")
+                .gradleProperty("jriscv.zigExecutable")
+                .orElse(project.getProviders().gradleProperty("graalriscv.zigExecutable"))
                 .orElse(project.getProviders().gradleProperty("zigExecutable"))
                 .orElse(project.getProviders().environmentVariable("ZIG_EXECUTABLE"));
 

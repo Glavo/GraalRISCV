@@ -36,13 +36,17 @@ val rva22AcceptanceElfDirectory = layout.buildDirectory.dir("riscv-tests/rva22-a
 val rva23AcceptanceSourceInputDirectory = layout.projectDirectory.dir("src/test/asm/rva23")
 val rva23AcceptanceGeneratedSourceDirectory = layout.buildDirectory.dir("generated/rva23-acceptance")
 val rva23AcceptanceElfDirectory = layout.buildDirectory.dir("riscv-tests/rva23-acceptance")
-val riscVTestsMaxInstructions = providers.gradleProperty("graalriscv.riscvTestsMaxInstructions")
+val riscVTestsMaxInstructions = providers.gradleProperty("jriscv.riscvTestsMaxInstructions")
+    .orElse(providers.gradleProperty("graalriscv.riscvTestsMaxInstructions"))
     .orElse("10000000")
-val riscVTestsFilter = providers.gradleProperty("graalriscv.riscvTestsFilter")
+val riscVTestsFilter = providers.gradleProperty("jriscv.riscvTestsFilter")
+    .orElse(providers.gradleProperty("graalriscv.riscvTestsFilter"))
     .orElse(".*")
-val rva22AcceptanceFilter = providers.gradleProperty("graalriscv.rva22AcceptanceFilter")
+val rva22AcceptanceFilter = providers.gradleProperty("jriscv.rva22AcceptanceFilter")
+    .orElse(providers.gradleProperty("graalriscv.rva22AcceptanceFilter"))
     .orElse(".*")
-val rva23AcceptanceFilter = providers.gradleProperty("graalriscv.rva23AcceptanceFilter")
+val rva23AcceptanceFilter = providers.gradleProperty("jriscv.rva23AcceptanceFilter")
+    .orElse(providers.gradleProperty("graalriscv.rva23AcceptanceFilter"))
     .orElse(".*")
 val riscVTestsRequiredPaths = listOf(
     "configure.ac",
@@ -266,7 +270,7 @@ tasks.register<RiscVTestsBuildTask>("buildRva23AcceptanceTests") {
 
 tasks.register<RiscVTestsRunTask>("testRiscVTests") {
     group = "verification"
-    description = "Builds and runs the RV64GC p-mode riscv-tests ISA ELFs with the GraalRISCV CLI."
+    description = "Builds and runs the RV64GC p-mode riscv-tests ISA ELFs with the JRISC-V CLI."
 
     dependsOn("classes", "buildRiscVTests")
     elfDirectory.set(riscVTestsElfDirectory)
@@ -279,7 +283,7 @@ tasks.register<RiscVTestsRunTask>("testRiscVTests") {
 
 tasks.register<RiscVTestsRunTask>("testRva22Acceptance") {
     group = "verification"
-    description = "Builds and runs repository-owned RVA22U64 acceptance ELFs with the GraalRISCV CLI."
+    description = "Builds and runs repository-owned RVA22U64 acceptance ELFs with the JRISC-V CLI."
 
     dependsOn("classes", "buildRva22AcceptanceTests")
     elfDirectory.set(rva22AcceptanceElfDirectory)
@@ -292,7 +296,7 @@ tasks.register<RiscVTestsRunTask>("testRva22Acceptance") {
 
 tasks.register<RiscVTestsRunTask>("testRva23Acceptance") {
     group = "verification"
-    description = "Builds and runs repository-owned RVA23U64 acceptance ELFs with the GraalRISCV CLI."
+    description = "Builds and runs repository-owned RVA23U64 acceptance ELFs with the JRISC-V CLI."
 
     dependsOn("classes", "buildRva23AcceptanceTests")
     elfDirectory.set(rva23AcceptanceElfDirectory)

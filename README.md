@@ -1,6 +1,6 @@
-# GraalRISCV
+# JRISC-V
 
-GraalRISCV is a pure Java RV64 user-mode emulator.
+JRISC-V is a pure Java RV64 user-mode emulator.
 Its long-term goal is to run every Linux and FreeBSD RISC-V 64-bit user-space program without a guest kernel.
 
 Today it can already run real Linux RISC-V userland without a Linux kernel:
@@ -30,14 +30,14 @@ You can also package it as a Shadow JAR:
 
 ```text
 ./gradlew shadowJar
-java --sun-misc-unsafe-memory-access=allow -jar build/libs/GraalRISCV-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
+java --sun-misc-unsafe-memory-access=allow -jar build/libs/JRISC-V-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
 ```
 
 ## CLI Options
 
 ```text
-graalriscv [options] <program.elf> [program-args...]
-graalriscv [options] --guest-program <path> [program-args...]
+jriscv [options] <program.elf> [program-args...]
+jriscv [options] --guest-program <path> [program-args...]
 
 Options:
   --guest-program <path>    Load the executable from an absolute guest path resolved through --mount.
@@ -130,7 +130,7 @@ Run the Ubuntu Base dynamic-linking smoke tests:
 
 The C and CoreMark examples use Zig CC. Gradle downloads the configured Zig
 release when needed. To use an existing Zig executable command or path, set one
-of `ZIG_EXECUTABLE`, `zigExecutable`, or `graalriscv.zigExecutable`:
+of `ZIG_EXECUTABLE`, `zigExecutable`, or `jriscv.zigExecutable`:
 
 ```text
 ZIG_EXECUTABLE=zig ./gradlew runLinuxStaticPrintfExample
@@ -140,7 +140,7 @@ ZIG_EXECUTABLE=/path/to/zig ./gradlew runLinuxStaticPrintfExample
 
 The Go example uses the Go toolchain. Gradle downloads the configured Go
 release when needed. To use an existing Go executable command or path, set one
-of `GO_EXECUTABLE`, `goExecutable`, or `graalriscv.goExecutable`:
+of `GO_EXECUTABLE`, `goExecutable`, or `jriscv.goExecutable`:
 
 ```text
 GO_EXECUTABLE=go ./gradlew runGoHelloWorldExample
@@ -176,7 +176,7 @@ Run the larger showcase workloads together:
 ## RISC-V ISA Acceptance Tests
 
 Run the RV64GC baseline `riscv-tests` ISA acceptance tests through the
-GraalRISCV CLI:
+JRISC-V CLI:
 
 ```text
 ./gradlew buildRiscVTests
@@ -195,13 +195,13 @@ Run the repository-owned RVA23U64 extension acceptance tests:
 ./gradlew testRva23Acceptance
 ```
 
-Use `graalriscv.riscvTestsFilter` to run a subset by ELF filename regex, and
-`graalriscv.riscvTestsMaxInstructions` to override the per-ELF instruction
+Use `jriscv.riscvTestsFilter` to run a subset by ELF filename regex, and
+`jriscv.riscvTestsMaxInstructions` to override the per-ELF instruction
 limit:
 
 ```text
-./gradlew "-Pgraalriscv.riscvTestsFilter=^rv64ui-p-.*[.]elf$" testRiscVTests
-./gradlew "-Pgraalriscv.riscvTestsMaxInstructions=20000000" testRiscVTests
+./gradlew "-Pjriscv.riscvTestsFilter=^rv64ui-p-.*[.]elf$" testRiscVTests
+./gradlew "-Pjriscv.riscvTestsMaxInstructions=20000000" testRiscVTests
 ```
 
 ## Package And CI Smoke Checks
@@ -236,7 +236,7 @@ Run the Zig-backed CI example checks explicitly:
 Force `ciCheck` to download/use Zig and include those checks:
 
 ```text
-./gradlew -PgraalriscvCiIncludeZigExamples=true ciCheck
+./gradlew -PjriscvCiIncludeZigExamples=true ciCheck
 ```
 
 ## Native Image Packaging

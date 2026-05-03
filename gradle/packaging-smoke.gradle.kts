@@ -20,10 +20,12 @@ val javaToolchains = extensions.getByType<JavaToolchainService>()
 val javaLauncher = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }
-val includeZigExampleChecks = providers.gradleProperty("graalriscvCiIncludeZigExamples")
+val includeZigExampleChecks = providers.gradleProperty("jriscvCiIncludeZigExamples")
+    .orElse(providers.gradleProperty("graalriscvCiIncludeZigExamples"))
     .map(String::toBooleanStrict)
     .orElse(providers.provider {
-        providers.gradleProperty("graalriscv.zigExecutable").isPresent
+        providers.gradleProperty("jriscv.zigExecutable").isPresent
+                || providers.gradleProperty("graalriscv.zigExecutable").isPresent
                 || providers.gradleProperty("zigExecutable").isPresent
                 || providers.environmentVariable("ZIG_EXECUTABLE").isPresent
                 || zigArchiveFile.get().asFile.isFile
@@ -65,8 +67,8 @@ tasks.register<Exec>("runInstallDistSmoke") {
         stdout.reset()
         stderr.reset()
 
-        val scriptName = if (isWindowsHost) "graalriscv.bat" else "graalriscv"
-        val script = layout.buildDirectory.file("install/graalriscv/bin/$scriptName").get().asFile
+        val scriptName = if (isWindowsHost) "jriscv.bat" else "jriscv"
+        val script = layout.buildDirectory.file("install/jriscv/bin/$scriptName").get().asFile
         val elf = smokeElfFile.get().asFile
         if (isWindowsHost) {
             commandLine("cmd", "/c", script.absolutePath, elf.absolutePath)

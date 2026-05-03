@@ -6600,7 +6600,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
 
             return switch (file) {
-                case BOARD_NAME, PRODUCT_NAME -> asciiBytes("GraalRISCV\n");
+                case BOARD_NAME, PRODUCT_NAME -> asciiBytes("JRISC-V\n");
                 case BOARD_VENDOR, SYS_VENDOR -> asciiBytes("Glavo\n");
                 case PRODUCT_FAMILY -> asciiBytes("RV64 user-mode emulator\n");
             };
@@ -6839,7 +6839,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             case STAT -> asciiBytes(procStat());
             case STATUS -> asciiBytes(procStatus());
             case UPTIME -> asciiBytes(procUptime());
-            case VERSION -> asciiBytes("Linux version 6.12.0 (graalriscv) #1 SMP riscv64\n");
+            case VERSION -> asciiBytes("Linux version 6.12.0 (jriscv) #1 SMP riscv64\n");
         };
     }
 
@@ -6884,7 +6884,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile.isEpollFile()) {
             return "anon_inode:[eventpoll]";
         }
-        return "anon_inode:[graalriscv]";
+        return "anon_inode:[jriscv]";
     }
 
     /// Parses a decimal file descriptor from a proc path segment.
@@ -6918,7 +6918,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 + "hart\t\t: 0\n"
                 + "isa\t\t: rv64imafdc_zicsr_zifencei_zba_zbb_zbs_v\n"
                 + "mmu\t\t: sv48\n"
-                + "uarch\t\t: glavo,graalriscv\n"
+                + "uarch\t\t: glavo,jriscv\n"
                 + "java_version\t: " + procCpuinfoProperty("java.version") + "\n"
                 + "java_vm_name\t: " + procCpuinfoProperty("java.vm.name") + "\n"
                 + "java_vm_version\t: " + procCpuinfoProperty("java.vm.version") + "\n"
@@ -6997,12 +6997,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Returns `/proc/self/mountinfo` content for the synthetic guest root mount.
     protected static String procMountinfo() {
-        return "1 0 0:1 / / rw,relatime - graalriscv graalriscv rw\n";
+        return "1 0 0:1 / / rw,relatime - jriscv jriscv rw\n";
     }
 
     /// Returns `/proc/self/mounts` content for the synthetic guest root mount.
     protected static String procMounts() {
-        return "graalriscv / graalriscv rw,relatime 0 0\n";
+        return "jriscv / jriscv rw,relatime 0 0\n";
     }
 
     /// Returns `/proc/self/stat` content.
@@ -7042,7 +7042,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         while (length < processName.length && processName[length] != 0) {
             length++;
         }
-        return length == 0 ? "graalriscv" : new String(processName, 0, length, StandardCharsets.US_ASCII);
+        return length == 0 ? "jriscv" : new String(processName, 0, length, StandardCharsets.US_ASCII);
     }
 
     /// Formats a two-digit non-negative decimal number below 100.

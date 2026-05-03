@@ -31,7 +31,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/// Runs built `riscv-tests` ELF files with the GraalRISCV command-line entry point.
+/// Runs built `riscv-tests` ELF files with the JRISC-V command-line entry point.
 @DisableCachingByDefault(because = "The task executes simulator acceptance tests and has no reusable outputs.")
 @NotNullByDefault
 public abstract class RiscVTestsRunTask extends DefaultTask {

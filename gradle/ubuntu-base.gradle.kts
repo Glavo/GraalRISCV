@@ -264,7 +264,7 @@ registerUbuntuBaseSmokeTest(
     "Runs /usr/bin/df from the downloaded Ubuntu Base RISC-V root tar.",
     listOf("--guest-program", "/usr/bin/df", "-P", "-k", "/"),
     "Filesystem     1024-blocks  Used Available Capacity Mounted on\n" +
-            "graalriscv         4194304     0   4194304       0% /\n"
+            "jriscv             4194304     0   4194304       0% /\n"
 )
 
 registerUbuntuBaseSmokeTest(
