@@ -1,1 +1,1 @@
-rootProject.name = "JRISC-V"
+rootProject.name = "riscv"
