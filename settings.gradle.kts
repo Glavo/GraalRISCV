@@ -1,1 +1,1 @@
-rootProject.name = "GraalRISCV"
+rootProject.name = "riscv"
