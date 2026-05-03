@@ -828,7 +828,7 @@ public final class RiscVInterpreter {
     @NotNullByDefault
     private static final class SegmentDispatchNode {
         /// Maximum fast blocks executed before returning to the outer guest loop.
-        private static final int FAST_BLOCKS_PER_SLICE = 64;
+        private static final int FAST_BLOCKS_PER_SLICE = 128;
 
         /// Executes a fast segment slice, or falls back to the general block dispatcher.
         private long execute(GuestLoopState loopState, RiscVThreadState state, BlockDispatchNode fallback) {
