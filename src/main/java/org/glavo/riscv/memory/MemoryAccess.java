@@ -100,6 +100,13 @@ public final class MemoryAccess {
         return (short) memory.readLittleEndianByBytes(address, Short.BYTES, cache, layout);
     }
 
+    /// Reads an aligned little-endian 16-bit value that is known to stay within one base page.
+    public short readAlignedShort(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureReadableDataPage(address, Short.BYTES, layout);
+        return MemoryUnsafe.readShortLE(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
+    }
+
     /// Reads an unsigned little-endian 16-bit value from guest memory using explicit page-layout constants.
     public int readUnsignedShort(long address, MemoryLayout layout) {
         return readShort(address, layout) & 0xffff;
@@ -116,6 +123,13 @@ public final class MemoryAccess {
         return (int) memory.readLittleEndianByBytes(address, Integer.BYTES, cache, layout);
     }
 
+    /// Reads an aligned little-endian 32-bit value that is known to stay within one base page.
+    public int readAlignedInt(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureReadableDataPage(address, Integer.BYTES, layout);
+        return MemoryUnsafe.readIntLE(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
+    }
+
     /// Reads an unsigned little-endian 32-bit value from guest memory using explicit page-layout constants.
     public long readUnsignedInt(long address, MemoryLayout layout) {
         return readInt(address, layout) & 0xffff_ffffL;
@@ -130,6 +144,13 @@ public final class MemoryAccess {
         }
 
         return memory.readLittleEndianByBytes(address, Long.BYTES, cache, layout);
+    }
+
+    /// Reads an aligned little-endian 64-bit value that is known to stay within one base page.
+    public long readAlignedLong(long address, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureReadableDataPage(address, Long.BYTES, layout);
+        return MemoryUnsafe.readLongLE(cachedDataBaseObject, cachedDataBaseOffset + pageOffset);
     }
 
     /// Writes a byte to guest memory using explicit page-layout constants.
@@ -151,6 +172,13 @@ public final class MemoryAccess {
         memory.writeLittleEndianByBytes(address, value, Short.BYTES, cache, layout);
     }
 
+    /// Writes an aligned little-endian 16-bit value that is known to stay within one base page.
+    public void writeAlignedShort(long address, short value, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureWritableDataPage(address, Short.BYTES, layout);
+        MemoryUnsafe.writeShortLE(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
+    }
+
     /// Writes a little-endian 32-bit value to guest memory using explicit page-layout constants.
     public void writeInt(long address, int value, MemoryLayout layout) {
         long pageOffset = layout.pageOffset(address);
@@ -163,6 +191,13 @@ public final class MemoryAccess {
         memory.writeLittleEndianByBytes(address, value, Integer.BYTES, cache, layout);
     }
 
+    /// Writes an aligned little-endian 32-bit value that is known to stay within one base page.
+    public void writeAlignedInt(long address, int value, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureWritableDataPage(address, Integer.BYTES, layout);
+        MemoryUnsafe.writeIntLE(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
+    }
+
     /// Writes a little-endian 64-bit value to guest memory using explicit page-layout constants.
     public void writeLong(long address, long value, MemoryLayout layout) {
         long pageOffset = layout.pageOffset(address);
@@ -173,6 +208,13 @@ public final class MemoryAccess {
         }
 
         memory.writeLittleEndianByBytes(address, value, Long.BYTES, cache, layout);
+    }
+
+    /// Writes an aligned little-endian 64-bit value that is known to stay within one base page.
+    public void writeAlignedLong(long address, long value, MemoryLayout layout) {
+        long pageOffset = layout.pageOffset(address);
+        ensureWritableDataPage(address, Long.BYTES, layout);
+        MemoryUnsafe.writeLongLE(cachedWriteDataBaseObject, cachedWriteDataBaseOffset + pageOffset, value);
     }
 
     /// Ensures the readable data-page cache covers the supplied range.

@@ -53,11 +53,15 @@ public final class RiscVInterpreter {
     /// The decoded block and trace dispatch state for this execution root.
     private final BlockDispatchNode dispatch;
 
+    /// The PC-indexed segment fast dispatch state for this execution root.
+    private final SegmentDispatchNode segmentDispatch;
+
     /// Creates a runner for a RISC-V ELF source.
     public RiscVInterpreter(byte @Unmodifiable [] sourceBytes) {
         this.sourceBytes = sourceBytes.clone();
         this.blocks = new BlockCache();
         this.dispatch = new BlockDispatchNode(blocks);
+        this.segmentDispatch = new SegmentDispatchNode();
     }
 
     /// Executes the guest program and returns its exit code.
@@ -158,7 +162,7 @@ public final class RiscVInterpreter {
         while (true) {
             loopState.syscalls().checkProcessStatus();
             loopState.refreshMemoryAccess();
-            long pc = dispatch.execute(loopState, loopState.state());
+            long pc = segmentDispatch.execute(loopState, loopState.state(), dispatch);
             loopState.setPc(pc);
         }
     }
@@ -674,6 +678,9 @@ public final class RiscVInterpreter {
         /// Number of entries in the thread-local decoded-block lookup cache.
         private static final int LOCAL_BLOCK_CACHE_SIZE = 16;
 
+        /// Number of entries in the thread-local decoded-segment lookup cache.
+        private static final int LOCAL_SEGMENT_CACHE_SIZE = 64;
+
         /// The guest memory shared by the process.
         private final Memory memory;
 
@@ -703,6 +710,9 @@ public final class RiscVInterpreter {
 
         /// Thread-local decoded block entries used before probing the shared cache.
         private final @Nullable BlockEntry[] localBlocks = new BlockEntry[LOCAL_BLOCK_CACHE_SIZE];
+
+        /// Thread-local decoded page segments.
+        private final @Nullable DecodedCodeSegment[] localSegments = new DecodedCodeSegment[LOCAL_SEGMENT_CACHE_SIZE];
 
         /// Creates loop-local state for one guest thread.
         private GuestLoopState(Memory memory, RiscVThreadState state, long pc) {
@@ -778,6 +788,17 @@ public final class RiscVInterpreter {
             return block;
         }
 
+        /// Returns a decoded segment for the supplied PC, replacing the local cache on a miss.
+        private DecodedCodeSegment segmentFor(long pc, long instructionFetchGeneration) {
+            int slot = localSegmentSlot(pc, memoryLayout);
+            @Nullable DecodedCodeSegment segment = localSegments[slot];
+            if (segment == null || !segment.matches(pc, memoryLayout, instructionFetchGeneration)) {
+                segment = new DecodedCodeSegment(memory, pc, instructionFetchGeneration);
+                localSegments[slot] = segment;
+            }
+            return segment;
+        }
+
         /// Selects the guest-loop execution policy from stable machine-state flags.
         private static byte executionPolicy(RiscVThreadState state) {
             if (!state.canRetireBlock()) {
@@ -793,6 +814,47 @@ public final class RiscVInterpreter {
             long hash = pc >>> 1;
             hash ^= hash >>> 4;
             return (int) hash & (LOCAL_BLOCK_CACHE_SIZE - 1);
+        }
+
+        /// Hashes a guest PC into the thread-local decoded-segment cache.
+        private static int localSegmentSlot(long pc, MemoryLayout memoryLayout) {
+            long hash = pc >>> memoryLayout.pageShift();
+            hash ^= hash >>> 6;
+            return (int) hash & (LOCAL_SEGMENT_CACHE_SIZE - 1);
+        }
+    }
+
+    /// Dispatches decoded page segments before falling back to the general block interpreter.
+    @NotNullByDefault
+    private static final class SegmentDispatchNode {
+        /// Maximum fast blocks executed before returning to the outer guest loop.
+        private static final int FAST_BLOCKS_PER_SLICE = 64;
+
+        /// Executes a fast segment slice, or falls back to the general block dispatcher.
+        private long execute(GuestLoopState loopState, RiscVThreadState state, BlockDispatchNode fallback) {
+            if (loopState.executionPolicy() != RiscVMicroBlockNode.BATCHED_FAST_MODE) {
+                return fallback.execute(loopState, state);
+            }
+
+            Memory memory = loopState.memory();
+            MemoryAccess access = loopState.access();
+            long instructionFetchGeneration = state.instructionFetchGeneration();
+            long pc = loopState.pc();
+
+            for (int blockIndex = 0; blockIndex < FAST_BLOCKS_PER_SLICE; blockIndex++) {
+                DecodedCodeSegment segment = loopState.segmentFor(pc, instructionFetchGeneration);
+                int slot = segment.blockSlot(memory, pc);
+                if (!segment.isFastBlock(slot)) {
+                    state.setPc(pc);
+                    loopState.setPc(pc);
+                    return fallback.execute(loopState, state);
+                }
+
+                pc = segment.executeFastBlock(slot, state, access);
+            }
+
+            state.setPc(pc);
+            return pc;
         }
     }
 

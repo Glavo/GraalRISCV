@@ -15,6 +15,7 @@
 - The runtime includes Docker-like bind/tar mounts, virtual `/proc`, minimal virtual `/sys` DMI, PCI, and class stubs, Linux-like `/dev`, deterministic `NETLINK_ROUTE` interface and default-route metadata, guest credentials, deterministic time, process/thread state, `clone`/`wait4`, terminal handling, and Gradle-managed example/test tasks.
 - Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.
 - CLI execution runs through the plain Java `RiscVEngine` and `RiscVInterpreter` loop. Decoded blocks and traces use `ExecutableBlock` and `ExecutableTrace`, with `TraceCompiler` reserved as the future bytecode trace compiler boundary.
+- The Java interpreter includes a PC-indexed `DecodedCodeSegment` fast path for batched integer blocks, backed by a local segment cache and aligned scalar memory helpers. Unsupported, checked, traced, syscall, CSR, floating-point, vector, and atomic paths fall back to the existing block interpreter.
 
 ## Maintenance Principles
 
@@ -50,4 +51,4 @@
 
 - Keep README, CI aggregation, package smoke tests, example workloads, `riscv-tests`, and RVA22U64/RVA23U64 acceptance tests aligned with behavior changes.
 - Continue investigating HotSpot JIT/RVC code generation beyond the interpreted JDK 25 smoke path.
-- Tune the existing trace executor and micro-bytecode executor based on measurements before adding new performance subsystems.
+- Continue tuning the decoded segment fast path, trace executor, and micro-bytecode executor from CoreMark/HotLoop measurements before adding a JVM bytecode trace compiler.
