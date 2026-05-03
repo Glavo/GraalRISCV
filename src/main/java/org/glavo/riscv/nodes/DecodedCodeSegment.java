@@ -124,7 +124,8 @@ final class DecodedCodeSegment {
 
     /// Returns true when the supplied PC is inside this segment.
     private boolean contains(long pc) {
-        return Long.compareUnsigned(pc, startPc) >= 0 && Long.compareUnsigned(pc, endPc) < 0;
+        // Memory windows are validated to stay inside the non-negative signed address range.
+        return pc >= startPc && pc < endPc;
     }
 
     /// Ensures that a block starting at `pc` has been decoded and returns its start slot.
