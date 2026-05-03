@@ -209,6 +209,9 @@ public final class MachineState {
     /// The byte width of the active LR/SC reservation.
     private int reservationLength;
 
+    /// The value read by the active LR/SC reservation.
+    private long reservationValue;
+
     /// Creates a new architectural state container.
     public MachineState(
             Memory memory,
@@ -441,6 +444,40 @@ public final class MachineState {
     /// Updates a raw floating-point register value for an already decoded register index.
     public void setDecodedFloatingPointRegister(int index, long value) {
         floatingPointRegisters[index] = value;
+    }
+
+    /// Writes Linux RISC-V `user_regs_struct` register state to guest memory.
+    void writeSignalUserRegisters(long address) {
+        memory.writeLong(address, pc);
+        for (int index = 1; index < REGISTER_COUNT; index++) {
+            memory.writeLong(address + (long) index * Long.BYTES, registers[index]);
+        }
+    }
+
+    /// Restores Linux RISC-V `user_regs_struct` register state from guest memory.
+    void readSignalUserRegisters(long address) {
+        pc = memory.readLong(address) & thread.pointerMask();
+        registers[0] = 0;
+        for (int index = 1; index < REGISTER_COUNT; index++) {
+            registers[index] = memory.readLong(address + (long) index * Long.BYTES);
+        }
+    }
+
+    /// Writes Linux RISC-V double-precision floating-point signal state to guest memory.
+    void writeSignalFloatingPointState(long address, long unionSize) {
+        memory.clear(address, unionSize);
+        for (int index = 0; index < FLOATING_POINT_REGISTER_COUNT; index++) {
+            memory.writeLong(address + (long) index * Long.BYTES, floatingPointRegisters[index]);
+        }
+        memory.writeInt(address + (long) FLOATING_POINT_REGISTER_COUNT * Long.BYTES, floatingPointControlStatus);
+    }
+
+    /// Restores Linux RISC-V double-precision floating-point signal state from guest memory.
+    void readSignalFloatingPointState(long address) {
+        for (int index = 0; index < FLOATING_POINT_REGISTER_COUNT; index++) {
+            floatingPointRegisters[index] = memory.readLong(address + (long) index * Long.BYTES);
+        }
+        floatingPointControlStatus = memory.readInt(address + (long) FLOATING_POINT_REGISTER_COUNT * Long.BYTES) & FCSR_MASK;
     }
 
     /// Returns the mutable vector architectural state.
@@ -686,7 +723,7 @@ public final class MachineState {
 
     /// Returns the current instruction-fetch visibility generation.
     public long instructionFetchGeneration() {
-        return instructionFetchGeneration;
+        return Math.max(instructionFetchGeneration, syscalls.processInstructionFetchGeneration());
     }
 
     /// Makes subsequent instruction fetches see code modifications ordered before a `fence.i`.
@@ -695,7 +732,7 @@ public final class MachineState {
     }
 
     /// Returns the next JVM-wide instruction-fetch generation.
-    private static long nextInstructionFetchGeneration() {
+    static long nextInstructionFetchGeneration() {
         return NEXT_INSTRUCTION_FETCH_GENERATION.getAndUpdate(
                 current -> current == Long.MAX_VALUE ? 1 : current + 1);
     }
@@ -722,15 +759,16 @@ public final class MachineState {
         recentInstructionCount++;
     }
 
-    /// Sets the LR/SC reservation address and data width.
-    public void reserve(long address, int length) {
+    /// Sets the LR/SC reservation address, data width, and observed value.
+    public void reserve(long address, int length, long value) {
         reservationAddress = address;
         reservationLength = length;
+        reservationValue = value;
     }
 
-    /// Returns true when the supplied address and data width match the active LR/SC reservation.
-    public boolean hasReservation(long address, int length) {
-        return reservationAddress == address && reservationLength == length;
+    /// Returns true when the supplied address, data width, and value match the active LR/SC reservation.
+    public boolean hasReservation(long address, int length, long value) {
+        return reservationAddress == address && reservationLength == length && reservationValue == value;
     }
 
     /// Clears the active LR/SC reservation.
@@ -738,6 +776,7 @@ public final class MachineState {
         if (reservationAddress != ElfImage.ABSENT_ADDRESS) {
             reservationAddress = ElfImage.ABSENT_ADDRESS;
             reservationLength = 0;
+            reservationValue = 0;
         }
     }
 

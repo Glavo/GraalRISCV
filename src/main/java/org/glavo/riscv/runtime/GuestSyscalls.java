@@ -7,6 +7,8 @@ import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
 import org.glavo.riscv.RiscVLanguage;
+import org.glavo.riscv.exception.IllegalInstructionException;
+import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.ProcessImageReplacedException;
 import org.glavo.riscv.exception.RiscVException;
@@ -770,8 +772,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The byte size of Linux generic 64-bit kernel `sigset_t`.
     protected static final long KERNEL_SIGSET_SIZE = 8;
 
-    /// The byte size of Linux generic 64-bit kernel `struct sigaction`.
-    protected static final long KERNEL_SIGACTION_SIZE = 32;
+    /// The byte size of Linux RISC-V 64-bit kernel `struct sigaction`.
+    protected static final long KERNEL_SIGACTION_SIZE = 24;
 
     /// The byte offset of `ss_sp` inside Linux RISC-V 64-bit `stack_t`.
     protected static final long SIGNAL_STACK_POINTER_OFFSET = 0;
@@ -1138,6 +1140,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Process-level state shared by all guest threads.
     protected final GuestProcess process;
+
+    /// The process-wide generation visible to guest instruction fetches after cross-thread icache flushes.
+    private volatile long processInstructionFetchGeneration;
 
     /// The parent process that can wait for this process, or null for the initial process.
     protected final @Nullable GuestSyscalls parentProcess;
@@ -1666,8 +1671,28 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return process.initialThread();
     }
 
+    /// Returns the process-wide instruction-fetch visibility generation.
+    long processInstructionFetchGeneration() {
+        return processInstructionFetchGeneration;
+    }
+
+    /// Makes instruction bytes visible to every guest thread in this process.
+    void fenceProcessInstructionFetch() {
+        processInstructionFetchGeneration = MachineState.nextInstructionFetchGeneration();
+    }
+
     /// Executes the syscall described by the guest argument registers at the supplied program counter.
     public abstract void handle(MachineState state, long pc);
+
+    /// Gives an ABI-specific runtime a chance to deliver an illegal-instruction signal.
+    public boolean handleIllegalInstruction(MachineState state, IllegalInstructionException exception) {
+        return false;
+    }
+
+    /// Gives an ABI-specific runtime a chance to deliver a memory-access signal.
+    public boolean handleMemoryAccess(MachineState state, MemoryAccessException exception) {
+        return false;
+    }
 
     /// Creates a child-process syscall handler of the same guest ABI as this handler.
     protected abstract GuestSyscalls createChildSyscalls(Memory childMemory, GuestProcess childProcess);

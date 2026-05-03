@@ -17,8 +17,10 @@ import com.oracle.truffle.api.nodes.RepeatingNode;
 import com.oracle.truffle.api.nodes.RootNode;
 import org.glavo.riscv.RiscVContext;
 import org.glavo.riscv.RiscVLanguage;
-import org.glavo.riscv.exception.ProgramExitException;
+import org.glavo.riscv.exception.IllegalInstructionException;
+import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.ProcessImageReplacedException;
+import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.exception.ThreadExitException;
 import org.glavo.riscv.memory.Memory;
@@ -114,6 +116,16 @@ public final class RiscVRootNode extends RootNode {
                 continue;
             } catch (ThreadExitException exit) {
                 return (int) state.syscalls().completeThreadExit(state, exit.exitCode());
+            } catch (IllegalInstructionException exception) {
+                if (state.syscalls().handleIllegalInstruction(state, exception)) {
+                    continue;
+                }
+                throw withGuestContext(exception, state);
+            } catch (MemoryAccessException exception) {
+                if (state.syscalls().handleMemoryAccess(state, exception)) {
+                    continue;
+                }
+                throw withGuestContext(exception, state);
             } catch (RiscVException exception) {
                 throw withGuestContext(exception, state);
             }
@@ -143,6 +155,16 @@ public final class RiscVRootNode extends RootNode {
                 throw new AssertionError("Guest loop returned without an exit signal");
             } catch (ProcessImageReplacedException ignored) {
                 continue;
+            } catch (IllegalInstructionException exception) {
+                if (state.syscalls().handleIllegalInstruction(state, exception)) {
+                    continue;
+                }
+                throw withGuestContext(exception, state);
+            } catch (MemoryAccessException exception) {
+                if (state.syscalls().handleMemoryAccess(state, exception)) {
+                    continue;
+                }
+                throw withGuestContext(exception, state);
             } catch (RiscVException exception) {
                 throw withGuestContext(exception, state);
             }

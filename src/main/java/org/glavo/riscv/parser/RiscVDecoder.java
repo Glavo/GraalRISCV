@@ -3,6 +3,7 @@
 
 package org.glavo.riscv.parser;
 
+import org.glavo.riscv.exception.IllegalInstructionException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -1264,9 +1265,6 @@ public final class RiscVDecoder {
 
     /// Creates an illegal instruction exception.
     private static RiscVException illegalException(long address, int raw) {
-        return new RiscVException("Illegal instruction at 0x"
-                + Long.toUnsignedString(address, 16)
-                + ": 0x"
-                + Integer.toUnsignedString(raw, 16));
+        return new IllegalInstructionException(address, raw);
     }
 }

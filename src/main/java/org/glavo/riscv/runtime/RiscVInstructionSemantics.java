@@ -12,6 +12,7 @@ import org.glavo.riscv.parser.RiscVOperation;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
+import java.lang.invoke.VarHandle;
 import java.math.BigInteger;
 
 /// Executes one decoded RV64 guest instruction through shared semantic helpers.
@@ -588,6 +589,9 @@ public abstract sealed class RiscVInstructionSemantics {
         /// Advances the program counter.
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
+            if (operation == RiscVOperation.FENCE) {
+                VarHandle.fullFence();
+            }
         }
 
     }
@@ -764,7 +768,9 @@ public abstract sealed class RiscVInstructionSemantics {
         @Override
         protected void executeInstruction(MachineState state, long nextPc) {
             state.syscalls().handle(state, address);
-            state.setPc(nextPc);
+            if (state.pc() == address) {
+                state.setPc(nextPc);
+            }
         }
 
     }
@@ -1726,7 +1732,11 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes control-flow and system operations.
     protected final void executeControl(MachineState state, long nextPc) {
         switch (operation) {
-            case NOP, FENCE, WRS_NTO, WRS_STO, C_MOP -> state.setPc(nextPc);
+            case NOP, WRS_NTO, WRS_STO, C_MOP -> state.setPc(nextPc);
+            case FENCE -> {
+                VarHandle.fullFence();
+                state.setPc(nextPc);
+            }
             case FENCE_I -> {
                 state.fenceInstructionFetch();
                 state.setPc(nextPc);
@@ -2314,7 +2324,9 @@ public abstract sealed class RiscVInstructionSemantics {
     /// Executes an environment call through the configured syscall handler.
     private void ecall(MachineState state) {
         state.syscalls().handle(state, address);
-        state.setPc(address + length);
+        if (state.pc() == address) {
+            state.setPc(address + length);
+        }
     }
 
     /// Loads and reserves a 32-bit memory word.
@@ -2322,8 +2334,9 @@ public abstract sealed class RiscVInstructionSemantics {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
-            state.setDecodedRegister(rd, memory.readInt(address));
-            state.reserve(address, Integer.BYTES);
+            int value = memory.readInt(address);
+            state.setDecodedRegister(rd, value);
+            state.reserve(address, Integer.BYTES, value);
         }
         state.setPc(nextPc);
     }
@@ -2334,8 +2347,9 @@ public abstract sealed class RiscVInstructionSemantics {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
-            state.setDecodedRegister(rd, memory.readLong(address));
-            state.reserve(address, Long.BYTES);
+            long value = memory.readLong(address);
+            state.setDecodedRegister(rd, value);
+            state.reserve(address, Long.BYTES, value);
         }
         state.setPc(nextPc);
     }
@@ -2346,7 +2360,8 @@ public abstract sealed class RiscVInstructionSemantics {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Integer.BYTES);
-            if (state.hasReservation(address, Integer.BYTES)) {
+            int currentValue = memory.readInt(address);
+            if (state.hasReservation(address, Integer.BYTES, currentValue)) {
                 memory.writeInt(address, (int) state.decodedRegister(rs2));
                 afterStore(state, address, Integer.BYTES);
                 state.setDecodedRegister(rd, 0);
@@ -2364,7 +2379,8 @@ public abstract sealed class RiscVInstructionSemantics {
         synchronized (memory) {
             long address = state.maskPointer(state.decodedRegister(rs1));
             requireAtomicAlignment(address, Long.BYTES);
-            if (state.hasReservation(address, Long.BYTES)) {
+            long currentValue = memory.readLong(address);
+            if (state.hasReservation(address, Long.BYTES, currentValue)) {
                 memory.writeLong(address, state.decodedRegister(rs2));
                 afterStore(state, address, Long.BYTES);
                 state.setDecodedRegister(rd, 0);

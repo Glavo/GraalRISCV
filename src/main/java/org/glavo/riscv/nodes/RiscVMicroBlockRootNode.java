@@ -360,8 +360,13 @@ final class RiscVMicroBlockNode extends Node {
             case RiscVMicroOpcode.SRAW -> binaryRegister(state, registers, index, operand, mode, (int) registers[rs1(operand)] >> (registers[rs2(operand)] & 0x1f));
             case RiscVMicroOpcode.ECALL -> {
                 beginInstruction(state, index, mode);
+                if (mode == BATCHED_FAST_MODE) {
+                    state.setPc(addresses[index]);
+                }
                 state.syscalls().handle(state, addresses[index]);
-                finishInstruction(state, index, mode);
+                if (state.pc() == addresses[index]) {
+                    finishInstruction(state, index, mode);
+                }
             }
             case RiscVMicroOpcode.EBREAK -> {
                 beginInstruction(state, index, mode);
@@ -820,8 +825,9 @@ final class RiscVMicroBlockNode extends Node {
         synchronized (memory) {
             long address = registers[rs1(operand)] & pointerMask;
             requireAtomicAlignment(address, Integer.BYTES);
-            writeRegister(registers, rd(operand), access.readInt(address, memoryLayout));
-            state.reserve(address, Integer.BYTES);
+            int value = access.readInt(address, memoryLayout);
+            writeRegister(registers, rd(operand), value);
+            state.reserve(address, Integer.BYTES, value);
         }
         finishInstruction(state, index, mode);
     }
@@ -840,8 +846,9 @@ final class RiscVMicroBlockNode extends Node {
         synchronized (memory) {
             long address = registers[rs1(operand)] & pointerMask;
             requireAtomicAlignment(address, Long.BYTES);
-            writeRegister(registers, rd(operand), access.readLong(address, memoryLayout));
-            state.reserve(address, Long.BYTES);
+            long value = access.readLong(address, memoryLayout);
+            writeRegister(registers, rd(operand), value);
+            state.reserve(address, Long.BYTES, value);
         }
         finishInstruction(state, index, mode);
     }
@@ -860,7 +867,8 @@ final class RiscVMicroBlockNode extends Node {
         synchronized (memory) {
             long address = registers[rs1(operand)] & pointerMask;
             requireAtomicAlignment(address, Integer.BYTES);
-            if (state.hasReservation(address, Integer.BYTES)) {
+            int currentValue = access.readInt(address, memoryLayout);
+            if (state.hasReservation(address, Integer.BYTES, currentValue)) {
                 access.writeInt(address, (int) registers[rs2(operand)], memoryLayout);
                 afterStore(state, address, Integer.BYTES, mode);
                 writeRegister(registers, rd(operand), 0);
@@ -886,7 +894,8 @@ final class RiscVMicroBlockNode extends Node {
         synchronized (memory) {
             long address = registers[rs1(operand)] & pointerMask;
             requireAtomicAlignment(address, Long.BYTES);
-            if (state.hasReservation(address, Long.BYTES)) {
+            long currentValue = access.readLong(address, memoryLayout);
+            if (state.hasReservation(address, Long.BYTES, currentValue)) {
                 access.writeLong(address, registers[rs2(operand)], memoryLayout);
                 afterStore(state, address, Long.BYTES, mode);
                 writeRegister(registers, rd(operand), 0);

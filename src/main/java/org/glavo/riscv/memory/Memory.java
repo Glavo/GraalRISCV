@@ -4,6 +4,7 @@
 package org.glavo.riscv.memory;
 
 import com.oracle.truffle.api.ContextThreadLocal;
+import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
@@ -49,6 +50,12 @@ public final class Memory implements AutoCloseable {
 
     /// The supported guest page-protection bit mask.
     public static final long SUPPORTED_PROTECTION_MASK = PROTECTION_READ_WRITE_EXECUTE;
+
+    /// Linux `SEGV_MAPERR`.
+    private static final int SEGMENTATION_FAULT_ADDRESS_NOT_MAPPED = 1;
+
+    /// Linux `SEGV_ACCERR`.
+    private static final int SEGMENTATION_FAULT_ACCESS_ERROR = 2;
 
     /// The pointer mask that leaves every guest address bit visible.
     private static final long FULL_POINTER_MASK = -1L;
@@ -992,14 +999,16 @@ public final class Memory implements AutoCloseable {
     }
 
     /// Returns a RISC-V memory fault for the supplied guest range.
-    private RiscVException accessFault(long address, long length) {
+    private MemoryAccessException accessFault(long address, long length) {
         StringBuilder builder = new StringBuilder("Guest memory access out of range: address=0x")
                 .append(Long.toUnsignedString(address, 16))
                 .append(", length=")
                 .append(length);
 
         @Nullable Vma vma = length == 0 ? null : vmas.find(address, length);
+        int signalCode = SEGMENTATION_FAULT_ADDRESS_NOT_MAPPED;
         if (vma != null) {
+            signalCode = SEGMENTATION_FAULT_ACCESS_ERROR;
             builder.append(", vma=");
             appendVma(builder, vma);
         } else {
@@ -1011,7 +1020,7 @@ public final class Memory implements AutoCloseable {
                 appendNearestVmas(builder, address);
             }
         }
-        return new RiscVException(builder.toString());
+        return new MemoryAccessException(builder.toString(), address, length, signalCode);
     }
 
     /// Appends the mapped area closest to an access fault.

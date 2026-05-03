@@ -5,6 +5,8 @@ package org.glavo.riscv.runtime;
 
 import com.oracle.truffle.api.TruffleFile;
 import com.oracle.truffle.api.TruffleLanguage;
+import org.glavo.riscv.exception.IllegalInstructionException;
+import org.glavo.riscv.exception.MemoryAccessException;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.constants.Rva22Profile;
@@ -227,6 +229,103 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux `SIGCHLD`.
     private static final long SIGNAL_CHILD = 17L;
 
+    /// Linux `SIGILL`.
+    private static final long SIGNAL_ILLEGAL_INSTRUCTION = 4L;
+
+    /// Linux `SIGSEGV`.
+    private static final long SIGNAL_SEGMENTATION_FAULT = 11L;
+
+    /// Linux `SIG_DFL`.
+    private static final long SIGNAL_DEFAULT_HANDLER = 0L;
+
+    /// Linux `SIG_IGN`.
+    private static final long SIGNAL_IGNORE_HANDLER = 1L;
+
+    /// Linux `ILL_ILLOPC`.
+    private static final int SIGNAL_CODE_ILLEGAL_OPCODE = 1;
+
+    /// Linux `SA_ONSTACK`.
+    private static final long SIGNAL_ACTION_ON_STACK = 0x08000000L;
+
+    /// Linux `SA_NODEFER`.
+    private static final long SIGNAL_ACTION_NODEFER = 0x40000000L;
+
+    /// Linux `SA_RESETHAND`.
+    private static final long SIGNAL_ACTION_RESET_HAND = 0x80000000L;
+
+    /// The byte size of Linux generic 64-bit `siginfo_t`.
+    private static final long SIGNAL_INFO_SIZE = 128;
+
+    /// The byte offset of `si_signo` inside Linux generic 64-bit `siginfo_t`.
+    private static final long SIGNAL_INFO_SIGNO_OFFSET = 0;
+
+    /// The byte offset of `si_errno` inside Linux generic 64-bit `siginfo_t`.
+    private static final long SIGNAL_INFO_ERRNO_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `si_code` inside Linux generic 64-bit `siginfo_t`.
+    private static final long SIGNAL_INFO_CODE_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `si_addr` inside the Linux generic 64-bit `siginfo_t` fault union.
+    private static final long SIGNAL_INFO_FAULT_ADDRESS_OFFSET = 2L * Long.BYTES;
+
+    /// The byte offset of `sa_handler` inside Linux RISC-V 64-bit kernel `struct sigaction`.
+    private static final long SIGNAL_ACTION_HANDLER_OFFSET = 0;
+
+    /// The byte offset of `sa_flags` inside Linux RISC-V 64-bit kernel `struct sigaction`.
+    private static final long SIGNAL_ACTION_FLAGS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `sa_mask` inside Linux RISC-V 64-bit kernel `struct sigaction`.
+    private static final long SIGNAL_ACTION_MASK_OFFSET = 2L * Long.BYTES;
+
+    /// The byte offset of `uc_flags` inside Linux RISC-V 64-bit `ucontext_t`.
+    private static final long SIGNAL_CONTEXT_FLAGS_OFFSET = 0;
+
+    /// The byte offset of `uc_link` inside Linux RISC-V 64-bit `ucontext_t`.
+    private static final long SIGNAL_CONTEXT_LINK_OFFSET = Long.BYTES;
+
+    /// The byte offset of `uc_stack` inside Linux RISC-V 64-bit `ucontext_t`.
+    private static final long SIGNAL_CONTEXT_STACK_OFFSET = 2L * Long.BYTES;
+
+    /// The byte offset of `uc_sigmask` inside Linux RISC-V 64-bit `ucontext_t`.
+    private static final long SIGNAL_CONTEXT_MASK_OFFSET = 5L * Long.BYTES;
+
+    /// The byte offset of `uc_mcontext` inside Linux RISC-V 64-bit `ucontext_t`.
+    /// `mcontext_t` is 16-byte aligned, so glibc inserts padding after `uc_sigmask`.
+    private static final long SIGNAL_CONTEXT_MACHINE_OFFSET = 176;
+
+    /// The byte offset of general registers inside Linux RISC-V 64-bit `mcontext_t`.
+    private static final long SIGNAL_MACHINE_REGISTERS_OFFSET = 0;
+
+    /// The byte offset of floating-point registers inside Linux RISC-V 64-bit `mcontext_t`.
+    private static final long SIGNAL_MACHINE_FLOATING_POINT_OFFSET = 32L * Long.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `mcontext_t`.
+    private static final long SIGNAL_MACHINE_CONTEXT_SIZE = SIGNAL_MACHINE_FLOATING_POINT_OFFSET + 528;
+
+    /// The byte offset of `struct __riscv_extra_ext_header.reserved` inside `mcontext_t`.
+    private static final long SIGNAL_MACHINE_EXTRA_RESERVED_OFFSET = SIGNAL_MACHINE_FLOATING_POINT_OFFSET + 516;
+
+    /// The byte offset of `struct __riscv_extra_ext_header.hdr.magic` inside `mcontext_t`.
+    private static final long SIGNAL_MACHINE_EXTRA_MAGIC_OFFSET = SIGNAL_MACHINE_FLOATING_POINT_OFFSET + 520;
+
+    /// The byte offset of `struct __riscv_extra_ext_header.hdr.size` inside `mcontext_t`.
+    private static final long SIGNAL_MACHINE_EXTRA_SIZE_OFFSET = SIGNAL_MACHINE_FLOATING_POINT_OFFSET + 524;
+
+    /// The byte offset of `siginfo_t` inside Linux RISC-V 64-bit `rt_sigframe`.
+    private static final long SIGNAL_FRAME_INFO_OFFSET = 0;
+
+    /// The byte offset of `ucontext_t` inside Linux RISC-V 64-bit `rt_sigframe`.
+    private static final long SIGNAL_FRAME_CONTEXT_OFFSET = SIGNAL_INFO_SIZE;
+
+    /// The rounded byte size of Linux RISC-V 64-bit `rt_sigframe`.
+    private static final long SIGNAL_FRAME_SIZE = 1088;
+
+    /// `addi a7, zero, __NR_rt_sigreturn`.
+    private static final int SIGNAL_TRAMPOLINE_LOAD_SYSCALL = 0x08b00893;
+
+    /// `ecall`.
+    private static final int SIGNAL_TRAMPOLINE_ECALL = 0x00000073;
+
     /// Linux `CLONE_FS`.
     private static final long CLONE_FS = 0x00000200L;
 
@@ -335,8 +434,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux `RISCV_HWPROBE_WHICH_CPUS`.
     private static final long RISCV_HWPROBE_WHICH_CPUS = 1;
 
-    /// Linux `SYS_RISCV_FLUSH_ICACHE_ALL` flag.
-    private static final long RISCV_FLUSH_ICACHE_ALL = 1;
+    /// Linux `SYS_RISCV_FLUSH_ICACHE_LOCAL` flag.
+    private static final long RISCV_FLUSH_ICACHE_LOCAL = 1;
 
     /// Linux `RISCV_HWPROBE_KEY_MVENDORID`.
     private static final long RISCV_HWPROBE_KEY_MVENDORID = 0;
@@ -493,6 +592,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Linux `PR_PMLEN_MASK`.
     private static final long PR_PMLEN_MASK = 0x7fL << PR_PMLEN_SHIFT;
+
+    /// Guest signal actions installed through `rt_sigaction`.
+    private final @Nullable SignalAction[] signalActions = new SignalAction[(int) MAX_SIGNAL_NUMBER + 1];
+
+    /// Lazily mapped signal-return trampoline, or zero before allocation.
+    private long signalTrampolineAddress;
 
     /// The default disabled RISC-V userspace pointer mask length.
     private static final int POINTER_MASK_LENGTH_DISABLED = 0;
@@ -880,12 +985,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
     /// Flushes guest instruction-fetch visibility for Linux `riscv_flush_icache`.
-    protected static long riscvFlushIcache(MachineState state, long startAddress, long endAddress, long flags) {
-        if ((flags & ~RISCV_FLUSH_ICACHE_ALL) != 0 || Long.compareUnsigned(startAddress, endAddress) > 0) {
+    protected long riscvFlushIcache(MachineState state, long startAddress, long endAddress, long flags) {
+        if ((flags & ~RISCV_FLUSH_ICACHE_LOCAL) != 0 || Long.compareUnsigned(startAddress, endAddress) > 0) {
             return EINVAL;
         }
 
-        state.fenceInstructionFetch();
+        fenceProcessInstructionFetch();
+        if ((flags & RISCV_FLUSH_ICACHE_LOCAL) != 0) {
+            state.fenceInstructionFetch();
+        }
         return 0;
     }
 
@@ -1102,7 +1210,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
 
-    /// Accepts signal action setup for a guest that never delivers host signals.
+    /// Registers or reports a Linux signal action.
     protected long rtSigaction(long signalNumber, long actionAddress, long oldActionAddress, long sigsetSize) {
         if (sigsetSize != KERNEL_SIGSET_SIZE) {
             return EINVAL;
@@ -1110,11 +1218,35 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         if (signalNumber < MIN_SIGNAL_NUMBER || signalNumber > MAX_SIGNAL_NUMBER) {
             return EINVAL;
         }
+        if (actionAddress != 0 && (signalNumber == SIGKILL || signalNumber == SIGSTOP)) {
+            return EINVAL;
+        }
 
         if (oldActionAddress != 0) {
-            memory.clear(oldActionAddress, KERNEL_SIGACTION_SIZE);
+            writeSignalAction(oldActionAddress, signalActions[(int) signalNumber]);
+        }
+        if (actionAddress != 0) {
+            signalActions[(int) signalNumber] = readSignalAction(actionAddress);
         }
         return 0;
+    }
+
+    /// Reads a Linux RISC-V kernel `struct sigaction`.
+    protected SignalAction readSignalAction(long actionAddress) {
+        return new SignalAction(
+                memory.readLong(actionAddress + SIGNAL_ACTION_HANDLER_OFFSET),
+                memory.readLong(actionAddress + SIGNAL_ACTION_FLAGS_OFFSET),
+                memory.readLong(actionAddress + SIGNAL_ACTION_MASK_OFFSET) & ~UNBLOCKABLE_SIGNAL_MASK);
+    }
+
+    /// Writes a Linux RISC-V kernel `struct sigaction`.
+    protected void writeSignalAction(long actionAddress, @Nullable SignalAction action) {
+        memory.clear(actionAddress, KERNEL_SIGACTION_SIZE);
+        if (action != null) {
+            memory.writeLong(actionAddress + SIGNAL_ACTION_HANDLER_OFFSET, action.handler());
+            memory.writeLong(actionAddress + SIGNAL_ACTION_FLAGS_OFFSET, action.flags());
+            memory.writeLong(actionAddress + SIGNAL_ACTION_MASK_OFFSET, action.mask());
+        }
     }
 
     /// Reads and updates the calling guest thread's signal mask.
@@ -1144,6 +1276,150 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             thread.setSignalMask(updatedMask);
         }
         return 0;
+    }
+
+    /// Delivers synchronous illegal-instruction faults to a registered guest `SIGILL` handler.
+    @Override
+    public boolean handleIllegalInstruction(MachineState state, IllegalInstructionException exception) {
+        @Nullable SignalAction action = signalActions[(int) SIGNAL_ILLEGAL_INSTRUCTION];
+        if (action == null
+                || action.handler() == SIGNAL_DEFAULT_HANDLER
+                || action.handler() == SIGNAL_IGNORE_HANDLER) {
+            return false;
+        }
+
+        // Illegal instructions can be found while decoding a new dispatch target, before
+        // the architectural PC has been materialized for that target.
+        state.setPc(exception.address());
+        deliverSignal(state, SIGNAL_ILLEGAL_INSTRUCTION, SIGNAL_CODE_ILLEGAL_OPCODE, exception.address(), action);
+        return true;
+    }
+
+    /// Delivers synchronous memory-access faults to a registered guest `SIGSEGV` handler.
+    @Override
+    public boolean handleMemoryAccess(MachineState state, MemoryAccessException exception) {
+        @Nullable SignalAction action = signalActions[(int) SIGNAL_SEGMENTATION_FAULT];
+        if (action == null
+                || action.handler() == SIGNAL_DEFAULT_HANDLER
+                || action.handler() == SIGNAL_IGNORE_HANDLER) {
+            return false;
+        }
+
+        deliverSignal(state, SIGNAL_SEGMENTATION_FAULT, exception.signalCode(), exception.address(), action);
+        return true;
+    }
+
+    /// Builds a Linux RISC-V `rt_sigframe` and redirects execution to a guest signal handler.
+    protected void deliverSignal(
+            MachineState state,
+            long signalNumber,
+            int signalCode,
+            long faultAddress,
+            SignalAction action) {
+        long frameAddress = signalFrameAddress(state, action);
+        if (!memory.isBacked(frameAddress, SIGNAL_FRAME_SIZE)) {
+            throw new RiscVException("Guest signal frame is not backed: address=0x"
+                    + Long.toUnsignedString(frameAddress, 16)
+                    + ", size="
+                    + SIGNAL_FRAME_SIZE);
+        }
+
+        memory.clear(frameAddress, SIGNAL_FRAME_SIZE);
+        writeSignalInfo(frameAddress + SIGNAL_FRAME_INFO_OFFSET, signalNumber, signalCode, faultAddress);
+        writeSignalContext(state, frameAddress + SIGNAL_FRAME_CONTEXT_OFFSET);
+
+        long trampolineAddress = ensureSignalTrampoline(state);
+        state.setRegister(1, trampolineAddress);
+        state.setRegister(2, frameAddress);
+        state.setRegister(10, signalNumber);
+        state.setRegister(11, frameAddress + SIGNAL_FRAME_INFO_OFFSET);
+        state.setRegister(12, frameAddress + SIGNAL_FRAME_CONTEXT_OFFSET);
+        state.setPc(action.handler());
+
+        GuestThread thread = state.guestThread();
+        long blockedSignals = action.mask();
+        if ((action.flags() & SIGNAL_ACTION_NODEFER) == 0) {
+            blockedSignals |= signalMask(signalNumber);
+        }
+        thread.setSignalMask((thread.signalMask() | blockedSignals) & ~UNBLOCKABLE_SIGNAL_MASK);
+        if ((action.flags() & SIGNAL_ACTION_RESET_HAND) != 0) {
+            signalActions[(int) signalNumber] = null;
+        }
+    }
+
+    /// Computes the guest stack address used for a new signal frame.
+    protected long signalFrameAddress(MachineState state, SignalAction action) {
+        GuestThread thread = state.guestThread();
+        long stackPointer = state.register(2);
+        if ((action.flags() & SIGNAL_ACTION_ON_STACK) != 0 && thread.alternateSignalStackSize() > 0) {
+            stackPointer = thread.alternateSignalStackPointer() + thread.alternateSignalStackSize();
+        }
+        return alignDown(stackPointer - SIGNAL_FRAME_SIZE, 16);
+    }
+
+    /// Writes a Linux generic `siginfo_t` for a synchronous instruction fault.
+    protected void writeSignalInfo(long infoAddress, long signalNumber, int signalCode, long faultAddress) {
+        memory.writeInt(infoAddress + SIGNAL_INFO_SIGNO_OFFSET, (int) signalNumber);
+        memory.writeInt(infoAddress + SIGNAL_INFO_ERRNO_OFFSET, 0);
+        memory.writeInt(infoAddress + SIGNAL_INFO_CODE_OFFSET, signalCode);
+        memory.writeLong(infoAddress + SIGNAL_INFO_FAULT_ADDRESS_OFFSET, faultAddress);
+    }
+
+    /// Writes a Linux RISC-V `ucontext_t` for signal delivery.
+    protected void writeSignalContext(MachineState state, long contextAddress) {
+        GuestThread thread = state.guestThread();
+        memory.writeLong(contextAddress + SIGNAL_CONTEXT_FLAGS_OFFSET, 0);
+        memory.writeLong(contextAddress + SIGNAL_CONTEXT_LINK_OFFSET, 0);
+        writeSignalStack(thread, contextAddress + SIGNAL_CONTEXT_STACK_OFFSET);
+        memory.writeLong(contextAddress + SIGNAL_CONTEXT_MASK_OFFSET, thread.signalMask());
+
+        long machineContextAddress = contextAddress + SIGNAL_CONTEXT_MACHINE_OFFSET;
+        state.writeSignalUserRegisters(machineContextAddress + SIGNAL_MACHINE_REGISTERS_OFFSET);
+        state.writeSignalFloatingPointState(
+                machineContextAddress + SIGNAL_MACHINE_FLOATING_POINT_OFFSET,
+                SIGNAL_MACHINE_CONTEXT_SIZE - SIGNAL_MACHINE_FLOATING_POINT_OFFSET);
+        memory.writeInt(machineContextAddress + SIGNAL_MACHINE_EXTRA_RESERVED_OFFSET, 0);
+        memory.writeInt(machineContextAddress + SIGNAL_MACHINE_EXTRA_MAGIC_OFFSET, 0);
+        memory.writeInt(machineContextAddress + SIGNAL_MACHINE_EXTRA_SIZE_OFFSET, 0);
+    }
+
+    /// Restores guest state from the Linux RISC-V signal frame at the current stack pointer.
+    protected void rtSigreturn(MachineState state) {
+        long frameAddress = state.register(2);
+        if (!memory.isBacked(frameAddress, SIGNAL_FRAME_SIZE)) {
+            throw new RiscVException("Guest signal return frame is not backed: address=0x"
+                    + Long.toUnsignedString(frameAddress, 16)
+                    + ", size="
+                    + SIGNAL_FRAME_SIZE);
+        }
+
+        long contextAddress = frameAddress + SIGNAL_FRAME_CONTEXT_OFFSET;
+        state.guestThread().setSignalMask(memory.readLong(contextAddress + SIGNAL_CONTEXT_MASK_OFFSET)
+                & ~UNBLOCKABLE_SIGNAL_MASK);
+
+        long machineContextAddress = contextAddress + SIGNAL_CONTEXT_MACHINE_OFFSET;
+        state.readSignalUserRegisters(machineContextAddress + SIGNAL_MACHINE_REGISTERS_OFFSET);
+        state.readSignalFloatingPointState(machineContextAddress + SIGNAL_MACHINE_FLOATING_POINT_OFFSET);
+    }
+
+    /// Ensures an executable guest trampoline for returning from signal handlers.
+    protected long ensureSignalTrampoline(MachineState state) {
+        if (signalTrampolineAddress != 0) {
+            return signalTrampolineAddress;
+        }
+
+        long address = findMmapAddress(0, pageSize, pageSize);
+        if (address == 0 || !ensureMemoryBacking(address, pageSize, Memory.PROTECTION_READ_WRITE_EXECUTE, false)) {
+            throw new RiscVException("Failed to allocate guest signal trampoline");
+        }
+
+        addMemoryMapping(address, pageSize, Memory.PROTECTION_READ_WRITE_EXECUTE);
+        memory.writeInt(address, SIGNAL_TRAMPOLINE_LOAD_SYSCALL);
+        memory.writeInt(address + Integer.BYTES, SIGNAL_TRAMPOLINE_ECALL);
+        signalTrampolineAddress = address;
+        fenceProcessInstructionFetch();
+        state.fenceInstructionFetch();
+        return address;
     }
 
     /// Handles the Linux `prctl` operations needed by single-process user-mode guests.
@@ -2531,6 +2807,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Creates a child-process Linux syscall handler by copying fork-inherited parent state.
     private LinuxGuestSyscalls(LinuxGuestSyscalls parent, Memory memory, GuestProcess process) {
         super(parent, memory, process);
+        System.arraycopy(parent.signalActions, 0, signalActions, 0, signalActions.length);
+        signalTrampolineAddress = parent.signalTrampolineAddress;
     }
 
     /// The Linux RISC-V syscall number for `getxattr`.
@@ -2724,6 +3002,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final int SYS_RT_SIGPROCMASK = 135;
+
+    /// The Linux RISC-V syscall number for `rt_sigreturn`.
+    private static final int SYS_RT_SIGRETURN = 139;
 
     /// The Linux RISC-V syscall number for `setresuid`.
     private static final int SYS_SETRESUID = 147;
@@ -3069,6 +3350,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_RT_SIGRETURN -> rtSigreturn(state);
             case SYS_GETRESUID -> state.setRegister(10, getresid(
                     state.register(10),
                     state.register(11),
@@ -3257,5 +3539,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     @Override
     protected GuestSyscalls createChildSyscalls(Memory childMemory, GuestProcess childProcess) {
         return new LinuxGuestSyscalls(this, childMemory, childProcess);
+    }
+
+    /// Linux RISC-V kernel signal action state.
+    protected record SignalAction(long handler, long flags, long mask) {
     }
 }

@@ -297,6 +297,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final long SYS_RT_SIGPROCMASK = 135;
 
+    /// The Linux RISC-V syscall number for `rt_sigreturn`.
+    private static final long SYS_RT_SIGRETURN = 139;
+
     /// The Linux RISC-V syscall number for `setresuid`.
     private static final long SYS_SETRESUID = 147;
 
@@ -1005,6 +1008,9 @@ public final class GuestSyscallsTest {
     /// The Linux generic kernel `sigset_t` size accepted by signal syscalls.
     private static final long KERNEL_SIGSET_SIZE = 8;
 
+    /// Linux `SIGILL`.
+    private static final long SIGILL = 4;
+
     /// Linux `SIGKILL`.
     private static final long SIGKILL = 9;
 
@@ -1023,6 +1029,24 @@ public final class GuestSyscallsTest {
     /// Linux `SIG_SETMASK` signal-mask operation.
     private static final long SIG_SETMASK = 2;
 
+    /// Linux `ILL_ILLOPC`.
+    private static final int ILL_ILLOPC = 1;
+
+    /// Linux `SA_SIGINFO`.
+    private static final long SA_SIGINFO = 0x00000004L;
+
+    /// The byte size of Linux generic 64-bit `siginfo_t`.
+    private static final long SIGNAL_INFO_SIZE = 128;
+
+    /// The rounded byte size of Linux RISC-V 64-bit `rt_sigframe`.
+    private static final long SIGNAL_FRAME_SIZE = 1088;
+
+    /// The byte offset of `si_code` inside Linux generic 64-bit `siginfo_t`.
+    private static final long SIGNAL_INFO_CODE_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `si_addr` inside the Linux generic 64-bit `siginfo_t` fault union.
+    private static final long SIGNAL_INFO_FAULT_ADDRESS_OFFSET = 2L * Long.BYTES;
+
     /// The byte offset of `ss_sp` inside Linux RISC-V 64-bit `stack_t`.
     private static final long SIGNAL_STACK_POINTER_OFFSET = 0;
 
@@ -1031,6 +1055,9 @@ public final class GuestSyscallsTest {
 
     /// The byte offset of `ss_size` inside Linux RISC-V 64-bit `stack_t`.
     private static final long SIGNAL_STACK_SIZE_OFFSET = 2L * Long.BYTES;
+
+    /// The byte offset of `uc_mcontext` inside Linux RISC-V 64-bit `ucontext_t`.
+    private static final long SIGNAL_CONTEXT_MACHINE_OFFSET = 176;
 
     /// Linux `MINSIGSTKSZ`.
     private static final long MINIMUM_SIGNAL_STACK_SIZE = 2048;
@@ -5972,6 +5999,69 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_RT_SIGACTION, 2, 0, 0, KERNEL_SIGSET_SIZE - 1);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies synchronous signal delivery uses the glibc RISC-V `ucontext_t` register layout.
+    @Test
+    public void illegalInstructionSignalFrameUsesGlibcUcontextLayout() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 65536, null)) {
+            long base = memory.baseAddress();
+            assertTrue(memory.map(base, 8192));
+
+            MachineState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    base + 8192);
+            long actionAddress = base + 64;
+            long handlerAddress = base + 512;
+            long stalePc = base + 1024;
+            long faultPc = base + 1280;
+            long returnPc = base + 1536;
+            long stackPointer = base + 4096;
+            long globalPointer = base + 6144;
+
+            memory.writeLong(actionAddress, handlerAddress);
+            memory.writeLong(actionAddress + Long.BYTES, SA_SIGINFO);
+            memory.writeLong(actionAddress + 2L * Long.BYTES, 0);
+            setSyscall(state, SYS_RT_SIGACTION, SIGILL, actionAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            state.setPc(stalePc);
+            state.setRegister(1, returnPc);
+            state.setRegister(2, stackPointer);
+            state.setRegister(3, globalPointer);
+
+            assertTrue(state.syscalls().handleIllegalInstruction(state, new IllegalInstructionException(faultPc, -1)));
+            long frameAddress = state.register(2);
+            long infoAddress = state.register(11);
+            long contextAddress = state.register(12);
+            long registersAddress = contextAddress + SIGNAL_CONTEXT_MACHINE_OFFSET;
+
+            assertEquals(handlerAddress, state.pc());
+            assertEquals(stackPointer - SIGNAL_FRAME_SIZE, frameAddress);
+            assertEquals(frameAddress, infoAddress);
+            assertEquals(frameAddress + SIGNAL_INFO_SIZE, contextAddress);
+            assertEquals(SIGILL, memory.readInt(infoAddress));
+            assertEquals(ILL_ILLOPC, memory.readInt(infoAddress + SIGNAL_INFO_CODE_OFFSET));
+            assertEquals(faultPc, memory.readLong(infoAddress + SIGNAL_INFO_FAULT_ADDRESS_OFFSET));
+            assertEquals(0, memory.readLong(registersAddress - Long.BYTES));
+            assertEquals(faultPc, memory.readLong(registersAddress));
+            assertEquals(returnPc, memory.readLong(registersAddress + Long.BYTES));
+            assertEquals(stackPointer, memory.readLong(registersAddress + 2L * Long.BYTES));
+            assertEquals(globalPointer, memory.readLong(registersAddress + 3L * Long.BYTES));
+
+            long resumePc = base + 2048;
+            memory.writeLong(registersAddress, resumePc);
+            setSyscall(state, SYS_RT_SIGRETURN, 0, 0, 0);
+            state.syscalls().handle(state, state.pc());
+            assertEquals(resumePc, state.pc());
+            assertEquals(returnPc, state.register(1));
+            assertEquals(stackPointer, state.register(2));
+            assertEquals(globalPointer, state.register(3));
         }
     }
 
