@@ -16,14 +16,9 @@ import org.glavo.riscv.runtime.RiscVThreadState;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Unmodifiable;
 
-import java.util.Arrays;
-
 /// Stores decoded instructions for one executable guest page and runs integer hot blocks directly.
 @NotNullByDefault
 final class DecodedCodeSegment {
-    /// Marker used before a PC-indexed instruction slot has been decoded.
-    private static final byte UNDECODED_OPCODE = -1;
-
     /// Segment-local fast opcode for `addi rd, x0, immediate`.
     private static final byte LOAD_IMMEDIATE_OPCODE = -2;
 
@@ -66,6 +61,9 @@ final class DecodedCodeSegment {
     /// Ten-bit mask for a packed block byte length.
     private static final int BLOCK_BYTES_MASK = 0x3ff;
 
+    /// Bit shift for the packed opcode in one decoder entry.
+    private static final int ENTRY_OPCODE_SHIFT = 24;
+
     /// Inclusive first guest PC covered by this segment.
     private final long startPc;
 
@@ -78,11 +76,8 @@ final class DecodedCodeSegment {
     /// Instruction-fetch generation that made this decoded segment visible.
     private final long instructionFetchGeneration;
 
-    /// PC-indexed micro-opcode slots.
-    private final byte[] opcodes;
-
-    /// Packed register operands.
-    private final int[] operands;
+    /// PC-indexed packed opcode and register operand entries.
+    private final int[] decoderEntries;
 
     /// Decoded immediate operands.
     private final long[] immediates;
@@ -98,9 +93,7 @@ final class DecodedCodeSegment {
         this.instructionFetchGeneration = instructionFetchGeneration;
 
         int slotCount = memoryLayout.pageSize() >>> 1;
-        this.opcodes = new byte[slotCount];
-        Arrays.fill(opcodes, UNDECODED_OPCODE);
-        this.operands = new int[slotCount];
+        this.decoderEntries = new int[slotCount];
         this.immediates = new long[slotCount];
         this.metadata = new int[slotCount];
     }
@@ -184,8 +177,9 @@ final class DecodedCodeSegment {
 
         try {
             for (int index = 0, slot = startSlot; index < instructionCount; index++) {
-                byte opcode = opcodes[slot];
-                int operand = operands[slot];
+                int entry = decoderEntries[slot];
+                byte opcode = (byte) (entry >>> ENTRY_OPCODE_SHIFT);
+                int operand = entry;
                 int rd = operand & REGISTER_MASK;
                 int rs1 = (operand >>> RS1_SHIFT) & REGISTER_MASK;
                 int rs2 = (operand >>> RS2_SHIFT) & REGISTER_MASK;
@@ -505,12 +499,11 @@ final class DecodedCodeSegment {
 
             byte opcode = rewriteOpcode(RiscVMicroBlockCompiler.opcode(instruction.operation()), instruction);
             int slot = slot(instruction.address());
-            opcodes[slot] = opcode;
-            operands[slot] = packOperand(
+            decoderEntries[slot] = packDecoderEntry(opcode, packOperand(
                     instruction.rd(),
                     instruction.rs1(),
                     instruction.rs2(),
-                    instruction.length());
+                    instruction.length()));
             immediates[slot] = instruction.immediate();
             metadata[slot] = instruction.terminator() ? FLAG_TERMINATOR : 0;
 
@@ -555,6 +548,11 @@ final class DecodedCodeSegment {
                 | (rs1 << RS1_SHIFT)
                 | (rs2 << RS2_SHIFT)
                 | ((length >>> 1) << LENGTH_SHIFT);
+    }
+
+    /// Packs one micro-opcode and its rewritten register operands into one decoder entry word.
+    private static int packDecoderEntry(byte opcode, int operand) {
+        return ((opcode & 0xff) << ENTRY_OPCODE_SHIFT) | operand;
     }
 
     /// Returns true when this micro-op has a direct body in the segment fast loop.
