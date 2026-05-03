@@ -11,6 +11,7 @@ import org.glavo.riscv.memory.MemoryLayout;
 import org.glavo.riscv.parser.DecodedBlock;
 import org.glavo.riscv.parser.DecodedInstruction;
 import org.glavo.riscv.parser.RiscVDecoder;
+import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.DataIndependent;
 import org.glavo.riscv.runtime.RiscVThreadState;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -24,6 +25,30 @@ final class DecodedCodeSegment {
 
     /// Segment-local fast opcode for integer register moves.
     private static final byte MOVE_REGISTER_OPCODE = -3;
+
+    /// Segment-local fast opcode for no-link PC-relative jumps.
+    private static final byte JUMP_OPCODE = -4;
+
+    /// Segment-local fast opcode for no-link register-indirect jumps.
+    private static final byte JUMP_REGISTER_OPCODE = -5;
+
+    /// Segment-local fast opcode for `jal ra, target`.
+    private static final byte FAST_CALL_OPCODE = -6;
+
+    /// Segment-local fast opcode for a discarded byte load into `x0`.
+    private static final byte DISCARD_LOAD_BYTE_OPCODE = -7;
+
+    /// Segment-local fast opcode for a discarded halfword load into `x0`.
+    private static final byte DISCARD_LOAD_SHORT_OPCODE = -8;
+
+    /// Segment-local fast opcode for a discarded word load into `x0`.
+    private static final byte DISCARD_LOAD_INT_OPCODE = -9;
+
+    /// Segment-local fast opcode for a discarded doubleword load into `x0`.
+    private static final byte DISCARD_LOAD_LONG_OPCODE = -10;
+
+    /// Register index for the return-address register.
+    private static final int RETURN_ADDRESS_REGISTER = 1;
 
     /// Five-bit mask for one packed RISC-V register index.
     private static final int REGISTER_MASK = 0x1f;
@@ -190,28 +215,37 @@ final class DecodedCodeSegment {
                 switch (opcode) {
                     case RiscVMicroOpcode.ADVANCE_PC -> slot = nextSlot;
                     case LOAD_IMMEDIATE_OPCODE -> {
-                        writeRegister(registers, rd, immediates[slot]);
+                        registers[rd] = immediates[slot];
                         slot = nextSlot;
                     }
                     case MOVE_REGISTER_OPCODE -> {
-                        writeRegister(registers, rd, registers[rs1]);
+                        registers[rd] = registers[rs1];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LUI -> {
-                        writeRegister(registers, rd, immediates[slot]);
+                        registers[rd] = immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.AUIPC -> {
-                        writeRegister(registers, rd, instructionPc + immediates[slot]);
+                        registers[rd] = instructionPc + immediates[slot];
                         slot = nextSlot;
                     }
-                    case RiscVMicroOpcode.JAL -> {
-                        writeRegister(registers, rd, sequentialPc);
+                    case JUMP_OPCODE -> pc = (instructionPc + immediates[slot]) & pointerMask;
+                    case FAST_CALL_OPCODE -> {
+                        registers[RETURN_ADDRESS_REGISTER] = sequentialPc;
                         pc = (instructionPc + immediates[slot]) & pointerMask;
+                    }
+                    case RiscVMicroOpcode.JAL -> {
+                        registers[rd] = sequentialPc;
+                        pc = (instructionPc + immediates[slot]) & pointerMask;
+                    }
+                    case JUMP_REGISTER_OPCODE -> {
+                        long target = (registers[rs1] + immediates[slot]) & ~1L;
+                        pc = target & pointerMask;
                     }
                     case RiscVMicroOpcode.JALR -> {
                         long target = (registers[rs1] + immediates[slot]) & ~1L;
-                        writeRegister(registers, rd, sequentialPc);
+                        registers[rd] = sequentialPc;
                         pc = target & pointerMask;
                     }
                     case RiscVMicroOpcode.BEQ ->
@@ -228,37 +262,57 @@ final class DecodedCodeSegment {
                             pc = branch(Long.compareUnsigned(registers[rs1], registers[rs2]) >= 0, instructionPc, immediates[slot], sequentialPc, pointerMask);
                     case RiscVMicroOpcode.LB -> {
                         faultPc = instructionPc;
-                        writeRegister(registers, rd, access.readByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout));
+                        registers[rd] = access.readByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LH -> {
                         faultPc = instructionPc;
-                        writeRegister(registers, rd, readShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
+                        registers[rd] = readShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LW -> {
                         faultPc = instructionPc;
-                        writeRegister(registers, rd, readInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
+                        registers[rd] = readInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LD -> {
                         faultPc = instructionPc;
-                        writeRegister(registers, rd, readLong(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
+                        registers[rd] = readLong(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LBU -> {
                         faultPc = instructionPc;
-                        writeRegister(registers, rd, access.readUnsignedByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout));
+                        registers[rd] = access.readUnsignedByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LHU -> {
                         faultPc = instructionPc;
-                        writeRegister(registers, rd, readUnsignedShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
+                        registers[rd] = readUnsignedShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.LWU -> {
                         faultPc = instructionPc;
-                        writeRegister(registers, rd, readUnsignedInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask)));
+                        registers[rd] = readUnsignedInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
+                        slot = nextSlot;
+                    }
+                    case DISCARD_LOAD_BYTE_OPCODE -> {
+                        faultPc = instructionPc;
+                        access.readByte(loadAddress(registers, rs1, immediates[slot], pointerMask), memoryLayout);
+                        slot = nextSlot;
+                    }
+                    case DISCARD_LOAD_SHORT_OPCODE -> {
+                        faultPc = instructionPc;
+                        readShort(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
+                        slot = nextSlot;
+                    }
+                    case DISCARD_LOAD_INT_OPCODE -> {
+                        faultPc = instructionPc;
+                        readInt(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
+                        slot = nextSlot;
+                    }
+                    case DISCARD_LOAD_LONG_OPCODE -> {
+                        faultPc = instructionPc;
+                        readLong(access, loadAddress(registers, rs1, immediates[slot], pointerMask));
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SB -> {
@@ -282,167 +336,167 @@ final class DecodedCodeSegment {
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.ADDI -> {
-                        writeRegister(registers, rd, registers[rs1] + immediates[slot]);
+                        registers[rd] = registers[rs1] + immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLTI -> {
-                        writeRegister(registers, rd, DataIndependent.signedLessThan(registers[rs1], immediates[slot]));
+                        registers[rd] = DataIndependent.signedLessThan(registers[rs1], immediates[slot]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLTIU -> {
-                        writeRegister(registers, rd, DataIndependent.unsignedLessThan(registers[rs1], immediates[slot]));
+                        registers[rd] = DataIndependent.unsignedLessThan(registers[rs1], immediates[slot]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.XORI -> {
-                        writeRegister(registers, rd, registers[rs1] ^ immediates[slot]);
+                        registers[rd] = registers[rs1] ^ immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.ORI -> {
-                        writeRegister(registers, rd, registers[rs1] | immediates[slot]);
+                        registers[rd] = registers[rs1] | immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.ANDI -> {
-                        writeRegister(registers, rd, registers[rs1] & immediates[slot]);
+                        registers[rd] = registers[rs1] & immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLLI -> {
-                        writeRegister(registers, rd, registers[rs1] << immediates[slot]);
+                        registers[rd] = registers[rs1] << immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRLI -> {
-                        writeRegister(registers, rd, registers[rs1] >>> immediates[slot]);
+                        registers[rd] = registers[rs1] >>> immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRAI -> {
-                        writeRegister(registers, rd, registers[rs1] >> immediates[slot]);
+                        registers[rd] = registers[rs1] >> immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.ADDIW -> {
-                        writeRegister(registers, rd, (int) (registers[rs1] + immediates[slot]));
+                        registers[rd] = (int) (registers[rs1] + immediates[slot]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLLIW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] << immediates[slot]);
+                        registers[rd] = (int) registers[rs1] << immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRLIW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] >>> immediates[slot]);
+                        registers[rd] = (int) registers[rs1] >>> immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRAIW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] >> immediates[slot]);
+                        registers[rd] = (int) registers[rs1] >> immediates[slot];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.ADD -> {
-                        writeRegister(registers, rd, registers[rs1] + registers[rs2]);
+                        registers[rd] = registers[rs1] + registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SUB -> {
-                        writeRegister(registers, rd, registers[rs1] - registers[rs2]);
+                        registers[rd] = registers[rs1] - registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLL -> {
-                        writeRegister(registers, rd, registers[rs1] << (registers[rs2] & 0x3f));
+                        registers[rd] = registers[rs1] << (registers[rs2] & 0x3f);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLT -> {
-                        writeRegister(registers, rd, DataIndependent.signedLessThan(registers[rs1], registers[rs2]));
+                        registers[rd] = DataIndependent.signedLessThan(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLTU -> {
-                        writeRegister(registers, rd, DataIndependent.unsignedLessThan(registers[rs1], registers[rs2]));
+                        registers[rd] = DataIndependent.unsignedLessThan(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.XOR -> {
-                        writeRegister(registers, rd, registers[rs1] ^ registers[rs2]);
+                        registers[rd] = registers[rs1] ^ registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRL -> {
-                        writeRegister(registers, rd, registers[rs1] >>> (registers[rs2] & 0x3f));
+                        registers[rd] = registers[rs1] >>> (registers[rs2] & 0x3f);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRA -> {
-                        writeRegister(registers, rd, registers[rs1] >> (registers[rs2] & 0x3f));
+                        registers[rd] = registers[rs1] >> (registers[rs2] & 0x3f);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.OR -> {
-                        writeRegister(registers, rd, registers[rs1] | registers[rs2]);
+                        registers[rd] = registers[rs1] | registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.AND -> {
-                        writeRegister(registers, rd, registers[rs1] & registers[rs2]);
+                        registers[rd] = registers[rs1] & registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.ADDW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] + (int) registers[rs2]);
+                        registers[rd] = (int) registers[rs1] + (int) registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SUBW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] - (int) registers[rs2]);
+                        registers[rd] = (int) registers[rs1] - (int) registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SLLW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] << (registers[rs2] & 0x1f));
+                        registers[rd] = (int) registers[rs1] << (registers[rs2] & 0x1f);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRLW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] >>> (registers[rs2] & 0x1f));
+                        registers[rd] = (int) registers[rs1] >>> (registers[rs2] & 0x1f);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.SRAW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] >> (registers[rs2] & 0x1f));
+                        registers[rd] = (int) registers[rs1] >> (registers[rs2] & 0x1f);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.MUL -> {
-                        writeRegister(registers, rd, registers[rs1] * registers[rs2]);
+                        registers[rd] = registers[rs1] * registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.MULH -> {
-                        writeRegister(registers, rd, DataIndependent.multiplyHighSigned(registers[rs1], registers[rs2]));
+                        registers[rd] = DataIndependent.multiplyHighSigned(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.MULHSU -> {
-                        writeRegister(registers, rd, DataIndependent.multiplyHighSignedUnsigned(registers[rs1], registers[rs2]));
+                        registers[rd] = DataIndependent.multiplyHighSignedUnsigned(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.MULHU -> {
-                        writeRegister(registers, rd, DataIndependent.multiplyHighUnsigned(registers[rs1], registers[rs2]));
+                        registers[rd] = DataIndependent.multiplyHighUnsigned(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.DIV -> {
-                        writeRegister(registers, rd, divideSigned(registers[rs1], registers[rs2]));
+                        registers[rd] = divideSigned(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.DIVU -> {
-                        writeRegister(registers, rd, divideUnsigned(registers[rs1], registers[rs2]));
+                        registers[rd] = divideUnsigned(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.REM -> {
-                        writeRegister(registers, rd, remainderSigned(registers[rs1], registers[rs2]));
+                        registers[rd] = remainderSigned(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.REMU -> {
-                        writeRegister(registers, rd, remainderUnsigned(registers[rs1], registers[rs2]));
+                        registers[rd] = remainderUnsigned(registers[rs1], registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.MULW -> {
-                        writeRegister(registers, rd, (int) registers[rs1] * (int) registers[rs2]);
+                        registers[rd] = (int) registers[rs1] * (int) registers[rs2];
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.DIVW -> {
-                        writeRegister(registers, rd, divideSignedWord((int) registers[rs1], (int) registers[rs2]));
+                        registers[rd] = divideSignedWord((int) registers[rs1], (int) registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.DIVUW -> {
-                        writeRegister(registers, rd, divideUnsignedWord((int) registers[rs1], (int) registers[rs2]));
+                        registers[rd] = divideUnsignedWord((int) registers[rs1], (int) registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.REMW -> {
-                        writeRegister(registers, rd, remainderSignedWord((int) registers[rs1], (int) registers[rs2]));
+                        registers[rd] = remainderSignedWord((int) registers[rs1], (int) registers[rs2]);
                         slot = nextSlot;
                     }
                     case RiscVMicroOpcode.REMUW -> {
-                        writeRegister(registers, rd, remainderUnsignedWord((int) registers[rs1], (int) registers[rs2]));
+                        registers[rd] = remainderUnsignedWord((int) registers[rs1], (int) registers[rs2]);
                         slot = nextSlot;
                     }
                     default -> throw new AssertionError("Unsupported segment fast opcode: " + opcode);
@@ -506,13 +560,13 @@ final class DecodedCodeSegment {
             int slot = slot(instruction.address());
             decoderEntries[slot] = packDecoderEntry(opcode, packOperand(
                     instruction.rd(),
-                    instruction.rs1(),
+                    rewrittenRs1(opcode, instruction),
                     instruction.rs2(),
                     instruction.length()));
             immediates[slot] = instruction.immediate();
             metadata[slot] = instruction.terminator() ? FLAG_TERMINATOR : 0;
 
-            fastBlock &= isFastOpcode(opcode);
+            fastBlock &= isFastInstruction(opcode, instruction);
         }
 
         int blockMetadata = metadata[startSlot] | FLAG_BLOCK_START;
@@ -565,6 +619,13 @@ final class DecodedCodeSegment {
         return switch (opcode) {
             case LOAD_IMMEDIATE_OPCODE,
                  MOVE_REGISTER_OPCODE,
+                 JUMP_OPCODE,
+                 JUMP_REGISTER_OPCODE,
+                 FAST_CALL_OPCODE,
+                 DISCARD_LOAD_BYTE_OPCODE,
+                 DISCARD_LOAD_SHORT_OPCODE,
+                 DISCARD_LOAD_INT_OPCODE,
+                 DISCARD_LOAD_LONG_OPCODE,
                  RiscVMicroOpcode.ADVANCE_PC,
                  RiscVMicroOpcode.LUI,
                  RiscVMicroOpcode.AUIPC,
@@ -632,8 +693,31 @@ final class DecodedCodeSegment {
         };
     }
 
+    /// Returns true when this rewritten instruction can run without guarded `x0` writes.
+    private static boolean isFastInstruction(byte opcode, DecodedInstruction instruction) {
+        return isFastOpcode(opcode) && (!writesIntegerDestination(opcode) || instruction.rd() != 0);
+    }
+
     /// Rewrites common decoded operations into cheaper segment-local fast opcodes.
     private static byte rewriteOpcode(byte opcode, DecodedInstruction instruction) {
+        if (opcode == RiscVMicroOpcode.JAL) {
+            if (instruction.rd() == 0) {
+                return JUMP_OPCODE;
+            }
+            if (instruction.rd() == RETURN_ADDRESS_REGISTER) {
+                return FAST_CALL_OPCODE;
+            }
+            return opcode;
+        }
+        if (opcode == RiscVMicroOpcode.JALR) {
+            return instruction.rd() == 0 ? JUMP_REGISTER_OPCODE : opcode;
+        }
+        if (isLoadOpcode(opcode) && instruction.rd() == 0) {
+            return discardLoadOpcode(opcode);
+        }
+        if (writesIntegerDestination(opcode) && instruction.rd() == 0) {
+            return RiscVMicroOpcode.ADVANCE_PC;
+        }
         if (opcode == RiscVMicroOpcode.ADDI) {
             if (instruction.rs1() == 0) {
                 return LOAD_IMMEDIATE_OPCODE;
@@ -643,18 +727,108 @@ final class DecodedCodeSegment {
             }
         }
         if (opcode == RiscVMicroOpcode.ADD) {
-            if (instruction.rs2() == 0) {
+            if (instruction.rs1() == 0 || instruction.rs2() == 0) {
                 return MOVE_REGISTER_OPCODE;
             }
         }
         return opcode;
     }
 
-    /// Writes a decoded integer register and preserves the hardwired zero register.
-    private static void writeRegister(long[] registers, int index, long value) {
-        if (index != 0) {
-            registers[index] = value;
+    /// Returns the rewritten first source register for segment-local fast opcodes.
+    private static int rewrittenRs1(byte opcode, DecodedInstruction instruction) {
+        if (opcode == MOVE_REGISTER_OPCODE
+                && instruction.operation() == RiscVOperation.ADD
+                && instruction.rs1() == 0) {
+            return instruction.rs2();
         }
+        return instruction.rs1();
+    }
+
+    /// Returns true when this opcode reads memory into an integer destination register.
+    private static boolean isLoadOpcode(byte opcode) {
+        return switch (opcode) {
+            case RiscVMicroOpcode.LB,
+                 RiscVMicroOpcode.LH,
+                 RiscVMicroOpcode.LW,
+                 RiscVMicroOpcode.LD,
+                 RiscVMicroOpcode.LBU,
+                 RiscVMicroOpcode.LHU,
+                 RiscVMicroOpcode.LWU -> true;
+            default -> false;
+        };
+    }
+
+    /// Returns the discarded-load opcode that preserves load fault behavior without writing `x0`.
+    private static byte discardLoadOpcode(byte opcode) {
+        return switch (opcode) {
+            case RiscVMicroOpcode.LB, RiscVMicroOpcode.LBU -> DISCARD_LOAD_BYTE_OPCODE;
+            case RiscVMicroOpcode.LH, RiscVMicroOpcode.LHU -> DISCARD_LOAD_SHORT_OPCODE;
+            case RiscVMicroOpcode.LW, RiscVMicroOpcode.LWU -> DISCARD_LOAD_INT_OPCODE;
+            case RiscVMicroOpcode.LD -> DISCARD_LOAD_LONG_OPCODE;
+            default -> throw new AssertionError("Unsupported discarded load opcode: " + opcode);
+        };
+    }
+
+    /// Returns true when this opcode writes an integer destination register.
+    private static boolean writesIntegerDestination(byte opcode) {
+        return switch (opcode) {
+            case LOAD_IMMEDIATE_OPCODE,
+                 MOVE_REGISTER_OPCODE,
+                 FAST_CALL_OPCODE,
+                 RiscVMicroOpcode.LUI,
+                 RiscVMicroOpcode.AUIPC,
+                 RiscVMicroOpcode.JAL,
+                 RiscVMicroOpcode.JALR,
+                 RiscVMicroOpcode.LB,
+                 RiscVMicroOpcode.LH,
+                 RiscVMicroOpcode.LW,
+                 RiscVMicroOpcode.LD,
+                 RiscVMicroOpcode.LBU,
+                 RiscVMicroOpcode.LHU,
+                 RiscVMicroOpcode.LWU,
+                 RiscVMicroOpcode.ADDI,
+                 RiscVMicroOpcode.SLTI,
+                 RiscVMicroOpcode.SLTIU,
+                 RiscVMicroOpcode.XORI,
+                 RiscVMicroOpcode.ORI,
+                 RiscVMicroOpcode.ANDI,
+                 RiscVMicroOpcode.SLLI,
+                 RiscVMicroOpcode.SRLI,
+                 RiscVMicroOpcode.SRAI,
+                 RiscVMicroOpcode.ADDIW,
+                 RiscVMicroOpcode.SLLIW,
+                 RiscVMicroOpcode.SRLIW,
+                 RiscVMicroOpcode.SRAIW,
+                 RiscVMicroOpcode.ADD,
+                 RiscVMicroOpcode.SUB,
+                 RiscVMicroOpcode.SLL,
+                 RiscVMicroOpcode.SLT,
+                 RiscVMicroOpcode.SLTU,
+                 RiscVMicroOpcode.XOR,
+                 RiscVMicroOpcode.SRL,
+                 RiscVMicroOpcode.SRA,
+                 RiscVMicroOpcode.OR,
+                 RiscVMicroOpcode.AND,
+                 RiscVMicroOpcode.ADDW,
+                 RiscVMicroOpcode.SUBW,
+                 RiscVMicroOpcode.SLLW,
+                 RiscVMicroOpcode.SRLW,
+                 RiscVMicroOpcode.SRAW,
+                 RiscVMicroOpcode.MUL,
+                 RiscVMicroOpcode.MULH,
+                 RiscVMicroOpcode.MULHSU,
+                 RiscVMicroOpcode.MULHU,
+                 RiscVMicroOpcode.DIV,
+                 RiscVMicroOpcode.DIVU,
+                 RiscVMicroOpcode.REM,
+                 RiscVMicroOpcode.REMU,
+                 RiscVMicroOpcode.MULW,
+                 RiscVMicroOpcode.DIVW,
+                 RiscVMicroOpcode.DIVUW,
+                 RiscVMicroOpcode.REMW,
+                 RiscVMicroOpcode.REMUW -> true;
+            default -> false;
+        };
     }
 
     /// Computes a conditional branch target.
