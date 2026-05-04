@@ -2403,8 +2403,8 @@ public final class GuestSyscallsTest {
     /// Verifies that host child path access requires search permission on the parent directory.
     @Test
     public void hostPathAccessRequiresParentSearchPermission() throws Exception {
-        Files.createDirectories(tempDirectory.resolve("private"));
-        Files.writeString(tempDirectory.resolve("private").resolve("child.txt"), "child", StandardCharsets.UTF_8);
+        Files.createDirectories(tempDirectory.resolve("private").resolve("nested"));
+        Files.writeString(tempDirectory.resolve("private").resolve("nested").resolve("child.txt"), "child", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
             RiscVThreadState state = state(
@@ -2421,7 +2421,7 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
 
-            writeGuestString(memory, pathAddress, "private/child.txt");
+            writeGuestString(memory, pathAddress, "private/nested/child.txt");
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EACCES, state.register(10));
@@ -2435,7 +2435,7 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
 
-            writeGuestString(memory, pathAddress, "private/child.txt");
+            writeGuestString(memory, pathAddress, "private/nested/child.txt");
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(3, state.register(10));
@@ -2452,6 +2452,9 @@ public final class GuestSyscallsTest {
             writeTarFile(tarOutput, "group.txt", "group".getBytes(StandardCharsets.UTF_8), 0040, 2000, 42);
             writeTarFile(tarOutput, "other.txt", "other".getBytes(StandardCharsets.UTF_8), 0004, 2000, 7777);
             writeTarFile(tarOutput, "blocked.txt", "blocked".getBytes(StandardCharsets.UTF_8), 0000, 2000, 7777);
+            writeTarDirectory(tarOutput, "private", 0600, 1234, 5678);
+            writeTarDirectory(tarOutput, "private/nested", 0700, 1234, 5678);
+            writeTarFile(tarOutput, "private/nested/child.txt", "child".getBytes(StandardCharsets.UTF_8), 0600, 1234, 5678);
             tarOutput.finish();
         }
 
@@ -2499,6 +2502,11 @@ public final class GuestSyscallsTest {
             assertEquals(EACCES, state.register(10));
 
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/tar/private/nested/child.txt");
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EACCES, state.register(10));
         }
@@ -7308,6 +7316,22 @@ public final class GuestSyscallsTest {
         entry.setSize(data.length);
         tarOutput.putArchiveEntry(entry);
         tarOutput.write(data, 0, data.length);
+        tarOutput.closeArchiveEntry();
+    }
+
+    /// Writes one directory tar entry with explicit Linux metadata to an open archive.
+    private static void writeTarDirectory(
+            TarArchiveOutputStream tarOutput,
+            String name,
+            int mode,
+            long userId,
+            long groupId) throws IOException {
+        TarArchiveEntry entry = new TarArchiveEntry(name.endsWith("/") ? name : name + "/", true);
+        entry.setMode(mode);
+        entry.setUserId(userId);
+        entry.setGroupId(groupId);
+        entry.setSize(0);
+        tarOutput.putArchiveEntry(entry);
         tarOutput.closeArchiveEntry();
     }
 
