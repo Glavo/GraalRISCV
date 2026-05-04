@@ -3050,6 +3050,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `getrusage`.
     private static final int SYS_GETRUSAGE = 165;
 
+    /// The Linux RISC-V syscall number for `umask`.
+    private static final int SYS_UMASK = 166;
+
     /// The Linux RISC-V syscall number for `prctl`.
     private static final int SYS_PRCTL = 167;
 
@@ -3410,6 +3413,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
             case SYS_UNAME -> state.setRegister(10, uname(state.register(10)));
             case SYS_GETRUSAGE -> state.setRegister(10, getrusage(state.register(10), state.register(11)));
+            case SYS_UMASK -> state.setRegister(10, umask(state.register(10)));
             case SYS_PRCTL -> state.setRegister(10, prctl(
                     state,
                     state.register(10),

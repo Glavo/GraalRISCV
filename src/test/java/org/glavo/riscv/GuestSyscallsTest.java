@@ -350,6 +350,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getrusage`.
     private static final long SYS_GETRUSAGE = 165;
 
+    /// The Linux RISC-V syscall number for `umask`.
+    private static final long SYS_UMASK = 166;
+
     /// The Linux RISC-V syscall number for `prctl`.
     private static final long SYS_PRCTL = 167;
 
@@ -2559,6 +2562,295 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0644, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EROFS, state.register(10));
+        }
+    }
+
+    /// Verifies that `umask` masks host file and directory creation modes.
+    @Test
+    public void umaskMasksHostCreatedEntryModes() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_UMASK, 0027, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "masked");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0040000 | 0750, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "masked/file.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0100000 | 0640, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_UMASK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0027, state.register(10));
+        }
+    }
+
+    /// Verifies that `umask` masks writable tar file and directory creation modes.
+    @Test
+    public void umaskMasksTarCreatedEntryModes() throws Exception {
+        Path archive = tempDirectory.resolve("umask.tar");
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            tarOutput.finish();
+        }
+
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tar,src=" + archive + ",dst=/tar,memory,rw"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_UMASK, 0077, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/tar/private");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0777);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0040000 | 0700, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "/tar/private/file.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0100000 | 0600, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_UMASK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0077, state.register(10));
+        }
+    }
+
+    /// Verifies that host setgid directories supply inherited groups to created children.
+    @Test
+    public void hostSetgidDirectoryControlsCreatedEntryGroups() throws Exception {
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.forHostRoot(new HostPath(tempDirectory)),
+                    root);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "setgid");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0770);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 0, 4242, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 02770, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "setgid/file.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_TRUNC, 0660);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0100000 | 0660, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(0, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_UID_OFFSET)));
+            assertEquals(4242, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_GID_OFFSET)));
+
+            writeGuestString(memory, pathAddress, "setgid/child");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0770);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0040000 | 02770, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(0, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_UID_OFFSET)));
+            assertEquals(4242, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_GID_OFFSET)));
+        }
+    }
+
+    /// Verifies that tar setgid directories supply inherited groups to created children.
+    @Test
+    public void tarSetgidDirectoryControlsCreatedEntryGroups() throws Exception {
+        Path archive = tempDirectory.resolve("setgid.tar");
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarDirectory(tarOutput, "setgid", 02770, 1234, 4242);
+            tarOutput.finish();
+        }
+
+        GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "", "/home/alice", "/bin/bash");
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tar,src=" + archive + ",dst=/tar,memory,rw"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem,
+                    credentials);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/tar/setgid/file.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_TRUNC, 0660);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0100000 | 0660, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(1234, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_UID_OFFSET)));
+            assertEquals(4242, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_GID_OFFSET)));
+
+            writeGuestString(memory, pathAddress, "/tar/setgid/child");
+            setSyscall(state, SYS_MKDIRAT, AT_FDCWD, pathAddress, 0770);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0040000 | 02770, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(1234, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_UID_OFFSET)));
+            assertEquals(4242, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_GID_OFFSET)));
+        }
+    }
+
+    /// Verifies that sticky tar directories restrict deleting and replacing entries owned by other users.
+    @Test
+    public void tarStickyDirectoryRestrictsEntryMutation() throws Exception {
+        Path archive = tempDirectory.resolve("sticky.tar");
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarDirectory(tarOutput, "sticky", 01777, 3000, 3000);
+            writeTarFile(tarOutput, "sticky/owned.txt", "owned".getBytes(StandardCharsets.UTF_8), 0600, 1234, 5678);
+            writeTarFile(tarOutput, "sticky/other.txt", "other".getBytes(StandardCharsets.UTF_8), 0600, 2000, 5678);
+            writeTarFile(tarOutput, "sticky/source.txt", "source".getBytes(StandardCharsets.UTF_8), 0600, 1234, 5678);
+            writeTarFile(tarOutput, "sticky/target.txt", "target".getBytes(StandardCharsets.UTF_8), 0600, 2000, 5678);
+            writeTarFile(tarOutput, "sticky/rename.txt", "rename".getBytes(StandardCharsets.UTF_8), 0600, 1234, 5678);
+            tarOutput.finish();
+        }
+
+        GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "", "/home/alice", "/bin/bash");
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tar,src=" + archive + ",dst=/tar,memory,rw"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem,
+                    credentials);
+            long oldPathAddress = memory.baseAddress();
+            long newPathAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, oldPathAddress, "/tar/sticky/owned.txt");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, oldPathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, oldPathAddress, "/tar/sticky/other.txt");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, oldPathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            writeGuestString(memory, oldPathAddress, "/tar/sticky/source.txt");
+            writeGuestString(memory, newPathAddress, "/tar/sticky/target.txt");
+            setSyscall(state, SYS_RENAMEAT, AT_FDCWD, oldPathAddress, AT_FDCWD, newPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            writeGuestString(memory, oldPathAddress, "/tar/sticky/rename.txt");
+            writeGuestString(memory, newPathAddress, "/tar/sticky/moved.txt");
+            setSyscall(state, SYS_RENAMEAT, AT_FDCWD, oldPathAddress, AT_FDCWD, newPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, newPathAddress, F_OK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+        GuestFileSystem rootFileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tar,src=" + archive + ",dst=/tar,memory,rw"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    rootFileSystem,
+                    root);
+            long pathAddress = memory.baseAddress();
+
+            writeGuestString(memory, pathAddress, "/tar/sticky/other.txt");
+            setSyscall(state, SYS_UNLINKAT, AT_FDCWD, pathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
         }
     }
 

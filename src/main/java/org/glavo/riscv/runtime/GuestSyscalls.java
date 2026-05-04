@@ -1013,6 +1013,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The file permission bits exposed for symbolic links.
     protected static final int STAT_MODE_ALL = 0777;
 
+    /// The Linux `S_ISGID` special mode bit.
+    protected static final int STAT_MODE_SET_GROUP_ID = 02000;
+
+    /// The Linux `S_ISVTX` sticky directory special mode bit.
+    protected static final int STAT_MODE_STICKY = 01000;
+
     /// The file permission and special mode bits changed by `chmod`.
     protected static final int STAT_MODE_CHANGE_BITS = 07777;
 
@@ -1102,6 +1108,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// The Linux user and group identity exposed to this guest process.
     protected final GuestCredentials credentials;
+
+    /// The Linux file creation mask applied to `openat(O_CREAT)` and `mkdirat`.
+    protected volatile int fileCreationMask;
 
     /// The guest-visible current working directory in absolute Linux path syntax.
     protected String guestWorkingDirectory = "/";
@@ -1552,6 +1561,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.fileSystem = addDefaultVirtualMounts(baseFileSystem);
         this.fileMetadataStore = parent.fileMetadataStore;
         this.credentials = parent.credentials;
+        this.fileCreationMask = parent.fileCreationMask;
         this.guestWorkingDirectory = parent.guestWorkingDirectory;
         this.auxiliaryVectorBytes = parent.auxiliaryVectorBytes.clone();
         this.procCommandLineBytes = parent.procCommandLineBytes.clone();
@@ -2461,13 +2471,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (pathEntryExists(hostFile)) {
                 return EEXIST;
             }
+            GuestFileMetadata parentMetadata = hostFileMetadata(parent, true);
             hostFile.createDirectory();
             fileMetadataStore.put(
                     hostFile,
                     new GuestFileMetadata(
                             credentials.effectiveUserId(),
-                            credentials.effectiveGroupId(),
-                            (int) (mode & STAT_MODE_CHANGE_BITS)));
+                            createdEntryGroupId(parentMetadata),
+                            createdDirectoryMode(parentMetadata, mode)));
             return 0;
         } catch (FileAlreadyExistsException exception) {
             return EEXIST;
@@ -2496,9 +2507,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         String relativePath = GuestFileSystem.relativeGuestPath(tarPath.guestPath(), mount.guestPath());
         @Nullable TarNode directory = mount.fileSystem().createDirectory(
                 relativePath,
-                (int) (mode & STAT_MODE_CHANGE_BITS),
+                createdDirectoryMode(parent, mode),
                 credentials.effectiveUserId(),
-                credentials.effectiveGroupId());
+                createdEntryGroupId(parent));
         return directory == null ? ENOENT : 0;
     }
 
@@ -2566,6 +2577,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return EISDIR;
             }
 
+            GuestFileMetadata parentMetadata = hostFileMetadata(parent, true);
+            if (hasStickyMutationRestriction(parentMetadata)) {
+                GuestFileMetadata metadata = hostFileMetadata(hostFile, removeDirectory && !symbolicLink);
+                if (!canMutateStickyDirectory(parentMetadata, metadata)) {
+                    return EPERM;
+                }
+            }
+
             String metadataKey = fileMetadataStore.key(hostFile);
             hostFile.delete();
             fileMetadataStore.remove(metadataKey);
@@ -2606,6 +2625,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
         if (!canAccessTarDirectory(parent, W_OK | X_OK)) {
             return EACCES;
+        }
+        if (hasStickyMutationRestriction(parent) && !canMutateStickyDirectory(parent, node)) {
+            return EPERM;
         }
         return mount.fileSystem().removeNode(node) ? 0 : EACCES;
     }
@@ -2689,6 +2711,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
 
             boolean oldDirectory = !oldHostFile.isSymbolicLink() && oldHostFile.isDirectory();
+            GuestFileMetadata oldParentMetadata = hostFileMetadata(oldParent, true);
+            if (hasStickyMutationRestriction(oldParentMetadata)) {
+                GuestFileMetadata oldMetadata = hostFileMetadata(oldHostFile, oldDirectory);
+                if (!canMutateStickyDirectory(oldParentMetadata, oldMetadata)) {
+                    return EPERM;
+                }
+            }
+
             if (pathEntryExists(newHostFile)) {
                 boolean newDirectory = !newHostFile.isSymbolicLink() && newHostFile.isDirectory();
                 if (oldDirectory && !newDirectory) {
@@ -2696,6 +2726,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 }
                 if (!oldDirectory && newDirectory) {
                     return EISDIR;
+                }
+                GuestFileMetadata newParentMetadata = hostFileMetadata(newParent, true);
+                if (hasStickyMutationRestriction(newParentMetadata)) {
+                    GuestFileMetadata newMetadata = hostFileMetadata(newHostFile, newDirectory);
+                    if (!canMutateStickyDirectory(newParentMetadata, newMetadata)) {
+                        return EPERM;
+                    }
                 }
             }
 
@@ -2745,6 +2782,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (oldNode.isDirectory() && guestPathMatchesMount(newTarPath.guestPath(), oldTarPath.guestPath())) {
             return EINVAL;
         }
+        if (hasStickyMutationRestriction(oldParent) && !canMutateStickyDirectory(oldParent, oldNode)) {
+            return EPERM;
+        }
         if (newNode != null) {
             if (oldNode.isDirectory() && !newNode.isDirectory()) {
                 return ENOTDIR;
@@ -2754,6 +2794,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             if (newNode.isDirectory() && !newNode.children().isEmpty()) {
                 return ENOTEMPTY;
+            }
+            if (hasStickyMutationRestriction(newParent) && !canMutateStickyDirectory(newParent, newNode)) {
+                return EPERM;
             }
             if (!mount.fileSystem().removeNode(newNode)) {
                 return EACCES;
@@ -3212,6 +3255,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return owner == -1L && group == -1L ? 0 : EROFS;
     }
 
+    /// Sets the process file creation mask and returns the previous mask.
+    protected long umask(long mask) {
+        synchronized (threadLock) {
+            int previousMask = fileCreationMask;
+            fileCreationMask = (int) mask & STAT_MODE_ALL;
+            return previousMask;
+        }
+    }
+
     /// Returns true when the current credentials may apply a Linux ownership change.
     protected boolean canChangeOwner(GuestFileMetadata metadata, long owner, long group) {
         return canChangeOwner(metadata.userId(), metadata.groupId(), owner, group);
@@ -3400,8 +3452,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns normalized Linux mode bits for `chmod`-style updates.
     protected int normalizeChangedMode(long groupId, long mode) {
         int normalizedMode = (int) mode & STAT_MODE_CHANGE_BITS;
-        if (credentials.effectiveUserId() != 0 && (normalizedMode & 02000) != 0 && !ownsGroup(groupId)) {
-            normalizedMode &= ~02000;
+        if (credentials.effectiveUserId() != 0
+                && (normalizedMode & STAT_MODE_SET_GROUP_ID) != 0
+                && !ownsGroup(groupId)) {
+            normalizedMode &= ~STAT_MODE_SET_GROUP_ID;
         }
         return normalizedMode;
     }
@@ -3490,6 +3544,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if ((truncate || append) && !writable) {
             return EACCES;
         }
+        @Nullable GuestFileMetadata createParentMetadata = null;
         try {
             @Nullable HostMount mount = mountForHostFile(hostFile);
             if (mount == null) {
@@ -3515,6 +3570,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 if (parentAccess != 0) {
                     return parentAccess;
                 }
+                createParentMetadata = hostFileMetadata(parent, true);
             }
         } catch (IOException | SecurityException exception) {
             return EACCES;
@@ -3571,12 +3627,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
             SeekableByteChannel channel = hostFile.newByteChannel(options);
             if (!exists && create) {
+                if (createParentMetadata == null) {
+                    return EACCES;
+                }
                 fileMetadataStore.put(
                         hostFile,
                         new GuestFileMetadata(
                                 credentials.effectiveUserId(),
-                                credentials.effectiveGroupId(),
-                                (int) (mode & STAT_MODE_CHANGE_BITS)));
+                                createdEntryGroupId(createParentMetadata),
+                                createdFileMode(mode)));
             }
             return addOpenFile(OpenFile.hostFile(hostFile, absoluteGuestPath, channel, readable, writable, append));
         } catch (IOException | SecurityException exception) {
@@ -3617,9 +3676,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                         : tarPath.guestPath(), mount.guestPath());
                 @Nullable TarNode created = mount.fileSystem().createFile(
                         relativePath,
-                        (int) (mode & STAT_MODE_CHANGE_BITS),
+                        createdFileMode(mode),
                         credentials.effectiveUserId(),
-                        credentials.effectiveGroupId());
+                        createdEntryGroupId(parent));
                 if (created == null) {
                     return ENOENT;
                 }
@@ -7792,6 +7851,63 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns true when a tar directory and its parent directories satisfy path access.
     protected boolean canAccessTarDirectory(TarNode directory, long accessMode) {
         return directory.isDirectory() && canAccess(directory, accessMode) && canSearchTarAncestors(directory);
+    }
+
+    /// Returns the group id assigned to a newly created host entry below a directory.
+    protected long createdEntryGroupId(GuestFileMetadata parentMetadata) {
+        return (parentMetadata.mode() & STAT_MODE_SET_GROUP_ID) != 0
+                ? parentMetadata.groupId()
+                : credentials.effectiveGroupId();
+    }
+
+    /// Returns the group id assigned to a newly created tar entry below a directory.
+    protected long createdEntryGroupId(TarNode parent) {
+        return (parent.permissions() & STAT_MODE_SET_GROUP_ID) != 0
+                ? parent.groupId()
+                : credentials.effectiveGroupId();
+    }
+
+    /// Returns the mode assigned to a newly created regular file.
+    protected int createdFileMode(long mode) {
+        return ((int) mode & STAT_MODE_CHANGE_BITS) & ~fileCreationMask;
+    }
+
+    /// Returns the mode assigned to a newly created host directory below a directory.
+    protected int createdDirectoryMode(GuestFileMetadata parentMetadata, long mode) {
+        int directoryMode = ((int) mode & STAT_MODE_CHANGE_BITS) & ~fileCreationMask;
+        return (parentMetadata.mode() & STAT_MODE_SET_GROUP_ID) == 0
+                ? directoryMode
+                : directoryMode | STAT_MODE_SET_GROUP_ID;
+    }
+
+    /// Returns the mode assigned to a newly created tar directory below a directory.
+    protected int createdDirectoryMode(TarNode parent, long mode) {
+        int directoryMode = ((int) mode & STAT_MODE_CHANGE_BITS) & ~fileCreationMask;
+        return (parent.permissions() & STAT_MODE_SET_GROUP_ID) == 0
+                ? directoryMode
+                : directoryMode | STAT_MODE_SET_GROUP_ID;
+    }
+
+    /// Returns true when a sticky directory needs ownership checks for entry mutation.
+    protected boolean hasStickyMutationRestriction(GuestFileMetadata directoryMetadata) {
+        return credentials.effectiveUserId() != 0 && (directoryMetadata.mode() & STAT_MODE_STICKY) != 0;
+    }
+
+    /// Returns true when a sticky tar directory needs ownership checks for entry mutation.
+    protected boolean hasStickyMutationRestriction(TarNode directory) {
+        return credentials.effectiveUserId() != 0 && (directory.permissions() & STAT_MODE_STICKY) != 0;
+    }
+
+    /// Returns true when the current credentials may mutate an entry in a sticky host directory.
+    protected boolean canMutateStickyDirectory(GuestFileMetadata directoryMetadata, GuestFileMetadata nodeMetadata) {
+        long userId = credentials.effectiveUserId();
+        return userId == directoryMetadata.userId() || userId == nodeMetadata.userId();
+    }
+
+    /// Returns true when the current credentials may mutate an entry in a sticky tar directory.
+    protected boolean canMutateStickyDirectory(TarNode directory, TarNode node) {
+        long userId = credentials.effectiveUserId();
+        return userId == directory.userId() || userId == node.userId();
     }
 
     /// Returns the tar parent directory selected by an absolute guest path.
