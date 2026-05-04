@@ -31,6 +31,9 @@ public record FramebufferPixelFormat(
         int blueLength,
         int transparencyOffset,
         int transparencyLength) {
+    /// The largest channel width that host ARGB conversion accepts.
+    private static final int MAX_CHANNEL_BITS = Integer.SIZE;
+
     /// Little-endian 32-bit RGB format with one ignored high byte.
     public static final FramebufferPixelFormat XRGB8888 =
             new FramebufferPixelFormat(32, 16, 8, 8, 8, 0, 8, 0, 0);
@@ -82,6 +85,9 @@ public record FramebufferPixelFormat(
     private static void validateOptionalChannel(String name, int bitsPerPixel, int offset, int length) {
         if (length < 0) {
             throw new RiscVException("Framebuffer " + name + " channel length must be non-negative: " + length);
+        }
+        if (length > MAX_CHANNEL_BITS) {
+            throw new RiscVException("Framebuffer " + name + " channel length is too large: " + length);
         }
         if (length == 0) {
             if (offset != 0) {

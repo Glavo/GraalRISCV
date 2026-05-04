@@ -81,6 +81,20 @@ public final class FramebufferDeviceTest {
         assertNull(device.dirtyRegion());
     }
 
+    /// Verifies snapshot consumption clears the accumulated dirty region atomically.
+    @Test
+    public void takesSnapshotAndClearsDirtyRegion() {
+        FramebufferGeometry geometry = FramebufferGeometry.packed(2, 2, FramebufferPixelFormat.XRGB8888);
+        FramebufferDevice device = new FramebufferDevice(geometry);
+
+        device.write(0, new byte[]{1, 2, 3, 4}, 0, 4);
+        FramebufferSnapshot snapshot = device.takeSnapshot();
+
+        assertEquals(new FramebufferDirtyRegion(0, 0, 2, 1), snapshot.dirtyRegion());
+        assertNull(device.dirtyRegion());
+        assertEquals(1, device.modificationCounter());
+    }
+
     /// Verifies invalid framebuffer layouts are rejected.
     @Test
     public void rejectsInvalidGeometryAndPixelFormats() {

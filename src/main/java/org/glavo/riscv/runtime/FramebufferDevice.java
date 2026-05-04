@@ -39,7 +39,7 @@ public final class FramebufferDevice {
         return geometry;
     }
 
-    /// Returns the number of writes and explicit clears applied to this framebuffer.
+    /// Returns the number of writes, explicit clears, and explicit dirty-region marks applied to this framebuffer.
     public synchronized long modificationCounter() {
         return modificationCounter;
     }
@@ -59,6 +59,13 @@ public final class FramebufferDevice {
     /// Returns a copy of the current framebuffer pixels and dirty state.
     public synchronized FramebufferSnapshot snapshot() {
         return new FramebufferSnapshot(geometry, pixels, modificationCounter, dirtyRegion);
+    }
+
+    /// Returns a copy of the current framebuffer pixels and clears the accumulated dirty region.
+    public synchronized FramebufferSnapshot takeSnapshot() {
+        FramebufferSnapshot result = new FramebufferSnapshot(geometry, pixels, modificationCounter, dirtyRegion);
+        dirtyRegion = null;
+        return result;
     }
 
     /// Copies bytes from the framebuffer into a host buffer.
