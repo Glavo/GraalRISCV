@@ -5,12 +5,12 @@ package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.gui.SwingFramebufferBackend;
-import org.glavo.riscv.runtime.FilesystemMountSpec;
-import org.glavo.riscv.runtime.FilesystemMountSpec.Type;
 import org.glavo.riscv.runtime.FramebufferDevice;
 import org.glavo.riscv.runtime.FramebufferGeometry;
 import org.glavo.riscv.runtime.FramebufferPixelFormat;
 import org.glavo.riscv.runtime.GuestCredentials;
+import org.glavo.riscv.runtime.fs.FilesystemMountSpec;
+import org.glavo.riscv.runtime.fs.FilesystemMountSpec.Type;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;

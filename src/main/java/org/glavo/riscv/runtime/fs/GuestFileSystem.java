@@ -1,12 +1,13 @@
 // Copyright (c) 2026 Glavo
 // SPDX-License-Identifier: MPL-2.0
 
-package org.glavo.riscv.runtime;
+package org.glavo.riscv.runtime.fs;
 
 import kala.compress.archivers.tar.TarArchiveEntry;
 import kala.compress.archivers.tar.TarArchiveInputStream;
 import kala.compress.archivers.tar.TarArchiveReader;
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.runtime.GuestCredentials;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;

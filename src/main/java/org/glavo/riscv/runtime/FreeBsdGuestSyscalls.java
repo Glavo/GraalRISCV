@@ -6,6 +6,7 @@ package org.glavo.riscv.runtime;
 import org.glavo.riscv.exception.ProgramExitException;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.runtime.fs.GuestFileSystem;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;

@@ -10,6 +10,7 @@ import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
+import org.glavo.riscv.runtime.fs.*;
 import org.glavo.riscv.constants.Rva22Profile;
 import org.glavo.riscv.constants.Rva23Profile;
 import org.jetbrains.annotations.NotNullByDefault;

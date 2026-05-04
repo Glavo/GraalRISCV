@@ -11,6 +11,8 @@ import org.glavo.riscv.constants.Rva22Profile;
 import org.glavo.riscv.constants.Rva23Profile;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.runtime.fs.GuestFileSystem;
+import org.glavo.riscv.runtime.fs.HostPath;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
