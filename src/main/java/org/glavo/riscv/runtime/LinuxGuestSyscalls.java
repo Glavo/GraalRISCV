@@ -208,6 +208,34 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 guestThreadRunner);
     }
 
+    /// Creates a Linux syscall handler backed by streams, lazy filesystem mounts, time source, credentials,
+    /// terminal option, guest thread runner, and framebuffer device.
+    public LinuxGuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            String @Unmodifiable [] filesystemMountSpecs,
+            TimeSource timeSource,
+            boolean useHostTty,
+            GuestCredentials credentials,
+            GuestThreadRunner guestThreadRunner,
+            @Nullable FramebufferDevice framebufferDevice) {
+        super(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                GuestFileSystem.forMountSpecs(filesystemMountSpecs),
+                timeSource,
+                useHostTty,
+                credentials,
+                guestThreadRunner,
+                framebufferDevice);
+    }
+
     /// Linux `CLONE_VM`.
     private static final long CLONE_VM = 0x00000100L;
 

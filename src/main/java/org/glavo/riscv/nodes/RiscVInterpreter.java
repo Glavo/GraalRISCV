@@ -320,7 +320,8 @@ public final class RiscVInterpreter {
                     context.timeSource(),
                     context.useHostTty(),
                     context.guestCredentials(),
-                    this::runGuestThread);
+                    this::runGuestThread,
+                    context.framebufferDevice());
             case FREEBSD -> new FreeBsdGuestSyscalls(
                     memory,
                     context.in(),
@@ -331,7 +332,8 @@ public final class RiscVInterpreter {
                     context.timeSource(),
                     context.useHostTty(),
                     context.guestCredentials(),
-                    this::runGuestThread);
+                    this::runGuestThread,
+                    context.framebufferDevice());
         };
     }
 

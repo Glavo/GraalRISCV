@@ -1106,6 +1106,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The process-shared terminal exposed through standard descriptors and `/dev/tty`.
     protected final TerminalDevice terminalDevice;
 
+    /// The optional framebuffer device configured for graphical guest integrations.
+    protected final @Nullable FramebufferDevice framebufferDevice;
+
     /// The Linux user and group identity exposed to this guest process.
     protected final GuestCredentials credentials;
 
@@ -1524,6 +1527,33 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             boolean useHostTty,
             GuestCredentials credentials,
             @Nullable GuestThreadRunner guestThreadRunner) {
+        this(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                fileSystem,
+                timeSource,
+                useHostTty,
+                credentials,
+                guestThreadRunner,
+                null);
+    }
+
+    /// Creates a syscall handler with an explicit filesystem namespace and optional framebuffer device.
+    protected GuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            GuestFileSystem fileSystem,
+            TimeSource timeSource,
+            boolean useHostTty,
+            GuestCredentials credentials,
+            @Nullable GuestThreadRunner guestThreadRunner,
+            @Nullable FramebufferDevice framebufferDevice) {
         if (initialProgramBreak < memory.baseAddress() || initialProgramBreak > memory.endAddress()) {
             throw new RiscVException("Initial program break is outside guest memory: address=0x"
                     + Long.toUnsignedString(initialProgramBreak, 16));
@@ -1536,6 +1566,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.guestThreadRunner = guestThreadRunner;
         this.baseFileSystem = fileSystem;
         this.terminalDevice = TerminalDevice.open(in, out, useHostTty);
+        this.framebufferDevice = framebufferDevice;
         this.fileSystem = addDefaultVirtualMounts(fileSystem);
         this.fileMetadataStore = new GuestFileMetadataStore();
         this.credentials = credentials;
@@ -1558,6 +1589,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.guestThreadRunner = parent.guestThreadRunner;
         this.baseFileSystem = parent.baseFileSystem;
         this.terminalDevice = parent.terminalDevice.retain();
+        this.framebufferDevice = parent.framebufferDevice;
         this.fileSystem = addDefaultVirtualMounts(baseFileSystem);
         this.fileMetadataStore = parent.fileMetadataStore;
         this.credentials = parent.credentials;

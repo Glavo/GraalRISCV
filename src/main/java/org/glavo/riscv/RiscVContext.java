@@ -5,6 +5,7 @@ package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
+import org.glavo.riscv.runtime.FramebufferDevice;
 import org.glavo.riscv.runtime.FilesystemMountSpec;
 import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.TimeSource;
@@ -109,6 +110,9 @@ public final class RiscVContext {
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
+    /// The optional framebuffer device exposed by graphical guest device integrations.
+    private final @Nullable FramebufferDevice framebufferDevice;
+
     /// Creates a simulator context.
     public RiscVContext(
             InputStream in,
@@ -135,6 +139,61 @@ public final class RiscVContext {
             String guestHome,
             String guestShell,
             String @Unmodifiable [] programArguments) {
+        this(
+                in,
+                out,
+                err,
+                memoryBase,
+                memorySize,
+                pageSize,
+                maxCommittedPages,
+                hugePageSize,
+                hugePages,
+                vectorVlenBits,
+                maxInstructions,
+                trace,
+                timeSource,
+                hostRoot,
+                filesystemMounts,
+                guestProgramPath,
+                useHostTty,
+                guestUserName,
+                guestUid,
+                guestGid,
+                guestGroups,
+                guestHome,
+                guestShell,
+                programArguments,
+                null);
+    }
+
+    /// Creates a simulator context with an optional framebuffer device.
+    public RiscVContext(
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long memoryBase,
+            long memorySize,
+            long pageSize,
+            long maxCommittedPages,
+            long hugePageSize,
+            long hugePages,
+            long vectorVlenBits,
+            long maxInstructions,
+            boolean trace,
+            TimeSource timeSource,
+            String hostRoot,
+            String filesystemMounts,
+            String guestProgramPath,
+            boolean useHostTty,
+            String guestUserName,
+            long guestUid,
+            long guestGid,
+            String guestGroups,
+            String guestHome,
+            String guestShell,
+            String @Unmodifiable [] programArguments,
+            @Nullable FramebufferDevice framebufferDevice) {
         if (memoryBase < 0 && memoryBase != AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
@@ -192,6 +251,7 @@ public final class RiscVContext {
         this.useHostTty = useHostTty;
         this.guestCredentials = parsedGuestCredentials;
         this.programArguments = programArguments.clone();
+        this.framebufferDevice = framebufferDevice;
     }
 
     /// Returns host standard input exposed to guest syscalls.
@@ -287,6 +347,11 @@ public final class RiscVContext {
     /// Returns the guest application arguments supplied after the ELF path.
     public String @Unmodifiable [] programArguments() {
         return programArguments.clone();
+    }
+
+    /// Returns the optional framebuffer device exposed by graphical guest device integrations.
+    public @Nullable FramebufferDevice framebufferDevice() {
+        return framebufferDevice;
     }
 
     /// Creates the guest time source from the fixed-clock debug option.

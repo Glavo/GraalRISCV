@@ -44,6 +44,34 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
                 guestThreadRunner);
     }
 
+    /// Creates a FreeBSD syscall handler backed by streams, lazy filesystem mounts, time source, credentials,
+    /// terminal option, guest thread runner, and framebuffer device.
+    public FreeBsdGuestSyscalls(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            String @Unmodifiable [] filesystemMountSpecs,
+            TimeSource timeSource,
+            boolean useHostTty,
+            GuestCredentials credentials,
+            GuestThreadRunner guestThreadRunner,
+            @Nullable FramebufferDevice framebufferDevice) {
+        super(
+                memory,
+                in,
+                out,
+                err,
+                initialProgramBreak,
+                GuestFileSystem.forMountSpecs(filesystemMountSpecs),
+                timeSource,
+                useHostTty,
+                credentials,
+                guestThreadRunner,
+                framebufferDevice);
+    }
+
     /// Creates a child-process FreeBSD syscall handler by copying fork-inherited parent state.
     private FreeBsdGuestSyscalls(FreeBsdGuestSyscalls parent, Memory memory, GuestProcess process) {
         super(parent, memory, process);
