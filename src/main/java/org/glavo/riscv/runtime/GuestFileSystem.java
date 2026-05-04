@@ -76,6 +76,9 @@ public final class GuestFileSystem {
     /// Linux permission bits for user, group, and other.
     public static final int STAT_MODE_ALL = 0777;
 
+    /// Linux permission and special mode bits changed by `chmod`.
+    public static final int STAT_MODE_CHANGE_BITS = 07777;
+
     /// The maximum number of symbolic links followed during one path resolution.
     private static final int SYMBOLIC_LINK_LIMIT = 40;
 
@@ -809,7 +812,7 @@ public final class GuestFileSystem {
     /// Stores a filesystem built from a tar archive.
     public static final class TarFileSystem {
         /// The synthetic root directory of the archive.
-        private final TarNode root = TarNode.directory("", "", null, STAT_MODE_READ_EXECUTE_ALL);
+        private final TarNode root = TarNode.directory("", "", null, STAT_MODE_ALL, 0, 0);
 
         /// The seekable tar reader used by lazy mounts, or null for memory mounts.
         private final @Nullable TarArchiveReader reader;
@@ -837,26 +840,28 @@ public final class GuestFileSystem {
                         continue;
                     }
 
-                    int mode = entry.getMode() & STAT_MODE_ALL;
+                    int mode = entry.getMode() & STAT_MODE_CHANGE_BITS;
+                    long userId = tarId(entry.getLongUserId());
+                    long groupId = tarId(entry.getLongGroupId());
                     if (entry.isDirectory()) {
-                        fileSystem.addDirectory(relativePath, mode);
+                        fileSystem.addDirectory(relativePath, mode, userId, groupId);
                     } else if (entry.isSymbolicLink()) {
                         @Nullable String target = entry.getLinkName();
-                        fileSystem.addSymbolicLink(relativePath, target == null ? "" : target, mode);
+                        fileSystem.addSymbolicLink(relativePath, target == null ? "" : target, mode, userId, groupId);
                     } else if (entry.isLink()) {
                         @Nullable String target = entry.getLinkName();
                         String targetPath = normalizeTarEntryName(target == null ? "" : target);
                         if (!targetPath.isEmpty()) {
-                            hardLinks.add(new PendingTarHardLink(relativePath, targetPath, mode));
+                            hardLinks.add(new PendingTarHardLink(relativePath, targetPath, mode, userId, groupId));
                         }
                     } else if (entry.isFile()) {
-                        fileSystem.addFile(relativePath, new TarFileData(readEntryData(tarInput, entry), null), mode);
+                        fileSystem.addFile(relativePath, new TarFileData(readEntryData(tarInput, entry), null), mode, userId, groupId);
                     }
                 }
             }
 
             for (PendingTarHardLink hardLink : hardLinks) {
-                fileSystem.addHardLink(hardLink.path(), hardLink.targetPath(), hardLink.mode());
+                fileSystem.addHardLink(hardLink.path(), hardLink.targetPath(), hardLink.mode(), hardLink.userId(), hardLink.groupId());
             }
             return fileSystem;
         }
@@ -872,25 +877,27 @@ public final class GuestFileSystem {
                     continue;
                 }
 
-                int mode = entry.getMode() & STAT_MODE_ALL;
+                int mode = entry.getMode() & STAT_MODE_CHANGE_BITS;
+                long userId = tarId(entry.getLongUserId());
+                long groupId = tarId(entry.getLongGroupId());
                 if (entry.isDirectory()) {
-                    fileSystem.addDirectory(relativePath, mode);
+                    fileSystem.addDirectory(relativePath, mode, userId, groupId);
                 } else if (entry.isSymbolicLink()) {
                     @Nullable String target = entry.getLinkName();
-                    fileSystem.addSymbolicLink(relativePath, target == null ? "" : target, mode);
+                    fileSystem.addSymbolicLink(relativePath, target == null ? "" : target, mode, userId, groupId);
                 } else if (entry.isLink()) {
                     @Nullable String target = entry.getLinkName();
                     String targetPath = normalizeTarEntryName(target == null ? "" : target);
                     if (!targetPath.isEmpty()) {
-                        hardLinks.add(new PendingTarHardLink(relativePath, targetPath, mode));
+                        hardLinks.add(new PendingTarHardLink(relativePath, targetPath, mode, userId, groupId));
                     }
                 } else if (entry.isFile()) {
-                    fileSystem.addFile(relativePath, new TarFileData(null, entry), mode);
+                    fileSystem.addFile(relativePath, new TarFileData(null, entry), mode, userId, groupId);
                 }
             }
 
             for (PendingTarHardLink hardLink : hardLinks) {
-                fileSystem.addHardLink(hardLink.path(), hardLink.targetPath(), hardLink.mode());
+                fileSystem.addHardLink(hardLink.path(), hardLink.targetPath(), hardLink.mode(), hardLink.userId(), hardLink.groupId());
             }
             return fileSystem;
         }
@@ -972,18 +979,18 @@ public final class GuestFileSystem {
         }
 
         /// Adds or replaces a directory entry and any missing parents.
-        private void addDirectory(String path, int mode) {
+        private void addDirectory(String path, int mode, long userId, long groupId) {
             TarNode parent = ensureParentDirectory(path);
             String name = leafName(path);
             @Nullable TarNode existing = parent.children.get(name);
             if (existing != null && existing.isDirectory()) {
                 return;
             }
-            parent.children.put(name, TarNode.directory(name, path, parent, mode));
+            parent.children.put(name, TarNode.directory(name, path, parent, mode, userId, groupId));
         }
 
         /// Creates a regular file below an existing directory.
-        public @Nullable TarNode createFile(String path, int mode) {
+        public @Nullable TarNode createFile(String path, int mode, long userId, long groupId) {
             @Nullable TarNode parent = existingParentDirectory(path);
             if (parent == null) {
                 return null;
@@ -993,18 +1000,22 @@ public final class GuestFileSystem {
                     path,
                     parent,
                     new TarFileData(new byte[0], null),
-                    mode == 0 ? STAT_MODE_READ_WRITE_ALL : mode);
+                    mode,
+                    userId,
+                    groupId);
+            node.setPermissions(mode);
             parent.children.put(leafName(path), node);
             return node;
         }
 
         /// Creates a directory below an existing directory.
-        public @Nullable TarNode createDirectory(String path, int mode) {
+        public @Nullable TarNode createDirectory(String path, int mode, long userId, long groupId) {
             @Nullable TarNode parent = existingParentDirectory(path);
             if (parent == null) {
                 return null;
             }
-            TarNode node = TarNode.directory(leafName(path), path, parent, mode);
+            TarNode node = TarNode.directory(leafName(path), path, parent, mode, userId, groupId);
+            node.setPermissions(mode);
             parent.children.put(leafName(path), node);
             return node;
         }
@@ -1030,19 +1041,19 @@ public final class GuestFileSystem {
         }
 
         /// Adds or replaces a regular file entry and any missing parents.
-        private void addFile(String path, TarFileData data, int mode) {
+        private void addFile(String path, TarFileData data, int mode, long userId, long groupId) {
             TarNode parent = ensureParentDirectory(path);
-            parent.children.put(leafName(path), TarNode.file(leafName(path), path, parent, data, mode));
+            parent.children.put(leafName(path), TarNode.file(leafName(path), path, parent, data, mode, userId, groupId));
         }
 
         /// Adds or replaces a symbolic link entry and any missing parents.
-        private void addSymbolicLink(String path, String target, int mode) {
+        private void addSymbolicLink(String path, String target, int mode, long userId, long groupId) {
             TarNode parent = ensureParentDirectory(path);
-            parent.children.put(leafName(path), TarNode.symbolicLink(leafName(path), path, parent, target, mode));
+            parent.children.put(leafName(path), TarNode.symbolicLink(leafName(path), path, parent, target, mode, userId, groupId));
         }
 
         /// Adds a hard-link entry by sharing the already-read regular-file payload.
-        private void addHardLink(String path, String targetPath, int mode) {
+        private void addHardLink(String path, String targetPath, int mode, long userId, long groupId) {
             @Nullable TarNode target = node(targetPath);
             if (target == null || !target.isFile()) {
                 return;
@@ -1050,7 +1061,7 @@ public final class GuestFileSystem {
 
             int permissions = mode == 0 ? target.permissions() : mode;
             TarNode parent = ensureParentDirectory(path);
-            parent.children.put(leafName(path), TarNode.file(leafName(path), path, parent, target.fileData(), permissions));
+            parent.children.put(leafName(path), TarNode.file(leafName(path), path, parent, target.fileData(), permissions, userId, groupId));
         }
 
         /// Returns the existing parent directory for a relative path.
@@ -1063,7 +1074,7 @@ public final class GuestFileSystem {
         /// Clones a node and any children under a new parent and relative path.
         private static TarNode cloneNode(TarNode node, String name, String path, TarNode parent) {
             if (node.isDirectory()) {
-                TarNode copy = TarNode.directory(name, path, parent, node.permissions());
+                TarNode copy = TarNode.directory(name, path, parent, node.permissions(), node.userId(), node.groupId());
                 for (TarNode child : node.children.values()) {
                     String childPath = path.isEmpty() ? child.name() : path + "/" + child.name();
                     copy.children.put(child.name(), cloneNode(child, child.name(), childPath, copy));
@@ -1071,9 +1082,9 @@ public final class GuestFileSystem {
                 return copy;
             }
             if (node.isFile()) {
-                return TarNode.file(name, path, parent, node.fileData(), node.permissions());
+                return TarNode.file(name, path, parent, node.fileData(), node.permissions(), node.userId(), node.groupId());
             }
-            return TarNode.symbolicLink(name, path, parent, node.linkTarget(), node.permissions());
+            return TarNode.symbolicLink(name, path, parent, node.linkTarget(), node.permissions(), node.userId(), node.groupId());
         }
 
         /// Ensures that all parent directories for a relative path exist.
@@ -1096,12 +1107,17 @@ public final class GuestFileSystem {
 
                 @Nullable TarNode child = current.children.get(segment);
                 if (child == null || !child.isDirectory()) {
-                    child = TarNode.directory(segment, currentPath.toString(), current, STAT_MODE_READ_EXECUTE_ALL);
+                    child = TarNode.directory(segment, currentPath.toString(), current, STAT_MODE_READ_EXECUTE_ALL, 0, 0);
                     current.children.put(segment, child);
                 }
                 current = child;
             }
             return current;
+        }
+
+        /// Returns a Linux uid or gid stored in a tar entry, defaulting unknown values to root.
+        private static long tarId(long id) {
+            return id < 0 || id > GuestCredentials.MAX_ID ? 0 : id;
         }
     }
 
@@ -1110,7 +1126,9 @@ public final class GuestFileSystem {
     /// @param path the archive-relative path where the hard link is exposed
     /// @param targetPath the archive-relative path of the hard-link target
     /// @param mode the permission bits from the hard-link tar entry
-    private record PendingTarHardLink(String path, String targetPath, int mode) {
+    /// @param userId the Linux uid from the hard-link tar entry
+    /// @param groupId the Linux gid from the hard-link tar entry
+    private record PendingTarHardLink(String path, String targetPath, int mode, long userId, long groupId) {
     }
 
     /// Stores regular-file payload state for one or more tar nodes.
@@ -1147,8 +1165,14 @@ public final class GuestFileSystem {
         /// The parent directory, or null for the synthetic root node.
         private final @Nullable TarNode parent;
 
-        /// The Linux permission bits exposed for this node.
-        private final int permissions;
+        /// The Linux mode bits exposed for this node.
+        private int permissions;
+
+        /// The Linux uid exposed as this node's owner.
+        private long userId;
+
+        /// The Linux gid exposed as this node's group.
+        private long groupId;
 
         /// The Linux directory entry type exposed for this node.
         private final byte directoryEntryType;
@@ -1171,6 +1195,8 @@ public final class GuestFileSystem {
                 String path,
                 @Nullable TarNode parent,
                 int permissions,
+                long userId,
+                long groupId,
                 byte directoryEntryType,
                 int statType,
                 @Nullable TarFileData fileData,
@@ -1180,6 +1206,8 @@ public final class GuestFileSystem {
             this.path = path;
             this.parent = parent;
             this.permissions = permissions;
+            this.userId = userId;
+            this.groupId = groupId;
             this.directoryEntryType = directoryEntryType;
             this.statType = statType;
             this.fileData = fileData;
@@ -1188,12 +1216,14 @@ public final class GuestFileSystem {
         }
 
         /// Creates a directory tar node.
-        static TarNode directory(String name, String path, @Nullable TarNode parent, int mode) {
+        static TarNode directory(String name, String path, @Nullable TarNode parent, int mode, long userId, long groupId) {
             return new TarNode(
                     name,
                     path,
                     parent,
-                    permissionsOrDefault(mode, STAT_MODE_READ_EXECUTE_ALL),
+                    mode & STAT_MODE_CHANGE_BITS,
+                    userId,
+                    groupId,
                     DIRECTORY_ENTRY_DIRECTORY,
                     STAT_MODE_DIRECTORY,
                     null,
@@ -1207,12 +1237,16 @@ public final class GuestFileSystem {
                 String path,
                 TarNode parent,
                 TarFileData fileData,
-                int mode) {
+                int mode,
+                long userId,
+                long groupId) {
             return new TarNode(
                     name,
                     path,
                     parent,
-                    permissionsOrDefault(mode, STAT_MODE_READ_ALL),
+                    mode & STAT_MODE_CHANGE_BITS,
+                    userId,
+                    groupId,
                     DIRECTORY_ENTRY_REGULAR_FILE,
                     STAT_MODE_REGULAR_FILE,
                     fileData,
@@ -1221,12 +1255,14 @@ public final class GuestFileSystem {
         }
 
         /// Creates a symbolic-link tar node.
-        static TarNode symbolicLink(String name, String path, TarNode parent, String target, int mode) {
+        static TarNode symbolicLink(String name, String path, TarNode parent, String target, int mode, long userId, long groupId) {
             return new TarNode(
                     name,
                     path,
                     parent,
                     permissionsOrDefault(mode, STAT_MODE_ALL),
+                    userId,
+                    groupId,
                     DIRECTORY_ENTRY_SYMBOLIC_LINK,
                     STAT_MODE_SYMBOLIC_LINK,
                     null,
@@ -1236,7 +1272,7 @@ public final class GuestFileSystem {
 
         /// Returns nonzero permission bits or the supplied fallback when the archive stores none.
         private static int permissionsOrDefault(int mode, int fallback) {
-            int permissions = mode & STAT_MODE_ALL;
+            int permissions = mode & STAT_MODE_CHANGE_BITS;
             return permissions == 0 ? fallback : permissions;
         }
 
@@ -1273,6 +1309,27 @@ public final class GuestFileSystem {
         /// Returns the Linux permission bits for this node.
         public int permissions() {
             return permissions;
+        }
+
+        /// Sets the Linux permission and special mode bits for this node.
+        public void setPermissions(int permissions) {
+            this.permissions = permissions & STAT_MODE_CHANGE_BITS;
+        }
+
+        /// Returns the Linux uid exposed as this node's owner.
+        public long userId() {
+            return userId;
+        }
+
+        /// Returns the Linux gid exposed as this node's group.
+        public long groupId() {
+            return groupId;
+        }
+
+        /// Updates the Linux owner and group exposed for this node.
+        public void setOwner(long userId, long groupId) {
+            this.userId = userId;
+            this.groupId = groupId;
         }
 
         /// Returns the byte size exposed through metadata syscalls.

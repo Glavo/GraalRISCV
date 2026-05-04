@@ -2882,8 +2882,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `fchdir`.
     private static final int SYS_FCHDIR = 50;
 
+    /// The Linux RISC-V syscall number for `fchmod`.
+    private static final int SYS_FCHMOD = 52;
+
+    /// The Linux RISC-V syscall number for `fchmodat`.
+    private static final int SYS_FCHMODAT = 53;
+
     /// The Linux RISC-V syscall number for `fchownat`.
     private static final int SYS_FCHOWNAT = 54;
+
+    /// The Linux RISC-V syscall number for `fchown`.
+    private static final int SYS_FCHOWN = 55;
 
     /// The Linux RISC-V syscall number for `openat`.
     private static final int SYS_OPENAT = 56;
@@ -3161,6 +3170,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final int SYS_FACCESSAT2 = 439;
 
+    /// The Linux RISC-V syscall number for `fchmodat2`.
+    private static final int SYS_FCHMODAT2 = 452;
+
     /// Executes the Linux syscall described by the guest argument registers at the supplied program counter.
     @Override
     public void handle(RiscVThreadState state, long pc) {
@@ -3237,12 +3249,22 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_FACCESSAT -> state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
             case SYS_CHDIR -> state.setRegister(10, chdir(state.register(10)));
             case SYS_FCHDIR -> state.setRegister(10, fchdir((int) state.register(10)));
+            case SYS_FCHMOD -> state.setRegister(10, fchmod((int) state.register(10), state.register(11)));
+            case SYS_FCHMODAT -> state.setRegister(10, fchmodat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    0));
             case SYS_FCHOWNAT -> state.setRegister(10, fchownat(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            case SYS_FCHOWN -> state.setRegister(10, fchown(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_OPENAT -> state.setRegister(10, openat(
                     state.register(10),
                     state.register(11),
@@ -3520,6 +3542,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(12),
                     state.register(13)));
             case SYS_FACCESSAT2 -> state.setRegister(10, faccessat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_FCHMODAT2 -> state.setRegister(10, fchmodat(
                     state.register(10),
                     state.register(11),
                     state.register(12),

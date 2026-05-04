@@ -3,6 +3,8 @@
 
 package org.glavo.riscv;
 
+import kala.compress.archivers.tar.TarArchiveEntry;
+import kala.compress.archivers.tar.TarArchiveOutputStream;
 import org.glavo.riscv.exception.*;
 import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.memory.*;
@@ -117,6 +119,9 @@ public final class GuestSyscallsTest {
     /// Linux `ESPIPE` as a raw negative syscall result.
     private static final long ESPIPE = -29;
 
+    /// Linux `EROFS` as a raw negative syscall result.
+    private static final long EROFS = -30;
+
     /// Linux `ETIMEDOUT` as a raw negative syscall result.
     private static final long ETIMEDOUT = -110;
 
@@ -186,8 +191,17 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `fchdir`.
     private static final long SYS_FCHDIR = 50;
 
+    /// The Linux RISC-V syscall number for `fchmod`.
+    private static final long SYS_FCHMOD = 52;
+
+    /// The Linux RISC-V syscall number for `fchmodat`.
+    private static final long SYS_FCHMODAT = 53;
+
     /// The Linux RISC-V syscall number for `fchownat`.
     private static final long SYS_FCHOWNAT = 54;
+
+    /// The Linux RISC-V syscall number for `fchown`.
+    private static final long SYS_FCHOWN = 55;
 
     /// The Linux RISC-V syscall number for `openat`.
     private static final long SYS_OPENAT = 56;
@@ -450,6 +464,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final long SYS_FACCESSAT2 = 439;
 
+    /// The Linux RISC-V syscall number for `fchmodat2`.
+    private static final long SYS_FCHMODAT2 = 452;
+
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
 
@@ -522,17 +539,14 @@ public final class GuestSyscallsTest {
     /// The expected `st_mode` value for pipe endpoints.
     private static final int PIPE_STAT_MODE = 0010000 | 0444;
 
-    /// The expected `st_mode` value for read-only regular host files.
-    private static final int REGULAR_FILE_STAT_MODE = 0100000 | 0444;
-
-    /// The expected `st_mode` value for write-only regular host files.
-    private static final int WRITABLE_REGULAR_FILE_STAT_MODE = 0100000 | 0222;
+    /// The expected `st_mode` value for guest-created regular host files with mode 0644.
+    private static final int CREATED_REGULAR_FILE_STAT_MODE = 0100000 | 0644;
 
     /// The expected `st_mode` value for read-write regular host files.
     private static final int READ_WRITE_REGULAR_FILE_STAT_MODE = 0100000 | 0666;
 
-    /// The expected `st_mode` value for readable host directories.
-    private static final int READABLE_DIRECTORY_STAT_MODE = 0040000 | 0555;
+    /// The expected `st_mode` value for read-write host directories.
+    private static final int READ_WRITE_DIRECTORY_STAT_MODE = 0040000 | 0777;
 
     /// The expected `stx_mode` value for symbolic links.
     private static final int SYMBOLIC_LINK_STAT_MODE = 0120000 | 0777;
@@ -1668,7 +1682,7 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, AT_EMPTY_PATH);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(READ_WRITE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
 
             writeGuestString(memory, pathAddress, "../message.txt");
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
@@ -1743,18 +1757,18 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(READ_WRITE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
 
             writeGuestString(memory, pathAddress, "");
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, AT_EMPTY_PATH);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(READ_WRITE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
 
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, 0, statAddress, AT_EMPTY_PATH);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(READ_WRITE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
 
             setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, 0, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -1891,7 +1905,7 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_STATX, AT_FDCWD, pathAddress, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+            assertStatx(memory, statxAddress, READ_WRITE_DIRECTORY_STAT_MODE, 0);
 
             writeGuestString(memory, pathAddress, "");
             setSyscall(
@@ -1905,7 +1919,7 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+            assertStatx(memory, statxAddress, READ_WRITE_DIRECTORY_STAT_MODE, 0);
 
             setSyscall(
                     state,
@@ -1918,7 +1932,7 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+            assertStatx(memory, statxAddress, READ_WRITE_DIRECTORY_STAT_MODE, 0);
 
             setSyscall(state, SYS_STATX, AT_FDCWD, 0, 0, STATX_BASIC_STATS_MASK, statxAddress, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -1951,7 +1965,7 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertStatx(memory, statxAddress, READABLE_DIRECTORY_STAT_MODE, 0);
+            assertStatx(memory, statxAddress, READ_WRITE_DIRECTORY_STAT_MODE, 0);
 
             writeGuestString(memory, pathAddress, "message.txt");
             setSyscall(state, SYS_OPENAT, directoryFileDescriptor, pathAddress, O_RDONLY, 0);
@@ -1971,7 +1985,7 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertStatx(memory, statxAddress, REGULAR_FILE_STAT_MODE, 9);
+            assertStatx(memory, statxAddress, READ_WRITE_REGULAR_FILE_STAT_MODE, 9);
 
             setSyscall(
                     state,
@@ -1984,7 +1998,7 @@ public final class GuestSyscallsTest {
                     0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertStatx(memory, statxAddress, REGULAR_FILE_STAT_MODE, 9);
+            assertStatx(memory, statxAddress, READ_WRITE_REGULAR_FILE_STAT_MODE, 9);
 
             setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -2168,7 +2182,7 @@ public final class GuestSyscallsTest {
 
             setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, R_OK, AT_EMPTY_PATH, 0, 0);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(EACCES, state.register(10));
+            assertEquals(0, state.register(10));
 
             setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, X_OK, AT_EMPTY_PATH, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -2176,9 +2190,9 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies that `fchownat` validates paths and accepts ownership updates as no-ops.
+    /// Verifies that `fchownat` validates paths and applies synthetic ownership metadata.
     @Test
-    public void fchownatAcceptsSandboxedPathsAsNoOp() throws Exception {
+    public void fchownatUpdatesSandboxedPathMetadata() throws Exception {
         Files.writeString(tempDirectory.resolve("owned.txt"), "data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
@@ -2194,7 +2208,7 @@ public final class GuestSyscallsTest {
             writeGuestString(memory, pathAddress, "owned.txt");
             setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
+            assertEquals(EPERM, state.register(10));
 
             setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, -1, -1, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -2223,11 +2237,36 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EFAULT, state.register(10));
         }
+
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.forHostRoot(new HostPath(tempDirectory)),
+                    root);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "owned.txt");
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 1234, 5678, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1234, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_UID_OFFSET)));
+            assertEquals(5678, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_GID_OFFSET)));
+        }
     }
 
-    /// Verifies that `fchownat` supports `AT_EMPTY_PATH` file descriptor updates.
+    /// Verifies that `fchown` and `fchownat` support file descriptor updates.
     @Test
-    public void fchownatSupportsEmptyPathFileDescriptors() throws Exception {
+    public void fchownUpdatesFileDescriptorMetadata() throws Exception {
         Files.writeString(tempDirectory.resolve("owned.txt"), "data", StandardCharsets.UTF_8);
 
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
@@ -2249,7 +2288,7 @@ public final class GuestSyscallsTest {
             writeGuestString(memory, pathAddress, "");
             setSyscall(state, SYS_FCHOWNAT, fileDescriptor, pathAddress, 0, 0, AT_EMPTY_PATH);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(0, state.register(10));
+            assertEquals(EPERM, state.register(10));
 
             setSyscall(state, SYS_FCHOWNAT, 99, pathAddress, 0, 0, AT_EMPTY_PATH);
             state.syscalls().handle(state, TEST_PC);
@@ -2258,6 +2297,260 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FCHOWNAT, fileDescriptor, pathAddress, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ENOENT, state.register(10));
+        }
+
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.forHostRoot(new HostPath(tempDirectory)),
+                    root);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "owned.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FCHOWN, fileDescriptor, 2000, 3000);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(2000, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_UID_OFFSET)));
+            assertEquals(3000, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_GID_OFFSET)));
+        }
+    }
+
+    /// Verifies that `fchmod`, `fchmodat`, and `fchmodat2` update host metadata and access checks.
+    @Test
+    public void fchmodUpdatesHostMetadataAndAccessChecks() throws Exception {
+        Files.writeString(tempDirectory.resolve("mode.txt"), "data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "mode.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FCHMOD, fileDescriptor, 0600, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0100000 | 0600, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, R_OK | W_OK, AT_EMPTY_PATH, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FACCESSAT2, fileDescriptor, pathAddress, X_OK, AT_EMPTY_PATH, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "mode.txt");
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(state, SYS_FCHMODAT2, fileDescriptor, pathAddress, 0644, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "mode.txt");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(CREATED_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_FCHMODAT2, AT_FDCWD, pathAddress, 0600, AT_EACCESS);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FCHMOD, 99, 0600, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that host child path access requires search permission on the parent directory.
+    @Test
+    public void hostPathAccessRequiresParentSearchPermission() throws Exception {
+        Files.createDirectories(tempDirectory.resolve("private"));
+        Files.writeString(tempDirectory.resolve("private").resolve("child.txt"), "child", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+
+            writeGuestString(memory, pathAddress, "private");
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0600, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "private/child.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            writeGuestString(memory, pathAddress, "private");
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0700, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "private/child.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+        }
+    }
+
+    /// Verifies that tar uid, gid, and mode metadata drive DAC access checks.
+    @Test
+    public void tarPermissionsUseOwnerGroupAndOtherBits() throws Exception {
+        Path archive = tempDirectory.resolve("permissions.tar");
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, "owner.txt", "owner".getBytes(StandardCharsets.UTF_8), 0600, 1234, 9999);
+            writeTarFile(tarOutput, "group.txt", "group".getBytes(StandardCharsets.UTF_8), 0040, 2000, 42);
+            writeTarFile(tarOutput, "other.txt", "other".getBytes(StandardCharsets.UTF_8), 0004, 2000, 7777);
+            writeTarFile(tarOutput, "blocked.txt", "blocked".getBytes(StandardCharsets.UTF_8), 0000, 2000, 7777);
+            tarOutput.finish();
+        }
+
+        GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "42,43", "/home/alice", "/bin/bash");
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tar,src=" + archive + ",dst=/tar"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem,
+                    credentials);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/tar/owner.txt");
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0100000 | 0600, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(1234, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_UID_OFFSET)));
+            assertEquals(9999, Integer.toUnsignedLong(memory.readInt(statAddress + STAT_GID_OFFSET)));
+
+            writeGuestString(memory, pathAddress, "/tar/group.txt");
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/tar/other.txt");
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/tar/blocked.txt");
+            setSyscall(state, SYS_FACCESSAT2, AT_FDCWD, pathAddress, R_OK, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EACCES, state.register(10));
+        }
+    }
+
+    /// Verifies that writable memory tar mounts support chmod while read-only tar mounts reject it.
+    @Test
+    public void fchmodatUpdatesWritableTarMetadata() throws Exception {
+        Path archive = tempDirectory.resolve("chmod.tar");
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, "owned.txt", "owned".getBytes(StandardCharsets.UTF_8), 0600, 1234, 5678);
+            writeTarFile(tarOutput, "other.txt", "other".getBytes(StandardCharsets.UTF_8), 0600, 2000, 5678);
+            tarOutput.finish();
+        }
+
+        GuestCredentials credentials = GuestCredentials.of("alice", 1234, 5678, "42,43", "/home/alice", "/bin/bash");
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tar,src=" + archive + ",dst=/tar,memory,rw",
+                "type=tar,src=" + archive + ",dst=/ro,memory"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem,
+                    credentials);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/tar/owned.txt");
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(CREATED_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "/tar/other.txt");
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/ro/owned.txt");
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EROFS, state.register(10));
         }
     }
 
@@ -2337,7 +2630,7 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(READ_WRITE_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
             assertEquals(1, memory.readInt(statAddress + STAT_LINK_COUNT_OFFSET));
             assertEquals(9, memory.readLong(statAddress + STAT_SIZE_OFFSET));
             assertEquals(4096, memory.readInt(statAddress + STAT_BLOCK_SIZE_OFFSET));
@@ -2384,7 +2677,7 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FSTAT, directoryFileDescriptor, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(READABLE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(READ_WRITE_DIRECTORY_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
 
             setSyscall(state, SYS_READ, directoryFileDescriptor, bufferAddress, 1);
             state.syscalls().handle(state, TEST_PC);
@@ -3106,7 +3399,7 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(WRITABLE_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(CREATED_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
             assertEquals(4, memory.readLong(statAddress + STAT_SIZE_OFFSET));
 
             setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
@@ -3165,7 +3458,7 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals(READ_WRITE_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+            assertEquals(CREATED_REGULAR_FILE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
 
             setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -6998,6 +7291,24 @@ public final class GuestSyscallsTest {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         memory.writeBytes(address, bytes, 0, bytes.length);
         memory.writeByte(address + bytes.length, (byte) 0);
+    }
+
+    /// Writes one regular tar entry with explicit Linux metadata to an open archive.
+    private static void writeTarFile(
+            TarArchiveOutputStream tarOutput,
+            String name,
+            byte[] data,
+            int mode,
+            long userId,
+            long groupId) throws IOException {
+        TarArchiveEntry entry = new TarArchiveEntry(name);
+        entry.setMode(mode);
+        entry.setUserId(userId);
+        entry.setGroupId(groupId);
+        entry.setSize(data.length);
+        tarOutput.putArchiveEntry(entry);
+        tarOutput.write(data, 0, data.length);
+        tarOutput.closeArchiveEntry();
     }
 
     /// Reads a fixed-length UTF-8 string from guest memory.
