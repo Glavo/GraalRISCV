@@ -48,6 +48,7 @@ import java.util.HashMap;
 import java.util.Set;
 
 /// Provides shared state and helpers for guest syscall ABI implementations.
+@SuppressWarnings("OctalInteger")
 @NotNullByDefault
 public sealed abstract class GuestSyscalls implements AutoCloseable
         permits LinuxGuestSyscalls, FreeBsdGuestSyscalls {
