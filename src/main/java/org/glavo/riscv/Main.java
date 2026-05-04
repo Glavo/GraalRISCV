@@ -4,8 +4,12 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.exception.RiscVException;
+import org.glavo.riscv.gui.SwingFramebufferBackend;
 import org.glavo.riscv.runtime.FilesystemMountSpec;
 import org.glavo.riscv.runtime.FilesystemMountSpec.Type;
+import org.glavo.riscv.runtime.FramebufferDevice;
+import org.glavo.riscv.runtime.FramebufferGeometry;
+import org.glavo.riscv.runtime.FramebufferPixelFormat;
 import org.glavo.riscv.runtime.GuestCredentials;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
@@ -43,6 +47,9 @@ public final class Main {
               --mount <spec>             Mount a host path:
                                           type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
+              --framebuffer <width>x<height>
+                                          Open a Swing framebuffer and expose it as guest /dev/fb0.
+              --framebuffer-scale <n>     Integer Swing framebuffer scale. Default is 3.
               --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
               --user <name>              Guest login name. Default is user.
               --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
@@ -62,6 +69,9 @@ public final class Main {
 
     /// The process exit code used for host-side execution failures.
     private static final int HOST_ERROR = 1;
+
+    /// The default scale used for CLI-created Swing framebuffer windows.
+    private static final int DEFAULT_FRAMEBUFFER_SCALE = 3;
 
     /// Prevents construction of this utility class.
     private Main() {
@@ -87,8 +97,27 @@ public final class Main {
             byte[] elf = options.hostProgramPath() == null
                     ? new byte[0]
                     : Files.readAllBytes(options.hostProgramPath());
-            RiscVContext context = createContext(options, in, out, err);
-            return normalizeExitCode(RiscVEngine.run(elf, context));
+            @Nullable FramebufferDevice framebufferDevice = options.framebuffer() == null
+                    ? null
+                    : createFramebufferDevice(options.framebuffer());
+            @Nullable SwingFramebufferBackend framebufferBackend = null;
+            try {
+                if (framebufferDevice != null) {
+                    framebufferBackend = new SwingFramebufferBackend(
+                            framebufferDevice,
+                            "JRISC-V /dev/fb0",
+                            intOptionOrDefault(options.framebufferScale(), DEFAULT_FRAMEBUFFER_SCALE),
+                            SwingFramebufferBackend.DEFAULT_REFRESH_MILLIS);
+                    framebufferBackend.open();
+                }
+
+                RiscVContext context = createContext(options, in, out, err, framebufferDevice);
+                return normalizeExitCode(RiscVEngine.run(elf, context));
+            } finally {
+                if (framebufferBackend != null) {
+                    framebufferBackend.close();
+                }
+            }
         } catch (IOException exception) {
             errorStream.println("Failed to read ELF file: " + exception.getMessage());
             return HOST_ERROR;
@@ -99,7 +128,12 @@ public final class Main {
     }
 
     /// Creates the plain Java simulator context used for guest execution.
-    private static RiscVContext createContext(CliOptions options, InputStream in, OutputStream out, OutputStream err) {
+    private static RiscVContext createContext(
+            CliOptions options,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            @Nullable FramebufferDevice framebufferDevice) {
         return new RiscVContext(
                 in,
                 out,
@@ -125,7 +159,8 @@ public final class Main {
                 options.guestGroups() == null ? "" : options.guestGroups(),
                 options.guestHome() == null ? "" : options.guestHome(),
                 options.guestShell() == null ? GuestCredentials.DEFAULT_SHELL : options.guestShell(),
-                options.applicationArguments());
+                options.applicationArguments(),
+                framebufferDevice);
     }
 
     /// Parses command-line arguments.
@@ -145,6 +180,8 @@ public final class Main {
         @Nullable String guestGroups = null;
         @Nullable String guestHome = null;
         @Nullable String guestShell = null;
+        @Nullable String framebuffer = null;
+        @Nullable String framebufferScale = null;
         ArrayList<MountOption> mounts = new ArrayList<>();
         boolean useHostTty = false;
         boolean debugTraceCompilation = false;
@@ -428,6 +465,34 @@ public final class Main {
                 mounts.add(mount);
                 continue;
             }
+            if (parseOptions && "--framebuffer".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --framebuffer.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                framebuffer = parseFramebufferOption(args[index], err);
+                if (framebuffer == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
+            if (parseOptions && "--framebuffer-scale".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --framebuffer-scale.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                framebufferScale = parsePositiveIntOption("--framebuffer-scale", args[index], err);
+                if (framebufferScale == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                continue;
+            }
             if (programPath != null) {
                 programArguments.add(argument);
                 continue;
@@ -448,6 +513,11 @@ public final class Main {
 
         if (programPath == null) {
             err.println("Missing ELF file.");
+            printUsage(err);
+            return CliOptions.error();
+        }
+        if (framebuffer == null && framebufferScale != null) {
+            err.println("--framebuffer-scale requires --framebuffer.");
             printUsage(err);
             return CliOptions.error();
         }
@@ -476,6 +546,8 @@ public final class Main {
                 guestGroups,
                 guestHome,
                 guestShell,
+                framebuffer,
+                framebufferScale,
                 debugTraceCompilation,
                 trace);
     }
@@ -497,6 +569,56 @@ public final class Main {
     /// Returns a parsed normalized long option value or the supplied default.
     private static long longOptionOrDefault(@Nullable String value, long defaultValue) {
         return value == null ? defaultValue : Long.parseLong(value);
+    }
+
+    /// Returns a parsed normalized integer option value or the supplied default.
+    private static int intOptionOrDefault(@Nullable String value, int defaultValue) {
+        return value == null ? defaultValue : Integer.parseInt(value);
+    }
+
+    /// Parses a positive integer option and returns its normalized decimal string value.
+    private static @Nullable String parsePositiveIntOption(String optionName, String value, PrintStream err) {
+        try {
+            long parsed = Long.decode(value);
+            if (parsed <= 0 || parsed > Integer.MAX_VALUE) {
+                err.println("Invalid value for " + optionName + ": " + value);
+                return null;
+            }
+            return Integer.toString((int) parsed);
+        } catch (NumberFormatException exception) {
+            err.println("Invalid value for " + optionName + ": " + value);
+            return null;
+        }
+    }
+
+    /// Parses a framebuffer geometry option and returns a normalized `widthxheight` value.
+    private static @Nullable String parseFramebufferOption(String value, PrintStream err) {
+        int separator = value.indexOf('x');
+        if (separator < 0) {
+            separator = value.indexOf('X');
+        }
+        if (separator <= 0 || separator >= value.length() - 1
+                || value.indexOf('x', separator + 1) >= 0
+                || value.indexOf('X', separator + 1) >= 0) {
+            err.println("Invalid value for --framebuffer: " + value);
+            err.println("Expected --framebuffer <width>x<height>.");
+            return null;
+        }
+
+        @Nullable String width = parsePositiveIntOption("--framebuffer", value.substring(0, separator), err);
+        @Nullable String height = parsePositiveIntOption("--framebuffer", value.substring(separator + 1), err);
+        if (width == null || height == null) {
+            return null;
+        }
+        return width + "x" + height;
+    }
+
+    /// Creates a framebuffer device from a normalized `widthxheight` option value.
+    private static FramebufferDevice createFramebufferDevice(String framebuffer) {
+        int separator = framebuffer.indexOf('x');
+        int width = Integer.parseInt(framebuffer.substring(0, separator));
+        int height = Integer.parseInt(framebuffer.substring(separator + 1));
+        return new FramebufferDevice(FramebufferGeometry.packed(width, height, FramebufferPixelFormat.XRGB8888));
     }
 
     /// Parses a Linux uid or gid option and returns its normalized decimal string value.
@@ -665,6 +787,8 @@ public final class Main {
     /// @param guestGroups the optional supplementary guest gid list option value
     /// @param guestHome the optional guest home directory option value
     /// @param guestShell the optional guest shell option value
+    /// @param framebuffer the optional CLI-created framebuffer geometry option value
+    /// @param framebufferScale the optional CLI-created Swing framebuffer scale option value
     /// @param debugTraceCompilation whether trace compilation diagnostics were requested
     /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
@@ -690,6 +814,8 @@ public final class Main {
             @Nullable String guestGroups,
             @Nullable String guestHome,
             @Nullable String guestShell,
+            @Nullable String framebuffer,
+            @Nullable String framebufferScale,
             boolean debugTraceCompilation,
             boolean trace) {
         /// Creates parsed command-line options.
@@ -734,6 +860,8 @@ public final class Main {
                     null,
                     null,
                     null,
+                    null,
+                    null,
                     false,
                     false);
         }
@@ -756,6 +884,8 @@ public final class Main {
                     null,
                     new MountOption[0],
                     false,
+                    null,
+                    null,
                     null,
                     null,
                     null,
@@ -788,6 +918,8 @@ public final class Main {
                 @Nullable String guestGroups,
                 @Nullable String guestHome,
                 @Nullable String guestShell,
+                @Nullable String framebuffer,
+                @Nullable String framebufferScale,
                 boolean debugTraceCompilation,
                 boolean trace) {
             return new CliOptions(
@@ -812,6 +944,8 @@ public final class Main {
                     guestGroups,
                     guestHome,
                     guestShell,
+                    framebuffer,
+                    framebufferScale,
                     debugTraceCompilation,
                     trace);
         }

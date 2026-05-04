@@ -1140,6 +1140,36 @@ tasks.register<JavaExec>("testLinuxStaticRuntimeServicesExample") {
     }
 }
 
+// Static Linux framebuffer demo.
+val linuxStaticFramebufferDemoElf = layout.buildDirectory.file("examples/linux-static/framebuffer-demo.elf")
+
+tasks.register<RiscVLinuxMuslStaticZigCCTask>("buildLinuxStaticFramebufferDemo") {
+    group = "verification"
+    description = "Builds examples/linux-static/FramebufferDemo.c as a static riscv64-linux-musl executable."
+
+    configureLinuxStaticExample("FramebufferDemo.c", linuxStaticFramebufferDemoElf)
+}
+
+tasks.register<JavaExec>("runLinuxStaticFramebufferDemo") {
+    group = "application"
+    description = "Runs the static musl framebuffer demo through the Swing /dev/fb0 backend."
+
+    dependsOn("classes", "buildLinuxStaticFramebufferDemo")
+    classpath = sourceSets.named("main").get().runtimeClasspath
+    mainClass = mainClassName
+    jvmArgs(applicationDefaultJvmArgs)
+
+    doFirst {
+        setArgs(listOf(
+            "--framebuffer",
+            "320x180",
+            "--framebuffer-scale",
+            "3",
+            linuxStaticFramebufferDemoElf.get().asFile.absolutePath
+        ))
+    }
+}
+
 // Static Linux process signals example.
 val linuxStaticProcessSignalsExampleElf = layout.buildDirectory.file("examples/linux-static/process-signals.elf")
 

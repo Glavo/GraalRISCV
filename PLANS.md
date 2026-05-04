@@ -18,7 +18,7 @@
 - LTP syscall work currently includes a coverage report and an ABI-table driven static smoke ELF for core identity, process/resource, time, random, and file-system behavior.
 - CLI execution runs through the plain Java `RiscVEngine` and `RiscVInterpreter` loop. Decoded blocks and traces use `ExecutableBlock` and `ExecutableTrace`, with `TraceCompiler` reserved as the future bytecode trace compiler boundary.
 - The Java interpreter includes a PC-indexed `DecodedCodeSegment` fast path for batched integer blocks, backed by a local segment cache, segment-local operand rewrites, packed register operands, segment-internal fast-slice dispatch, batched retire accounting, lazy memory-fault PC materialization, and aligned scalar memory helpers. `MemoryAccess` owns a non-null software TLB directly, while direct `Memory` API paths create short-lived non-null caches without `ThreadLocal` state. Unsupported, checked, traced, syscall, CSR, floating-point, vector, atomic, and active LR/SC reservation paths fall back to the existing block interpreter.
-- Graphical-device groundwork now includes host-side framebuffer geometry, packed pixel-format metadata, dirty-region tracking, immutable framebuffer snapshots, host ARGB conversion, a Swing framebuffer presentation backend, a Gradle-runnable Swing framebuffer demo, and an optional `RiscVContext`/syscall-layer framebuffer hook. Guest `/dev/fb0`, framebuffer ioctls, mmap integration, and CLI window creation are not wired yet.
+- Graphical-device groundwork now includes host-side framebuffer geometry, packed pixel-format metadata, dirty-region tracking, immutable framebuffer snapshots, host ARGB conversion, a Swing framebuffer presentation backend, a Gradle-runnable Swing framebuffer demo, optional `RiscVContext`/syscall-layer framebuffer hook, CLI-created Swing framebuffer windows, minimal Linux `/dev/fb0` access, fbdev screen-info ioctls, write-based framebuffer updates, and a static RISC-V Linux framebuffer demo.
 
 ## Maintenance Principles
 
@@ -39,7 +39,7 @@
 
 - Continue improving signal, process, clone, exec, and dynamic-linking semantics as workloads require them.
 - Add richer `/proc`, `/sys`, device, terminal, and process/thread-scoped filesystem state only when concrete programs need it.
-- Expose the framebuffer abstraction through a minimal Linux fbdev path, starting with `/dev/fb0`, `FBIOGET_VSCREENINFO`, `FBIOGET_FSCREENINFO`, write-based pixel updates, and a small static framebuffer smoke workload.
+- Extend framebuffer integration beyond the current write-based fbdev path when a concrete workload needs it, starting with `mmap` support and broader pixel-format negotiation.
 
 ### FreeBSD Runtime Compatibility
 

@@ -470,6 +470,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The Linux generic tty `TIOCSWINSZ` ioctl request number.
     protected static final long TIOCSWINSZ = 0x5414;
 
+    /// The Linux framebuffer `FBIOGET_VSCREENINFO` ioctl request number.
+    protected static final long FBIOGET_VSCREENINFO = 0x4600;
+
+    /// The Linux framebuffer `FBIOGET_FSCREENINFO` ioctl request number.
+    protected static final long FBIOGET_FSCREENINFO = 0x4602;
+
     /// The byte size of Linux generic `struct termios`.
     protected static final int TERMIOS_SIZE = 36;
 
@@ -1261,7 +1267,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Adds process-local default virtual filesystems unless the user already supplied those mount points.
     protected GuestFileSystem addDefaultVirtualMounts(GuestFileSystem fileSystem) {
         return fileSystem
-                .withDefaultVirtualMount(DEV_MOUNT_PATH, new DevFileSystem())
+                .withDefaultVirtualMount(DEV_MOUNT_PATH, new DevFileSystem(framebufferDevice))
                 .withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem())
                 .withDefaultVirtualMount(SYS_MOUNT_PATH, new SysFileSystem());
     }
@@ -3854,6 +3860,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     guestPath,
                     readable,
                     writable));
+            case FRAMEBUFFER -> framebufferDevice == null
+                    ? ENODEV
+                    : addOpenFile(OpenFile.characterDevice(
+                            node,
+                            mount,
+                            guestPath,
+                            readable,
+                            writable));
             case TTY, CONSOLE -> addOpenFile(OpenFile.terminalDevice(
                     node,
                     mount,
@@ -3934,6 +3948,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
             if (deviceFile != null) {
+                if (deviceFile == DeviceFile.FRAMEBUFFER) {
+                    return readFramebufferDevice(openFile, address, length);
+                }
                 return readDeviceFile(deviceFile, address, length);
             }
 
@@ -3997,6 +4014,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     return EINVAL;
                 }
                 byte[] bytes = memory.readBytes(address, length);
+                @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
+                if (deviceFile == DeviceFile.FRAMEBUFFER) {
+                    return writeFramebufferDevice(openFile, bytes);
+                }
                 if (isDiscardingDeviceFile(openFile)) {
                     return bytes.length;
                 }
@@ -4429,6 +4450,35 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return bytes.length;
     }
 
+    /// Reads bytes from the configured framebuffer device using the descriptor's current offset.
+    protected long readFramebufferDevice(OpenFile openFile, long address, long length) {
+        @Nullable FramebufferDevice device = framebufferDevice;
+        if (device == null) {
+            return ENODEV;
+        }
+        if (length > Integer.MAX_VALUE) {
+            throw new RiscVException("Guest framebuffer read buffer is too large: " + length);
+        }
+
+        byte[] bytes = new byte[(int) length];
+        int count = device.read(openFile.deviceOffset(), bytes, 0, bytes.length);
+        openFile.advanceDeviceOffset(count);
+        memory.writeBytes(address, bytes, 0, count);
+        return count;
+    }
+
+    /// Writes bytes to the configured framebuffer device using the descriptor's current offset.
+    protected long writeFramebufferDevice(OpenFile openFile, byte[] bytes) {
+        @Nullable FramebufferDevice device = framebufferDevice;
+        if (device == null) {
+            return ENODEV;
+        }
+
+        int count = device.write(openFile.deviceOffset(), bytes, 0, bytes.length);
+        openFile.advanceDeviceOffset(count);
+        return count;
+    }
+
     /// Reads from one built-in virtual character device into guest memory.
     protected long readDeviceFile(DeviceFile deviceFile, long address, long length) {
         return switch (deviceFile) {
@@ -4438,6 +4488,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 yield length;
             }
             case RANDOM, URANDOM -> writeDeterministicRandomBytes(address, length);
+            case FRAMEBUFFER -> EINVAL;
             case TTY, CONSOLE -> EBADF;
         };
     }
@@ -4454,6 +4505,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 fillDeterministicRandomBytes(buffer, 0, length);
                 yield length;
             }
+            case FRAMEBUFFER -> EINVAL;
             case TTY, CONSOLE -> EBADF;
         };
     }
@@ -4638,6 +4690,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile == null) {
             return EBADF;
         }
+        if (deviceFileFor(openFile) == DeviceFile.FRAMEBUFFER) {
+            return lseekFramebufferDevice(openFile, offset, whence);
+        }
         if (!openFile.isHostFile()) {
             return ESPIPE;
         }
@@ -4665,6 +4720,34 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         } catch (IOException exception) {
             throw new RiscVException("Guest lseek syscall failed", exception);
         }
+    }
+
+    /// Handles `lseek` for the framebuffer character device offset.
+    protected long lseekFramebufferDevice(OpenFile openFile, long offset, int whence) {
+        @Nullable FramebufferDevice device = framebufferDevice;
+        if (device == null) {
+            return ENODEV;
+        }
+
+        long basePosition = switch (whence) {
+            case 0 -> 0;
+            case 1 -> openFile.deviceOffset();
+            case 2 -> device.geometry().bufferSizeBytes();
+            default -> throw new AssertionError("validated whence");
+        };
+        if (offset > 0 && basePosition > Long.MAX_VALUE - offset) {
+            return EINVAL;
+        }
+        if (offset < 0 && basePosition < Long.MIN_VALUE - offset) {
+            return EINVAL;
+        }
+
+        long position = basePosition + offset;
+        if (position < 0) {
+            return EINVAL;
+        }
+        openFile.setDeviceOffset(position);
+        return position;
     }
 
     /// Reads a sandboxed symbolic link target into guest memory.
@@ -5564,6 +5647,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Handles tty-related ioctls used by common `isatty` and stdio setup paths.
     protected long ioctl(int fileDescriptor, long request, long argument) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile != null && deviceFileFor(openFile) == DeviceFile.FRAMEBUFFER) {
+            return framebufferIoctl(request, argument);
+        }
+
         @Nullable TerminalDevice terminal = terminalDeviceFor(fileDescriptor);
         if (terminal == null) {
             if (!isOpenFileDescriptor(fileDescriptor)) {
@@ -5631,6 +5719,69 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
         return ENOTTY;
+    }
+
+    /// Handles Linux framebuffer ioctls for the configured framebuffer device.
+    protected long framebufferIoctl(long request, long argument) {
+        @Nullable FramebufferDevice device = framebufferDevice;
+        if (device == null) {
+            return ENODEV;
+        }
+        if (request == FBIOGET_VSCREENINFO) {
+            return writeFramebufferVariableScreenInfo(device.geometry(), argument);
+        }
+        if (request == FBIOGET_FSCREENINFO) {
+            return writeFramebufferFixedScreenInfo(device.geometry(), argument);
+        }
+        return ENOTTY;
+    }
+
+    /// Writes Linux `struct fb_var_screeninfo` for the configured framebuffer.
+    protected long writeFramebufferVariableScreenInfo(FramebufferGeometry geometry, long address) {
+        int size = 160;
+        if (!memory.isBacked(address, size)) {
+            return EFAULT;
+        }
+
+        FramebufferPixelFormat format = geometry.pixelFormat();
+        memory.clear(address, size);
+        memory.writeInt(address, geometry.width());
+        memory.writeInt(address + 4, geometry.height());
+        memory.writeInt(address + 8, geometry.width());
+        memory.writeInt(address + 12, geometry.height());
+        memory.writeInt(address + 24, format.bitsPerPixel());
+        writeFramebufferBitfield(address + 32, format.redOffset(), format.redLength());
+        writeFramebufferBitfield(address + 44, format.greenOffset(), format.greenLength());
+        writeFramebufferBitfield(address + 56, format.blueOffset(), format.blueLength());
+        writeFramebufferBitfield(address + 68, format.transparencyOffset(), format.transparencyLength());
+        memory.writeInt(address + 88, -1);
+        memory.writeInt(address + 92, -1);
+        return 0;
+    }
+
+    /// Writes Linux `struct fb_fix_screeninfo` for the configured framebuffer.
+    protected long writeFramebufferFixedScreenInfo(FramebufferGeometry geometry, long address) {
+        int size = 80;
+        if (!memory.isBacked(address, size)) {
+            return EFAULT;
+        }
+
+        memory.clear(address, size);
+        byte[] id = "JRISC-V FB".getBytes(StandardCharsets.US_ASCII);
+        memory.writeBytes(address, id, 0, Math.min(id.length, 15));
+        memory.writeInt(address + 24, geometry.bufferSizeBytes());
+        memory.writeInt(address + 28, 0);
+        memory.writeInt(address + 32, 0);
+        memory.writeInt(address + 36, 2);
+        memory.writeInt(address + 48, geometry.strideBytes());
+        return 0;
+    }
+
+    /// Writes Linux `struct fb_bitfield`.
+    protected void writeFramebufferBitfield(long address, int offset, int length) {
+        memory.writeInt(address, offset);
+        memory.writeInt(address + 4, length);
+        memory.writeInt(address + 8, 0);
     }
 
     /// Maps a Linux `termios2` set request to the matching legacy `termios` set request.
@@ -7030,15 +7181,26 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         RANDOM,
 
         /// The non-blocking random source exposed as `/dev/urandom`.
-        URANDOM
+        URANDOM,
+
+        /// The optional linear framebuffer exposed as `/dev/fb0`.
+        FRAMEBUFFER
     }
 
     /// Provides the built-in process-local `/dev` filesystem.
     protected static final class DevFileSystem implements GuestFileSystem.VirtualFileSystem {
+        /// The optional framebuffer device exposed as `/dev/fb0`.
+        private final @Nullable FramebufferDevice framebufferDevice;
+
+        /// Creates a device filesystem.
+        private DevFileSystem(@Nullable FramebufferDevice framebufferDevice) {
+            this.framebufferDevice = framebufferDevice;
+        }
+
         /// Returns a device node at an absolute guest path, or null when absent.
         @Override
         public @Nullable VirtualNode node(String absoluteGuestPath) {
-            return devNode(absoluteGuestPath);
+            return devNode(absoluteGuestPath, framebufferDevice != null);
         }
 
         /// Returns the child device nodes for `/dev`.
@@ -7047,18 +7209,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (!DEV_MOUNT_PATH.equals(directoryGuestPath)) {
                 return new VirtualNode[0];
             }
-            return new VirtualNode[]{
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/console", DeviceFile.CONSOLE),
-                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/fd", PROC_MOUNT_PATH + "/self/fd"),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/null", DeviceFile.NULL),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/random", DeviceFile.RANDOM),
-                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stderr", PROC_MOUNT_PATH + "/self/fd/2"),
-                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdin", PROC_MOUNT_PATH + "/self/fd/0"),
-                    VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdout", PROC_MOUNT_PATH + "/self/fd/1"),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/tty", DeviceFile.TTY),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/urandom", DeviceFile.URANDOM),
-                    VirtualNode.characterDevice(DEV_MOUNT_PATH + "/zero", DeviceFile.ZERO)
-            };
+            ArrayList<VirtualNode> children = new ArrayList<>();
+            children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/console", DeviceFile.CONSOLE));
+            if (framebufferDevice != null) {
+                children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/fb0", DeviceFile.FRAMEBUFFER));
+            }
+            children.add(VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/fd", PROC_MOUNT_PATH + "/self/fd"));
+            children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/null", DeviceFile.NULL));
+            children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/random", DeviceFile.RANDOM));
+            children.add(VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stderr", PROC_MOUNT_PATH + "/self/fd/2"));
+            children.add(VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdin", PROC_MOUNT_PATH + "/self/fd/0"));
+            children.add(VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdout", PROC_MOUNT_PATH + "/self/fd/1"));
+            children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/tty", DeviceFile.TTY));
+            children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/urandom", DeviceFile.URANDOM));
+            children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/zero", DeviceFile.ZERO));
+            return children.toArray(VirtualNode[]::new);
         }
 
         /// Returns empty bytes because `/dev` does not expose regular files.
@@ -7075,11 +7240,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Returns one built-in `/dev` node.
-        private static @Nullable VirtualNode devNode(String absoluteGuestPath) {
+        private static @Nullable VirtualNode devNode(String absoluteGuestPath, boolean hasFramebuffer) {
             return switch (absoluteGuestPath) {
                 case DEV_MOUNT_PATH -> VirtualNode.directory(DEV_MOUNT_PATH);
                 case DEV_MOUNT_PATH + "/console" ->
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.CONSOLE);
+                case DEV_MOUNT_PATH + "/fb0" -> hasFramebuffer
+                        ? VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.FRAMEBUFFER)
+                        : null;
                 case DEV_MOUNT_PATH + "/fd" ->
                         VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd");
                 case DEV_MOUNT_PATH + "/null" ->
@@ -7462,6 +7630,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Returns the byte size exposed for a virtual node.
     protected long virtualNodeSize(VirtualMount mount, VirtualNode node) {
+        if (node.fileKey() == DeviceFile.FRAMEBUFFER && framebufferDevice != null) {
+            return framebufferDevice.geometry().bufferSizeBytes();
+        }
         if (node.isFile()) {
             return mount.fileSystem().fileData(node).length;
         }
@@ -9318,6 +9489,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// The next directory entry index returned by `getdents64`.
         private int directoryEntryIndex;
 
+        /// The current byte offset for seekable virtual character devices.
+        private long deviceOffset;
+
         /// The number of guest descriptor table slots sharing this entry.
         private int references = 1;
 
@@ -9942,6 +10116,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when this entry is backed by a virtual character device node.
         boolean isCharacterDevice() {
             return virtualNode != null && virtualNode.isCharacterDevice();
+        }
+
+        /// Returns the current byte offset for seekable virtual character devices.
+        long deviceOffset() {
+            return deviceOffset;
+        }
+
+        /// Updates the current byte offset for seekable virtual character devices.
+        void setDeviceOffset(long deviceOffset) {
+            this.deviceOffset = deviceOffset;
+        }
+
+        /// Advances the current byte offset for seekable virtual character devices.
+        void advanceDeviceOffset(long count) {
+            deviceOffset += count;
         }
 
         /// Returns true when reads are permitted.

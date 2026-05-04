@@ -53,6 +53,9 @@ Options:
   --mount <spec>             Mount a host path:
                               type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
   --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
+  --framebuffer <width>x<height>
+                              Open a Swing framebuffer and expose it as guest /dev/fb0.
+  --framebuffer-scale <n>     Integer Swing framebuffer scale. Default is 3.
   --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
   --user <name>              Guest login name. Default is user.
   --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
@@ -80,7 +83,9 @@ archive into process memory and allows guest writes that are discarded when the
 process exits. If no `/` mount is provided for a host executable, the CLI mounts
 the directory containing that executable at `/`.
 By default, guest `/dev/tty` is backed by the configured process streams; pass
-`--use-host-tty` to try a real host controlling terminal when available.
+`--use-host-tty` to try a real host controlling terminal when available. Pass
+`--framebuffer <width>x<height>` to create a Swing-backed XRGB8888 framebuffer
+that guest Linux programs can access through `/dev/fb0`.
 
 ## Supported ELF Inputs
 
@@ -156,6 +161,7 @@ GO_EXECUTABLE=/path/to/go ./gradlew runGoHelloWorldExample
 | Static FreeBSD Go hello-world | Build and run a static `freebsd/riscv64` Go program. | `./gradlew runFreeBsdGoHelloWorldExample` |
 | Static Go showcase | Run a larger Go standard-library workload covering JSON, sorting, compression, hashing, and goroutines. | `./gradlew runGoShowcaseExample` |
 | Static musl printf | Run a static musl `printf` hello-world program. | `./gradlew runLinuxStaticPrintfExample` |
+| Static musl framebuffer | Build and run a RISC-V Linux program that renders animation through `/dev/fb0` in a Swing window. | `./gradlew runLinuxStaticFramebufferDemo` |
 | SQLite showcase | Download SQLite, build a static RISC-V file-database demo, and run transactions and queries. | `./gradlew runSQLiteShowcaseExample` |
 | fastfetch | Download the Linux RISC-V fastfetch release tar and run it. | `./gradlew runFastfetch` |
 | RVV vector add | Build and run the RVV vector-add example. | `./gradlew runRvvVectorAddExample` |

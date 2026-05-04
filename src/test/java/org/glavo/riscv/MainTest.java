@@ -26,6 +26,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,6 +83,9 @@ public final class MainTest {
     /// Linux `O_WRONLY`.
     private static final int O_WRONLY = 1;
 
+    /// Linux `O_RDWR`.
+    private static final int O_RDWR = 2;
+
     /// Linux `O_CREAT`.
     private static final int O_CREAT = 00000100;
 
@@ -90,6 +94,12 @@ public final class MainTest {
 
     /// The Linux RISC-V syscall number for `openat`.
     private static final int SYS_OPENAT = 56;
+
+    /// The Linux RISC-V syscall number for `ioctl`.
+    private static final int SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `lseek`.
+    private static final int SYS_LSEEK = 62;
 
     /// The Linux RISC-V syscall number for `read`.
     private static final int SYS_READ = 63;
@@ -797,6 +807,53 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that a guest program can access the configured Linux framebuffer device.
+    @Test
+    public void guestWritesConfiguredFramebufferDevice() {
+        FramebufferDevice framebuffer = new FramebufferDevice(FramebufferGeometry.packed(
+                2,
+                1,
+                FramebufferPixelFormat.XRGB8888));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+
+        int exitCode = RiscVEngine.run(
+                ElfTestImages.executable(framebufferDeviceCode()),
+                new RiscVContext(
+                        new ByteArrayInputStream(new byte[0]),
+                        out,
+                        err,
+                        RiscVContext.DEFAULT_MEMORY_BASE,
+                        RiscVContext.DEFAULT_MEMORY_SIZE,
+                        RiscVContext.DEFAULT_PAGE_SIZE,
+                        RiscVContext.DEFAULT_MAX_COMMITTED_PAGES,
+                        RiscVContext.DEFAULT_HUGE_PAGE_SIZE,
+                        RiscVContext.DEFAULT_HUGE_PAGES,
+                        RiscVContext.DEFAULT_VECTOR_VLEN,
+                        1000,
+                        false,
+                        RiscVContext.timeSourceFromDebugFixedClockNanos(RiscVContext.HOST_CLOCK_NANOS),
+                        ".",
+                        "",
+                        "",
+                        false,
+                        GuestCredentials.DEFAULT_USER_NAME,
+                        GuestCredentials.DEFAULT_USER_ID,
+                        GuestCredentials.DEFAULT_GROUP_ID,
+                        "",
+                        "",
+                        GuestCredentials.DEFAULT_SHELL,
+                        new String[]{"framebuffer-test"},
+                        framebuffer));
+
+        assertEquals(0, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+        assertArrayEquals(
+                new byte[]{0, 0, 0, 0, 0x33, 0x22, 0x11, 0},
+                framebuffer.snapshot().pixels());
+    }
+
     /// Verifies that programs with more loop blocks than the former inline dispatch cache keep making progress.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -1335,6 +1392,97 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, 93));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         code.put((byte) 0);
+        return code.array();
+    }
+
+    /// Builds a program that opens `/dev/fb0`, queries fbdev metadata, seeks, and writes one pixel.
+    private static byte[] framebufferDeviceCode() {
+        int pathOffset = 0x180;
+        int variableInfoOffset = 0x190;
+        int fixedInfoOffset = 0x240;
+        int pixelOffset = 0x2a0;
+        ByteBuffer code = ByteBuffer.allocate(0x2b0).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadImmediate(code, 10, AT_FDCWD);
+        putLoadAddress(code, 11, pathOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, O_RDWR));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_OPENAT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 10, 0));
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        putLoadImmediate(code, 11, 0x4600);
+        putLoadAddress(code, 12, variableInfoOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_IOCTL));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int variableIoctlBranchPosition = reserveInstruction(code);
+
+        putLoadAddress(code, 7, variableInfoOffset);
+        ElfTestImages.putInt(code, lw(6, 0, 7));
+        ElfTestImages.putInt(code, ElfTestImages.addi(8, 0, 2));
+        int widthBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, lw(6, 4, 7));
+        ElfTestImages.putInt(code, ElfTestImages.addi(8, 0, 1));
+        int heightBranchPosition = reserveInstruction(code);
+        ElfTestImages.putInt(code, lw(6, 24, 7));
+        ElfTestImages.putInt(code, ElfTestImages.addi(8, 0, 32));
+        int bitsPerPixelBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        putLoadImmediate(code, 11, 0x4602);
+        putLoadAddress(code, 12, fixedInfoOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_IOCTL));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int fixedIoctlBranchPosition = reserveInstruction(code);
+
+        putLoadAddress(code, 7, fixedInfoOffset);
+        ElfTestImages.putInt(code, lw(6, 48, 7));
+        ElfTestImages.putInt(code, ElfTestImages.addi(8, 0, 8));
+        int strideBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(11, 0, 4));
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_LSEEK));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(8, 0, 4));
+        int lseekBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 5, 0));
+        putLoadAddress(code, 11, pixelOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, 4));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_WRITE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(8, 0, 4));
+        int writeBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int failurePosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, variableIoctlBranchPosition, bne(10, 0, failurePosition - variableIoctlBranchPosition));
+        patchInstruction(code, widthBranchPosition, bne(6, 8, failurePosition - widthBranchPosition));
+        patchInstruction(code, heightBranchPosition, bne(6, 8, failurePosition - heightBranchPosition));
+        patchInstruction(
+                code,
+                bitsPerPixelBranchPosition,
+                bne(6, 8, failurePosition - bitsPerPixelBranchPosition));
+        patchInstruction(code, fixedIoctlBranchPosition, bne(10, 0, failurePosition - fixedIoctlBranchPosition));
+        patchInstruction(code, strideBranchPosition, bne(6, 8, failurePosition - strideBranchPosition));
+        patchInstruction(code, lseekBranchPosition, bne(10, 8, failurePosition - lseekBranchPosition));
+        patchInstruction(code, writeBranchPosition, bne(10, 8, failurePosition - writeBranchPosition));
+
+        code.position(pathOffset);
+        code.put("/dev/fb0".getBytes(StandardCharsets.US_ASCII));
+        code.put((byte) 0);
+        code.position(pixelOffset);
+        code.put(new byte[]{0x33, 0x22, 0x11, 0});
         return code.array();
     }
 
