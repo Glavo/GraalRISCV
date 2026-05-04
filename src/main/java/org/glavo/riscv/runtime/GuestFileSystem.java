@@ -12,10 +12,10 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 import org.jetbrains.annotations.UnmodifiableView;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PushbackInputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.NonWritableChannelException;
@@ -870,15 +870,11 @@ public final class GuestFileSystem {
 
         /// Opens a memory tar source, transparently unwrapping gzip-compressed archives.
         private static InputStream openMemoryTarInputStream(HostPath archive) throws IOException {
-            PushbackInputStream input = new PushbackInputStream(archive.newInputStream(), 2);
+            BufferedInputStream input = new BufferedInputStream(archive.newInputStream());
+            input.mark(2);
             int first = input.read();
             int second = input.read();
-            if (second >= 0) {
-                input.unread(second);
-            }
-            if (first >= 0) {
-                input.unread(first);
-            }
+            input.reset();
             return first == 0x1f && second == 0x8b ? new GZIPInputStream(input) : input;
         }
 
