@@ -70,6 +70,13 @@ tasks.withType<JavaExec>().configureEach {
     jvmArgs(unsafeModuleArgs)
 }
 
+tasks.register<JavaExec>("runSwingFramebufferDemo") {
+    group = "application"
+    description = "Run the Swing framebuffer smoke demo."
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass = "org.glavo.riscv.gui.SwingFramebufferDemo"
+}
+
 tasks.withType<JavaCompile>().configureEach {
     options.compilerArgs.add("--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED")
 }
