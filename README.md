@@ -204,6 +204,30 @@ limit:
 ./gradlew "-Pjriscv.riscvTestsMaxInstructions=20000000" testRiscVTests
 ```
 
+## LTP Syscall Checks
+
+Generate the Linux Test Project syscall coverage guide:
+
+```text
+./gradlew ltpSyscallCoverage
+```
+
+Run the LTP ABI-table driven syscall smoke test:
+
+```text
+./gradlew testLtpSyscallSmoke
+```
+
+Run both checks:
+
+```text
+./gradlew ltpSyscallCheck
+```
+
+The smoke test is generated from LTP's asm-generic 64-bit syscall table and
+then built as a static `riscv64-linux-musl` ELF before running through the
+JRISC-V CLI.
+
 ## Package And CI Smoke Checks
 
 Run package smoke tests that do not require Zig:
