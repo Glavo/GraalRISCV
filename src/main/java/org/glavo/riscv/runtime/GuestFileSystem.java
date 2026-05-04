@@ -15,6 +15,7 @@ import org.jetbrains.annotations.UnmodifiableView;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PushbackInputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.NonWritableChannelException;
@@ -28,6 +29,7 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.zip.GZIPInputStream;
 
 /// Describes the guest-visible filesystem mount namespace used by Linux syscalls.
 ///
@@ -831,7 +833,7 @@ public final class GuestFileSystem {
         static TarFileSystem readMemory(HostPath archive) throws IOException {
             TarFileSystem fileSystem = new TarFileSystem(null);
             ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();
-            try (InputStream input = archive.newInputStream();
+            try (InputStream input = openMemoryTarInputStream(archive);
                  TarArchiveInputStream tarInput = new TarArchiveInputStream(input)) {
                 TarArchiveEntry entry;
                 while ((entry = tarInput.getNextEntry()) != null) {
@@ -864,6 +866,20 @@ public final class GuestFileSystem {
                 fileSystem.addHardLink(hardLink.path(), hardLink.targetPath(), hardLink.mode(), hardLink.userId(), hardLink.groupId());
             }
             return fileSystem;
+        }
+
+        /// Opens a memory tar source, transparently unwrapping gzip-compressed archives.
+        private static InputStream openMemoryTarInputStream(HostPath archive) throws IOException {
+            PushbackInputStream input = new PushbackInputStream(archive.newInputStream(), 2);
+            int first = input.read();
+            int second = input.read();
+            if (second >= 0) {
+                input.unread(second);
+            }
+            if (first >= 0) {
+                input.unread(first);
+            }
+            return first == 0x1f && second == 0x8b ? new GZIPInputStream(input) : input;
         }
 
         /// Reads tar metadata while leaving regular file contents in the archive.

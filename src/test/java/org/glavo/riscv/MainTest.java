@@ -25,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -338,6 +339,31 @@ public final class MainTest {
                 new String[]{
                         "--max-instructions", "1000",
                         "--mount", "type=tar,src=" + archive + ",dst=/data",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("mounted-data", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that memory tar mounts accept gzip-compressed tar archives.
+    @Test
+    public void memoryTarMountExposesGzipCompressedTarArchiveAtGuestPath() throws Exception {
+        Path elfPath = tempDirectory.resolve("memory-tar-gzip-read.elf");
+        Files.write(elfPath, ElfTestImages.executable(readMountedFileCode()));
+        Path archive = tempDirectory.resolve("mounted.tar.gz");
+        writeGzipTarEntry(archive, "message.txt", "mounted-data".getBytes(StandardCharsets.UTF_8));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "type=tar,src=" + archive + ",dst=/data,memory",
                         elfPath.toString()
                 },
                 new ByteArrayInputStream(new byte[0]),
@@ -1492,6 +1518,20 @@ public final class MainTest {
              TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
             writeTarFile(tarOutput, name, data);
             tarOutput.finish();
+        }
+    }
+
+    /// Writes one regular-file entry to a gzip-compressed tar archive.
+    private static void writeGzipTarEntry(Path archive, String name, byte[] data) throws Exception {
+        ByteArrayOutputStream tarBytes = new ByteArrayOutputStream();
+        try (TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(tarBytes)) {
+            writeTarFile(tarOutput, name, data);
+            tarOutput.finish();
+        }
+
+        try (OutputStream output = Files.newOutputStream(archive);
+             GZIPOutputStream gzipOutput = new GZIPOutputStream(output)) {
+            gzipOutput.write(tarBytes.toByteArray());
         }
     }
 

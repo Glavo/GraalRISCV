@@ -78,10 +78,11 @@ use Docker-like key-value syntax, for example
 `--mount type=tar,src=ubuntu-base.tar,dst=/`. When `type` is omitted, regular
 host files are inferred as tar mounts and other host paths are inferred as bind
 mounts. Non-memory tar mounts are lazy and read file payloads from the archive
-only when opened. `memory` is valid only for tar mounts; `memory,rw` loads the
-archive into process memory and allows guest writes that are discarded when the
-process exits. If no `/` mount is provided for a host executable, the CLI mounts
-the directory containing that executable at `/`.
+only when opened. `memory` is valid only for tar mounts; memory tar mounts accept
+plain tar archives and gzip-compressed tar archives such as `.tar.gz`.
+`memory,rw` loads the archive into process memory and allows guest writes that
+are discarded when the process exits. If no `/` mount is provided for a host
+executable, the CLI mounts the directory containing that executable at `/`.
 By default, guest `/dev/tty` is backed by the configured process streams; pass
 `--use-host-tty` to try a real host controlling terminal when available. Pass
 `--framebuffer <width>x<height>` to create a Swing-backed XRGB8888 framebuffer
