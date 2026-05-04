@@ -226,7 +226,8 @@ Run both checks:
 
 The smoke test is generated from LTP's asm-generic 64-bit syscall table and
 then built as a static `riscv64-linux-musl` ELF before running through the
-JRISC-V CLI.
+JRISC-V CLI. It covers identity, process/resource, time, random, and
+bind-mounted file-system syscall behavior.
 
 ## Package And CI Smoke Checks
 
