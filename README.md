@@ -36,57 +36,56 @@ java -jar build/libs/riscv-1.0-SNAPSHOT-all.jar path/to/program.riscv64-musl
 ## CLI Options
 
 ```text
+Usage:
 jriscv [options] <program.elf> [program-args...]
 jriscv [options] --guest-program <path> [program-args...]
 
 Options:
-  --guest-program <path>    Load the executable from an absolute guest path resolved through --mount.
-  --memory-base <address>    Guest memory base address; accepts auto, decimal, or 0x-prefixed hex.
-                              Default is 0; auto infers the base from ELF load segments.
-  --memory-size <bytes>      Guest virtual address window size in bytes.
-  --page-size <bytes>        Guest base page size in bytes; power of two at least 4096.
-  --max-committed-pages <n>  Maximum committed guest base pages; 0 means unlimited.
-  --huge-page-size <bytes>   Guest HugeTLB page size in bytes.
-  --huge-pages <n>           Guest HugeTLB page pool size.
-  --vector-vlen <bits>       Vector register length in bits. Default is 128.
-  --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-  --mount <spec>             Mount a filesystem:
+  --guest-program <path>     Load the executable from an absolute guest path resolved through mounts.
+  --memory-base <address>    Set the guest memory base address: auto, decimal, or 0x-prefixed hex.
+                              Default: 0. auto derives the base from ELF load segments.
+  --memory-size <bytes>      Set the guest virtual address window size.
+  --page-size <bytes>        Set the guest base page size; must be a power of two >= 4096.
+  --max-committed-pages <n>  Limit committed guest base pages; 0 disables the limit.
+  --huge-page-size <bytes>   Set the guest HugeTLB page size.
+  --huge-pages <n>           Set the number of guest HugeTLB pages.
+  --vector-vlen <bits>       Set vector register length. Default: 128.
+  --max-instructions <count> Stop after this many guest instructions; 0 disables the limit.
+  --mount <spec>             Add a guest filesystem mount:
                               type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory]
                               or type=tmpfs,dst=<guest>[,readonly|rw].
-  --network <none|host>      Guest Internet socket backend. Default is none.
-  --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
+  --network <none|host>      Select the Internet socket backend. Default: none.
+  --use-host-tty             Attach guest /dev/tty to the host controlling terminal when available.
   --framebuffer <width>x<height>
                               Open a Swing framebuffer and expose it as guest /dev/fb0.
-  --framebuffer-scale <n>     Integer Swing framebuffer scale. Default is 3.
-  --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
-  --user <name>              Guest login name exported in the default environment.
-  --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
-  --gid <id>                 Guest real, effective, and saved gid. Default is 1000.
-  --groups <ids|none>        Comma-separated supplementary guest gids, or none.
-  --home <path>              Guest home directory used by the default environment.
-  --shell <path>             Guest shell path used by the default environment.
+  --framebuffer-scale <n>    Set integer Swing framebuffer scale. Default: 3.
+  --root                     Use root identity; equivalent to --user root --uid 0 --gid 0 --groups 0.
+  --user <name>              Set the guest login name exported in the default environment.
+  --uid <id>                 Set guest real, effective, and saved uid. Default: 1000.
+  --gid <id>                 Set guest real, effective, and saved gid. Default: 1000.
+  --groups <ids|none>        Set comma-separated supplementary guest gids, or none.
+  --home <path>              Set the guest home directory used by the default environment.
+  --shell <path>             Set the guest shell path used by the default environment.
   --debug-fixed-clock-nanos <nanos>
-                              Fixed epoch nanoseconds for deterministic guest time.
+                              Use fixed epoch nanoseconds for deterministic guest time.
   --debug-trace-compilation  Accepted for compatibility; currently ignored.
-  --trace                    Print guest instruction trace lines.
+  --trace                    Print guest instruction traces.
   -h, --help                 Print this help message.
 ```
 
 `<program.elf>` is interpreted as a host path. Use `--guest-program` when the
-executable should be loaded from the guest filesystem. `--mount` controls the
-host directories, tar archives, and tmpfs trees visible to guest file syscalls.
-Mount specs use Docker-like key-value syntax, for example
-`--mount type=bind,src=./root,dst=/,readonly` or
-`--mount type=tar,src=ubuntu-base.tar,dst=/`, or
-`--mount type=tmpfs,dst=/tmp`. When `type` is omitted, regular host files are
-inferred as tar mounts and other host paths are inferred as bind mounts.
-Non-memory tar mounts are lazy and read file payloads from the archive only when
-opened. `memory` is meaningful for tar mounts; memory tar mounts accept plain tar
-archives and gzip-compressed tar archives such as `.tar.gz`. `memory,rw` loads
-the archive into process memory and allows guest writes that are discarded when
-the process exits. Tmpfs mounts are empty writable in-memory trees by default.
-If no `/` mount is provided for a host executable, the CLI mounts the directory
-containing that executable at `/`.
+executable must be loaded from a guest mount instead. `--mount` accepts
+Docker-like key-value specs for bind mounts, tar archives, and tmpfs trees:
+`type=bind,src=./root,dst=/,readonly`,
+`type=tar,src=ubuntu-base.tar,dst=/`, or `type=tmpfs,dst=/tmp`. When `type` is
+omitted, regular host files are inferred as tar mounts and other host paths are
+inferred as bind mounts.
+
+Tar mounts are lazy by default and read file payloads from the archive only when
+opened. Add `memory` to load a tar archive into process memory; add `rw` as well
+to allow guest writes that are discarded when the process exits. Tmpfs mounts
+are empty writable in-memory trees by default. If no `/` mount is provided for a
+host executable, the CLI mounts the executable's containing directory at `/`.
 By default, guest `/dev/tty` is backed by the configured process streams; pass
 `--use-host-tty` to try a real host controlling terminal when available. Pass
 `--framebuffer <width>x<height>` to create a Swing-backed XRGB8888 framebuffer
