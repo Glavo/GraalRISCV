@@ -149,6 +149,22 @@ public final class GuestFileSystem {
         return hasMountAt(normalizedGuestPath) ? this : withVirtualMount(normalizedGuestPath, fileSystem);
     }
 
+    /// Returns a filesystem that inherits current non-virtual mounts and drops process-local virtual mounts.
+    public GuestFileSystem withoutVirtualMounts() {
+        Mount @Nullable [] mounts = resolvedMounts;
+        if (mounts == null) {
+            return new GuestFileSystem(eagerMounts, mountSpecs, new VirtualMount[0]);
+        }
+
+        ArrayList<Mount> inheritedMounts = new ArrayList<>(mounts.length);
+        for (Mount mount : mounts) {
+            if (!(mount instanceof VirtualMount)) {
+                inheritedMounts.add(mount);
+            }
+        }
+        return new GuestFileSystem(inheritedMounts.toArray(Mount[]::new), new String[0], new VirtualMount[0]);
+    }
+
     /// Reads a regular file from a filesystem described by lazy mount specs.
     public static byte @Unmodifiable [] readMountedFile(
             String @Unmodifiable [] mountSpecs,

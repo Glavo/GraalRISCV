@@ -35,6 +35,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -2693,6 +2694,101 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0644, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EROFS, state.register(10));
+        }
+    }
+
+    /// Verifies forked child processes inherit writable memory tar changes made before `clone`.
+    @Test
+    public void cloneInheritsWritableMemoryTarChanges() throws Exception {
+        Path archive = tempDirectory.resolve("clone-memory.tar");
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            tarOutput.finish();
+        }
+
+        CompletableFuture<String> childRead = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                long childPathAddress = childMemory.baseAddress();
+                long childBufferAddress = childMemory.baseAddress() + 256;
+
+                writeGuestString(childMemory, childPathAddress, "/tar/A.txt");
+                setSyscall(childState, SYS_OPENAT, AT_FDCWD, childPathAddress, O_RDONLY, 0);
+                childState.syscalls().handle(childState, TEST_PC);
+                long childFileDescriptor = childState.register(10);
+                if (childFileDescriptor < 0) {
+                    throw new AssertionError("Child open failed: " + childFileDescriptor);
+                }
+
+                setSyscall(childState, SYS_READ, childFileDescriptor, childBufferAddress, 8);
+                childState.syscalls().handle(childState, TEST_PC);
+                long readCount = childState.register(10);
+                if (readCount < 0) {
+                    throw new AssertionError("Child read failed: " + readCount);
+                }
+
+                setSyscall(childState, SYS_CLOSE, childFileDescriptor, 0, 0);
+                childState.syscalls().handle(childState, TEST_PC);
+                if (childState.register(10) != 0) {
+                    throw new AssertionError("Child close failed: " + childState.register(10));
+                }
+
+                childRead.complete(readGuestString(childMemory, childBufferAddress, (int) readCount));
+                childState.syscalls().recordThreadExit(childState, 0);
+            } catch (Throwable throwable) {
+                childRead.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    new String[]{"type=tar,src=" + archive + ",dst=/tar,memory,rw"},
+                    TimeSource.system(),
+                    runner);
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long pathAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 256;
+            long statusAddress = memory.baseAddress() + 512;
+            byte[] data = "A\n".getBytes(StandardCharsets.UTF_8);
+
+            writeGuestString(memory, pathAddress, "/tar/A.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            memory.writeBytes(dataAddress, data, 0, data.length);
+            setSyscall(state, SYS_WRITE, fileDescriptor, dataAddress, data.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(data.length, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+
+            assertEquals("A\n", childRead.get(5, TimeUnit.SECONDS));
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+            assertEquals(0, memory.readInt(statusAddress));
         }
     }
 

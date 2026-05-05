@@ -1639,7 +1639,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.out = parent.out;
         this.err = parent.err;
         this.guestThreadRunner = parent.guestThreadRunner;
-        this.baseFileSystem = parent.baseFileSystem;
+        this.baseFileSystem = parent.fileSystem.withoutVirtualMounts();
         this.terminalDevice = parent.terminalDevice.retain();
         this.framebufferDevice = parent.framebufferDevice;
         this.fileSystem = addDefaultVirtualMounts(baseFileSystem);
