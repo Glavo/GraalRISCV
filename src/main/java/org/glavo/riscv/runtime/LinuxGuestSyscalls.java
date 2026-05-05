@@ -1903,6 +1903,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux netlink protocol number for route and interface metadata.
     private static final long NETLINK_ROUTE = 0;
 
+    /// Linux IPv4 protocol level.
+    private static final long IPPROTO_IP = 0;
+
     /// Linux TCP protocol number.
     private static final long IPPROTO_TCP = 6;
 
@@ -1911,6 +1914,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Linux IPv6 protocol level.
     private static final long IPPROTO_IPV6 = 41;
+
+    /// Linux `IP_RECVERR`.
+    private static final long IP_RECVERR = 11;
+
+    /// Linux `IPV6_RECVERR`.
+    private static final long IPV6_RECVERR = 25;
 
     /// Linux socket option level for generic socket options.
     private static final long SOL_SOCKET = 1;
@@ -1944,6 +1953,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Linux `MSG_NOSIGNAL`.
     private static final long MSG_NOSIGNAL = 0x4000L;
+
+    /// Linux `MSG_WAITFORONE`.
+    private static final long MSG_WAITFORONE = 0x10000L;
 
     /// Linux message flags accepted by the host socket backend.
     private static final long SUPPORTED_SOCKET_MESSAGE_FLAGS = MSG_DONTWAIT | MSG_NOSIGNAL;
@@ -2016,6 +2028,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Byte offset of `msg_flags` inside Linux RISC-V 64-bit `struct msghdr`.
     private static final long MSGHDR_FLAGS_OFFSET = 6L * Long.BYTES;
+
+    /// Byte offset of `msg_len` inside Linux RISC-V 64-bit `struct mmsghdr`.
+    private static final long MMSGHDR_LENGTH_OFFSET = 7L * Long.BYTES;
+
+    /// Byte size of Linux RISC-V 64-bit `struct mmsghdr`.
+    private static final long MMSGHDR_SIZE = 8L * Long.BYTES;
 
     /// Byte size of Linux `struct nlmsghdr`.
     private static final int NETLINK_HEADER_SIZE = 16;
@@ -2879,6 +2897,66 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return EINVAL;
         }
         return writeIovBytes(iovecAddress, iovecCount, response);
+    }
+
+    /// Sends multiple datagrams described by Linux `struct mmsghdr` entries.
+    protected long sendmmsg(int fileDescriptor, long messageVectorAddress, long messageCount, long flags) {
+        if (messageCount < 0 || messageCount > IOV_MAX) {
+            return EINVAL;
+        }
+        long messageVectorLength = messageCount * MMSGHDR_SIZE;
+        if (messageVectorLength < 0 || !memory.isBacked(messageVectorAddress, messageVectorLength)) {
+            return EFAULT;
+        }
+
+        int sent = 0;
+        for (long index = 0; index < messageCount; index++) {
+            long messageAddress = messageVectorAddress + index * MMSGHDR_SIZE;
+            long result = sendmsg(fileDescriptor, messageAddress, flags);
+            if (result < 0) {
+                return sent > 0 ? sent : result;
+            }
+            memory.writeInt(messageAddress + MMSGHDR_LENGTH_OFFSET, (int) result);
+            sent++;
+        }
+        return sent;
+    }
+
+    /// Receives multiple datagrams described by Linux `struct mmsghdr` entries.
+    protected long recvmmsg(
+            int fileDescriptor,
+            long messageVectorAddress,
+            long messageCount,
+            long flags,
+            long timeoutAddress) {
+        if (messageCount < 0 || messageCount > IOV_MAX) {
+            return EINVAL;
+        }
+        if ((flags & ~MSG_WAITFORONE & ~SUPPORTED_SOCKET_MESSAGE_FLAGS) != 0) {
+            return EINVAL;
+        }
+        long messageVectorLength = messageCount * MMSGHDR_SIZE;
+        if (messageVectorLength < 0
+                || !memory.isBacked(messageVectorAddress, messageVectorLength)
+                || (timeoutAddress != 0 && !memory.isBacked(timeoutAddress, 2L * Long.BYTES))) {
+            return EFAULT;
+        }
+
+        long receiveFlags = flags & ~MSG_WAITFORONE;
+        int received = 0;
+        for (long index = 0; index < messageCount; index++) {
+            long messageAddress = messageVectorAddress + index * MMSGHDR_SIZE;
+            long result = recvmsg(fileDescriptor, messageAddress, receiveFlags);
+            if (result < 0) {
+                return received > 0 ? received : result;
+            }
+            memory.writeInt(messageAddress + MMSGHDR_LENGTH_OFFSET, (int) result);
+            received++;
+            if ((flags & MSG_WAITFORONE) != 0) {
+                receiveFlags |= MSG_DONTWAIT;
+            }
+        }
+        return received;
     }
 
     /// Writes the local netlink socket address for `getsockname`.
@@ -3927,6 +4005,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         /// Whether `TCP_NODELAY` is enabled.
         private boolean tcpNoDelay;
 
+        /// Whether `IP_RECVERR` is enabled.
+        private boolean ipReceiveErrors;
+
+        /// Whether `IPV6_RECVERR` is enabled.
+        private boolean ipv6ReceiveErrors;
+
         /// Whether `IPV6_V6ONLY` is enabled.
         private boolean ipv6Only;
 
@@ -3970,6 +4054,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             reusePort = server.reusePort;
             keepAlive = server.keepAlive;
             tcpNoDelay = server.tcpNoDelay;
+            ipReceiveErrors = server.ipReceiveErrors;
+            ipv6ReceiveErrors = server.ipv6ReceiveErrors;
+            ipv6Only = server.ipv6Only;
             sendBufferSize = server.sendBufferSize;
             receiveBufferSize = server.receiveBufferSize;
             applyOptions(streamChannel);
@@ -4252,6 +4339,14 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     tcpNoDelay = value != 0;
                     return setBooleanOption(StandardSocketOptions.TCP_NODELAY, tcpNoDelay);
                 }
+                if (level == IPPROTO_IP && option == IP_RECVERR && domain == AF_INET) {
+                    ipReceiveErrors = value != 0;
+                    return 0;
+                }
+                if (level == IPPROTO_IPV6 && option == IPV6_RECVERR && domain == AF_INET6) {
+                    ipv6ReceiveErrors = value != 0;
+                    return 0;
+                }
                 if (level == IPPROTO_IPV6 && option == IPV6_V6ONLY && domain == AF_INET6) {
                     ipv6Only = value != 0;
                     return 0;
@@ -4272,6 +4367,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 }
                 if (level == IPPROTO_TCP && option == TCP_NODELAY && socketType == SOCK_STREAM) {
                     return OptionResult.value(booleanOption(StandardSocketOptions.TCP_NODELAY, tcpNoDelay) ? 1 : 0);
+                }
+                if (level == IPPROTO_IP && option == IP_RECVERR && domain == AF_INET) {
+                    return OptionResult.value(ipReceiveErrors ? 1 : 0);
+                }
+                if (level == IPPROTO_IPV6 && option == IPV6_RECVERR && domain == AF_INET6) {
+                    return OptionResult.value(ipv6ReceiveErrors ? 1 : 0);
                 }
                 if (level == IPPROTO_IPV6 && option == IPV6_V6ONLY && domain == AF_INET6) {
                     return OptionResult.value(ipv6Only ? 1 : 0);
@@ -5555,6 +5656,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `accept4`.
     private static final int SYS_ACCEPT4 = 242;
 
+    /// The Linux RISC-V syscall number for `recvmmsg`.
+    private static final int SYS_RECVMMSG = 243;
+
     /// The Linux RISC-V syscall number for `madvise`.
     private static final int SYS_MADVISE = 233;
 
@@ -5572,6 +5676,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `syncfs`.
     private static final int SYS_SYNCFS = 267;
+
+    /// The Linux RISC-V syscall number for `sendmmsg`.
+    private static final int SYS_SENDMMSG = 269;
 
     /// The Linux RISC-V syscall number for `renameat2`.
     private static final int SYS_RENAMEAT2 = 276;
@@ -5921,6 +6028,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     (int) state.register(10),
                     state.register(11),
                     state.register(12)));
+            case SYS_RECVMMSG -> state.setRegister(10, recvmmsg(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
+            case SYS_SENDMMSG -> state.setRegister(10, sendmmsg(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_CLONE -> state.setRegister(10, clone(
                     state,
                     pc,

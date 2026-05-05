@@ -1132,6 +1132,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The guest path where the built-in virtual sys filesystem is mounted.
     protected static final String SYS_MOUNT_PATH = "/sys";
 
+    /// The guest resolver configuration path.
+    protected static final String RESOLV_CONF_PATH = "/etc/resolv.conf";
+
     /// Synthetic inode base used for virtual proc entries.
     protected static final long PROC_INODE_BASE = 0x7000_0000L;
 
@@ -1334,10 +1337,40 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Adds process-local default virtual filesystems unless the user already supplied those mount points.
     protected GuestFileSystem addDefaultVirtualMounts(GuestFileSystem fileSystem) {
-        return fileSystem
+        GuestFileSystem mountedFileSystem = fileSystem
                 .withDefaultVirtualMount(DEV_MOUNT_PATH, new DevFileSystem(framebufferDevice))
                 .withDefaultVirtualMount(PROC_MOUNT_PATH, new ProcFileSystem())
                 .withDefaultVirtualMount(SYS_MOUNT_PATH, new SysFileSystem());
+        if (!guestRegularFileExists(mountedFileSystem, RESOLV_CONF_PATH)) {
+            mountedFileSystem = mountedFileSystem.withDefaultVirtualMount(
+                    RESOLV_CONF_PATH,
+                    new ResolvConfFileSystem());
+        }
+        return mountedFileSystem;
+    }
+
+    /// Returns true when a guest path resolves to an existing regular file.
+    protected static boolean guestRegularFileExists(GuestFileSystem fileSystem, String absoluteGuestPath) {
+        @Nullable Mount mount = fileSystem.mountForGuestPath(absoluteGuestPath);
+        if (mount instanceof TarMount) {
+            @Nullable TarPath tarPath = fileSystem.resolveTarPath(absoluteGuestPath, true);
+            @Nullable TarNode node = tarPath == null ? null : tarPath.node();
+            return node != null && node.isFile();
+        }
+        if (mount instanceof VirtualMount virtualMount) {
+            @Nullable VirtualPath virtualPath = fileSystem.resolveVirtualPath(virtualMount, absoluteGuestPath, true);
+            @Nullable VirtualNode node = virtualPath == null ? null : virtualPath.node();
+            return node != null && node.isFile();
+        }
+        if (mount instanceof HostMount hostMount) {
+            @Nullable Path hostFile = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
+            try {
+                return hostFile != null && Files.isRegularFile(hostFile);
+            } catch (SecurityException exception) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /// Creates a syscall handler backed by the supplied host streams and heap boundary.
@@ -7595,6 +7628,63 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             bytes[index] = (byte) (value >>> (index * Byte.SIZE));
         }
         memory.writeBytes(address, bytes, 0, bytes.length);
+    }
+
+    /// Provides a container-style resolver configuration when the mounted root lacks one.
+    protected static final class ResolvConfFileSystem implements GuestFileSystem.VirtualFileSystem {
+        /// Returns the synthetic resolver configuration node.
+        @Override
+        public @Nullable VirtualNode node(String absoluteGuestPath) {
+            return RESOLV_CONF_PATH.equals(absoluteGuestPath)
+                    ? VirtualNode.file(RESOLV_CONF_PATH, RESOLV_CONF_PATH)
+                    : null;
+        }
+
+        /// Returns no children because this virtual mount is a single regular file.
+        @Override
+        public VirtualNode @Unmodifiable [] childNodes(String directoryGuestPath) {
+            return new VirtualNode[0];
+        }
+
+        /// Returns host resolver configuration bytes, falling back to public recursive resolvers.
+        @Override
+        public byte @Unmodifiable [] fileData(VirtualNode node) {
+            return resolvConfData();
+        }
+
+        /// Returns an empty link target because this virtual filesystem has no symbolic links.
+        @Override
+        public String linkTarget(VirtualNode node) {
+            return "";
+        }
+
+        /// Returns resolver configuration bytes copied from the host when available.
+        private static byte @Unmodifiable [] resolvConfData() {
+            try {
+                byte[] bytes = Files.readAllBytes(Path.of(RESOLV_CONF_PATH));
+                if (bytes.length > 0 && bytes.length <= 64 * 1024 && containsNameserverDirective(bytes)) {
+                    return bytes;
+                }
+            } catch (IOException | SecurityException exception) {
+                return fallbackResolvConfData();
+            }
+            return fallbackResolvConfData();
+        }
+
+        /// Returns true when resolver bytes contain a `nameserver` directive.
+        private static boolean containsNameserverDirective(byte @Unmodifiable [] bytes) {
+            for (String line : new String(bytes, StandardCharsets.US_ASCII).split("\n")) {
+                if (line.stripLeading().startsWith("nameserver")) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Returns a small static resolver configuration for hosts without `/etc/resolv.conf`.
+        private static byte @Unmodifiable [] fallbackResolvConfData() {
+            return asciiBytes("nameserver 1.1.1.1\nnameserver 8.8.8.8\n");
+        }
     }
 
     /// Identifies the built-in virtual device nodes exposed below `/dev`.

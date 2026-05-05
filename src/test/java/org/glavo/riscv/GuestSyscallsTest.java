@@ -5,6 +5,7 @@ package org.glavo.riscv;
 
 import kala.compress.archivers.tar.TarArchiveEntry;
 import kala.compress.archivers.tar.TarArchiveOutputStream;
+import kala.compress.archivers.tar.TarConstants;
 import org.glavo.riscv.exception.*;
 import org.glavo.riscv.constants.RiscVExtensions;
 import org.glavo.riscv.memory.*;
@@ -485,6 +486,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `accept4`.
     private static final long SYS_ACCEPT4 = 242;
 
+    /// The Linux RISC-V syscall number for `recvmmsg`.
+    private static final long SYS_RECVMMSG = 243;
+
     /// The Linux RISC-V syscall number for `mincore`.
     private static final long SYS_MINCORE = 232;
 
@@ -505,6 +509,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `syncfs`.
     private static final long SYS_SYNCFS = 267;
+
+    /// The Linux RISC-V syscall number for `sendmmsg`.
+    private static final long SYS_SENDMMSG = 269;
 
     /// The Linux RISC-V syscall number for `renameat2`.
     private static final long SYS_RENAMEAT2 = 276;
@@ -962,6 +969,9 @@ public final class GuestSyscallsTest {
     /// Linux netlink protocol number for route and interface metadata.
     private static final long NETLINK_ROUTE = 0;
 
+    /// Linux IPv4 protocol level.
+    private static final long IPPROTO_IP = 0;
+
     /// Linux TCP protocol number.
     private static final long IPPROTO_TCP = 6;
 
@@ -970,6 +980,12 @@ public final class GuestSyscallsTest {
 
     /// Linux IPv6 protocol level.
     private static final long IPPROTO_IPV6 = 41;
+
+    /// Linux `IP_RECVERR`.
+    private static final long IP_RECVERR = 11;
+
+    /// Linux `IPV6_RECVERR`.
+    private static final long IPV6_RECVERR = 25;
 
     /// Linux socket option level for generic socket options.
     private static final long SOL_SOCKET = 1;
@@ -1057,6 +1073,12 @@ public final class GuestSyscallsTest {
 
     /// Byte offset of `msg_flags` inside Linux RISC-V 64-bit `struct msghdr`.
     private static final int MSGHDR_FLAGS_OFFSET = 6 * Long.BYTES;
+
+    /// Byte offset of `msg_len` inside Linux RISC-V 64-bit `struct mmsghdr`.
+    private static final int MMSGHDR_LENGTH_OFFSET = 7 * Long.BYTES;
+
+    /// Byte size of Linux RISC-V 64-bit `struct mmsghdr`.
+    private static final int MMSGHDR_SIZE = 8 * Long.BYTES;
 
     /// Byte size of one Linux RISC-V 64-bit `struct iovec`.
     private static final int IOVEC_SIZE = 2 * Long.BYTES;
@@ -7094,6 +7116,50 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies UDP sockets accept resolver-related extended-error options.
+    @Test
+    public void hostNetworkUdpReceiveErrorOptionsAreAccepted() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long optionAddress = memory.baseAddress();
+            long optionLengthAddress = memory.baseAddress() + 64;
+
+            setSyscall(state, SYS_SOCKET, AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            state.syscalls().handle(state, TEST_PC);
+            int ipv4FileDescriptor = (int) state.register(10);
+            assertEquals(3, ipv4FileDescriptor);
+
+            assertSetAndGetSocketOption(
+                    state,
+                    memory,
+                    ipv4FileDescriptor,
+                    IPPROTO_IP,
+                    IP_RECVERR,
+                    1,
+                    optionAddress,
+                    optionLengthAddress);
+
+            setSyscall(state, SYS_CLOSE, ipv4FileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SOCKET, AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+            state.syscalls().handle(state, TEST_PC);
+            int ipv6FileDescriptor = (int) state.register(10);
+            assertEquals(3, ipv6FileDescriptor);
+
+            assertSetAndGetSocketOption(
+                    state,
+                    memory,
+                    ipv6FileDescriptor,
+                    IPPROTO_IPV6,
+                    IPV6_RECVERR,
+                    1,
+                    optionAddress,
+                    optionLengthAddress);
+        }
+    }
+
     /// Verifies a guest TCP server can accept a host loopback client.
     @Test
     public void hostNetworkTcpServerAcceptsHostClient() throws Exception {
@@ -7186,6 +7252,69 @@ public final class GuestSyscallsTest {
             assertGuestUdpEcho(loopback);
         } catch (IOException exception) {
             assumeTrue(false, "IPv6 UDP loopback is unavailable: " + exception.getMessage());
+        }
+    }
+
+    /// Verifies host networking supports batched IPv4 UDP sends through `sendmmsg`.
+    @Test
+    public void hostNetworkSendmmsgSendsUdpDatagrams() throws Exception {
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        try (DatagramSocket server = new DatagramSocket(new InetSocketAddress(loopback, 0));
+             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long messageVectorAddress = memory.baseAddress();
+            long firstSockaddrAddress = memory.baseAddress() + 256;
+            long secondSockaddrAddress = memory.baseAddress() + 288;
+            long firstIovecAddress = memory.baseAddress() + 512;
+            long secondIovecAddress = memory.baseAddress() + 528;
+            long firstPayloadAddress = memory.baseAddress() + 768;
+            long secondPayloadAddress = memory.baseAddress() + 784;
+
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> serverTask = executor.submit(() -> {
+                    byte[] first = new byte[3];
+                    byte[] second = new byte[3];
+                    server.receive(new DatagramPacket(first, first.length));
+                    server.receive(new DatagramPacket(second, second.length));
+                    assertEquals("one", new String(first, StandardCharsets.UTF_8));
+                    assertEquals("two", new String(second, StandardCharsets.UTF_8));
+                    return null;
+                });
+
+                setSyscall(state, SYS_SOCKET, AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                state.syscalls().handle(state, TEST_PC);
+                int socketFileDescriptor = (int) state.register(10);
+                assertEquals(3, socketFileDescriptor);
+
+                writeMmsgUdpMessage(
+                        memory,
+                        messageVectorAddress,
+                        firstSockaddrAddress,
+                        firstIovecAddress,
+                        firstPayloadAddress,
+                        loopback,
+                        server.getLocalPort(),
+                        "one");
+                writeMmsgUdpMessage(
+                        memory,
+                        messageVectorAddress + MMSGHDR_SIZE,
+                        secondSockaddrAddress,
+                        secondIovecAddress,
+                        secondPayloadAddress,
+                        loopback,
+                        server.getLocalPort(),
+                        "two");
+
+                setSyscall(state, SYS_SENDMMSG, socketFileDescriptor, messageVectorAddress, 2, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(2, state.register(10));
+                assertEquals(3, memory.readInt(messageVectorAddress + MMSGHDR_LENGTH_OFFSET));
+                assertEquals(3, memory.readInt(messageVectorAddress + MMSGHDR_SIZE + MMSGHDR_LENGTH_OFFSET));
+                waitForNetworkTask(serverTask);
+            } finally {
+                executor.shutdownNow();
+            }
         }
     }
 
@@ -7428,6 +7557,82 @@ public final class GuestSyscallsTest {
             nextEntry = assertDirectoryEntry(memory, nextEntry, "..", DIRECTORY_ENTRY_DIRECTORY, 2);
             nextEntry = assertDirectoryEntry(memory, nextEntry, "data.txt", DIRECTORY_ENTRY_REGULAR_FILE, 3);
             assertDirectoryEntry(memory, nextEntry, "link.txt", DIRECTORY_ENTRY_SYMBOLIC_LINK, 4);
+        }
+    }
+
+    /// Verifies a missing cloud-image resolver symlink target is replaced with host resolver configuration.
+    @Test
+    public void defaultResolvConfSuppliesHostResolverForBrokenRootfsLink() throws Exception {
+        Path archive = tempDirectory.resolve("broken-resolv.tar");
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarDirectory(tarOutput, "etc", 0755, 0, 0);
+            writeTarSymbolicLink(
+                    tarOutput,
+                    "etc/resolv.conf",
+                    "../run/systemd/resolve/stub-resolv.conf",
+                    0777,
+                    0,
+                    0);
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.forMountSpecs(new String[]{"type=tar,src=" + archive + ",dst=/"}));
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "/etc/resolv.conf");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 4096);
+            state.syscalls().handle(state, TEST_PC);
+            int byteCount = (int) state.register(10);
+            assertTrue(byteCount > 0);
+            assertTrue(readGuestString(memory, bufferAddress, byteCount).contains("nameserver"));
+        }
+    }
+
+    /// Verifies a valid root filesystem resolver file is not replaced by the default virtual file.
+    @Test
+    public void defaultResolvConfDoesNotReplaceExistingRootfsFile() throws Exception {
+        Path archive = tempDirectory.resolve("existing-resolv.tar");
+        byte[] resolvConf = "nameserver 192.0.2.53\n".getBytes(StandardCharsets.UTF_8);
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarDirectory(tarOutput, "etc", 0755, 0, 0);
+            writeTarFile(tarOutput, "etc/resolv.conf", resolvConf, 0644, 0, 0);
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.forMountSpecs(new String[]{"type=tar,src=" + archive + ",dst=/"}));
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, pathAddress, "/etc/resolv.conf");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, resolvConf.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(resolvConf.length, state.register(10));
+            assertArrayEquals(resolvConf, memory.readBytes(bufferAddress, resolvConf.length));
         }
     }
 
@@ -9008,6 +9213,24 @@ public final class GuestSyscallsTest {
         tarOutput.closeArchiveEntry();
     }
 
+    /// Writes one symbolic-link tar entry with explicit Linux metadata to an open archive.
+    private static void writeTarSymbolicLink(
+            TarArchiveOutputStream tarOutput,
+            String name,
+            String target,
+            int mode,
+            long userId,
+            long groupId) throws IOException {
+        TarArchiveEntry entry = new TarArchiveEntry(name, TarConstants.LF_SYMLINK);
+        entry.setLinkName(target);
+        entry.setMode(mode);
+        entry.setUserId(userId);
+        entry.setGroupId(groupId);
+        entry.setSize(0);
+        tarOutput.putArchiveEntry(entry);
+        tarOutput.closeArchiveEntry();
+    }
+
     /// Reads a fixed-length UTF-8 string from guest memory.
     private static String readGuestString(Memory memory, long address, int length) {
         byte[] bytes = new byte[length];
@@ -9208,6 +9431,28 @@ public final class GuestSyscallsTest {
         memory.writeLong(iovecAddress + IOVEC_BASE_OFFSET, responseAddress);
         memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, responseLength);
         memory.clear(responseAddress, responseLength);
+    }
+
+    /// Prepares one guest `struct mmsghdr` with one UDP send iovec.
+    private static void writeMmsgUdpMessage(
+            Memory memory,
+            long messageAddress,
+            long sockaddrAddress,
+            long iovecAddress,
+            long payloadAddress,
+            InetAddress address,
+            int port,
+            String payload) {
+        byte[] payloadBytes = payload.getBytes(StandardCharsets.UTF_8);
+        memory.clear(messageAddress, MMSGHDR_SIZE);
+        writeInetSockaddr(memory, sockaddrAddress, address, port);
+        memory.writeBytes(payloadAddress, payloadBytes, 0, payloadBytes.length);
+        memory.writeLong(messageAddress, sockaddrAddress);
+        memory.writeInt(messageAddress + MSGHDR_NAME_LENGTH_OFFSET, SOCKADDR_IN_SIZE);
+        memory.writeLong(messageAddress + MSGHDR_IOV_OFFSET, iovecAddress);
+        memory.writeLong(messageAddress + MSGHDR_IOV_LENGTH_OFFSET, 1);
+        memory.writeLong(iovecAddress + IOVEC_BASE_OFFSET, payloadAddress);
+        memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, payloadBytes.length);
     }
 
     /// Verifies one `struct linux_dirent64` record and returns the next record address.

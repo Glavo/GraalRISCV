@@ -482,6 +482,8 @@ public final class VectorInstructionTest {
                     vsetvli(5, 10, vtype(16, 1)),
                     vle(16, 1, 6),
                     vwadduVx(2, 1, 11),
+                    vwsubuVv(6, 1, 1),
+                    vse(32, 6, 13),
                     vnsrlWi(3, 2, 1),
                     vle(8, 4, 7),
                     vsextVf2(5, 4),
@@ -499,6 +501,7 @@ public final class VectorInstructionTest {
             machine.state().setRegister(9, output + 32);
             machine.state().setRegister(11, 9);
             machine.state().setRegister(12, extendedInput);
+            machine.state().setRegister(13, output + 64);
 
             runDecodedProgram(machine);
 
@@ -506,6 +509,9 @@ public final class VectorInstructionTest {
             assertEquals(5, machine.memory().readUnsignedShort(output + Short.BYTES));
             assertEquals(0xfffa, machine.memory().readUnsignedShort(output + 32));
             assertEquals(2, machine.memory().readUnsignedShort(output + 34));
+            for (int index = 0; index < narrowValues.length; index++) {
+                assertEquals(0, machine.memory().readInt(output + 64 + (long) index * Integer.BYTES));
+            }
             assertVectorBytes(machine.state(), 7, 255, 12, 13, 14);
             assertEquals(1, machine.state().readControlStatusRegister(VCSR_CSR) & 1);
         }
@@ -1214,7 +1220,12 @@ public final class VectorInstructionTest {
 
     /// Encodes `vwaddu.vx`.
     private static int vwadduVx(int vd, int vs2, int rs1) {
-        return vectorInteger(0x30, true, vd, rs1, vs2, 4);
+        return vectorInteger(0x30, true, vd, rs1, vs2, 6);
+    }
+
+    /// Encodes `vwsubu.vv`.
+    private static int vwsubuVv(int vd, int vs2, int vs1) {
+        return vectorInteger(0x32, true, vd, vs1, vs2, 2);
     }
 
     /// Encodes `vnsrl.wi`.

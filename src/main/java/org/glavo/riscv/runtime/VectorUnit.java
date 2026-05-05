@@ -1952,7 +1952,7 @@ public final class VectorUnit {
         long wideGroupBytes = groupBytesForElementBits(wideBits);
         requireRegisterGroup(vd, wideGroupBytes);
         requireRegisterGroup(vs2, funct6 >= 0x34 && funct6 <= 0x37 ? wideGroupBytes : narrowGroupBytes);
-        if (funct3 == OPIVV || funct3 == OPMVV) {
+        if (funct3 == OPMVV) {
             requireRegisterGroup(vs1, narrowGroupBytes);
         }
         long start = vectorStart;
@@ -2775,10 +2775,8 @@ public final class VectorUnit {
 
     /// Returns whether the operation is a widening integer arithmetic instruction.
     private static boolean isWideningInteger(int funct3, int funct6) {
-        boolean opiv = funct3 == OPIVV || funct3 == OPIVX;
         boolean opm = funct3 == OPMVV || funct3 == OPMVX;
-        return opiv && funct6 >= 0x30 && funct6 <= 0x33
-                || opm && funct6 >= 0x34 && funct6 <= 0x38
+        return opm && funct6 >= 0x30 && funct6 <= 0x38
                 || opm && (funct6 == 0x3a || funct6 == 0x3b);
     }
 
