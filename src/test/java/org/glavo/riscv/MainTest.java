@@ -93,6 +93,18 @@ public final class MainTest {
     /// Linux `O_TRUNC`.
     private static final int O_TRUNC = 00001000;
 
+    /// Linux `PROT_READ`.
+    private static final int PROT_READ = 0x1;
+
+    /// Linux `PROT_WRITE`.
+    private static final int PROT_WRITE = 0x2;
+
+    /// Linux `MAP_SHARED`.
+    private static final int MAP_SHARED = 0x01;
+
+    /// The default Linux page size used by the tests.
+    private static final int PAGE_SIZE = 4096;
+
     /// The Linux RISC-V syscall number for `openat`.
     private static final int SYS_OPENAT = 56;
 
@@ -111,8 +123,14 @@ public final class MainTest {
     /// The Linux RISC-V syscall number for `exit`.
     private static final int SYS_EXIT = 93;
 
+    /// The Linux RISC-V syscall number for `munmap`.
+    private static final int SYS_MUNMAP = 215;
+
     /// The Linux RISC-V syscall number for `clone`.
     private static final int SYS_CLONE = 220;
+
+    /// The Linux RISC-V syscall number for `mmap`.
+    private static final int SYS_MMAP = 222;
 
     /// The Linux RISC-V syscall number for `execve`.
     private static final int SYS_EXECVE = 221;
@@ -993,6 +1011,53 @@ public final class MainTest {
                 framebuffer.snapshot().pixels());
     }
 
+    /// Verifies that a guest program can mmap and update the configured Linux framebuffer device.
+    @Test
+    public void guestMmapsConfiguredFramebufferDevice() {
+        FramebufferDevice framebuffer = new FramebufferDevice(FramebufferGeometry.packed(
+                2,
+                1,
+                FramebufferPixelFormat.XRGB8888));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+
+        int exitCode = RiscVEngine.run(
+                ElfTestImages.executable(framebufferMmapDeviceCode()),
+                new RiscVContext(
+                        new ByteArrayInputStream(new byte[0]),
+                        out,
+                        err,
+                        RiscVContext.DEFAULT_MEMORY_BASE,
+                        RiscVContext.DEFAULT_MEMORY_SIZE,
+                        RiscVContext.DEFAULT_PAGE_SIZE,
+                        RiscVContext.DEFAULT_MAX_COMMITTED_PAGES,
+                        RiscVContext.DEFAULT_HUGE_PAGE_SIZE,
+                        RiscVContext.DEFAULT_HUGE_PAGES,
+                        RiscVContext.DEFAULT_VECTOR_VLEN,
+                        1000,
+                        false,
+                        RiscVContext.timeSourceFromDebugFixedClockNanos(RiscVContext.HOST_CLOCK_NANOS),
+                        ".",
+                        "",
+                        "",
+                        false,
+                        GuestCredentials.DEFAULT_USER_NAME,
+                        GuestCredentials.DEFAULT_USER_ID,
+                        GuestCredentials.DEFAULT_GROUP_ID,
+                        "",
+                        "",
+                        GuestCredentials.DEFAULT_SHELL,
+                        new String[]{"framebuffer-mmap-test"},
+                        framebuffer));
+
+        assertEquals(0, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+        assertArrayEquals(
+                new byte[]{0, 0, 0, 0, 0x33, 0x22, 0x11, 0},
+                framebuffer.snapshot().pixels());
+    }
+
     /// Verifies that programs with more loop blocks than the former inline dispatch cache keep making progress.
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
@@ -1625,6 +1690,59 @@ public final class MainTest {
         return code.array();
     }
 
+    /// Builds a program that opens `/dev/fb0`, mmaps it, writes one pixel, and unmaps it.
+    private static byte[] framebufferMmapDeviceCode() {
+        int pathOffset = 0x180;
+        ByteBuffer code = ByteBuffer.allocate(0x200).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadImmediate(code, 10, AT_FDCWD);
+        putLoadAddress(code, 11, pathOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, O_RDWR));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_OPENAT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(5, 10, 0));
+        int openBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        putLoadImmediate(code, 11, PAGE_SIZE);
+        ElfTestImages.putInt(code, ElfTestImages.addi(12, 0, PROT_READ | PROT_WRITE));
+        ElfTestImages.putInt(code, ElfTestImages.addi(13, 0, MAP_SHARED));
+        ElfTestImages.putInt(code, ElfTestImages.addi(14, 5, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(15, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_MMAP));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(6, 10, 0));
+        int mmapBranchPosition = reserveInstruction(code);
+
+        putLoadImmediate(code, 7, 0x0011_2233);
+        ElfTestImages.putInt(code, sw(7, 4, 6));
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 6, 0));
+        putLoadImmediate(code, 11, PAGE_SIZE);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_MUNMAP));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int munmapBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int failurePosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, openBranchPosition, blt(10, 0, failurePosition - openBranchPosition));
+        patchInstruction(code, mmapBranchPosition, blt(10, 0, failurePosition - mmapBranchPosition));
+        patchInstruction(code, munmapBranchPosition, bne(10, 0, failurePosition - munmapBranchPosition));
+
+        code.position(pathOffset);
+        code.put("/dev/fb0".getBytes(StandardCharsets.US_ASCII));
+        code.put((byte) 0);
+        return code.array();
+    }
+
     /// Writes one regular-file entry to a tar archive.
     private static void writeTarEntry(Path archive, String name, byte[] data) throws Exception {
         try (OutputStream output = Files.newOutputStream(archive);
@@ -2022,6 +2140,11 @@ public final class MainTest {
     /// Encodes `beq`.
     private static int beq(int rs1, int rs2, int offset) {
         return branch(0, rs1, rs2, offset);
+    }
+
+    /// Encodes `blt`.
+    private static int blt(int rs1, int rs2, int offset) {
+        return branch(4, rs1, rs2, offset);
     }
 
     /// Encodes a B-type branch.

@@ -1835,6 +1835,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Closes all host files opened by guest file descriptors.
     @Override
     public void close() {
+        syncSharedDeviceMappings();
         closeChildProcesses();
         for (int index = 0; index < standardFiles.length; index++) {
             @Nullable OpenFile openFile = standardFiles[index];
@@ -6778,6 +6779,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             LinuxProgramLoader.LoadedProgram program,
             String @Unmodifiable [] arguments,
             String @Unmodifiable [] environment) {
+        syncSharedDeviceMappings();
         memory.resetAddressSpace();
         LinuxProgramLoader.LoadedProcess loadedProcess =
                 LinuxProgramLoader.initialize(memory, program, arguments, environment, credentials, pageSize);
@@ -7328,18 +7330,33 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         boolean shared = mappingType == MAP_SHARED || mappingType == MAP_SHARED_VALIDATE;
         boolean anonymous = (flags & MAP_ANONYMOUS) != 0;
         @Nullable OpenFile mappedFile = null;
+        @Nullable DeviceFile mappedDeviceFile = null;
         if (!anonymous) {
             if (fileDescriptor < 0) {
                 return EBADF;
             }
             mappedFile = openFile((int) fileDescriptor);
-            if (mappedFile == null || mappedFile.isDirectory() || !mappedFile.isHostFile()) {
+            if (mappedFile == null || mappedFile.isDirectory()) {
+                return EBADF;
+            }
+            mappedDeviceFile = deviceFileFor(mappedFile);
+            if (mappedDeviceFile != null) {
+                if (mappedDeviceFile != DeviceFile.FRAMEBUFFER || framebufferDevice == null) {
+                    return ENODEV;
+                }
+                if (!shared) {
+                    return EINVAL;
+                }
+                if ((protection & Memory.PROTECTION_WRITE) != 0 && !mappedFile.writable()) {
+                    return EACCES;
+                }
+            } else if (!mappedFile.isHostFile()) {
                 return EBADF;
             }
             if (!mappedFile.readable()) {
                 return EACCES;
             }
-            if (shared && (protection & Memory.PROTECTION_WRITE) != 0) {
+            if (mappedDeviceFile == null && shared && (protection & Memory.PROTECTION_WRITE) != 0) {
                 return EACCES;
             }
         }
@@ -7384,7 +7401,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
         } else if (isMemoryBackedProtection(protection)) {
             assert mappedFile != null;
-            long loadResult = loadFileMapping(mappedFile, mappingAddress, length, alignedLength, offset, protection);
+            long loadResult = mappedDeviceFile == DeviceFile.FRAMEBUFFER
+                    ? loadFramebufferMapping(mappingAddress, length, alignedLength, offset, protection)
+                    : loadFileMapping(mappedFile, mappingAddress, length, alignedLength, offset, protection);
             if (loadResult != 0) {
                 memory.unmap(mappingAddress, alignedLength);
                 return loadResult;
@@ -7396,7 +7415,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 protection,
                 mappedFile == null ? null : mappedFile.guestPath(),
                 mappedFile == null ? 0 : offset,
-                shared);
+                shared,
+                mappedDeviceFile);
         return mappingAddress;
     }
 
@@ -7439,6 +7459,47 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             return 0;
         } catch (IOException | RiscVException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Copies framebuffer bytes into guest memory and applies the requested final protection.
+    protected long loadFramebufferMapping(
+            long mappingAddress,
+            long requestedLength,
+            long alignedLength,
+            long offset,
+            long protection) {
+        @Nullable FramebufferDevice device = framebufferDevice;
+        if (device == null) {
+            return ENODEV;
+        }
+
+        try {
+            memory.clear(mappingAddress, alignedLength);
+            long framebufferSize = device.geometry().bufferSizeBytes();
+            if (offset < framebufferSize) {
+                long remaining = Math.min(requestedLength, framebufferSize - offset);
+                long destinationAddress = mappingAddress;
+                long framebufferOffset = offset;
+                byte[] buffer = new byte[(int) Math.min(8192L, remaining)];
+                while (remaining > 0) {
+                    int chunkLength = (int) Math.min(buffer.length, remaining);
+                    int count = device.read(framebufferOffset, buffer, 0, chunkLength);
+                    if (count <= 0) {
+                        break;
+                    }
+                    memory.writeBytes(destinationAddress, buffer, 0, count);
+                    destinationAddress += count;
+                    framebufferOffset += count;
+                    remaining -= count;
+                }
+            }
+            if (!memory.protect(mappingAddress, alignedLength, protection)) {
+                return ENOMEM;
+            }
+            return 0;
+        } catch (IndexOutOfBoundsException | RiscVException exception) {
             return EACCES;
         }
     }
@@ -9129,7 +9190,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             @Nullable String path,
             long fileOffset,
             boolean shared) {
-        MemoryMapping mapping = new MemoryMapping(address, length, protection, path, fileOffset, shared);
+        addMemoryMapping(address, length, protection, path, fileOffset, shared, null);
+    }
+
+    /// Adds an active mapping in address order.
+    protected void addMemoryMapping(
+            long address,
+            long length,
+            long protection,
+            @Nullable String path,
+            long fileOffset,
+            boolean shared,
+            @Nullable DeviceFile deviceFile) {
+        MemoryMapping mapping = new MemoryMapping(address, length, protection, path, fileOffset, shared, deviceFile);
         int insertionIndex = 0;
         while (insertionIndex < memoryMappings.size()
                 && Long.compareUnsigned(memoryMappings.get(insertionIndex).address(), address) < 0) {
@@ -9200,7 +9273,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return ENOMEM;
         }
 
-        addMemoryMapping(newAddress, newLength, protection, mapping.path(), mapping.fileOffset(), mapping.shared());
+        addMemoryMapping(
+                newAddress,
+                newLength,
+                protection,
+                mapping.path(),
+                mapping.fileOffset(),
+                mapping.shared(),
+                mapping.deviceFile());
         removeMemoryMappings(oldAddress, oldLength);
         return newAddress;
     }
@@ -9231,6 +9311,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Releases or clears native backing for a removed mapping range.
     protected void releaseRemovedMappingMemory(MemoryMapping mapping, long address, long length) {
+        syncSharedDeviceMappingRange(mapping, address, length);
         if (memory.hasDenseInitialBacking() && fitsGuestMemory(address, length)) {
             if (mapping.isBacked()) {
                 memory.clear(address, length);
@@ -9243,6 +9324,58 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
         } else {
             memory.unmap(address, length);
+        }
+    }
+
+    /// Synchronizes every shared device mapping back to its backing device.
+    protected void syncSharedDeviceMappings() {
+        for (MemoryMapping mapping : memoryMappings) {
+            syncSharedDeviceMappingRange(mapping, mapping.address(), mapping.length());
+        }
+    }
+
+    /// Synchronizes a shared device-backed mapping range back to its backing device.
+    protected void syncSharedDeviceMappingRange(MemoryMapping mapping, long address, long length) {
+        if (mapping.deviceFile() != DeviceFile.FRAMEBUFFER || !mapping.shared() || !mapping.isBacked()) {
+            return;
+        }
+
+        @Nullable FramebufferDevice device = framebufferDevice;
+        if (device == null) {
+            return;
+        }
+
+        long framebufferOffset = mapping.fileOffset() + (address - mapping.address());
+        long framebufferSize = device.geometry().bufferSizeBytes();
+        if (length <= 0 || framebufferOffset < 0 || framebufferOffset >= framebufferSize) {
+            return;
+        }
+
+        long remaining = Math.min(length, framebufferSize - framebufferOffset);
+        long cursor = address;
+        long originalProtection = mapping.protection();
+        boolean restoreProtection = (originalProtection & Memory.PROTECTION_READ) == 0;
+        if (restoreProtection && !memory.protect(address, length, originalProtection | Memory.PROTECTION_READ)) {
+            throw new RiscVException("Failed to read guest device mapping before synchronization.");
+        }
+
+        try {
+            while (remaining > 0) {
+                long chunkLength = Math.min(8192L, remaining);
+                byte[] bytes = memory.readBytes(cursor, chunkLength);
+                byte[] currentBytes = new byte[bytes.length];
+                device.read(framebufferOffset, currentBytes, 0, currentBytes.length);
+                if (!Arrays.equals(bytes, currentBytes)) {
+                    device.write(framebufferOffset, bytes, 0, bytes.length);
+                }
+                cursor += bytes.length;
+                framebufferOffset += bytes.length;
+                remaining -= bytes.length;
+            }
+        } finally {
+            if (restoreProtection && !memory.protect(address, length, originalProtection)) {
+                throw new RiscVException("Failed to restore guest device mapping protection.");
+            }
         }
     }
 
@@ -9299,6 +9432,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             long protectStart = Math.max(address, mapping.address());
             long protectEnd = Math.min(endAddress, mapping.endAddress());
             long protectLength = protectEnd - protectStart;
+            if ((mapping.protection() & Memory.PROTECTION_WRITE) != 0
+                    && (protection & Memory.PROTECTION_WRITE) == 0) {
+                syncSharedDeviceMappingRange(mapping, protectStart, protectLength);
+            }
             if (!memory.protect(protectStart, protectLength, protection)) {
                 throw new RiscVException("Failed to update guest memory protection: address=0x"
                         + Long.toUnsignedString(protectStart, 16)
@@ -9690,13 +9827,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// @param path the guest-visible mapped file path, or null for anonymous mappings
     /// @param fileOffset the file offset backing the first mapped byte
     /// @param shared whether the mapping was created as shared
+    /// @param deviceFile the mapped virtual device, or null for anonymous and regular-file mappings
     protected record MemoryMapping(
             long address,
             long length,
             long protection,
             @Nullable String path,
             long fileOffset,
-            boolean shared) {
+            boolean shared,
+            @Nullable DeviceFile deviceFile) {
         /// Returns the exclusive guest end address of the mapping.
         long endAddress() {
             return address + length;
@@ -9715,7 +9854,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     protection,
                     path,
                     fileOffset + (newAddress - address),
-                    shared);
+                    shared,
+                    deviceFile);
         }
 
         /// Returns this mapping metadata with a different address range and protection.
@@ -9726,7 +9866,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     newProtection,
                     path,
                     fileOffset + (newAddress - address),
-                    shared);
+                    shared,
+                    deviceFile);
         }
     }
 

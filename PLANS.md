@@ -39,7 +39,7 @@
 
 ### Graphics
 
-- Graphical-device groundwork includes framebuffer geometry, packed pixel-format metadata, dirty-region tracking, immutable framebuffer snapshots, host ARGB conversion, a Swing framebuffer presentation backend, a Gradle-runnable Swing framebuffer demo, CLI-created Swing framebuffer windows, minimal Linux `/dev/fb0` access, fbdev screen-info ioctls, write-based framebuffer updates, and a static RISC-V Linux framebuffer demo.
+- Graphical-device groundwork includes framebuffer geometry, packed pixel-format metadata, dirty-region tracking, immutable framebuffer snapshots, host ARGB conversion, a Swing framebuffer presentation backend, a Gradle-runnable Swing framebuffer demo, CLI-created Swing framebuffer windows, minimal Linux `/dev/fb0` access, fbdev screen-info ioctls, write-based framebuffer updates, shared framebuffer `mmap` writeback, and static RISC-V Linux framebuffer demos.
 
 ## Maintenance Principles
 
@@ -60,7 +60,7 @@
 
 - Continue improving signal, process, clone, exec, and dynamic-linking semantics as workloads require them.
 - Add richer `/proc`, `/sys`, device, terminal, and process/thread-scoped filesystem state only when concrete programs need it.
-- Extend framebuffer integration beyond the current write-based fbdev path when a concrete workload needs it, starting with `mmap` support and broader pixel-format negotiation.
+- Extend framebuffer integration beyond the current writeback-based fbdev path when a concrete workload needs it, starting with live framebuffer mapping refresh and broader pixel-format negotiation.
 
 ### FreeBSD Runtime Compatibility
 

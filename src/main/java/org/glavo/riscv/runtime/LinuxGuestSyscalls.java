@@ -5085,6 +5085,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         if (mapping == null || oldAddress != mapping.address() || oldLength != mapping.length()) {
             return ENOMEM;
         }
+        if (mapping.deviceFile() != null) {
+            return EINVAL;
+        }
         if (fixed && rangesOverlap(oldAddress, oldAddress + oldLength, newAddress, newAddress + newLength)) {
             return EINVAL;
         }
