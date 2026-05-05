@@ -131,6 +131,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENOTCONN` as a raw negative syscall result.
     private static final long ENOTCONN = -107;
 
+    /// Linux `ECONNREFUSED` as a raw negative syscall result.
+    private static final long ECONNREFUSED = -111;
+
     /// Linux `ENOTEMPTY` as a raw negative syscall result.
     private static final long ENOTEMPTY = -39;
 
@@ -899,6 +902,9 @@ public final class GuestSyscallsTest {
     /// Linux `F_GETFL`.
     private static final long F_GETFL = 3;
 
+    /// Linux `F_SETFL`.
+    private static final long F_SETFL = 4;
+
     /// Linux `F_DUPFD_CLOEXEC`.
     private static final long F_DUPFD_CLOEXEC = 1030;
 
@@ -935,6 +941,9 @@ public final class GuestSyscallsTest {
     /// Linux UDP protocol number.
     private static final long IPPROTO_UDP = 17;
 
+    /// Linux IPv6 protocol level.
+    private static final long IPPROTO_IPV6 = 41;
+
     /// Linux socket option level for generic socket options.
     private static final long SOL_SOCKET = 1;
 
@@ -943,6 +952,21 @@ public final class GuestSyscallsTest {
 
     /// Linux `SO_ERROR`.
     private static final long SO_ERROR = 4;
+
+    /// Linux `SO_SNDBUF`.
+    private static final long SO_SNDBUF = 7;
+
+    /// Linux `SO_RCVBUF`.
+    private static final long SO_RCVBUF = 8;
+
+    /// Linux `SO_KEEPALIVE`.
+    private static final long SO_KEEPALIVE = 9;
+
+    /// Linux `TCP_NODELAY`.
+    private static final long TCP_NODELAY = 1;
+
+    /// Linux `IPV6_V6ONLY`.
+    private static final long IPV6_V6ONLY = 26;
 
     /// Linux `O_NONBLOCK` accepted in socket type flags.
     private static final long SOCK_NONBLOCK = O_NONBLOCK;
@@ -6259,6 +6283,217 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies TCP socket names, options, and duplicate descriptor lifetime.
+    @Test
+    public void hostNetworkTcpAddressesOptionsAndDupLifetimeWork() throws Exception {
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        try (ServerSocket server = new ServerSocket(0, 1, loopback);
+             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 64;
+            long bufferAddress = memory.baseAddress() + 128;
+            long optionAddress = memory.baseAddress() + 256;
+            long optionLengthAddress = memory.baseAddress() + 264;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> serverTask = executor.submit(() -> {
+                    try (Socket socket = server.accept()) {
+                        byte[] request = socket.getInputStream().readNBytes(4);
+                        assertEquals("ping", new String(request, StandardCharsets.UTF_8));
+                        socket.getOutputStream().write("pong".getBytes(StandardCharsets.UTF_8));
+                        assertEquals(-1, socket.getInputStream().read());
+                    }
+                    return null;
+                });
+
+                setSyscall(state, SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                state.syscalls().handle(state, TEST_PC);
+                int socketFileDescriptor = (int) state.register(10);
+                assertEquals(3, socketFileDescriptor);
+
+                assertSetAndGetSocketOption(
+                        state,
+                        memory,
+                        socketFileDescriptor,
+                        SOL_SOCKET,
+                        SO_KEEPALIVE,
+                        1,
+                        optionAddress,
+                        optionLengthAddress);
+                assertSetAndGetSocketOption(
+                        state,
+                        memory,
+                        socketFileDescriptor,
+                        IPPROTO_TCP,
+                        TCP_NODELAY,
+                        1,
+                        optionAddress,
+                        optionLengthAddress);
+                assertSetAndGetSocketOption(
+                        state,
+                        memory,
+                        socketFileDescriptor,
+                        SOL_SOCKET,
+                        SO_SNDBUF,
+                        4096,
+                        optionAddress,
+                        optionLengthAddress);
+                assertSetAndGetSocketOption(
+                        state,
+                        memory,
+                        socketFileDescriptor,
+                        SOL_SOCKET,
+                        SO_RCVBUF,
+                        4096,
+                        optionAddress,
+                        optionLengthAddress);
+
+                writeInetSockaddr(memory, sockaddrAddress, loopback, server.getLocalPort());
+                setSyscall(state, SYS_CONNECT, socketFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+                setSyscall(state, SYS_GETSOCKNAME, socketFileDescriptor, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                assertEquals(SOCKADDR_IN_SIZE, memory.readInt(lengthAddress));
+                assertEquals(AF_INET, memory.readUnsignedShort(sockaddrAddress));
+                assertArrayEquals(
+                        loopback.getAddress(),
+                        memory.readBytes(sockaddrAddress + SOCKADDR_IN_ADDRESS_OFFSET, Integer.BYTES));
+                assertTrue(readNetworkPort(memory, sockaddrAddress + SOCKADDR_PORT_OFFSET) > 0);
+
+                memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+                setSyscall(state, SYS_GETPEERNAME, socketFileDescriptor, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                assertEquals(SOCKADDR_IN_SIZE, memory.readInt(lengthAddress));
+                assertEquals(AF_INET, memory.readUnsignedShort(sockaddrAddress));
+                assertEquals(server.getLocalPort(), readNetworkPort(memory, sockaddrAddress + SOCKADDR_PORT_OFFSET));
+                assertArrayEquals(
+                        loopback.getAddress(),
+                        memory.readBytes(sockaddrAddress + SOCKADDR_IN_ADDRESS_OFFSET, Integer.BYTES));
+
+                setSyscall(state, SYS_DUP, socketFileDescriptor, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                int duplicateFileDescriptor = (int) state.register(10);
+                assertEquals(4, duplicateFileDescriptor);
+
+                setSyscall(state, SYS_CLOSE, socketFileDescriptor, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                byte[] request = "ping".getBytes(StandardCharsets.UTF_8);
+                memory.writeBytes(bufferAddress, request, 0, request.length);
+                setSyscall(state, SYS_WRITE, duplicateFileDescriptor, bufferAddress, request.length);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(request.length, state.register(10));
+
+                setSyscall(state, SYS_READ, duplicateFileDescriptor, bufferAddress, 4);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(4, state.register(10));
+                assertEquals("pong", readGuestString(memory, bufferAddress, 4));
+
+                setSyscall(state, SYS_CLOSE, duplicateFileDescriptor, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                setSyscall(state, SYS_WRITE, duplicateFileDescriptor, bufferAddress, request.length);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(EBADF, state.register(10));
+                waitForNetworkTask(serverTask);
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    /// Verifies IPv6-only and nonblocking connect error socket options.
+    @Test
+    public void hostNetworkIpv6OnlyAndNonblockingConnectErrorAreReported() throws Exception {
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        int closedPort;
+        try (ServerSocket probe = new ServerSocket(0, 1, loopback)) {
+            closedPort = probe.getLocalPort();
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long sockaddrAddress = memory.baseAddress();
+            long optionAddress = memory.baseAddress() + 128;
+            long optionLengthAddress = memory.baseAddress() + 136;
+
+            setSyscall(state, SYS_SOCKET, AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+            state.syscalls().handle(state, TEST_PC);
+            int ipv6FileDescriptor = (int) state.register(10);
+            assertEquals(3, ipv6FileDescriptor);
+
+            assertSetAndGetSocketOption(
+                    state,
+                    memory,
+                    ipv6FileDescriptor,
+                    IPPROTO_IPV6,
+                    IPV6_V6ONLY,
+                    1,
+                    optionAddress,
+                    optionLengthAddress);
+
+            setSyscall(state, SYS_CLOSE, ipv6FileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SOCKET, AF_INET, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+            state.syscalls().handle(state, TEST_PC);
+            int socketFileDescriptor = (int) state.register(10);
+            assertEquals(3, socketFileDescriptor);
+
+            writeInetSockaddr(memory, sockaddrAddress, loopback, closedPort);
+            setSyscall(state, SYS_CONNECT, socketFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            long connectResult = state.register(10);
+            assumeTrue(connectResult != 0, "Loopback probe port was reused before the connect failed");
+            assertTrue(connectResult == EINPROGRESS || connectResult == ECONNREFUSED);
+            assertEquals((int) -ECONNREFUSED, waitForSocketError(
+                    state,
+                    memory,
+                    socketFileDescriptor,
+                    optionAddress,
+                    optionLengthAddress));
+        }
+    }
+
+    /// Verifies `F_SETFL` updates socket nonblocking state.
+    @Test
+    public void hostNetworkFcntlSetflUpdatesSocketNonblocking() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long bufferAddress = memory.baseAddress();
+
+            setSyscall(state, SYS_SOCKET, AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            state.syscalls().handle(state, TEST_PC);
+            int socketFileDescriptor = (int) state.register(10);
+            assertEquals(3, socketFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, socketFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDWR, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, socketFileDescriptor, F_SETFL, O_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, socketFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDWR | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_RECVFROM, socketFileDescriptor, bufferAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+        }
+    }
+
     /// Verifies a guest TCP server can accept a host loopback client.
     @Test
     public void hostNetworkTcpServerAcceptsHostClient() throws Exception {
@@ -6403,6 +6638,92 @@ public final class GuestSyscallsTest {
                 assertEquals(EPOLLIN, memory.readInt(eventsAddress + EPOLL_EVENT_EVENTS_OFFSET));
                 assertEquals(0x77, readEpollEventData(memory, eventsAddress));
                 waitForNetworkTask(serverTask);
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    /// Verifies listening and datagram sockets report read readiness through `pselect6`.
+    @Test
+    public void hostNetworkListeningAndDatagramSocketsReportPselectReadiness() throws Exception {
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 64;
+            long bufferAddress = memory.baseAddress() + 128;
+            long fileDescriptorSetAddress = memory.baseAddress() + 512;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                setSyscall(state, SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                state.syscalls().handle(state, TEST_PC);
+                int serverFileDescriptor = (int) state.register(10);
+                assertEquals(3, serverFileDescriptor);
+
+                writeInetSockaddr(memory, sockaddrAddress, loopback, 0);
+                setSyscall(state, SYS_BIND, serverFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+                setSyscall(state, SYS_GETSOCKNAME, serverFileDescriptor, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                int serverPort = readNetworkPort(memory, sockaddrAddress + SOCKADDR_PORT_OFFSET);
+
+                setSyscall(state, SYS_LISTEN, serverFileDescriptor, 1, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                Future<?> client = executor.submit(() -> {
+                    try (Socket socket = new Socket(loopback, serverPort)) {
+                        Thread.sleep(250);
+                    }
+                    return null;
+                });
+
+                waitForPselectReadReady(state, memory, fileDescriptorSetAddress, serverFileDescriptor);
+                memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+                setSyscall(state, SYS_ACCEPT, serverFileDescriptor, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                int acceptedFileDescriptor = (int) state.register(10);
+                assertTrue(acceptedFileDescriptor >= 4);
+
+                setSyscall(state, SYS_CLOSE, acceptedFileDescriptor, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                setSyscall(state, SYS_CLOSE, serverFileDescriptor, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                waitForNetworkTask(client);
+
+                setSyscall(state, SYS_SOCKET, AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                state.syscalls().handle(state, TEST_PC);
+                int datagramFileDescriptor = (int) state.register(10);
+                assertEquals(3, datagramFileDescriptor);
+
+                writeInetSockaddr(memory, sockaddrAddress, loopback, 0);
+                setSyscall(state, SYS_BIND, datagramFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+                setSyscall(state, SYS_GETSOCKNAME, datagramFileDescriptor, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                int datagramPort = readNetworkPort(memory, sockaddrAddress + SOCKADDR_PORT_OFFSET);
+
+                try (DatagramSocket sender = new DatagramSocket(new InetSocketAddress(loopback, 0))) {
+                    byte[] payload = "udp".getBytes(StandardCharsets.UTF_8);
+                    sender.send(new DatagramPacket(payload, payload.length, new InetSocketAddress(loopback, datagramPort)));
+                }
+
+                waitForPselectReadReady(state, memory, fileDescriptorSetAddress, datagramFileDescriptor);
+                setSyscall(state, SYS_RECVFROM, datagramFileDescriptor, bufferAddress, 3, 0, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(3, state.register(10));
+                assertEquals("udp", readGuestString(memory, bufferAddress, 3));
             } finally {
                 executor.shutdownNow();
             }
@@ -8115,6 +8436,72 @@ public final class GuestSyscallsTest {
     /// Waits for a background host networking task.
     private static void waitForNetworkTask(Future<?> task) throws Exception {
         task.get(5, TimeUnit.SECONDS);
+    }
+
+    /// Sets an integer socket option and verifies the returned value.
+    private static void assertSetAndGetSocketOption(
+            RiscVThreadState state,
+            Memory memory,
+            int fileDescriptor,
+            long level,
+            long option,
+            int value,
+            long optionAddress,
+            long optionLengthAddress) {
+        memory.writeInt(optionAddress, value);
+        setSyscall(state, SYS_SETSOCKOPT, fileDescriptor, level, option, optionAddress, Integer.BYTES);
+        state.syscalls().handle(state, TEST_PC);
+        assertEquals(0, state.register(10));
+
+        memory.writeInt(optionAddress, 0);
+        memory.writeInt(optionLengthAddress, Integer.BYTES);
+        setSyscall(state, SYS_GETSOCKOPT, fileDescriptor, level, option, optionAddress, optionLengthAddress);
+        state.syscalls().handle(state, TEST_PC);
+        assertEquals(0, state.register(10));
+        assertEquals(Integer.BYTES, memory.readInt(optionLengthAddress));
+        assertEquals(value, memory.readInt(optionAddress));
+    }
+
+    /// Waits until `SO_ERROR` reports a pending socket error.
+    private static int waitForSocketError(
+            RiscVThreadState state,
+            Memory memory,
+            int fileDescriptor,
+            long optionAddress,
+            long optionLengthAddress) throws Exception {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            memory.writeInt(optionAddress, 0);
+            memory.writeInt(optionLengthAddress, Integer.BYTES);
+            setSyscall(state, SYS_GETSOCKOPT, fileDescriptor, SOL_SOCKET, SO_ERROR, optionAddress, optionLengthAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int error = memory.readInt(optionAddress);
+            if (error != 0) {
+                return error;
+            }
+            Thread.sleep(10);
+        }
+        return 0;
+    }
+
+    /// Waits until `pselect6` reports read readiness for one descriptor.
+    private static void waitForPselectReadReady(
+            RiscVThreadState state,
+            Memory memory,
+            long fileDescriptorSetAddress,
+            int fileDescriptor) throws Exception {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            memory.clear(fileDescriptorSetAddress, TEST_FD_SET_SIZE);
+            setFdSetBit(memory, fileDescriptorSetAddress, fileDescriptor);
+            setSyscall(state, SYS_PSELECT6, fileDescriptor + 1L, fileDescriptorSetAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            if (state.register(10) == 1 && isFdSetBitSet(memory, fileDescriptorSetAddress, fileDescriptor)) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        assertEquals(1, state.register(10));
+        assertTrue(isFdSetBitSet(memory, fileDescriptorSetAddress, fileDescriptor));
     }
 
     /// Waits until one poll descriptor reports readiness.
