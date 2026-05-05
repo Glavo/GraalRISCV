@@ -25,6 +25,9 @@ import java.util.Arrays;
 /// Provides the guest controlling terminal exposed through `/dev/tty`.
 @NotNullByDefault
 final class TerminalDevice implements AutoCloseable {
+    /// Internal read result used when a nonblocking terminal read would block.
+    static final int READ_WOULD_BLOCK = -1;
+
     /// Linux `O_RDWR`.
     private static final int POSIX_OPEN_READ_WRITE = 2;
 
@@ -187,6 +190,12 @@ final class TerminalDevice implements AutoCloseable {
     /// The next buffered canonical input byte returned to the guest.
     private int pendingInputOffset = 0;
 
+    /// Canonical input bytes collected before a complete line is available.
+    private byte[] canonicalInput = new byte[16];
+
+    /// The number of bytes currently stored in `canonicalInput`.
+    private int canonicalInputLength = 0;
+
     /// Raw-mode input bytes currently visible because of guest-side local echo.
     private byte[] rawEchoedInput = new byte[0];
 
@@ -237,10 +246,18 @@ final class TerminalDevice implements AutoCloseable {
 
     /// Reads bytes from the terminal input backend.
     int read(byte[] buffer, int length) throws IOException {
+        return read(buffer, length, false);
+    }
+
+    /// Reads bytes from the terminal input backend.
+    int read(byte[] buffer, int length, boolean nonblocking) throws IOException {
         if (backend.usesGuestLineDiscipline()) {
-            return readWithGuestLineDiscipline(buffer, length);
+            return readWithGuestLineDiscipline(buffer, length, nonblocking);
         }
 
+        if (nonblocking && backend.availableInput() == 0) {
+            return READ_WOULD_BLOCK;
+        }
         int count = backend.read(buffer, length);
         normalizeInput(buffer, count);
         return count;
@@ -261,6 +278,20 @@ final class TerminalDevice implements AutoCloseable {
     /// Returns true when the original standard descriptors should be visible as tty descriptors.
     boolean supportsStandardFileDescriptors() {
         return backend.supportsStandardFileDescriptors();
+    }
+
+    /// Returns true when a terminal read can complete without waiting for more host input.
+    boolean hasReadableInput() {
+        if (pendingInputOffset < pendingInput.length) {
+            return true;
+        }
+
+        try {
+            int availableInput = backend.availableInput();
+            return availableInput != 0;
+        } catch (IOException exception) {
+            return true;
+        }
     }
 
     /// Writes the current guest-visible `struct termios`.
@@ -379,26 +410,44 @@ final class TerminalDevice implements AutoCloseable {
     }
 
     /// Reads input through the guest-side canonical mode and echo implementation.
-    private int readWithGuestLineDiscipline(byte[] buffer, int length) throws IOException {
+    private int readWithGuestLineDiscipline(byte[] buffer, int length, boolean nonblocking) throws IOException {
         int pendingCount = drainPendingInput(buffer, length);
         if (pendingCount > 0) {
             return pendingCount;
         }
 
         if ((readLocalFlags(termios) & TERMIOS_LOCAL_CANONICAL) == 0) {
-            int count = backend.read(buffer, length);
+            int readLength = length;
+            if (nonblocking) {
+                int availableInput = backend.availableInput();
+                if (availableInput == 0) {
+                    return READ_WOULD_BLOCK;
+                }
+                if (availableInput > 0) {
+                    readLength = Math.min(readLength, availableInput);
+                }
+            }
+            int count = backend.read(buffer, readLength);
+            if (count == 0 && nonblocking) {
+                return READ_WOULD_BLOCK;
+            }
             normalizeInput(buffer, count);
             echoRawInput(buffer, count);
             return count;
         }
 
-        byte[] line = new byte[Math.max(16, Math.min(length, 256))];
-        int lineLength = 0;
         while (true) {
+            if (nonblocking) {
+                int availableInput = backend.availableInput();
+                if (availableInput == 0) {
+                    return READ_WOULD_BLOCK;
+                }
+            }
+
             byte[] oneByte = new byte[1];
             int count = backend.read(oneByte, oneByte.length);
             if (count == 0) {
-                if (lineLength == 0) {
+                if (canonicalInputLength == 0) {
                     return 0;
                 }
                 break;
@@ -408,33 +457,39 @@ final class TerminalDevice implements AutoCloseable {
             byte input = oneByte[0];
             int unsignedInput = Byte.toUnsignedInt(input);
             if (unsignedInput == controlChar(TERMIOS_END_OF_FILE_INDEX)) {
-                if (lineLength == 0) {
+                if (canonicalInputLength == 0) {
                     return 0;
                 }
                 break;
             }
             if (unsignedInput == controlChar(TERMIOS_ERASE_INDEX)) {
-                if (lineLength > 0) {
-                    lineLength--;
+                if (canonicalInputLength > 0) {
+                    canonicalInputLength--;
                     echoErase();
                 }
                 continue;
             }
 
-            if (lineLength == line.length) {
-                line = Arrays.copyOf(line, line.length * 2);
-            }
-            line[lineLength] = input;
-            lineLength++;
+            appendCanonicalInput(input);
             echoInput(input);
             if (input == '\n') {
                 break;
             }
         }
 
-        pendingInput = Arrays.copyOf(line, lineLength);
+        pendingInput = Arrays.copyOf(canonicalInput, canonicalInputLength);
         pendingInputOffset = 0;
+        canonicalInputLength = 0;
         return drainPendingInput(buffer, length);
+    }
+
+    /// Appends one byte to the current canonical input line.
+    private void appendCanonicalInput(byte input) {
+        if (canonicalInputLength == canonicalInput.length) {
+            canonicalInput = Arrays.copyOf(canonicalInput, canonicalInput.length * 2);
+        }
+        canonicalInput[canonicalInputLength] = input;
+        canonicalInputLength++;
     }
 
     /// Returns buffered canonical input bytes to the guest.
@@ -618,6 +673,11 @@ final class TerminalDevice implements AutoCloseable {
         /// Reads up to `length` bytes into the destination buffer.
         int read(byte[] buffer, int length) throws IOException;
 
+        /// Returns currently buffered input bytes that can be read without blocking, or a negative value if unknown.
+        default int availableInput() throws IOException {
+            return -1;
+        }
+
         /// Writes exactly `length` bytes from the source buffer.
         void write(byte[] buffer, int length) throws IOException;
 
@@ -666,6 +726,12 @@ final class TerminalDevice implements AutoCloseable {
             return Math.max(count, 0);
         }
 
+        /// Returns currently buffered input bytes.
+        @Override
+        public int availableInput() throws IOException {
+            return Math.max(0, in.available());
+        }
+
         /// Writes bytes to the configured output stream.
         @Override
         public void write(byte[] buffer, int length) throws IOException {
@@ -708,6 +774,12 @@ final class TerminalDevice implements AutoCloseable {
             }
             int count = in.read(buffer, 0, length);
             return Math.max(count, 0);
+        }
+
+        /// Returns currently buffered input bytes.
+        @Override
+        public int availableInput() throws IOException {
+            return terminalMode != null ? terminalMode.availableInput() : Math.max(0, in.available());
         }
 
         /// Writes bytes to the configured output stream.
@@ -774,6 +846,11 @@ final class TerminalDevice implements AutoCloseable {
         /// Reads bytes from the host terminal input.
         int read(byte[] buffer, int length) throws IOException;
 
+        /// Returns currently buffered input bytes that can be read without blocking, or a negative value if unknown.
+        default int availableInput() throws IOException {
+            return -1;
+        }
+
         /// Applies a Linux guest `struct termios` image to the host terminal mode.
         void writeTermios(byte[] buffer, long request);
 
@@ -829,6 +906,12 @@ final class TerminalDevice implements AutoCloseable {
             } catch (Throwable exception) {
                 throw new IOException("read(stdin) failed", exception);
             }
+        }
+
+        /// Returns currently buffered input bytes.
+        @Override
+        public int availableInput() {
+            return PosixBackend.availableInput(fileDescriptor);
         }
 
         /// Applies a native terminal `struct termios` byte image.
@@ -1126,6 +1209,9 @@ final class TerminalDevice implements AutoCloseable {
         /// The Linux `TIOCGWINSZ` ioctl request.
         private static final long TIOCGWINSZ = 0x5413;
 
+        /// The Linux `FIONREAD` ioctl request.
+        private static final long FIONREAD = 0x541b;
+
         /// Opens `/dev/tty` on Linux hosts, or returns null when unavailable.
         static @Nullable Backend open() {
             String osName = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
@@ -1168,6 +1254,12 @@ final class TerminalDevice implements AutoCloseable {
             } catch (Throwable exception) {
                 throw new IOException("read(/dev/tty) failed", exception);
             }
+        }
+
+        /// Returns currently buffered input bytes.
+        @Override
+        public int availableInput() {
+            return availableInput(fileDescriptor);
         }
 
         /// Writes bytes to the host terminal file descriptor.
@@ -1300,6 +1392,20 @@ final class TerminalDevice implements AutoCloseable {
                 return result == 0;
             } catch (Throwable exception) {
                 return false;
+            }
+        }
+
+        /// Returns the number of bytes currently readable from a POSIX descriptor without blocking.
+        private static int availableInput(int fileDescriptor) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment countAddress = arena.allocate(ValueLayout.JAVA_INT);
+                int result = (int) PosixHandles.IOCTL.invokeExact(fileDescriptor, FIONREAD, countAddress);
+                if (result != 0) {
+                    return 0;
+                }
+                return Math.max(0, countAddress.get(ValueLayout.JAVA_INT, 0));
+            } catch (Throwable exception) {
+                return 0;
             }
         }
 

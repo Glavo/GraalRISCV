@@ -3974,7 +3974,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             @Nullable TerminalDevice terminalInput = terminalInputFor(fileDescriptor);
             if (terminalInput != null) {
                 byte[] buffer = new byte[(int) length];
-                int count = terminalInput.read(buffer, buffer.length);
+                int count = terminalInput.read(buffer, buffer.length, descriptorNonblocking(fileDescriptor));
+                if (count == TerminalDevice.READ_WOULD_BLOCK) {
+                    return EAGAIN;
+                }
                 memory.writeBytes(address, buffer, 0, count);
                 return count;
             }
@@ -4006,7 +4009,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             if (openFile.isTerminalDevice()) {
                 byte[] buffer = new byte[(int) length];
-                int count = openFile.terminalDevice().read(buffer, buffer.length);
+                int count = openFile.terminalDevice().read(buffer, buffer.length, openFile.nonblocking());
+                if (count == TerminalDevice.READ_WOULD_BLOCK) {
+                    return EAGAIN;
+                }
                 memory.writeBytes(address, buffer, 0, count);
                 return count;
             }
@@ -4356,7 +4362,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (offsetAddress != 0) {
                 return ESPIPE;
             }
-            return terminalInput.read(buffer, length);
+            int count = terminalInput.read(buffer, length, nonblocking || descriptorNonblocking(fileDescriptor));
+            return count == TerminalDevice.READ_WOULD_BLOCK ? EAGAIN : count;
         }
 
         @Nullable InputStream stream = inputStreamFor(fileDescriptor);
@@ -4382,7 +4389,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (offsetAddress != 0) {
                 return ESPIPE;
             }
-            return openFile.terminalDevice().read(buffer, length);
+            int count = openFile.terminalDevice().read(buffer, length, nonblocking || openFile.nonblocking());
+            return count == TerminalDevice.READ_WOULD_BLOCK ? EAGAIN : count;
         }
         @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
         if (deviceFile != null) {
@@ -4620,7 +4628,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     protected int readyEventsFor(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor == 0) {
-            return EPOLLIN;
+            if (!terminalDevice.supportsStandardFileDescriptors()) {
+                return EPOLLIN;
+            }
+            return terminalDevice.hasReadableInput() ? EPOLLIN : 0;
         }
         if (standardFileDescriptor == 1 || standardFileDescriptor == 2) {
             return EPOLLOUT;
@@ -4654,7 +4665,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile.isTerminalDevice() || openFile.isCharacterDevice()) {
             int events = 0;
             if (openFile.readable()) {
-                events |= EPOLLIN;
+                if (!openFile.isTerminalDevice() || openFile.terminalDevice().hasReadableInput()) {
+                    events |= EPOLLIN;
+                }
             }
             if (openFile.writable()) {
                 events |= EPOLLOUT;
@@ -5917,6 +5930,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
         if (command == F_SETFL) {
             @Nullable OpenFile openFile = openFile(fileDescriptor);
+            if (openFile == null && isStandardFileDescriptor(fileDescriptor)) {
+                openFile = OpenFile.standardFileDescriptor(fileDescriptor);
+                standardFiles[fileDescriptor] = openFile;
+            }
             if (openFile != null) {
                 openFile.setNonblocking((argument & O_NONBLOCK) != 0);
             }
@@ -8513,6 +8530,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return openFiles.get(index);
     }
 
+    /// Returns true when the descriptor has `O_NONBLOCK` set on its open file description.
+    protected boolean descriptorNonblocking(int fileDescriptor) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        return openFile != null && openFile.nonblocking();
+    }
+
     /// Returns true when a file descriptor refers to a standard stream or open guest descriptor.
     protected boolean isOpenFileDescriptor(int fileDescriptor) {
         return isStandardFileDescriptor(fileDescriptor) || openFile(fileDescriptor) != null;
@@ -8521,11 +8544,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns Linux status flags for a standard stream or open guest descriptor.
     protected long statusFlagsFor(int fileDescriptor) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
-        if (standardFileDescriptor == 0) {
-            return O_RDONLY;
-        }
-        if (standardFileDescriptor == 1 || standardFileDescriptor == 2) {
-            return O_WRONLY;
+        if (standardFileDescriptor >= 0) {
+            long flags = standardFileDescriptor == 0 ? O_RDONLY : O_WRONLY;
+            if (descriptorNonblocking(fileDescriptor)) {
+                flags |= O_NONBLOCK;
+            }
+            return flags;
         }
 
         OpenFile openFile = openFile(fileDescriptor);

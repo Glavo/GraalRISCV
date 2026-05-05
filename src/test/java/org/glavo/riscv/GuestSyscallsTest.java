@@ -1685,6 +1685,26 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `fcntl(F_SETFL)` stores `O_NONBLOCK` for standard input descriptors.
+    @Test
+    public void fcntlSetsNonblockingOnStandardInput() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_FCNTL, 0, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, 0, F_SETFL, O_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, 0, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY | O_NONBLOCK, state.register(10));
+        }
+    }
+
     /// Verifies that standard streams report as character devices through `fstat`.
     @Test
     public void fstatReportsStandardStreamsAsCharacterDevices() {
@@ -4381,6 +4401,44 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
             assertEquals(CHARACTER_DEVICE_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+        }
+    }
+
+    /// Verifies nonblocking terminal reads return `EAGAIN` when no input is buffered.
+    @Test
+    public void readDevTtyReturnsEagainWhenNonblockingInputIsEmpty() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[]{'x'}),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            long pathAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 128;
+
+            writeGuestString(memory, pathAddress, "/dev/tty");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long fileDescriptor = state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_SETFL, O_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDWR | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, dataAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertEquals('x', memory.readUnsignedByte(dataAddress));
+
+            setSyscall(state, SYS_READ, fileDescriptor, dataAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
         }
     }
 

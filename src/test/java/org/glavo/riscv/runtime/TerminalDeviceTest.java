@@ -37,6 +37,33 @@ public final class TerminalDeviceTest {
     /// Linux generic `ECHOK`.
     private static final int TERMIOS_LOCAL_ECHO_KILL = 0x00020;
 
+    /// Verifies raw nonblocking reads return the terminal would-block sentinel when input is empty.
+    @Test
+    public void rawNonblockingReadReturnsWouldBlockWithoutBufferedInput() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024);
+             TerminalDevice terminal = TerminalDevice.openWithGuestLineDiscipline(
+                     new ByteArrayInputStream(new byte[]{'A'}),
+                     out)) {
+            long termiosAddress = memory.baseAddress();
+            terminal.writeTermios(memory, termiosAddress);
+            int localFlags = memory.readInt(termiosAddress + TERMIOS_LOCAL_FLAGS_OFFSET);
+            localFlags &= ~(TERMIOS_LOCAL_CANONICAL
+                    | TERMIOS_LOCAL_ECHO
+                    | TERMIOS_LOCAL_ECHO_ERASE
+                    | TERMIOS_LOCAL_ECHO_KILL);
+            memory.writeInt(termiosAddress + TERMIOS_LOCAL_FLAGS_OFFSET, localFlags);
+            terminal.readTermios(memory, termiosAddress, TCSETS);
+
+            byte[] buffer = new byte[1];
+            assertEquals(1, terminal.read(buffer, buffer.length, true));
+            assertArrayEquals(new byte[]{'A'}, buffer);
+            assertEquals(TerminalDevice.READ_WOULD_BLOCK, terminal.read(buffer, buffer.length, true));
+            assertArrayEquals(new byte[0], out.toByteArray());
+        }
+    }
+
     /// Verifies raw local echo suppresses readline erase replay without crossing the input boundary.
     @Test
     public void rawLocalEchoSuppressesGuestEraseReplayWithoutCrossingLineStart() throws Exception {
