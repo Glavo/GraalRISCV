@@ -8,6 +8,7 @@ import org.glavo.riscv.runtime.net.GuestNetworkBackend;
 import org.glavo.riscv.runtime.net.GuestNetworkMode;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Unmodifiable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -70,6 +71,30 @@ public final class RiscVContextTest {
                 credentials.initialEnvironment());
     }
 
+    /// Verifies that explicit guest environment entries override credential-derived defaults.
+    @Test
+    public void explicitEnvironmentOverridesDefaultEnvironment() throws Exception {
+        RiscVContext context = context(writePasswdRoot(), "cliuser", GuestNetworkMode.NONE.backend(), new String[]{
+                "DISPLAY=:1",
+                "HOME=/tmp",
+                "TERM=xterm"
+        });
+
+        assertArrayEquals(
+                new String[]{
+                        "LANG=C",
+                        "PATH=/usr/bin:/bin",
+                        "PWD=/",
+                        "USER=cliuser",
+                        "LOGNAME=cliuser",
+                        "SHELL=" + GuestCredentials.DEFAULT_SHELL,
+                        "DISPLAY=:1",
+                        "HOME=/tmp",
+                        "TERM=xterm"
+                },
+                context.initialEnvironment());
+    }
+
     /// Verifies that guest Internet sockets are disabled by default.
     @Test
     public void defaultNetworkBackendIsDisabled() throws Exception {
@@ -89,6 +114,15 @@ public final class RiscVContextTest {
 
     /// Creates a context using the supplied host root, login name, and network backend.
     private static RiscVContext context(Path root, @Nullable String userName, GuestNetworkBackend networkBackend) {
+        return context(root, userName, networkBackend, new String[0]);
+    }
+
+    /// Creates a context using the supplied host root, login name, network backend, and environment overrides.
+    private static RiscVContext context(
+            Path root,
+            @Nullable String userName,
+            GuestNetworkBackend networkBackend,
+            String @Unmodifiable [] environmentOverrides) {
         return new RiscVContext(
                 new ByteArrayInputStream(new byte[0]),
                 new ByteArrayOutputStream(),
@@ -114,6 +148,7 @@ public final class RiscVContextTest {
                 "",
                 "",
                 new String[]{"program"},
+                environmentOverrides,
                 null,
                 networkBackend);
     }

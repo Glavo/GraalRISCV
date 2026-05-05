@@ -60,6 +60,7 @@ public final class Main {
               --groups <ids|none>        Comma-separated supplementary guest gids, or none.
               --home <path>              Guest home directory used by the default environment.
               --shell <path>             Guest shell path used by the default environment.
+              --env <name[=value]>       Set a guest environment variable; without =, copy host value.
               --debug-fixed-clock-nanos <nanos>
                                           Fixed epoch nanoseconds for deterministic guest time.
               --debug-trace-compilation  Accepted for compatibility; currently ignored.
@@ -163,6 +164,7 @@ public final class Main {
                 options.guestHome(),
                 options.guestShell(),
                 options.applicationArguments(),
+                options.environment(),
                 framebufferDevice,
                 options.networkMode().backend());
     }
@@ -187,6 +189,7 @@ public final class Main {
         @Nullable String framebuffer = null;
         @Nullable String framebufferScale = null;
         GuestNetworkMode networkMode = GuestNetworkMode.NONE;
+        ArrayList<String> environment = new ArrayList<>();
         ArrayList<MountOption> mounts = new ArrayList<>();
         boolean useHostTty = false;
         boolean debugTraceCompilation = false;
@@ -318,6 +321,21 @@ public final class Main {
                     printUsage(err);
                     return CliOptions.error();
                 }
+                continue;
+            }
+            if (parseOptions && "--env".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --env.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                @Nullable String parsedEnvironment = parseEnvironmentOption("--env", args[index], err);
+                if (parsedEnvironment == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                environment.add(parsedEnvironment);
                 continue;
             }
             if (parseOptions && "--guest-program".equals(argument)) {
@@ -566,6 +584,7 @@ public final class Main {
                 guestGroups,
                 guestHome,
                 guestShell,
+                environment,
                 framebuffer,
                 framebufferScale,
                 networkMode,
@@ -674,6 +693,31 @@ public final class Main {
             err.println("Invalid value for " + optionName + ": " + value);
             return null;
         }
+    }
+
+    /// Parses a guest environment option and returns a normalized `NAME=value` entry.
+    private static @Nullable String parseEnvironmentOption(String optionName, String value, PrintStream err) {
+        int separator = value.indexOf('=');
+        String name = separator < 0 ? value : value.substring(0, separator);
+        if (name.isEmpty() || name.indexOf('\0') >= 0) {
+            err.println("Invalid value for " + optionName + ": " + value);
+            err.println("Expected " + optionName + " <name[=value]>.");
+            return null;
+        }
+        if (separator >= 0) {
+            if (value.indexOf('\0', separator + 1) >= 0) {
+                err.println("Invalid value for " + optionName + ": " + value);
+                return null;
+            }
+            return value;
+        }
+
+        @Nullable String hostValue = System.getenv(name);
+        if (hostValue == null) {
+            err.println("Host environment variable is not set: " + name);
+            return null;
+        }
+        return name + "=" + hostValue;
     }
 
     /// Parses a supplementary group list option.
@@ -820,6 +864,7 @@ public final class Main {
     /// @param guestGroups the optional supplementary guest gid list option value
     /// @param guestHome the optional guest home directory option value
     /// @param guestShell the optional guest shell option value
+    /// @param environment guest environment entries overriding the default environment
     /// @param framebuffer the optional CLI-created framebuffer geometry option value
     /// @param framebufferScale the optional CLI-created Swing framebuffer scale option value
     /// @param networkMode the guest Internet socket backend mode
@@ -848,6 +893,7 @@ public final class Main {
             @Nullable String guestGroups,
             @Nullable String guestHome,
             @Nullable String guestShell,
+            String @Unmodifiable [] environment,
             @Nullable String framebuffer,
             @Nullable String framebufferScale,
             GuestNetworkMode networkMode,
@@ -857,6 +903,7 @@ public final class Main {
         private CliOptions {
             programArguments = programArguments.clone();
             mounts = mounts.clone();
+            environment = environment.clone();
         }
 
         /// Returns a copy of the guest arguments after the ELF path.
@@ -895,6 +942,7 @@ public final class Main {
                     null,
                     null,
                     null,
+                    new String[0],
                     null,
                     null,
                     GuestNetworkMode.NONE,
@@ -926,6 +974,7 @@ public final class Main {
                     null,
                     null,
                     null,
+                    new String[0],
                     null,
                     null,
                     GuestNetworkMode.NONE,
@@ -955,6 +1004,7 @@ public final class Main {
                 @Nullable String guestGroups,
                 @Nullable String guestHome,
                 @Nullable String guestShell,
+                List<String> environment,
                 @Nullable String framebuffer,
                 @Nullable String framebufferScale,
                 GuestNetworkMode networkMode,
@@ -982,6 +1032,7 @@ public final class Main {
                     guestGroups,
                     guestHome,
                     guestShell,
+                    environment.toArray(String[]::new),
                     framebuffer,
                     framebufferScale,
                     networkMode,
@@ -995,6 +1046,12 @@ public final class Main {
             result[0] = programPath;
             System.arraycopy(programArguments, 0, result, 1, programArguments.length);
             return result;
+        }
+
+        /// Returns environment entries overriding the default guest environment.
+        @Override
+        public String @Unmodifiable [] environment() {
+            return environment.clone();
         }
 
         /// Returns the guest executable path when the program is loaded from guest mounts.

@@ -109,6 +109,9 @@ public final class RiscVContext {
     /// The Linux user and group identity exposed to the guest process.
     private final GuestCredentials guestCredentials;
 
+    /// The initial environment exposed to the guest process.
+    private final String @Unmodifiable [] initialEnvironment;
+
     /// The guest application arguments supplied after the ELF path.
     private final String @Unmodifiable [] programArguments;
 
@@ -256,6 +259,65 @@ public final class RiscVContext {
             String @Unmodifiable [] programArguments,
             @Nullable FramebufferDevice framebufferDevice,
             GuestNetworkBackend networkBackend) {
+        this(
+                in,
+                out,
+                err,
+                memoryBase,
+                memorySize,
+                pageSize,
+                maxCommittedPages,
+                hugePageSize,
+                hugePages,
+                vectorVlenBits,
+                maxInstructions,
+                trace,
+                timeSource,
+                hostRoot,
+                filesystemMounts,
+                guestProgramPath,
+                useHostTty,
+                guestUserName,
+                guestUid,
+                guestGid,
+                guestGroups,
+                guestHome,
+                guestShell,
+                programArguments,
+                new String[0],
+                framebufferDevice,
+                networkBackend);
+    }
+
+    /// Creates a simulator context with optional framebuffer, networking, and environment overrides.
+    public RiscVContext(
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long memoryBase,
+            long memorySize,
+            long pageSize,
+            long maxCommittedPages,
+            long hugePageSize,
+            long hugePages,
+            long vectorVlenBits,
+            long maxInstructions,
+            boolean trace,
+            TimeSource timeSource,
+            String hostRoot,
+            String filesystemMounts,
+            String guestProgramPath,
+            boolean useHostTty,
+            @Nullable String guestUserName,
+            long guestUid,
+            long guestGid,
+            String guestGroups,
+            @Nullable String guestHome,
+            @Nullable String guestShell,
+            String @Unmodifiable [] programArguments,
+            String @Unmodifiable [] environmentOverrides,
+            @Nullable FramebufferDevice framebufferDevice,
+            GuestNetworkBackend networkBackend) {
         if (memoryBase < 0 && memoryBase != AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
@@ -312,6 +374,9 @@ public final class RiscVContext {
         this.guestProgramPath = normalizedGuestProgramPath;
         this.useHostTty = useHostTty;
         this.guestCredentials = parsedGuestCredentials;
+        this.initialEnvironment = mergeEnvironment(
+                parsedGuestCredentials.initialEnvironment(),
+                environmentOverrides);
         this.programArguments = programArguments.clone();
         this.framebufferDevice = framebufferDevice;
         this.networkBackend = networkBackend;
@@ -407,6 +472,11 @@ public final class RiscVContext {
         return guestCredentials;
     }
 
+    /// Returns the initial environment exposed to the guest process.
+    public String @Unmodifiable [] initialEnvironment() {
+        return initialEnvironment.clone();
+    }
+
     /// Returns the guest application arguments supplied after the ELF path.
     public String @Unmodifiable [] programArguments() {
         return programArguments.clone();
@@ -417,7 +487,7 @@ public final class RiscVContext {
         return framebufferDevice;
     }
 
-    /// Returns the backend used for guest Internet sockets.
+    /// Returns the backend used for host-backed guest sockets.
     public GuestNetworkBackend networkBackend() {
         return networkBackend;
     }
@@ -454,6 +524,37 @@ public final class RiscVContext {
     /// Returns true when a value is a positive power of two.
     private static boolean isPowerOfTwo(long value) {
         return value > 0 && (value & (value - 1L)) == 0;
+    }
+
+    /// Merges explicit environment entries over the credential-derived defaults.
+    private static String @Unmodifiable [] mergeEnvironment(
+            String @Unmodifiable [] defaults,
+            String @Unmodifiable [] overrides) {
+        ArrayList<String> result = new ArrayList<>();
+        for (String entry : defaults) {
+            validateEnvironmentEntry(entry);
+            result.add(entry);
+        }
+        for (String override : overrides) {
+            validateEnvironmentEntry(override);
+            String name = environmentName(override);
+            result.removeIf(entry -> environmentName(entry).equals(name));
+            result.add(override);
+        }
+        return result.toArray(String[]::new);
+    }
+
+    /// Validates one `NAME=value` environment entry.
+    private static void validateEnvironmentEntry(String entry) {
+        if (entry.isEmpty() || entry.indexOf('=') <= 0 || entry.indexOf('\0') >= 0) {
+            throw new RiscVException("Guest environment entry must use NAME=value syntax: " + entry);
+        }
+    }
+
+    /// Returns the name portion of one `NAME=value` environment entry.
+    private static String environmentName(String entry) {
+        int separator = entry.indexOf('=');
+        return separator < 0 ? entry : entry.substring(0, separator);
     }
 
     /// Parses newline-separated mount entries, defaulting to `riscv.hostRoot` as `/`.

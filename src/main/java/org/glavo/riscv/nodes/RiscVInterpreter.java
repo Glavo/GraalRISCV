@@ -458,7 +458,7 @@ public final class RiscVInterpreter {
                     program.executable().loadBias(),
                     program.interpreterBase(),
                     program.executablePath(),
-                    context.guestCredentials().initialEnvironment(),
+                    context.initialEnvironment(),
                     context.guestCredentials(),
                     context.pageSize());
         }
@@ -483,7 +483,7 @@ public final class RiscVInterpreter {
                 program.executable().loadBias(),
                 program.interpreterBase(),
                 program.executablePath(),
-                context.guestCredentials().initialEnvironment(),
+                context.initialEnvironment(),
                 context.guestCredentials(),
                 context.pageSize());
     }

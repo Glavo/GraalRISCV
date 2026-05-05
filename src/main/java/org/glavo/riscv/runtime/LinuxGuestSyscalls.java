@@ -2202,12 +2202,46 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
 
         try {
-            return addOpenFile(OpenFile.socket(new UnixStreamSocket(), nonblocking));
+            return addOpenFile(OpenFile.socket(new HostUnixStreamSocket(), nonblocking));
         } catch (IOException exception) {
             return networkException(exception);
         } catch (UnsupportedOperationException exception) {
             return EAFNOSUPPORT;
         }
+    }
+
+    /// Creates a pair of connected in-memory Unix-domain stream sockets.
+    protected long socketpair(long domain, long type, long protocol, long pairAddress) {
+        long socketType = type & SOCK_TYPE_MASK;
+        long typeFlags = type & ~SOCK_TYPE_MASK;
+        if ((typeFlags & ~SUPPORTED_SOCKET_TYPE_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (domain != AF_UNIX) {
+            return EAFNOSUPPORT;
+        }
+        if (socketType != SOCK_STREAM) {
+            return EPROTONOSUPPORT;
+        }
+        if (protocol != 0) {
+            return EPROTONOSUPPORT;
+        }
+        if (!memory.isBacked(pairAddress, 2L * Integer.BYTES)) {
+            return EFAULT;
+        }
+
+        PipeBuffer firstToSecond = new PipeBuffer();
+        PipeBuffer secondToFirst = new PipeBuffer();
+        boolean nonblocking = (typeFlags & O_NONBLOCK) != 0;
+        long firstFileDescriptor = addOpenFile(OpenFile.socket(
+                new LocalUnixStreamSocket(secondToFirst, firstToSecond),
+                nonblocking));
+        long secondFileDescriptor = addOpenFile(OpenFile.socket(
+                new LocalUnixStreamSocket(firstToSecond, secondToFirst),
+                nonblocking));
+        memory.writeInt(pairAddress, (int) firstFileDescriptor);
+        memory.writeInt(pairAddress + Integer.BYTES, (int) secondFileDescriptor);
+        return 0;
     }
 
     /// Handles Linux network-interface ioctl requests on generic ioctl sockets.
@@ -3117,7 +3151,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             }
             memory.clear(address, size);
             memory.writeShort(address + SOCKADDR_FAMILY_OFFSET, (short) AF_UNIX);
-            if (pathBytes != null) {
+            if (pathBytes != null && pathBytes.length > 0) {
                 memory.writeBytes(address + SOCKADDR_UN_PATH_OFFSET, pathBytes, 0, pathBytes.length);
                 memory.writeByte(address + SOCKADDR_UN_PATH_OFFSET + pathBytes.length, (byte) 0);
             }
@@ -3135,7 +3169,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Returns the byte size of a guest Unix-domain socket address.
     private static long unixSockaddrSize(byte @Nullable [] pathBytes) {
-        return pathBytes == null ? SOCKADDR_UN_PATH_OFFSET : SOCKADDR_UN_PATH_OFFSET + pathBytes.length + 1L;
+        return pathBytes == null || pathBytes.length == 0
+                ? SOCKADDR_UN_PATH_OFFSET
+                : SOCKADDR_UN_PATH_OFFSET + pathBytes.length + 1L;
     }
 
     /// Writes a wildcard socket address for an unbound guest Internet socket.
@@ -3345,8 +3381,38 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
     }
 
+    /// Guest Unix-domain stream socket behavior shared by host-backed and local-pair sockets.
+    private abstract class UnixStreamSocket implements GuestSocket {
+        /// Connects the socket to a Unix-domain peer.
+        abstract long connect(@Nullable UnixSocketAddress address, boolean nonblocking);
+
+        /// Sends bytes to the connected peer.
+        abstract long send(ByteBuffer source, boolean nonblocking);
+
+        /// Receives bytes from the connected peer.
+        abstract UnixReceiveResult receive(ByteBuffer target, boolean nonblocking);
+
+        /// Returns the bound local guest path, or null for unnamed sockets.
+        abstract @Nullable String localPath();
+
+        /// Returns the connected peer guest path, or null when not connected or unnamed.
+        abstract @Nullable String peerPath();
+
+        /// Sets one supported Unix-domain socket option.
+        abstract long setOption(long level, long option, int value);
+
+        /// Gets one supported Unix-domain socket option.
+        abstract OptionResult getOption(long level, long option);
+
+        /// Shuts down one or both stream socket directions.
+        abstract long shutdown(long how);
+
+        /// Computes readiness events for poll and epoll.
+        abstract int readyEvents();
+    }
+
     /// Host-backed guest Unix-domain stream socket.
-    private final class UnixStreamSocket implements GuestSocket {
+    private final class HostUnixStreamSocket extends UnixStreamSocket {
         /// The host Unix-domain stream channel.
         private final SocketChannel channel;
 
@@ -3369,7 +3435,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         private boolean writeShutdown;
 
         /// Creates an unconnected host-backed Unix-domain stream socket.
-        UnixStreamSocket() throws IOException {
+        HostUnixStreamSocket() throws IOException {
             channel = networkBackend.openUnixSocketChannel();
         }
 
@@ -3638,6 +3704,168 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             if (error < 0) {
                 socketError = (int) -error;
             }
+        }
+    }
+
+    /// In-memory Unix-domain stream socket returned by `socketpair`.
+    private final class LocalUnixStreamSocket extends UnixStreamSocket {
+        /// Bytes written by the peer and read by this socket.
+        private final PipeBuffer inbound;
+
+        /// Bytes written by this socket and read by the peer.
+        private final PipeBuffer outbound;
+
+        /// The configured send buffer size, or zero when not explicitly configured.
+        private int sendBufferSize;
+
+        /// The configured receive buffer size, or zero when not explicitly configured.
+        private int receiveBufferSize;
+
+        /// Whether the read side has been shut down.
+        private boolean readShutdown;
+
+        /// Whether the write side has been shut down.
+        private boolean writeShutdown;
+
+        /// Creates one connected end of a Unix-domain socket pair.
+        LocalUnixStreamSocket(PipeBuffer inbound, PipeBuffer outbound) {
+            this.inbound = inbound;
+            this.outbound = outbound;
+        }
+
+        /// Reports that socket-pair endpoints are already connected.
+        @Override
+        long connect(@Nullable UnixSocketAddress address, boolean nonblocking) {
+            return EISCONN;
+        }
+
+        /// Sends bytes to the paired endpoint.
+        @Override
+        long send(ByteBuffer source, boolean nonblocking) {
+            if (!source.hasRemaining()) {
+                return 0;
+            }
+            if (writeShutdown) {
+                return EPIPE;
+            }
+            byte[] bytes = new byte[source.remaining()];
+            source.get(bytes);
+            return outbound.write(bytes);
+        }
+
+        /// Receives bytes from the paired endpoint.
+        @Override
+        UnixReceiveResult receive(ByteBuffer target, boolean nonblocking) {
+            if (!target.hasRemaining()) {
+                return UnixReceiveResult.success(0, "");
+            }
+            if (readShutdown) {
+                return UnixReceiveResult.success(0, "");
+            }
+            byte[] bytes = new byte[target.remaining()];
+            try {
+                int count = inbound.read(bytes, bytes.length, nonblocking);
+                if (count < 0) {
+                    return UnixReceiveResult.error(count);
+                }
+                target.put(bytes, 0, count);
+                return UnixReceiveResult.success(count, "");
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return UnixReceiveResult.error(EINTR);
+            }
+        }
+
+        /// Returns the unnamed local socket-pair address.
+        @Override
+        @Nullable String localPath() {
+            return "";
+        }
+
+        /// Returns the unnamed peer socket-pair address.
+        @Override
+        @Nullable String peerPath() {
+            return "";
+        }
+
+        /// Sets one supported in-memory Unix-domain socket option.
+        @Override
+        long setOption(long level, long option, int value) {
+            if (level != SOL_SOCKET) {
+                return ENOPROTOOPT;
+            }
+            if (option == SO_SNDBUF) {
+                if (value <= 0) {
+                    return EINVAL;
+                }
+                sendBufferSize = value;
+                return 0;
+            }
+            if (option == SO_RCVBUF) {
+                if (value <= 0) {
+                    return EINVAL;
+                }
+                receiveBufferSize = value;
+                return 0;
+            }
+            return ENOPROTOOPT;
+        }
+
+        /// Gets one supported in-memory Unix-domain socket option.
+        @Override
+        OptionResult getOption(long level, long option) {
+            if (level != SOL_SOCKET) {
+                return OptionResult.error(ENOPROTOOPT);
+            }
+            if (option == SO_SNDBUF) {
+                return OptionResult.value(sendBufferSize);
+            }
+            if (option == SO_RCVBUF) {
+                return OptionResult.value(receiveBufferSize);
+            }
+            if (option == SO_ERROR) {
+                return OptionResult.value(0);
+            }
+            return OptionResult.error(ENOPROTOOPT);
+        }
+
+        /// Shuts down one or both stream socket directions.
+        @Override
+        long shutdown(long how) {
+            if (how < SHUT_RD || how > SHUT_RDWR) {
+                return EINVAL;
+            }
+            if (how == SHUT_RD || how == SHUT_RDWR) {
+                inbound.closeReader();
+                readShutdown = true;
+            }
+            if (how == SHUT_WR || how == SHUT_RDWR) {
+                outbound.closeWriter();
+                writeShutdown = true;
+            }
+            return 0;
+        }
+
+        /// Computes readiness events for poll and epoll.
+        @Override
+        int readyEvents() {
+            int events = 0;
+            if (!readShutdown && inbound.isReadable()) {
+                events |= EPOLLIN;
+            }
+            if (!writeShutdown && outbound.isReaderOpen()) {
+                events |= EPOLLOUT;
+            }
+            if (!inbound.isWriterOpen() || !outbound.isReaderOpen()) {
+                events |= EPOLLHUP;
+            }
+            return events;
+        }
+
+        /// Releases this socket-pair endpoint.
+        @Override
+        public void close() {
+            shutdown(SHUT_RDWR);
         }
     }
 
@@ -5235,6 +5463,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `socket`.
     private static final int SYS_SOCKET = 198;
 
+    /// The Linux RISC-V syscall number for `socketpair`.
+    private static final int SYS_SOCKETPAIR = 199;
+
     /// The Linux RISC-V syscall number for `bind`.
     private static final int SYS_BIND = 200;
 
@@ -5599,6 +5830,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_GETEGID -> state.setRegister(10, credentials.effectiveGroupId());
             case SYS_SYSINFO -> state.setRegister(10, sysinfo(state.register(10)));
             case SYS_SOCKET -> state.setRegister(10, socket(state.register(10), state.register(11), state.register(12)));
+            case SYS_SOCKETPAIR -> state.setRegister(10, socketpair(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_BIND -> state.setRegister(10, bind(
                     (int) state.register(10),
                     state.register(11),

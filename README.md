@@ -66,6 +66,7 @@ Options:
   --groups <ids|none>        Set comma-separated supplementary guest gids, or none.
   --home <path>              Set the guest home directory used by the default environment.
   --shell <path>             Set the guest shell path used by the default environment.
+  --env <name[=value]>       Set a guest environment variable; without =, copy host value.
   --debug-fixed-clock-nanos <nanos>
                               Use fixed epoch nanoseconds for deterministic guest time.
   --debug-trace-compilation  Accepted for compatibility; currently ignored.
@@ -89,15 +90,30 @@ host executable, the CLI mounts the executable's containing directory at `/`.
 By default, guest `/dev/tty` is backed by the configured process streams; pass
 `--use-host-tty` to try a real host controlling terminal when available. Pass
 `--framebuffer <width>x<height>` to create a Swing-backed XRGB8888 framebuffer
-that guest Linux programs can access through `/dev/fb0`.
+that guest Linux programs can access through `/dev/fb0`. Use `--env NAME=value`
+to append or override one guest environment entry; `--env NAME` copies the
+current host value.
+
 Guest host sockets are disabled by default. Pass `--network host` to map Linux
 IPv4 and IPv6 TCP/UDP sockets, plus filesystem-backed Unix-domain stream
 sockets, to host Java NIO sockets; `NETLINK_ROUTE` and network-interface ioctl
 metadata remain synthetic. Swing/AWT programs running inside the guest can reach
 an X11 server by bind-mounting the host socket directory, for example
-`--mount type=bind,src=/tmp/.X11-unix,dst=/tmp/.X11-unix,readonly`, and setting
-`DISPLAY` inside the guest. Mount the host Xauthority file too when your X server
-requires cookie authentication.
+`--mount type=bind,src=/tmp/.X11-unix,dst=/tmp/.X11-unix,readonly`, and passing
+`--env DISPLAY`. Mount the host Xauthority file too when your X server requires
+cookie authentication:
+
+```text
+java -jar build/libs/riscv-1.0-SNAPSHOT-all.jar \
+  --mount src=./ubuntu-26.04-server-cloudimg-riscv64-root.tar,dst=/,memory \
+  --mount type=bind,src=/tmp/.X11-unix,dst=/tmp/.X11-unix,readonly \
+  --mount type=bind,src="${XAUTHORITY:-$HOME/.Xauthority}",dst=/root/.Xauthority,readonly \
+  --network host \
+  --root \
+  --env DISPLAY \
+  --env XAUTHORITY=/root/.Xauthority \
+  --guest-program /path/to/java -jar /path/to/app.jar
+```
 
 ## Supported ELF Inputs
 
@@ -120,7 +136,9 @@ devices. Guest uid, gid, supplementary groups, login name, home, and shell can b
 configured with CLI options. Host passthrough networking is opt-in with
 `--network host`, which enables IPv4 and IPv6 TCP client/server sockets, UDP
 datagrams, and bind-mounted Unix-domain stream sockets through the host network
-stack while keeping synthetic netlink and interface ioctl metadata available.
+stack. Local Unix-domain stream `socketpair` descriptors are supported even
+without host networking. Synthetic netlink and interface ioctl metadata remain
+available.
 
 ## Examples
 

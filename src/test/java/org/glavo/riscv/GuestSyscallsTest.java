@@ -416,6 +416,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `socket`.
     private static final long SYS_SOCKET = 198;
 
+    /// The Linux RISC-V syscall number for `socketpair`.
+    private static final long SYS_SOCKETPAIR = 199;
+
     /// The Linux RISC-V syscall number for `bind`.
     private static final long SYS_BIND = 200;
 
@@ -973,6 +976,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `IPV6_V6ONLY`.
     private static final long IPV6_V6ONLY = 26;
+
+    /// Linux `SHUT_WR`.
+    private static final long SHUT_WR = 1;
 
     /// Linux `O_NONBLOCK` accepted in socket type flags.
     private static final long SOCK_NONBLOCK = O_NONBLOCK;
@@ -6487,6 +6493,78 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SOCKET, AF_UNIX, SOCK_STREAM, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EAFNOSUPPORT, state.register(10));
+        }
+    }
+
+    /// Verifies Unix-domain `socketpair` creates connected in-memory stream sockets.
+    @Test
+    public void unixStreamSocketpairExchangesBytes() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pairAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 64;
+            long iovecAddress = memory.baseAddress() + 256;
+            long sockaddrAddress = memory.baseAddress() + 384;
+            long lengthAddress = memory.baseAddress() + 512;
+
+            setSyscall(state, SYS_SOCKETPAIR, AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | O_CLOEXEC, 0, pairAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int firstFileDescriptor = memory.readInt(pairAddress);
+            int secondFileDescriptor = memory.readInt(pairAddress + Integer.BYTES);
+            assertEquals(3, firstFileDescriptor);
+            assertEquals(4, secondFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, firstFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDWR | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_RECVFROM, firstFileDescriptor, bufferAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            byte[] firstMessage = "ping".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(bufferAddress, firstMessage, 0, firstMessage.length);
+            setSyscall(state, SYS_WRITE, firstFileDescriptor, bufferAddress, firstMessage.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(firstMessage.length, state.register(10));
+
+            setSyscall(state, SYS_READ, secondFileDescriptor, bufferAddress, firstMessage.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(firstMessage.length, state.register(10));
+            assertEquals("ping", readGuestString(memory, bufferAddress, firstMessage.length));
+
+            byte[] secondPart1 = "po".getBytes(StandardCharsets.UTF_8);
+            byte[] secondPart2 = "ng".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(bufferAddress, secondPart1, 0, secondPart1.length);
+            memory.writeBytes(bufferAddress + 16, secondPart2, 0, secondPart2.length);
+            memory.writeLong(iovecAddress + IOVEC_BASE_OFFSET, bufferAddress);
+            memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, secondPart1.length);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_BASE_OFFSET, bufferAddress + 16);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, secondPart2.length);
+            setSyscall(state, SYS_WRITEV, secondFileDescriptor, iovecAddress, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(secondPart1.length + secondPart2.length, state.register(10));
+
+            memory.writeInt(lengthAddress, SOCKADDR_UN_SIZE);
+            setSyscall(state, SYS_GETPEERNAME, firstFileDescriptor, sockaddrAddress, lengthAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(AF_UNIX, memory.readUnsignedShort(sockaddrAddress));
+            assertEquals(SOCKADDR_UN_PATH_OFFSET, memory.readInt(lengthAddress));
+
+            setSyscall(state, SYS_READ, firstFileDescriptor, bufferAddress, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertEquals("pong", readGuestString(memory, bufferAddress, 4));
+
+            setSyscall(state, SYS_SHUTDOWN, firstFileDescriptor, SHUT_WR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, secondFileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
         }
     }
 
