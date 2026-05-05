@@ -5,13 +5,14 @@ package org.glavo.riscv.runtime;
 
 import org.glavo.riscv.exception.RiscVException;
 import org.jetbrains.annotations.NotNullByDefault;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
 import java.util.ArrayList;
 
 /// Stores the Linux user and group identity exposed to a guest process.
 ///
-/// @param userName the login name exposed through the default guest environment
+/// @param userName the login name exposed through the default guest environment, or null when omitted
 /// @param realUserId the real Linux uid returned by identity syscalls and auxv
 /// @param effectiveUserId the effective Linux uid returned by identity syscalls and auxv
 /// @param savedUserId the saved Linux uid returned by `getresuid`
@@ -19,11 +20,11 @@ import java.util.ArrayList;
 /// @param effectiveGroupId the effective Linux gid returned by identity syscalls and auxv
 /// @param savedGroupId the saved Linux gid returned by `getresgid`
 /// @param supplementaryGroups the supplementary Linux gids returned by `getgroups`
-/// @param homeDirectory the absolute guest home directory used by the default environment
-/// @param shell the absolute guest shell path used by the default environment
+/// @param homeDirectory the absolute guest home directory used by the default environment, or null when omitted
+/// @param shell the absolute guest shell path used by the default environment, or null when omitted
 @NotNullByDefault
 public record GuestCredentials(
-        String userName,
+        @Nullable String userName,
         long realUserId,
         long effectiveUserId,
         long savedUserId,
@@ -31,9 +32,9 @@ public record GuestCredentials(
         long effectiveGroupId,
         long savedGroupId,
         long @Unmodifiable [] supplementaryGroups,
-        String homeDirectory,
-        String shell) {
-    /// The default guest login name.
+        @Nullable String homeDirectory,
+        @Nullable String shell) {
+    /// The conventional login name used by callers that explicitly request a textual default user.
     public static final String DEFAULT_USER_NAME = "user";
 
     /// The default guest uid.
@@ -50,7 +51,9 @@ public record GuestCredentials(
 
     /// Creates guest credentials after validating and defensively copying mutable inputs.
     public GuestCredentials {
-        validateUserName("userName", userName);
+        if (userName != null) {
+            validateUserName("userName", userName);
+        }
         validateId("realUserId", realUserId);
         validateId("effectiveUserId", effectiveUserId);
         validateId("savedUserId", savedUserId);
@@ -61,28 +64,35 @@ public record GuestCredentials(
         for (long group : supplementaryGroups) {
             validateId("supplementaryGroups", group);
         }
-        homeDirectory = normalizeGuestPath("homeDirectory", homeDirectory);
-        shell = normalizeGuestPath("shell", shell);
+        if (homeDirectory != null) {
+            homeDirectory = normalizeGuestPath("homeDirectory", homeDirectory);
+        }
+        if (shell != null) {
+            shell = normalizeGuestPath("shell", shell);
+        }
     }
 
-    /// Returns the default non-root guest identity.
+    /// Returns the default numeric non-root guest identity.
     public static GuestCredentials defaultUser() {
-        return of(DEFAULT_USER_NAME, DEFAULT_USER_ID, DEFAULT_GROUP_ID, "", "", DEFAULT_SHELL);
+        return of(null, DEFAULT_USER_ID, DEFAULT_GROUP_ID, "", null, null);
     }
 
     /// Creates guest credentials from user-facing option values.
     public static GuestCredentials of(
-            String userName,
+            @Nullable String userName,
             long userId,
             long groupId,
             String supplementaryGroups,
-            String homeDirectory,
-            String shell) {
-        validateUserName("userName", userName);
+            @Nullable String homeDirectory,
+            @Nullable String shell) {
+        if (userName != null) {
+            validateUserName("userName", userName);
+        }
         validateId("userId", userId);
         validateId("groupId", groupId);
         long[] groups = parseSupplementaryGroups(supplementaryGroups, groupId);
-        String resolvedHomeDirectory = homeDirectory.isEmpty() ? defaultHomeDirectory(userName) : homeDirectory;
+        @Nullable String resolvedHomeDirectory = resolveHomeDirectory(userName, homeDirectory);
+        @Nullable String resolvedShell = resolveShell(userName, shell);
         return new GuestCredentials(
                 userName,
                 userId,
@@ -93,7 +103,7 @@ public record GuestCredentials(
                 groupId,
                 groups,
                 resolvedHomeDirectory,
-                shell);
+                resolvedShell);
     }
 
     /// Returns a copy of the configured supplementary group list.
@@ -114,16 +124,22 @@ public record GuestCredentials(
 
     /// Returns the default environment exposed to an initial guest process.
     public String @Unmodifiable [] initialEnvironment() {
-        return new String[]{
-                "LANG=C",
-                "PATH=/usr/bin:/bin",
-                "PWD=/",
-                "USER=" + userName,
-                "LOGNAME=" + userName,
-                "HOME=" + homeDirectory,
-                "SHELL=" + shell,
-                "TERM=xterm-256color"
-        };
+        ArrayList<String> environment = new ArrayList<>();
+        environment.add("LANG=C");
+        environment.add("PATH=/usr/bin:/bin");
+        environment.add("PWD=/");
+        if (userName != null) {
+            environment.add("USER=" + userName);
+            environment.add("LOGNAME=" + userName);
+        }
+        if (homeDirectory != null) {
+            environment.add("HOME=" + homeDirectory);
+        }
+        if (shell != null) {
+            environment.add("SHELL=" + shell);
+        }
+        environment.add("TERM=xterm-256color");
+        return environment.toArray(String[]::new);
     }
 
     /// Converts a Linux uid or gid to the unsigned 32-bit integer stored in guest structs.
@@ -175,6 +191,22 @@ public record GuestCredentials(
     /// Returns the default home directory for a login name.
     private static String defaultHomeDirectory(String userName) {
         return "root".equals(userName) ? "/root" : "/home/" + userName;
+    }
+
+    /// Resolves the home directory field from the explicit launch options.
+    private static @Nullable String resolveHomeDirectory(@Nullable String userName, @Nullable String homeDirectory) {
+        if (homeDirectory != null && !homeDirectory.isEmpty()) {
+            return homeDirectory;
+        }
+        return userName == null ? null : defaultHomeDirectory(userName);
+    }
+
+    /// Resolves the shell field from the explicit launch options.
+    private static @Nullable String resolveShell(@Nullable String userName, @Nullable String shell) {
+        if (shell != null && !shell.isEmpty()) {
+            return shell;
+        }
+        return userName == null ? null : DEFAULT_SHELL;
     }
 
     /// Parses supplementary groups, defaulting to the primary gid when no group option was supplied.
@@ -229,4 +261,5 @@ public record GuestCredentials(
         }
         return segments.isEmpty() ? "/" : "/" + String.join("/", segments);
     }
+
 }

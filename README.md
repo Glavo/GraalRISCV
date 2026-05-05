@@ -57,7 +57,7 @@ Options:
                               Open a Swing framebuffer and expose it as guest /dev/fb0.
   --framebuffer-scale <n>     Integer Swing framebuffer scale. Default is 3.
   --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
-  --user <name>              Guest login name. Default is user.
+  --user <name>              Guest login name exported in the default environment.
   --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
   --gid <id>                 Guest real, effective, and saved gid. Default is 1000.
   --groups <ids|none>        Comma-separated supplementary guest gids, or none.

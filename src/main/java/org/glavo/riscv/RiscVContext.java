@@ -132,12 +132,12 @@ public final class RiscVContext {
             String filesystemMounts,
             String guestProgramPath,
             boolean useHostTty,
-            String guestUserName,
+            @Nullable String guestUserName,
             long guestUid,
             long guestGid,
             String guestGroups,
-            String guestHome,
-            String guestShell,
+            @Nullable String guestHome,
+            @Nullable String guestShell,
             String @Unmodifiable [] programArguments) {
         this(
                 in,
@@ -186,12 +186,12 @@ public final class RiscVContext {
             String filesystemMounts,
             String guestProgramPath,
             boolean useHostTty,
-            String guestUserName,
+            @Nullable String guestUserName,
             long guestUid,
             long guestGid,
             String guestGroups,
-            String guestHome,
-            String guestShell,
+            @Nullable String guestHome,
+            @Nullable String guestShell,
             String @Unmodifiable [] programArguments,
             @Nullable FramebufferDevice framebufferDevice) {
         if (memoryBase < 0 && memoryBase != AUTO_MEMORY_BASE) {

@@ -51,7 +51,7 @@ public final class Main {
                                           Open a Swing framebuffer and expose it as guest /dev/fb0.
               --framebuffer-scale <n>     Integer Swing framebuffer scale. Default is 3.
               --root                     Shortcut for --user root --uid 0 --gid 0 --groups 0.
-              --user <name>              Guest login name. Default is user.
+              --user <name>              Guest login name exported in the default environment.
               --uid <id>                 Guest real, effective, and saved uid. Default is 1000.
               --gid <id>                 Guest real, effective, and saved gid. Default is 1000.
               --groups <ids|none>        Comma-separated supplementary guest gids, or none.
@@ -153,12 +153,12 @@ public final class Main {
                 encodeMounts(options.mounts()),
                 options.guestProgramPath() == null ? "" : options.guestProgramPath(),
                 options.useHostTty(),
-                options.guestUserName() == null ? GuestCredentials.DEFAULT_USER_NAME : options.guestUserName(),
+                options.guestUserName(),
                 longOptionOrDefault(options.guestUid(), GuestCredentials.DEFAULT_USER_ID),
                 longOptionOrDefault(options.guestGid(), GuestCredentials.DEFAULT_GROUP_ID),
                 options.guestGroups() == null ? "" : options.guestGroups(),
-                options.guestHome() == null ? "" : options.guestHome(),
-                options.guestShell() == null ? GuestCredentials.DEFAULT_SHELL : options.guestShell(),
+                options.guestHome(),
+                options.guestShell(),
                 options.applicationArguments(),
                 framebufferDevice);
     }
