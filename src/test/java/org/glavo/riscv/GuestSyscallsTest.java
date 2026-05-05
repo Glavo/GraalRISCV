@@ -2250,7 +2250,7 @@ public final class GuestSyscallsTest {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress(),
-                    GuestFileSystem.forHostRoot(new HostPath(tempDirectory)),
+                    GuestFileSystem.forHostRoot(tempDirectory),
                     root);
             long pathAddress = memory.baseAddress();
             long statAddress = memory.baseAddress() + 256;
@@ -2311,7 +2311,7 @@ public final class GuestSyscallsTest {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress(),
-                    GuestFileSystem.forHostRoot(new HostPath(tempDirectory)),
+                    GuestFileSystem.forHostRoot(tempDirectory),
                     root);
             long pathAddress = memory.baseAddress();
             long statAddress = memory.baseAddress() + 256;
@@ -2677,7 +2677,7 @@ public final class GuestSyscallsTest {
                     new ByteArrayOutputStream(),
                     new ByteArrayOutputStream(),
                     memory.baseAddress(),
-                    GuestFileSystem.forHostRoot(new HostPath(tempDirectory)),
+                    GuestFileSystem.forHostRoot(tempDirectory),
                     root);
             long pathAddress = memory.baseAddress();
             long statAddress = memory.baseAddress() + 256;
@@ -7576,7 +7576,7 @@ public final class GuestSyscallsTest {
                 out,
                 err,
                 initialProgramBreak,
-                new HostPath(hostRoot),
+                hostRoot,
                 timeSource);
         return new RiscVThreadState(
                 memory,

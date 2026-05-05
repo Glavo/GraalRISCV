@@ -22,7 +22,10 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.NonWritableChannelException;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -113,10 +116,10 @@ public final class GuestFileSystem {
     }
 
     /// Creates a filesystem with an eager host root mount when one is supplied.
-    public static GuestFileSystem forHostRoot(@Nullable HostPath hostRoot) {
+    public static GuestFileSystem forHostRoot(@Nullable Path hostRoot) {
         Mount @Nullable [] mounts = hostRoot == null
                 ? null
-                : new Mount[]{new HostMount("/", hostRoot.getAbsoluteFile().normalize(), false)};
+                : new Mount[]{new HostMount("/", hostRoot.toAbsolutePath().normalize(), false)};
         return new GuestFileSystem(mounts, new String[0], new VirtualMount[0]);
     }
 
@@ -186,18 +189,18 @@ public final class GuestFileSystem {
             return virtualPath.mount().fileSystem().fileData(virtualPath.node()).clone();
         }
         if (mount instanceof HostMount hostMount) {
-            @Nullable HostPath hostFile = resolveHostFile(absoluteGuestPath, hostMount);
+            @Nullable Path hostFile = resolveHostFile(absoluteGuestPath, hostMount);
             if (hostFile == null) {
                 throw new RiscVException("Guest file is outside configured mounts: " + absoluteGuestPath);
             }
             try {
-                if (!hostFile.getCanonicalFile().startsWith(hostMount.root().getCanonicalFile())) {
+                if (!hostFile.toRealPath().startsWith(hostMount.root().toRealPath())) {
                     throw new RiscVException("Guest file escapes configured mount: " + absoluteGuestPath);
                 }
-                if (!hostFile.isRegularFile()) {
+                if (!Files.isRegularFile(hostFile)) {
                     throw new RiscVException("Guest path is not a regular file: " + absoluteGuestPath);
                 }
-                try (InputStream input = hostFile.newInputStream()) {
+                try (InputStream input = Files.newInputStream(hostFile)) {
                     return readAllBytes(input);
                 }
             } catch (IOException | SecurityException exception) {
@@ -213,16 +216,16 @@ public final class GuestFileSystem {
     }
 
     /// Returns the mount whose host mount root contains a host path.
-    public @Nullable HostMount mountForHostFile(HostPath hostFile) {
-        HostPath normalizedHostFile = hostFile.normalize();
+    public @Nullable HostMount mountForHostFile(Path hostFile) {
+        Path normalizedHostFile = hostFile.normalize();
         @Nullable HostMount best = null;
         for (Mount filesystemMount : currentMounts()) {
             if (!(filesystemMount instanceof HostMount mount)) {
                 continue;
             }
-            HostPath normalizedRoot = mount.root().normalize();
+            Path normalizedRoot = mount.root().normalize();
             if (normalizedHostFile.startsWith(normalizedRoot)
-                    && (best == null || normalizedRoot.getPath().length() > best.root().normalize().getPath().length())) {
+                    && (best == null || normalizedRoot.toString().length() > best.root().normalize().toString().length())) {
                 best = mount;
             }
         }
@@ -230,7 +233,7 @@ public final class GuestFileSystem {
     }
 
     /// Resolves an absolute guest path below a host-directory mount.
-    public @Nullable HostPath resolveHostFile(String absoluteGuestPath) {
+    public @Nullable Path resolveHostFile(String absoluteGuestPath) {
         @Nullable Mount mount = mountForGuestPath(absoluteGuestPath);
         if (!(mount instanceof HostMount hostMount)) {
             return null;
@@ -433,10 +436,10 @@ public final class GuestFileSystem {
     }
 
     /// Resolves an absolute guest path below a host-directory mount.
-    public static @Nullable HostPath resolveHostFile(String absoluteGuestPath, HostMount mount) {
+    public static @Nullable Path resolveHostFile(String absoluteGuestPath, HostMount mount) {
         String relativePath = relativeGuestPath(absoluteGuestPath, mount.guestPath());
         try {
-            HostPath hostFile = mount.root().resolve(relativePath).normalize();
+            Path hostFile = mount.root().resolve(relativePath).normalize();
             return hostFile.startsWith(mount.root()) ? hostFile : null;
         } catch (InvalidPathException exception) {
             return null;
@@ -537,8 +540,8 @@ public final class GuestFileSystem {
     }
 
     /// Returns true when the host path names an existing entry or a symbolic link.
-    public static boolean pathEntryExists(HostPath hostFile) {
-        return hostFile.exists() || hostFile.isSymbolicLink();
+    public static boolean pathEntryExists(Path hostFile) {
+        return Files.exists(hostFile, LinkOption.NOFOLLOW_LINKS);
     }
 
     /// Returns resolved filesystem mounts.
@@ -601,10 +604,10 @@ public final class GuestFileSystem {
         FilesystemMountSpec mountSpec = FilesystemMountSpec.parse(spec);
 
         try {
-            HostPath root = HostPath.of(mountSpec.hostPath()).getAbsoluteFile().normalize();
+            Path root = Path.of(mountSpec.hostPath()).toAbsolutePath().normalize();
             FilesystemMountSpec.Type type = mountSpec.type();
             if (type == FilesystemMountSpec.Type.AUTO) {
-                type = root.isRegularFile() ? FilesystemMountSpec.Type.TAR : FilesystemMountSpec.Type.BIND;
+                type = Files.isRegularFile(root) ? FilesystemMountSpec.Type.TAR : FilesystemMountSpec.Type.BIND;
             }
 
             if (type == FilesystemMountSpec.Type.BIND) {
@@ -614,7 +617,7 @@ public final class GuestFileSystem {
                 return new HostMount(mountSpec.guestPath(), root, mountSpec.bindReadOnly());
             }
 
-            if (!root.isRegularFile()) {
+            if (!Files.isRegularFile(root)) {
                 throw new RiscVException("Tar filesystem mount source is not a regular file: " + mountSpec.hostPath());
             }
             if (!mountSpec.memory() && Boolean.FALSE.equals(mountSpec.readOnly())) {
@@ -674,7 +677,7 @@ public final class GuestFileSystem {
     /// @param guestPath the absolute guest-visible mount point
     /// @param root the resolved host path backing the mount point
     /// @param readOnly whether guest writes through this mount are rejected
-    public record HostMount(String guestPath, HostPath root, boolean readOnly) implements Mount {
+    public record HostMount(String guestPath, Path root, boolean readOnly) implements Mount {
     }
 
     /// Describes one resolved tar filesystem mount.
@@ -831,7 +834,7 @@ public final class GuestFileSystem {
         }
 
         /// Reads a tar archive into an in-memory filesystem tree.
-        static TarFileSystem readMemory(HostPath archive) throws IOException {
+        static TarFileSystem readMemory(Path archive) throws IOException {
             TarFileSystem fileSystem = new TarFileSystem(null);
             ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();
             try (InputStream input = openMemoryTarInputStream(archive);
@@ -870,8 +873,8 @@ public final class GuestFileSystem {
         }
 
         /// Opens a memory tar source, transparently unwrapping gzip-compressed archives.
-        private static InputStream openMemoryTarInputStream(HostPath archive) throws IOException {
-            BufferedInputStream input = new BufferedInputStream(archive.newInputStream());
+        private static InputStream openMemoryTarInputStream(Path archive) throws IOException {
+            BufferedInputStream input = new BufferedInputStream(Files.newInputStream(archive));
             input.mark(2);
             int first = input.read();
             int second = input.read();
@@ -880,8 +883,8 @@ public final class GuestFileSystem {
         }
 
         /// Reads tar metadata while leaving regular file contents in the archive.
-        static TarFileSystem readLazy(HostPath archive) throws IOException {
-            TarArchiveReader reader = new TarArchiveReader(archive.newByteChannel(EnumSet.of(StandardOpenOption.READ)));
+        static TarFileSystem readLazy(Path archive) throws IOException {
+            TarArchiveReader reader = new TarArchiveReader(Files.newByteChannel(archive, EnumSet.of(StandardOpenOption.READ)));
             TarFileSystem fileSystem = new TarFileSystem(reader);
             ArrayList<PendingTarHardLink> hardLinks = new ArrayList<>();
             for (TarArchiveEntry entry : reader.getEntries()) {

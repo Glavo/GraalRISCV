@@ -12,7 +12,6 @@ import org.glavo.riscv.constants.Rva23Profile;
 import org.glavo.riscv.exception.RiscVException;
 import org.glavo.riscv.memory.Memory;
 import org.glavo.riscv.runtime.fs.GuestFileSystem;
-import org.glavo.riscv.runtime.fs.HostPath;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -20,6 +19,7 @@ import org.jetbrains.annotations.Unmodifiable;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 
 /// Handles the Linux-compatible syscall subset exposed by the simulator.
@@ -42,7 +42,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable HostPath hostRoot) {
+            @Nullable Path hostRoot) {
         super(memory, in, out, err, initialProgramBreak, hostRoot);
     }
 
@@ -53,7 +53,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable HostPath hostRoot,
+            @Nullable Path hostRoot,
             TimeSource timeSource) {
         super(memory, in, out, err, initialProgramBreak, hostRoot, timeSource);
     }

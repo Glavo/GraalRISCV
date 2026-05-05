@@ -24,7 +24,6 @@ import org.glavo.riscv.runtime.fs.GuestFileSystem.TarPath;
 import org.glavo.riscv.runtime.fs.GuestFileSystem.VirtualMount;
 import org.glavo.riscv.runtime.fs.GuestFileSystem.VirtualNode;
 import org.glavo.riscv.runtime.fs.GuestFileSystem.VirtualPath;
-import org.glavo.riscv.runtime.fs.HostPath;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -37,9 +36,12 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
@@ -1303,7 +1305,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable HostPath hostRoot) {
+            @Nullable Path hostRoot) {
         this(memory, in, out, err, initialProgramBreak, hostRoot, TimeSource.system());
     }
 
@@ -1314,7 +1316,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             OutputStream out,
             OutputStream err,
             long initialProgramBreak,
-            @Nullable HostPath hostRoot,
+            @Nullable Path hostRoot,
             TimeSource timeSource) {
         this(
                 memory,
@@ -2246,7 +2248,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return cachedEntries;
         }
 
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         @Nullable TarNode tarNode = openFile.tarNode();
         @Nullable VirtualNode virtualNode = openFile.virtualNode();
         @Nullable VirtualMount virtualMount = openFile.virtualMount();
@@ -2269,8 +2271,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         entries.add(new DirectoryEntry("..", syntheticInode(parentDirectoryForDotDot(path)), DIRECTORY_ENTRY_DIRECTORY));
 
         ArrayList<DirectoryEntry> childEntries = new ArrayList<>();
-        for (HostPath child : path.list()) {
-            childEntries.add(new DirectoryEntry(child.getName(), syntheticInode(child), directoryEntryType(child)));
+        for (Path child : listHostDirectory(path)) {
+            childEntries.add(new DirectoryEntry(hostFileName(child), syntheticInode(child), directoryEntryType(child)));
         }
         childEntries.sort((left, right) -> left.name().compareTo(right.name()));
         entries.addAll(childEntries);
@@ -2296,10 +2298,27 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return entries.toArray(DirectoryEntry[]::new);
     }
 
+    /// Lists immediate children of a sandboxed host directory.
+    protected static Path @Unmodifiable [] listHostDirectory(Path path) throws IOException {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(path)) {
+            ArrayList<Path> result = new ArrayList<>();
+            for (Path child : stream) {
+                result.add(child);
+            }
+            return result.toArray(Path[]::new);
+        }
+    }
+
+    /// Returns the final host path component.
+    protected static String hostFileName(Path path) {
+        @Nullable Path fileName = path.getFileName();
+        return fileName == null ? path.toString() : fileName.toString();
+    }
+
     /// Returns the parent directory represented by the `..` entry without escaping the selected mount root.
-    protected HostPath parentDirectoryForDotDot(HostPath path) {
+    protected Path parentDirectoryForDotDot(Path path) {
         @Nullable HostMount mount = mountForHostFile(path);
-        @Nullable HostPath parent = path.getParent();
+        @Nullable Path parent = path.getParent();
         if (mount != null && parent != null && parent.normalize().startsWith(mount.root())) {
             return parent.normalize();
         }
@@ -2307,15 +2326,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the Linux directory entry type for a sandboxed host path.
-    protected static byte directoryEntryType(HostPath path) {
+    protected static byte directoryEntryType(Path path) {
         try {
-            if (path.isSymbolicLink()) {
+            if (Files.isSymbolicLink(path)) {
                 return DIRECTORY_ENTRY_SYMBOLIC_LINK;
             }
-            if (path.isDirectory()) {
+            if (Files.isDirectory(path)) {
                 return DIRECTORY_ENTRY_DIRECTORY;
             }
-            if (path.isRegularFile()) {
+            if (Files.isRegularFile(path)) {
                 return DIRECTORY_ENTRY_REGULAR_FILE;
             }
             return DIRECTORY_ENTRY_UNKNOWN;
@@ -2360,7 +2379,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
+                @Nullable Path currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null ? EACCES : accessHostFile(currentDirectory, mode);
             }
             return accessFileDescriptor((int) directoryFileDescriptor, mode);
@@ -2386,7 +2405,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return accessVirtualNode(procPath.node(), mode);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2410,7 +2429,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile == null) {
             return EBADF;
         }
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         if (path != null) {
             return accessHostFile(path, mode, false);
         }
@@ -2434,14 +2453,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Checks access bits on a sandboxed host file.
-    protected long accessHostFile(HostPath hostFile, long mode) {
+    protected long accessHostFile(Path hostFile, long mode) {
         return accessHostFile(hostFile, mode, true);
     }
 
     /// Checks access bits on a sandboxed host file with optional parent search validation.
-    protected long accessHostFile(HostPath hostFile, long mode, boolean requireParentSearch) {
+    protected long accessHostFile(Path hostFile, long mode, boolean requireParentSearch) {
         try {
-            if (!hostFile.exists()) {
+            if (!Files.exists(hostFile)) {
                 return ENOENT;
             }
             if (!canonicalFileStaysBelowMount(hostFile)) {
@@ -2456,8 +2475,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if ((mode & W_OK) != 0 && hostFileOnReadOnlyMount(hostFile)) {
                 return EACCES;
             }
-            GuestFileMetadata metadata = hostFileMetadata(hostFile, hostFile.isDirectory());
-            if (!canAccess(metadata, mode, hostFile.isDirectory())) {
+            boolean directory = Files.isDirectory(hostFile);
+            GuestFileMetadata metadata = hostFileMetadata(hostFile, directory);
+            if (!canAccess(metadata, mode, directory)) {
                 return EACCES;
             }
             return 0;
@@ -2488,7 +2508,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2497,7 +2517,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (parentError != 0) {
             return parentError;
         }
-        @Nullable HostPath parent = hostFile.getParent();
+        @Nullable Path parent = hostFile.getParent();
         if (parent == null) {
             return EACCES;
         }
@@ -2514,7 +2534,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return EEXIST;
             }
             GuestFileMetadata parentMetadata = hostFileMetadata(parent, true);
-            hostFile.createDirectory();
+            Files.createDirectory(hostFile);
             fileMetadataStore.put(
                     hostFile,
                     new GuestFileMetadata(
@@ -2584,7 +2604,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2593,7 +2613,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (parentError != 0) {
             return parentError;
         }
-        @Nullable HostPath parent = hostFile.getParent();
+        @Nullable Path parent = hostFile.getParent();
         if (parent == null) {
             return EACCES;
         }
@@ -2607,15 +2627,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         boolean removeDirectory = (flags & AT_REMOVEDIR) != 0;
         try {
-            boolean symbolicLink = hostFile.isSymbolicLink();
+            boolean symbolicLink = Files.isSymbolicLink(hostFile);
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
             }
             if (removeDirectory) {
-                if (symbolicLink || !hostFile.isDirectory()) {
+                if (symbolicLink || !Files.isDirectory(hostFile)) {
                     return ENOTDIR;
                 }
-            } else if (!symbolicLink && hostFile.isDirectory()) {
+            } else if (!symbolicLink && Files.isDirectory(hostFile)) {
                 return EISDIR;
             }
 
@@ -2628,7 +2648,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
 
             String metadataKey = fileMetadataStore.key(hostFile);
-            hostFile.delete();
+            Files.delete(hostFile);
             fileMetadataStore.remove(metadataKey);
             return 0;
         } catch (NoSuchFileException exception) {
@@ -2716,8 +2736,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable HostPath oldHostFile = resolveHostFile(oldDirectoryFileDescriptor, oldGuestPath);
-        @Nullable HostPath newHostFile = resolveHostFile(newDirectoryFileDescriptor, newGuestPath);
+        @Nullable Path oldHostFile = resolveHostFile(oldDirectoryFileDescriptor, oldGuestPath);
+        @Nullable Path newHostFile = resolveHostFile(newDirectoryFileDescriptor, newGuestPath);
         if (oldHostFile == null || newHostFile == null) {
             return EACCES;
         }
@@ -2730,8 +2750,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (newParentError != 0) {
             return newParentError;
         }
-        @Nullable HostPath oldParent = oldHostFile.getParent();
-        @Nullable HostPath newParent = newHostFile.getParent();
+        @Nullable Path oldParent = oldHostFile.getParent();
+        @Nullable Path newParent = newHostFile.getParent();
         if (oldParent == null || newParent == null) {
             return EACCES;
         }
@@ -2752,7 +2772,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
 
-            boolean oldDirectory = !oldHostFile.isSymbolicLink() && oldHostFile.isDirectory();
+            boolean oldDirectory = !Files.isSymbolicLink(oldHostFile) && Files.isDirectory(oldHostFile);
             GuestFileMetadata oldParentMetadata = hostFileMetadata(oldParent, true);
             if (hasStickyMutationRestriction(oldParentMetadata)) {
                 GuestFileMetadata oldMetadata = hostFileMetadata(oldHostFile, oldDirectory);
@@ -2762,7 +2782,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
 
             if (pathEntryExists(newHostFile)) {
-                boolean newDirectory = !newHostFile.isSymbolicLink() && newHostFile.isDirectory();
+                boolean newDirectory = !Files.isSymbolicLink(newHostFile) && Files.isDirectory(newHostFile);
                 if (oldDirectory && !newDirectory) {
                     return ENOTDIR;
                 }
@@ -2779,7 +2799,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
 
             String oldMetadataKey = fileMetadataStore.key(oldHostFile);
-            oldHostFile.move(newHostFile, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(oldHostFile, newHostFile, StandardCopyOption.REPLACE_EXISTING);
             fileMetadataStore.move(oldMetadataKey, newHostFile);
             return 0;
         } catch (NoSuchFileException exception) {
@@ -2884,7 +2904,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable Path hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -2900,24 +2920,24 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (parentAccess != 0) {
                 return parentAccess;
             }
-            if (hostFile.isDirectory()) {
+            if (Files.isDirectory(hostFile)) {
                 return EISDIR;
             }
-            if (!hostFile.isRegularFile()) {
+            if (!Files.isRegularFile(hostFile)) {
                 return ENODEV;
             }
             GuestFileMetadata metadata = hostFileMetadata(hostFile, false);
             if (!canAccess(metadata, W_OK, false)) {
                 return EACCES;
             }
-            if (!hostFile.isWritable()) {
+            if (!Files.isWritable(hostFile)) {
                 return EACCES;
             }
             if (hostFileOnReadOnlyMount(hostFile)) {
                 return EROFS;
             }
 
-            try (SeekableByteChannel channel = hostFile.newByteChannel(EnumSet.of(StandardOpenOption.WRITE))) {
+            try (SeekableByteChannel channel = Files.newByteChannel(hostFile, EnumSet.of(StandardOpenOption.WRITE))) {
                 resizeHostChannel(channel, length);
             }
             return 0;
@@ -3001,7 +3021,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return changeWorkingDirectory(procPath);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable Path hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -3043,7 +3063,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
 
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         if (path == null) {
             return EBADF;
         }
@@ -3051,7 +3071,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Applies a host directory as the guest-visible current working directory.
-    protected long changeWorkingDirectory(HostPath hostFile) {
+    protected long changeWorkingDirectory(Path hostFile) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -3059,7 +3079,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (!canonicalFileStaysBelowMount(hostFile)) {
                 return EACCES;
             }
-            if (!hostFile.isDirectory()) {
+            if (!Files.isDirectory(hostFile)) {
                 return ENOTDIR;
             }
             long parentAccess = accessHostParent(hostFile);
@@ -3141,7 +3161,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
+                @Nullable Path currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null ? EACCES : chownHostFile(currentDirectory, owner, group, flags, true);
             }
             if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
@@ -3170,7 +3190,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return chownVirtualPath(procPath, owner, group);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -3193,7 +3213,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EBADF;
         }
 
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         if (path != null) {
             return chownHostFile(path, owner, group, 0, false);
         }
@@ -3212,7 +3232,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Changes ownership metadata for an existing sandboxed host filesystem entry.
     protected long chownHostFile(
-            HostPath hostFile,
+            Path hostFile,
             long owner,
             long group,
             long flags,
@@ -3225,7 +3245,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 if (!canonicalFileStaysBelowMount(hostFile)) {
                     return EACCES;
                 }
-            } else if (hostFile.isSymbolicLink()) {
+            } else if (Files.isSymbolicLink(hostFile)) {
                 return owner == -1L && group == -1L ? 0 : ENOTSUP;
             } else {
                 @Nullable HostMount mount = mountForHostFile(hostFile);
@@ -3247,7 +3267,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return EROFS;
             }
 
-            boolean directory = hostFile.isDirectory();
+            boolean directory = Files.isDirectory(hostFile);
             GuestFileMetadata metadata = hostFileMetadata(hostFile, directory);
             if (!canChangeOwner(metadata, owner, group)) {
                 return EPERM;
@@ -3362,7 +3382,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
+                @Nullable Path currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null ? EACCES : chmodHostFile(currentDirectory, mode, flags, true);
             }
             if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
@@ -3391,7 +3411,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return chmodVirtualPath(virtualPath, mode);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -3409,7 +3429,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EBADF;
         }
 
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         if (path != null) {
             return chmodHostFile(path, mode, 0, false);
         }
@@ -3426,12 +3446,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Changes permission metadata for an existing sandboxed host filesystem entry.
-    protected long chmodHostFile(HostPath hostFile, long mode, long flags, boolean requireParentSearch) {
+    protected long chmodHostFile(Path hostFile, long mode, long flags, boolean requireParentSearch) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
             }
-            if ((flags & AT_SYMLINK_NOFOLLOW) != 0 && hostFile.isSymbolicLink()) {
+            if ((flags & AT_SYMLINK_NOFOLLOW) != 0 && Files.isSymbolicLink(hostFile)) {
                 return ENOTSUP;
             }
             if (!canonicalFileStaysBelowMount(hostFile)) {
@@ -3447,7 +3467,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 }
             }
 
-            boolean directory = hostFile.isDirectory();
+            boolean directory = Files.isDirectory(hostFile);
             GuestFileMetadata metadata = hostFileMetadata(hostFile, directory);
             if (!canChangeMode(metadata.userId())) {
                 return EPERM;
@@ -3566,14 +3586,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EROFS;
         }
 
-        @Nullable HostPath hostFile = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
+        @Nullable Path hostFile = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
         if (hostFile == null) {
             return EACCES;
         }
 
         boolean exists;
         try {
-            exists = hostFile.exists();
+            exists = Files.exists(hostFile);
         } catch (SecurityException exception) {
             return EACCES;
         }
@@ -3592,9 +3612,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (mount == null) {
                 return EACCES;
             }
-            HostPath realMountRoot = mount.root().getCanonicalFile();
+            Path realMountRoot = mount.root().toRealPath();
             if (exists) {
-                if (!hostFile.getCanonicalFile().startsWith(realMountRoot)) {
+                if (!hostFile.toRealPath().startsWith(realMountRoot)) {
                     return EACCES;
                 }
                 long parentAccess = accessHostParent(hostFile);
@@ -3602,10 +3622,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     return parentAccess;
                 }
             } else {
-                @Nullable HostPath parent = hostFile.getParent();
+                @Nullable Path parent = hostFile.getParent();
                 if (parent == null
-                        || !parent.isDirectory()
-                        || !parent.getCanonicalFile().startsWith(realMountRoot)) {
+                        || !Files.isDirectory(parent)
+                        || !parent.toRealPath().startsWith(realMountRoot)) {
                     return EACCES;
                 }
                 long parentAccess = accessHostFile(parent, W_OK | X_OK);
@@ -3618,8 +3638,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EACCES;
         }
         try {
-            exists = hostFile.exists();
-            if (exists && hostFile.isDirectory()) {
+            exists = Files.exists(hostFile);
+            if (exists && Files.isDirectory(hostFile)) {
                 if (!directoryOnly || writable || truncate || append) {
                     return EISDIR;
                 }
@@ -3632,7 +3652,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (directoryOnly) {
                 return ENOTDIR;
             }
-            if (exists && !hostFile.isRegularFile()) {
+            if (exists && !Files.isRegularFile(hostFile)) {
                 return ENODEV;
             }
             if (exists) {
@@ -3641,10 +3661,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                         || (writable && !canAccess(metadata, W_OK, false))) {
                     return EACCES;
                 }
-                if (readable && !hostFile.isReadable()) {
+                if (readable && !Files.isReadable(hostFile)) {
                     return EACCES;
                 }
-                if (writable && !hostFile.isWritable()) {
+                if (writable && !Files.isWritable(hostFile)) {
                     return EACCES;
                 }
             }
@@ -3667,7 +3687,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 options.add(StandardOpenOption.TRUNCATE_EXISTING);
             }
 
-            SeekableByteChannel channel = hostFile.newByteChannel(options);
+            SeekableByteChannel channel = Files.newByteChannel(hostFile, options);
             if (!exists && create) {
                 if (createParentMetadata == null) {
                     return EACCES;
@@ -4783,16 +4803,16 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return readlinkVirtualPath(procPath.node(), procPath.mount(), bufferAddress, bufferSize);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
 
         try {
-            if (!hostFile.exists()) {
+            if (!Files.exists(hostFile)) {
                 return ENOENT;
             }
-            if (!hostFile.isSymbolicLink()) {
+            if (!Files.isSymbolicLink(hostFile)) {
                 return EINVAL;
             }
             if (!canonicalFileStaysBelowMount(hostFile)) {
@@ -4803,7 +4823,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return parentAccess;
             }
 
-            String target = hostFile.readSymbolicLink().toString();
+            String target = Files.readSymbolicLink(hostFile).toString();
             byte[] targetBytes = target.getBytes(StandardCharsets.UTF_8);
             int length = Math.min(targetBytes.length, (int) bufferSize);
             memory.writeBytes(bufferAddress, targetBytes, 0, length);
@@ -4874,7 +4894,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return virtualPath.node() == null ? ENOENT : 0;
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable Path hostFile = resolveHostFile(AT_FDCWD, guestPath);
         return hostFile == null ? EACCES : accessHostFile(hostFile, F_OK);
     }
 
@@ -4924,7 +4944,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
+                @Nullable Path currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null ? EACCES : statHostFile(currentDirectory, statAddress, true);
             }
             return fstat((int) directoryFileDescriptor, statAddress);
@@ -4951,7 +4971,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return statVirtualNode(procPath.node(), procPath.mount(), statAddress);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -4992,7 +5012,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (tarNode != null) {
                 writeTarStat(tarNode, statAddress);
             } else {
-                @Nullable HostPath path = openFile.path();
+                @Nullable Path path = openFile.path();
                 return path == null ? EACCES : statHostFile(path, statAddress, false);
             }
             return 0;
@@ -5009,7 +5029,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
 
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         return path == null ? EACCES : statHostFile(path, statAddress, false);
     }
 
@@ -5102,7 +5122,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ENOENT;
             }
             if (directoryFileDescriptor == AT_FDCWD) {
-                @Nullable HostPath currentDirectory = currentHostWorkingDirectory();
+                @Nullable Path currentDirectory = currentHostWorkingDirectory();
                 return currentDirectory == null
                         ? EACCES
                         : statxHostFile(currentDirectory, statxAddress, flags, requestedMask, true);
@@ -5131,7 +5151,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return statxVirtualNode(procPath.node(), procPath.mount(), statxAddress, requestedMask);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -5173,7 +5193,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 writeTarStatx(tarNode, statxAddress, requestedMask);
                 return 0;
             }
-            @Nullable HostPath path = openFile.path();
+            @Nullable Path path = openFile.path();
             return path == null ? EACCES : statxHostFile(path, statxAddress, AT_EMPTY_PATH, requestedMask, false);
         }
         @Nullable VirtualNode virtualNode = openFile.virtualNode();
@@ -5188,7 +5208,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
 
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         return path == null ? EACCES : statxHostFile(path, statxAddress, AT_EMPTY_PATH, requestedMask, false);
     }
 
@@ -5213,7 +5233,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return virtualPath.node() == null ? ENOENT : writeVirtualStatfsResult(virtualPath.mount(), statfsAddress);
         }
 
-        @Nullable HostPath hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        @Nullable Path hostFile = resolveHostFile(AT_FDCWD, guestPath);
         if (hostFile == null) {
             return EACCES;
         }
@@ -5248,7 +5268,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return 0;
         }
 
-        @Nullable HostPath path = openFile.path();
+        @Nullable Path path = openFile.path();
         return path == null ? EACCES : statfsHostFile(path, statfsAddress, false);
     }
 
@@ -5265,7 +5285,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes deterministic filesystem metadata for an existing sandboxed host path.
-    protected long statfsHostFile(HostPath hostFile, long statfsAddress, boolean requireParentSearch) {
+    protected long statfsHostFile(Path hostFile, long statfsAddress, boolean requireParentSearch) {
         try {
             if (!pathEntryExists(hostFile)) {
                 return ENOENT;
@@ -5287,9 +5307,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Writes a minimal Linux generic 64-bit `struct stat` for a sandboxed host file.
-    protected long statHostFile(HostPath hostFile, long statAddress, boolean requireParentSearch) {
+    protected long statHostFile(Path hostFile, long statAddress, boolean requireParentSearch) {
         try {
-            if (!hostFile.exists()) {
+            if (!Files.exists(hostFile)) {
                 return ENOENT;
             }
             if (!canonicalFileStaysBelowMount(hostFile)) {
@@ -5302,7 +5322,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 }
             }
 
-            if (hostFile.isDirectory()) {
+            if (Files.isDirectory(hostFile)) {
                 GuestFileMetadata metadata = hostFileMetadata(hostFile, true);
                 writeStat(
                         statAddress,
@@ -5313,8 +5333,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                         metadata.groupId());
                 return 0;
             }
-            if (hostFile.isRegularFile()) {
-                long size = hostFile.size();
+            if (Files.isRegularFile(hostFile)) {
+                long size = Files.size(hostFile);
                 GuestFileMetadata metadata = hostFileMetadata(hostFile, false);
                 writeStat(
                         statAddress,
@@ -5333,7 +5353,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Writes a Linux generic `struct statx` for a sandboxed host file.
     protected long statxHostFile(
-            HostPath hostFile,
+            Path hostFile,
             long statxAddress,
             long flags,
             long requestedMask,
@@ -5348,8 +5368,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     return parentAccess;
                 }
             }
-            if ((flags & AT_SYMLINK_NOFOLLOW) != 0 && hostFile.isSymbolicLink()) {
-                String target = hostFile.readSymbolicLink().toString();
+            if ((flags & AT_SYMLINK_NOFOLLOW) != 0 && Files.isSymbolicLink(hostFile)) {
+                String target = Files.readSymbolicLink(hostFile).toString();
                 long size = target.getBytes(StandardCharsets.UTF_8).length;
                 writeStatx(
                         statxAddress,
@@ -5359,14 +5379,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                         requestedMask);
                 return 0;
             }
-            if (!hostFile.exists()) {
+            if (!Files.exists(hostFile)) {
                 return ENOENT;
             }
             if (!canonicalFileStaysBelowMount(hostFile)) {
                 return EACCES;
             }
 
-            if (hostFile.isDirectory()) {
+            if (Files.isDirectory(hostFile)) {
                 GuestFileMetadata metadata = hostFileMetadata(hostFile, true);
                 writeStatx(
                         statxAddress,
@@ -5378,8 +5398,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                         metadata.groupId());
                 return 0;
             }
-            if (hostFile.isRegularFile()) {
-                long size = hostFile.size();
+            if (Files.isRegularFile(hostFile)) {
+                long size = Files.size(hostFile);
                 GuestFileMetadata metadata = hostFileMetadata(hostFile, false);
                 writeStatx(
                         statxAddress,
@@ -5645,7 +5665,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns a deterministic synthetic inode number for a sandboxed host path.
-    protected static long syntheticInode(HostPath hostFile) {
+    protected static long syntheticInode(Path hostFile) {
         return Integer.toUnsignedLong(hostFile.toString().hashCode()) + 1024L;
     }
 
@@ -7873,7 +7893,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Resolves a guest path below a configured filesystem mount or an open directory descriptor.
-    protected @Nullable HostPath resolveHostFile(long directoryFileDescriptor, String guestPath) {
+    protected @Nullable Path resolveHostFile(long directoryFileDescriptor, String guestPath) {
         @Nullable String absoluteGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
         if (absoluteGuestPath == null) {
             return null;
@@ -7919,7 +7939,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (descriptorGuestPath != null) {
                 basePath = descriptorGuestPath;
             } else {
-                @Nullable HostPath path = directory.path();
+                @Nullable Path path = directory.path();
                 if (path == null) {
                     return null;
                 }
@@ -7947,58 +7967,58 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when a host file's canonical location stays below its selected mount root.
-    protected boolean canonicalFileStaysBelowMount(HostPath hostFile) throws IOException {
+    protected boolean canonicalFileStaysBelowMount(Path hostFile) throws IOException {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         if (mount == null) {
             return false;
         }
-        return hostFile.getCanonicalFile().startsWith(mount.root().getCanonicalFile());
+        return hostFile.toRealPath().startsWith(mount.root().toRealPath());
     }
 
     /// Returns true when a host file is selected by a read-only bind mount.
-    protected boolean hostFileOnReadOnlyMount(HostPath hostFile) {
+    protected boolean hostFileOnReadOnlyMount(Path hostFile) {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         return mount != null && mount.readOnly();
     }
 
     /// Checks search permission on the parent directory used to reach a host path.
-    protected long accessHostParent(HostPath hostFile) throws IOException {
+    protected long accessHostParent(Path hostFile) throws IOException {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         if (mount == null) {
             return EACCES;
         }
-        HostPath canonicalRoot = mount.root().getCanonicalFile();
+        Path canonicalRoot = mount.root().toRealPath();
         try {
-            HostPath canonicalHostFile = hostFile.getCanonicalFile();
-            if (canonicalHostFile.getPath().equals(canonicalRoot.getPath())) {
+            Path canonicalHostFile = hostFile.toRealPath();
+            if (canonicalHostFile.toString().equals(canonicalRoot.toString())) {
                 return 0;
             }
         } catch (IOException exception) {
             // A nofollow operation can still access the parent of a broken or external symlink.
         }
 
-        @Nullable HostPath parent = hostFile.getParent();
+        @Nullable Path parent = hostFile.getParent();
         if (parent == null) {
             return EACCES;
         }
-        HostPath canonicalParent = parent.getCanonicalFile();
+        Path canonicalParent = parent.toRealPath();
         if (!canonicalParent.startsWith(canonicalRoot)) {
             return EACCES;
         }
 
-        ArrayList<HostPath> ancestors = new ArrayList<>();
-        @Nullable HostPath current = canonicalParent;
+        ArrayList<Path> ancestors = new ArrayList<>();
+        @Nullable Path current = canonicalParent;
         while (current != null) {
             if (!current.startsWith(canonicalRoot)) {
                 return EACCES;
             }
             ancestors.add(current);
-            if (current.getPath().equals(canonicalRoot.getPath())) {
+            if (current.toString().equals(canonicalRoot.toString())) {
                 break;
             }
             current = current.getParent();
         }
-        if (ancestors.isEmpty() || !ancestors.get(ancestors.size() - 1).getPath().equals(canonicalRoot.getPath())) {
+        if (ancestors.isEmpty() || !ancestors.get(ancestors.size() - 1).toString().equals(canonicalRoot.toString())) {
             return EACCES;
         }
 
@@ -8012,22 +8032,22 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the guest-visible metadata for a host file.
-    protected GuestFileMetadata hostFileMetadata(HostPath hostFile, boolean directory) throws IOException {
+    protected GuestFileMetadata hostFileMetadata(Path hostFile, boolean directory) throws IOException {
         return fileMetadataStore.getOrCreate(hostFile, initialHostFileMetadata(hostFile, directory));
     }
 
     /// Returns the guest-visible metadata inferred for a host file before guest-side changes.
-    protected GuestFileMetadata initialHostFileMetadata(HostPath hostFile, boolean directory) {
+    protected GuestFileMetadata initialHostFileMetadata(Path hostFile, boolean directory) {
         return new GuestFileMetadata(credentials.effectiveUserId(), credentials.effectiveGroupId(), initialHostFileMode(hostFile, directory));
     }
 
     /// Returns the initial guest-visible permission bits inferred for a host file.
-    protected int initialHostFileMode(HostPath hostFile, boolean directory) {
+    protected int initialHostFileMode(Path hostFile, boolean directory) {
         int permissions = 0;
-        if (hostFile.isReadable()) {
+        if (Files.isReadable(hostFile)) {
             permissions |= directory ? STAT_MODE_READ_EXECUTE_ALL : STAT_MODE_READ_ALL;
         }
-        if (!hostFileOnReadOnlyMount(hostFile) && hostFile.isWritable()) {
+        if (!hostFileOnReadOnlyMount(hostFile) && Files.isWritable(hostFile)) {
             permissions |= 0222;
         }
         return permissions;
@@ -8182,25 +8202,25 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the sandboxed host directory backing the guest-visible current working directory.
-    protected @Nullable HostPath currentHostWorkingDirectory() {
+    protected @Nullable Path currentHostWorkingDirectory() {
         return resolveHostFile(AT_FDCWD, guestWorkingDirectory);
     }
 
     /// Converts a sandboxed host path to an absolute guest-visible Linux path.
-    protected @Nullable String guestPathForHostFile(HostPath hostFile) {
+    protected @Nullable String guestPathForHostFile(Path hostFile) {
         @Nullable HostMount mount = mountForHostFile(hostFile);
         if (mount == null) {
             return null;
         }
 
-        HostPath normalizedRoot = mount.root().normalize();
-        HostPath normalizedHostFile = hostFile.normalize();
+        Path normalizedRoot = mount.root().normalize();
+        Path normalizedHostFile = hostFile.normalize();
         if (!normalizedHostFile.startsWith(normalizedRoot)) {
             return null;
         }
 
         try {
-            String relativePath = normalizedRoot.relativize(normalizedHostFile).getPath().replace('\\', '/');
+            String relativePath = normalizedRoot.relativize(normalizedHostFile).toString().replace('\\', '/');
             if (relativePath.isEmpty()) {
                 return mount.guestPath();
             }
@@ -8211,24 +8231,24 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Validates that a file's parent directory exists inside the selected filesystem mount.
-    protected long validateSandboxedParent(HostPath hostFile) {
+    protected long validateSandboxedParent(Path hostFile) {
         try {
             @Nullable HostMount mount = mountForHostFile(hostFile);
             if (mount == null) {
                 return EACCES;
             }
 
-            @Nullable HostPath parent = hostFile.getParent();
+            @Nullable Path parent = hostFile.getParent();
             if (parent == null) {
                 return EACCES;
             }
-            if (!parent.exists()) {
+            if (!Files.exists(parent)) {
                 return ENOENT;
             }
-            if (!parent.isDirectory()) {
+            if (!Files.isDirectory(parent)) {
                 return ENOTDIR;
             }
-            if (!parent.getCanonicalFile().startsWith(mount.root().getCanonicalFile())) {
+            if (!parent.toRealPath().startsWith(mount.root().toRealPath())) {
                 return EACCES;
             }
             return 0;
@@ -8238,7 +8258,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns true when the host path names an existing entry or a symbolic link.
-    protected static boolean pathEntryExists(HostPath hostFile) {
+    protected static boolean pathEntryExists(Path hostFile) {
         return GuestFileSystem.pathEntryExists(hostFile);
     }
 
@@ -8325,7 +8345,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Returns the mount whose host mount root contains a host path.
-    protected @Nullable HostMount mountForHostFile(HostPath hostFile) {
+    protected @Nullable HostMount mountForHostFile(Path hostFile) {
         return fileSystem.mountForHostFile(hostFile);
     }
 
@@ -9048,7 +9068,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private final HashMap<String, GuestFileMetadata> hostFiles = new HashMap<>();
 
         /// Returns existing metadata for a host path, or installs the supplied fallback.
-        synchronized GuestFileMetadata getOrCreate(HostPath path, GuestFileMetadata fallback) throws IOException {
+        synchronized GuestFileMetadata getOrCreate(Path path, GuestFileMetadata fallback) throws IOException {
             String key = metadataKey(path);
             @Nullable GuestFileMetadata metadata = hostFiles.get(key);
             if (metadata != null) {
@@ -9059,12 +9079,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Replaces metadata for a host path.
-        synchronized void put(HostPath path, GuestFileMetadata metadata) throws IOException {
+        synchronized void put(Path path, GuestFileMetadata metadata) throws IOException {
             hostFiles.put(metadataKey(path), metadata);
         }
 
         /// Returns a canonical metadata key for an existing host path.
-        synchronized String key(HostPath path) throws IOException {
+        synchronized String key(Path path) throws IOException {
             return metadataKey(path);
         }
 
@@ -9074,7 +9094,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Moves metadata from one canonical source key to an existing host path.
-        synchronized void move(String sourceKey, HostPath target) throws IOException {
+        synchronized void move(String sourceKey, Path target) throws IOException {
             @Nullable GuestFileMetadata metadata = hostFiles.remove(sourceKey);
             String targetKey = metadataKey(target);
             if (metadata != null) {
@@ -9085,8 +9105,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Returns the canonical metadata key for an existing host path.
-        private static String metadataKey(HostPath path) throws IOException {
-            return path.getCanonicalFile().getPath();
+        private static String metadataKey(Path path) throws IOException {
+            return path.toRealPath().toString();
         }
 
     }
@@ -9431,7 +9451,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private final int standardFileDescriptor;
 
         /// The resolved host path backing the guest file descriptor.
-        private final @Nullable HostPath path;
+        private final @Nullable Path path;
 
         /// The guest-visible absolute path backing this descriptor, or null when none exists.
         private final @Nullable String guestPath;
@@ -9502,7 +9522,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Creates a non-socket file descriptor entry.
         private OpenFile(
                 int standardFileDescriptor,
-                @Nullable HostPath path,
+                @Nullable Path path,
                 @Nullable String guestPath,
                 @Nullable TarNode tarNode,
                 @Nullable VirtualNode virtualNode,
@@ -9546,7 +9566,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Creates a file descriptor entry.
         private OpenFile(
                 int standardFileDescriptor,
-                @Nullable HostPath path,
+                @Nullable Path path,
                 @Nullable String guestPath,
                 @Nullable TarNode tarNode,
                 @Nullable VirtualNode virtualNode,
@@ -9589,7 +9609,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         /// Creates an entry backed by a host file channel.
         static OpenFile hostFile(
-                HostPath path,
+                Path path,
                 @Nullable String guestPath,
                 SeekableByteChannel channel,
                 boolean readable,
@@ -9618,7 +9638,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Creates an entry backed by a host directory path.
-        static OpenFile hostDirectory(HostPath path, String guestPath) {
+        static OpenFile hostDirectory(Path path, String guestPath) {
             return new OpenFile(
                     -1,
                     path,
@@ -10083,7 +10103,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Returns the host path backing this descriptor.
-        @Nullable HostPath path() {
+        @Nullable Path path() {
             return path;
         }
 
