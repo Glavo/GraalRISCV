@@ -12,9 +12,17 @@ import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
 
+import java.nio.charset.StandardCharsets;
+
 /// Loads a Linux user-mode ELF executable and prepares its initial process image.
 @NotNullByDefault
 public final class LinuxProgramLoader {
+    /// The number of leading executable bytes used by Linux binary format probes.
+    private static final int BINARY_FORMAT_HEADER_SIZE = 256;
+
+    /// The maximum number of script interpreter rewrites accepted for one executable.
+    private static final int MAX_SCRIPT_RECURSION = 4;
+
     /// The initial Linux user stack backing size.
     private static final long INITIAL_STACK_SIZE = 8L * 1024L * 1024L;
 
@@ -26,6 +34,110 @@ public final class LinuxProgramLoader {
 
     /// Prevents construction of this utility class.
     private LinuxProgramLoader() {
+    }
+
+    /// Resolves Linux binary formats that rewrite the executable and argument vector before ELF loading.
+    ///
+    /// @param executableBytes the first executable image bytes
+    /// @param executablePath the guest path for the first executable image, or null for host-loaded bytes
+    /// @param fileSystem the guest filesystem used to read interpreter files
+    /// @param arguments the original argument vector exposed to `execve`
+    public static ResolvedExecutable resolveExecutable(
+            byte @Unmodifiable [] executableBytes,
+            @Nullable String executablePath,
+            GuestFileSystem fileSystem,
+            String @Unmodifiable [] arguments) {
+        return resolveExecutable(executableBytes, executablePath, fileSystem, arguments, 0);
+    }
+
+    /// Resolves one recursive Linux script interpreter step.
+    private static ResolvedExecutable resolveExecutable(
+            byte @Unmodifiable [] executableBytes,
+            @Nullable String executablePath,
+            GuestFileSystem fileSystem,
+            String @Unmodifiable [] arguments,
+            int scriptDepth) {
+        @Nullable ScriptInterpreter scriptInterpreter = parseScriptInterpreter(executableBytes);
+        if (scriptInterpreter == null) {
+            return new ResolvedExecutable(executableBytes, executablePath, arguments);
+        }
+        if (scriptDepth >= MAX_SCRIPT_RECURSION) {
+            throw new RiscVException("Script interpreter recursion limit exceeded: " + executablePath);
+        }
+        if (executablePath == null) {
+            throw new RiscVException("Script executable requires a guest path");
+        }
+
+        String interpreterPath = scriptInterpreter.path();
+        byte[] interpreterBytes = fileSystem.readFile(interpreterPath);
+        String[] interpreterArguments = scriptInterpreter.arguments(executablePath, arguments);
+        return resolveExecutable(
+                interpreterBytes,
+                interpreterPath,
+                fileSystem,
+                interpreterArguments,
+                scriptDepth + 1);
+    }
+
+    /// Parses a Linux `#!` interpreter line from executable bytes, or null for non-script inputs.
+    private static @Nullable ScriptInterpreter parseScriptInterpreter(byte @Unmodifiable [] executableBytes) {
+        if (executableBytes.length < 2 || executableBytes[0] != '#' || executableBytes[1] != '!') {
+            return null;
+        }
+
+        int headerLength = Math.min(executableBytes.length, BINARY_FORMAT_HEADER_SIZE);
+        int lineEnd = 2;
+        while (lineEnd < headerLength && executableBytes[lineEnd] != '\n') {
+            lineEnd++;
+        }
+        if (lineEnd == BINARY_FORMAT_HEADER_SIZE && lineEnd < executableBytes.length) {
+            throw new RiscVException("Script interpreter line is too long");
+        }
+
+        int contentStart = skipSpacesAndTabs(executableBytes, 2, lineEnd);
+        int contentEnd = trimTrailingSpacesAndTabs(executableBytes, contentStart, lineEnd);
+        if (contentStart == contentEnd) {
+            throw new RiscVException("Script interpreter path is missing");
+        }
+
+        int pathEnd = contentStart;
+        while (pathEnd < contentEnd && !isSpaceOrTab(executableBytes[pathEnd])) {
+            pathEnd++;
+        }
+        String path = new String(executableBytes, contentStart, pathEnd - contentStart, StandardCharsets.UTF_8);
+        @Nullable String argument = null;
+        int argumentStart = skipSpacesAndTabs(executableBytes, pathEnd, contentEnd);
+        if (argumentStart < contentEnd) {
+            argument = new String(
+                    executableBytes,
+                    argumentStart,
+                    contentEnd - argumentStart,
+                    StandardCharsets.UTF_8);
+        }
+        return new ScriptInterpreter(path, argument);
+    }
+
+    /// Skips ASCII spaces and tabs in a byte range.
+    private static int skipSpacesAndTabs(byte @Unmodifiable [] bytes, int start, int end) {
+        int index = start;
+        while (index < end && isSpaceOrTab(bytes[index])) {
+            index++;
+        }
+        return index;
+    }
+
+    /// Trims ASCII spaces and tabs from the end of a byte range.
+    private static int trimTrailingSpacesAndTabs(byte @Unmodifiable [] bytes, int start, int end) {
+        int index = end;
+        while (index > start && isSpaceOrTab(bytes[index - 1])) {
+            index--;
+        }
+        return index;
+    }
+
+    /// Returns true when a shebang byte is an ASCII space or tab.
+    private static boolean isSpaceOrTab(byte value) {
+        return value == ' ' || value == '\t';
     }
 
     /// Parses an executable and its optional dynamic interpreter.
@@ -386,6 +498,56 @@ public final class LinuxProgramLoader {
     /// Rounds an address down to the requested power-of-two alignment.
     private static long alignDown(long address, long alignment) {
         return address & -alignment;
+    }
+
+    /// Describes executable bytes and arguments after Linux binary format rewriting.
+    ///
+    /// @param executableBytes the final executable image bytes to parse as ELF
+    /// @param executablePath the guest path for the final executable image, or null for host-loaded bytes
+    /// @param arguments the final argument vector exposed to the loaded image
+    public record ResolvedExecutable(
+            byte @Unmodifiable [] executableBytes,
+            @Nullable String executablePath,
+            String @Unmodifiable [] arguments) {
+        /// Creates a resolved executable snapshot.
+        public ResolvedExecutable {
+            executableBytes = executableBytes.clone();
+            arguments = arguments.clone();
+        }
+
+        /// Returns a copy of the final executable image bytes.
+        @Override
+        public byte @Unmodifiable [] executableBytes() {
+            return executableBytes.clone();
+        }
+
+        /// Returns a copy of the final argument vector.
+        @Override
+        public String @Unmodifiable [] arguments() {
+            return arguments.clone();
+        }
+    }
+
+    /// Stores one parsed Linux script interpreter directive.
+    ///
+    /// @param path the interpreter path from the `#!` line
+    /// @param argument the optional single interpreter argument from the `#!` line
+    private record ScriptInterpreter(String path, @Nullable String argument) {
+        /// Builds the interpreter argument vector for a script execution.
+        String @Unmodifiable [] arguments(String scriptPath, String @Unmodifiable [] originalArguments) {
+            int originalTailLength = Math.max(0, originalArguments.length - 1);
+            String[] result = new String[originalTailLength + (argument == null ? 2 : 3)];
+            int index = 0;
+            result[index++] = path;
+            if (argument != null) {
+                result[index++] = argument;
+            }
+            result[index++] = scriptPath;
+            if (originalTailLength > 0) {
+                System.arraycopy(originalArguments, 1, result, index, originalTailLength);
+            }
+            return result;
+        }
     }
 
     /// Describes the fully load-biased program images that form one process startup.

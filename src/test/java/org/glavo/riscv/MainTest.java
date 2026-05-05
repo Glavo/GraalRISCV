@@ -547,6 +547,30 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that `--guest-program` applies Linux `#!` script interpreter rewriting.
+    @Test
+    public void guestProgramOptionLoadsShebangScriptFromGuestMount() throws Exception {
+        Path archive = tempDirectory.resolve("guest-program-script.tar");
+        writeTarScriptFixture(archive);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "type=tar,src=" + archive + ",dst=/",
+                        "--guest-program", "/bin/script",
+                        "tail"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(4, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Verifies that `execve` replaces the current image with a mounted guest executable.
     @Test
     public void execveReplacesProcessImageFromGuestMount() throws Exception {
@@ -566,6 +590,30 @@ public final class MainTest {
                 err);
 
         assertEquals(7, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that `execve` applies Linux `#!` script interpreter rewriting.
+    @Test
+    public void execveReplacesProcessImageWithShebangScript() throws Exception {
+        Files.write(tempDirectory.resolve("parent.elf"), ElfTestImages.executable(execveScriptProgramCode()));
+        Files.write(tempDirectory.resolve("interpreter.elf"), ElfTestImages.executable(exitWithArgcCode()));
+        Files.writeString(tempDirectory.resolve("script"), "#! /interpreter.elf --from-script\n");
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "type=bind,src=" + tempDirectory + ",dst=/",
+                        "--guest-program", "/parent.elf"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(4, exitCode);
         assertEquals("", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
@@ -1627,6 +1675,16 @@ public final class MainTest {
         }
     }
 
+    /// Writes a tar archive where the guest executable is a script with an ELF interpreter.
+    private static void writeTarScriptFixture(Path archive) throws Exception {
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, "bin/interpreter", ElfTestImages.executable(exitWithArgcCode()));
+            writeTarFile(tarOutput, "bin/script", "#! /bin/interpreter --from-script\n".getBytes(StandardCharsets.UTF_8));
+            tarOutput.finish();
+        }
+    }
+
     /// Writes one regular file entry to an open tar output stream.
     private static void writeTarFile(TarArchiveOutputStream tarOutput, String name, byte[] data) throws Exception {
         TarArchiveEntry entry = new TarArchiveEntry(name);
@@ -1668,10 +1726,50 @@ public final class MainTest {
         return code.array();
     }
 
+    /// Builds a freestanding program that replaces itself with `/script` and one extra argument.
+    private static byte[] execveScriptProgramCode() {
+        byte[] path = "/script\0".getBytes(StandardCharsets.UTF_8);
+        byte[] argument = "tail\0".getBytes(StandardCharsets.UTF_8);
+        int pathOffset = 64;
+        int argumentOffset = 80;
+        int argvOffset = 96;
+        int envpOffset = 120;
+        ByteBuffer code = ByteBuffer.allocate(128).order(ByteOrder.LITTLE_ENDIAN);
+
+        putLoadAddress(code, 10, pathOffset);
+        putLoadAddress(code, 11, argvOffset);
+        putLoadAddress(code, 12, envpOffset);
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXECVE));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 90));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        code.position(pathOffset);
+        code.put(path);
+        code.position(argumentOffset);
+        code.put(argument);
+        code.position(argvOffset);
+        code.putLong(ElfTestImages.BASE_ADDRESS + pathOffset);
+        code.putLong(ElfTestImages.BASE_ADDRESS + argumentOffset);
+        code.putLong(0);
+        code.position(envpOffset);
+        code.putLong(0);
+        return code.array();
+    }
+
     /// Builds a freestanding program that exits with the supplied status.
     private static byte[] exitWithCode(int exitCode) {
         return rawCode(
                 ElfTestImages.addi(10, 0, exitCode),
+                ElfTestImages.addi(17, 0, SYS_EXIT),
+                ElfTestImages.ecall());
+    }
+
+    /// Builds a freestanding program that exits with the initial Linux `argc` value.
+    private static byte[] exitWithArgcCode() {
+        return rawCode(
+                ld(10, 0, 2),
                 ElfTestImages.addi(17, 0, SYS_EXIT),
                 ElfTestImages.ecall());
     }
@@ -1918,6 +2016,11 @@ public final class MainTest {
     /// Encodes `lw`.
     private static int lw(int rd, int offset, int rs1) {
         return ElfTestImages.iType(0x03, rd, 2, rs1, offset);
+    }
+
+    /// Encodes `ld`.
+    private static int ld(int rd, int offset, int rs1) {
+        return ElfTestImages.iType(0x03, rd, 3, rs1, offset);
     }
 
     /// Encodes `sw`.

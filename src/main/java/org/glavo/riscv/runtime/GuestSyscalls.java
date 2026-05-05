@@ -6370,7 +6370,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         LinuxProgramLoader.LoadedProgram program;
         try {
             byte[] executableBytes = fileSystem.readFile(executablePath);
-            program = LinuxProgramLoader.load(executableBytes, executablePath, fileSystem, pageSize);
+            LinuxProgramLoader.ResolvedExecutable resolvedExecutable =
+                    LinuxProgramLoader.resolveExecutable(executableBytes, executablePath, fileSystem, arguments);
+            program = LinuxProgramLoader.load(
+                    resolvedExecutable.executableBytes(),
+                    resolvedExecutable.executablePath(),
+                    fileSystem,
+                    pageSize);
+            arguments = resolvedExecutable.arguments();
         } catch (RiscVException exception) {
             return execveLoadError(exception);
         }
@@ -6469,6 +6476,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
         if (message.contains("does not exist")) {
             return ENOENT;
+        }
+        if (message.contains("recursion limit exceeded")) {
+            return ELOOP;
         }
         if (message.contains("not a regular file")
                 || message.contains("outside configured mounts")

@@ -24,6 +24,7 @@ import org.glavo.riscv.runtime.GuestAbi;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxInitialStack;
 import org.glavo.riscv.runtime.LinuxGuestSyscalls;
+import org.glavo.riscv.runtime.LinuxProgramLoader;
 import org.glavo.riscv.runtime.RiscVThreadState;
 import org.glavo.riscv.runtime.fs.GuestFileSystem;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -181,15 +182,19 @@ public final class RiscVInterpreter {
 
     /// Loads the main executable and its optional dynamic interpreter before guest memory is created.
     private LoadedProgram loadProgram(RiscVContext context) {
-        ElfImage executable = ElfLoader.load(readExecutableBytes(context));
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(context.filesystemMounts());
+        LinuxProgramLoader.ResolvedExecutable resolvedExecutable = LinuxProgramLoader.resolveExecutable(
+                readExecutableBytes(context, fileSystem),
+                context.guestProgramPath(),
+                fileSystem,
+                context.programArguments());
+        ElfImage executable = ElfLoader.load(resolvedExecutable.executableBytes());
         GuestAbi abi = GuestAbi.fromElfOperatingSystem(executable.operatingSystem());
         LoadedImage loadedExecutable = loadImage(executable, DYNAMIC_EXECUTABLE_BASE, context.pageSize());
         @Nullable LoadedImage loadedInterpreter = null;
         @Nullable String interpreterPath = executable.interpreterPath();
         if (interpreterPath != null) {
-            byte[] interpreterBytes = GuestFileSystem.readMountedFile(
-                    context.filesystemMounts(),
-                    interpreterPath);
+            byte[] interpreterBytes = fileSystem.readFile(interpreterPath);
             ElfImage interpreter = ElfLoader.load(interpreterBytes);
             if (interpreter.hasInterpreter()) {
                 throw new RiscVException("ELF interpreter must not request another interpreter: " + interpreterPath);
@@ -204,16 +209,21 @@ public final class RiscVInterpreter {
                             DYNAMIC_LOAD_ALIGNMENT),
                     context.pageSize());
         }
-        return new LoadedProgram(loadedExecutable, loadedInterpreter, context.guestProgramPath(), abi);
+        return new LoadedProgram(
+                loadedExecutable,
+                loadedInterpreter,
+                resolvedExecutable.executablePath(),
+                abi,
+                resolvedExecutable.arguments());
     }
 
     /// Reads executable bytes from the source or from the configured guest filesystem mounts.
-    private byte @Unmodifiable [] readExecutableBytes(RiscVContext context) {
+    private byte @Unmodifiable [] readExecutableBytes(RiscVContext context, GuestFileSystem fileSystem) {
         @Nullable String guestProgramPath = context.guestProgramPath();
         if (guestProgramPath == null) {
             return sourceBytes.clone();
         }
-        return GuestFileSystem.readMountedFile(context.filesystemMounts(), guestProgramPath);
+        return fileSystem.readFile(guestProgramPath);
     }
 
     /// Assigns a load bias to an ELF image.
@@ -443,7 +453,7 @@ public final class RiscVInterpreter {
             return LinuxInitialStack.initialize(
                     memory,
                     memory.endAddress(),
-                    context.programArguments(),
+                    program.arguments(),
                     program.executable().image(),
                     program.executable().loadBias(),
                     program.interpreterBase(),
@@ -468,7 +478,7 @@ public final class RiscVInterpreter {
         return LinuxInitialStack.initialize(
                 memory,
                 stackTop,
-                context.programArguments(),
+                program.arguments(),
                 program.executable().image(),
                 program.executable().loadBias(),
                 program.interpreterBase(),
@@ -619,12 +629,25 @@ public final class RiscVInterpreter {
     /// @param interpreter the optional dynamic interpreter image
     /// @param executablePath the guest executable path used for `AT_EXECFN`, or null for host-loaded programs
     /// @param abi the guest syscall ABI selected from the main executable
+    /// @param arguments the argument vector exposed to the loaded image
     @NotNullByDefault
     private record LoadedProgram(
             LoadedImage executable,
             @Nullable LoadedImage interpreter,
             @Nullable String executablePath,
-            GuestAbi abi) {
+            GuestAbi abi,
+            String @Unmodifiable [] arguments) {
+        /// Creates a loaded program snapshot.
+        private LoadedProgram {
+            arguments = arguments.clone();
+        }
+
+        /// Returns a copy of the argument vector exposed to the loaded image.
+        @Override
+        public String @Unmodifiable [] arguments() {
+            return arguments.clone();
+        }
+
         /// Returns the images that must be mapped before execution starts.
         private LoadedImage @Unmodifiable [] images() {
             return interpreter == null
