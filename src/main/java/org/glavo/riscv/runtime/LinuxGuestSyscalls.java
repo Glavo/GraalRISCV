@@ -37,6 +37,7 @@ import java.net.SocketTimeoutException;
 import java.net.StandardProtocolFamily;
 import java.net.StandardSocketOptions;
 import java.net.UnknownHostException;
+import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.AlreadyConnectedException;
 import java.nio.channels.ClosedChannelException;
@@ -52,6 +53,8 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.UnresolvedAddressException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -1961,6 +1964,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Byte offset of `nl_groups` inside Linux `struct sockaddr_nl`.
     private static final long SOCKADDR_NL_GROUPS_OFFSET = 8;
 
+    /// Byte size of Linux `struct sockaddr_un`.
+    private static final long SOCKADDR_UN_SIZE = 110;
+
+    /// Byte offset of `sun_path` inside Linux `struct sockaddr_un`.
+    private static final long SOCKADDR_UN_PATH_OFFSET = 2;
+
+    /// Byte size of `sun_path` inside Linux `struct sockaddr_un`.
+    private static final int SOCKADDR_UN_PATH_SIZE = 108;
+
     /// Byte size of Linux `struct sockaddr_in`.
     private static final long SOCKADDR_IN_SIZE = 16;
 
@@ -2150,6 +2162,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 && protocol == NETLINK_ROUTE) {
             return addOpenFile(OpenFile.socket(new NetlinkRouteSocket(), (typeFlags & O_NONBLOCK) != 0));
         }
+        if (domain == AF_UNIX && socketType == SOCK_STREAM && protocol == 0) {
+            return unixStreamSocket((typeFlags & O_NONBLOCK) != 0);
+        }
         if (domain == AF_UNIX && socketType == SOCK_DGRAM && protocol == 0) {
             return addOpenFile(OpenFile.socket(new NetworkInterfaceIoctlSocket(), (typeFlags & O_NONBLOCK) != 0));
         }
@@ -2177,6 +2192,21 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return addOpenFile(OpenFile.socket(new InternetSocket(domain, (int) socketType, protocol), nonblocking));
         } catch (IOException exception) {
             return networkException(exception);
+        }
+    }
+
+    /// Creates a guest Unix-domain stream socket through the configured network backend.
+    private long unixStreamSocket(boolean nonblocking) {
+        if (!networkBackend.enabled()) {
+            return EAFNOSUPPORT;
+        }
+
+        try {
+            return addOpenFile(OpenFile.socket(new UnixStreamSocket(), nonblocking));
+        } catch (IOException exception) {
+            return networkException(exception);
+        } catch (UnsupportedOperationException exception) {
+            return EAFNOSUPPORT;
         }
     }
 
@@ -2264,6 +2294,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return result.error() != 0 ? result.error() : internetSocket.bind(result.address());
         }
 
+        if (unixStreamSocket(fileDescriptor) != null) {
+            return ENOTSUP;
+        }
+
         @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
         if (socket == null) {
             return ENOTSOCK;
@@ -2282,23 +2316,31 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return 0;
     }
 
-    /// Connects a guest Internet socket to a remote peer.
+    /// Connects a guest stream socket to a remote peer.
     protected long connect(int fileDescriptor, long address, long addressLength) {
-        @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        if (socket == null) {
-            return ENOTSOCK;
+        @Nullable InternetSocket internetSocket = internetSocket(fileDescriptor);
+        if (internetSocket != null) {
+            AddressResult result = readInetSocketAddress(address, addressLength);
+            return result.error() != 0
+                    ? result.error()
+                    : internetSocket.connect(result.address(), socketNonblocking(fileDescriptor));
         }
-        AddressResult result = readInetSocketAddress(address, addressLength);
-        return result.error() != 0
-                ? result.error()
-                : socket.connect(result.address(), socketNonblocking(fileDescriptor));
+
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            UnixAddressResult result = readUnixSocketAddress(address, addressLength);
+            return result.error() != 0
+                    ? result.error()
+                    : unixSocket.connect(result.address(), socketNonblocking(fileDescriptor));
+        }
+        return ENOTSOCK;
     }
 
     /// Marks a guest stream socket as accepting incoming connections.
     protected long listen(int fileDescriptor, long backlog) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
         if (socket == null) {
-            return ENOTSOCK;
+            return unixStreamSocket(fileDescriptor) == null ? ENOTSOCK : ENOTSUP;
         }
         if (backlog < 0) {
             backlog = 0;
@@ -2313,7 +2355,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
         if (socket == null) {
-            return ENOTSOCK;
+            return unixStreamSocket(fileDescriptor) == null ? ENOTSOCK : ENOTSUP;
         }
 
         AcceptResult result = socket.accept(socketNonblocking(fileDescriptor), (flags & O_NONBLOCK) != 0);
@@ -2340,19 +2382,24 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Sets one supported guest socket option.
     protected long setsockopt(int fileDescriptor, long level, long option, long valueAddress, long valueLength) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        if (socket == null) {
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (socket == null && unixSocket == null) {
             return ENOTSOCK;
         }
         if (valueLength < Integer.BYTES || !memory.isBacked(valueAddress, Integer.BYTES)) {
             return EFAULT;
         }
-        return socket.setOption(level, option, memory.readInt(valueAddress));
+        if (socket != null) {
+            return socket.setOption(level, option, memory.readInt(valueAddress));
+        }
+        return unixSocket.setOption(level, option, memory.readInt(valueAddress));
     }
 
     /// Gets one supported guest socket option.
     protected long getsockopt(int fileDescriptor, long level, long option, long valueAddress, long lengthAddress) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        if (socket == null) {
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (socket == null && unixSocket == null) {
             return ENOTSOCK;
         }
         if (!memory.isBacked(lengthAddress, Integer.BYTES)) {
@@ -2362,7 +2409,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         if (requestedLength < Integer.BYTES || !memory.isBacked(valueAddress, Integer.BYTES)) {
             return EFAULT;
         }
-        OptionResult result = socket.getOption(level, option);
+        OptionResult result;
+        if (socket != null) {
+            result = socket.getOption(level, option);
+        } else {
+            result = unixSocket.getOption(level, option);
+        }
         if (result.error() != 0) {
             return result.error();
         }
@@ -2374,7 +2426,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Shuts down one or both halves of a connected stream socket.
     protected long shutdown(int fileDescriptor, long how) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        return socket == null ? ENOTSOCK : socket.shutdown(how);
+        if (socket != null) {
+            return socket.shutdown(how);
+        }
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        return unixSocket == null ? ENOTSOCK : unixSocket.shutdown(how);
     }
 
     /// Sends one minimal netlink route request and queues an empty dump response.
@@ -2407,6 +2463,29 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return internetSocket.send(
                     ByteBuffer.wrap(memory.readBytes(bufferAddress, length)),
                     destination,
+                    socketNonblocking(fileDescriptor) || (flags & MSG_DONTWAIT) != 0);
+        }
+
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            if ((flags & ~SUPPORTED_SOCKET_MESSAGE_FLAGS) != 0) {
+                return EINVAL;
+            }
+            if (length < 0 || length > Integer.MAX_VALUE) {
+                return EINVAL;
+            }
+            if (!memory.isBacked(bufferAddress, length)) {
+                return EFAULT;
+            }
+            if (destinationAddress != 0) {
+                UnixAddressResult result = readUnixSocketAddress(destinationAddress, destinationLength);
+                if (result.error() != 0) {
+                    return result.error();
+                }
+                return EISCONN;
+            }
+            return unixSocket.send(
+                    ByteBuffer.wrap(memory.readBytes(bufferAddress, length)),
                     socketNonblocking(fileDescriptor) || (flags & MSG_DONTWAIT) != 0);
         }
 
@@ -2461,6 +2540,37 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             @Nullable InetSocketAddress source = result.address();
             if (source != null) {
                 long writeResult = writeInetSocketAddress(source, internetSocket.domain(), sourceAddress, sourceLengthAddress);
+                if (writeResult != 0) {
+                    return writeResult;
+                }
+            }
+            return result.count();
+        }
+
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            if ((flags & ~SUPPORTED_SOCKET_MESSAGE_FLAGS) != 0) {
+                return EINVAL;
+            }
+            if (length < 0 || length > Integer.MAX_VALUE) {
+                return EINVAL;
+            }
+            if (!memory.isBacked(bufferAddress, length)) {
+                return EFAULT;
+            }
+            byte[] buffer = new byte[(int) length];
+            UnixReceiveResult result = unixSocket.receive(
+                    ByteBuffer.wrap(buffer),
+                    socketNonblocking(fileDescriptor) || (flags & MSG_DONTWAIT) != 0);
+            if (result.error() != 0) {
+                return result.error();
+            }
+            if (result.count() > 0) {
+                memory.writeBytes(bufferAddress, buffer, 0, result.count());
+            }
+            @Nullable String source = result.address();
+            if (source != null) {
+                long writeResult = writeUnixSocketAddress(source, sourceAddress, sourceLengthAddress);
                 if (writeResult != 0) {
                     return writeResult;
                 }
@@ -2530,6 +2640,46 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return internetSocket.send(
                     ByteBuffer.wrap(bytes),
                     destination,
+                    socketNonblocking(fileDescriptor) || (flags & MSG_DONTWAIT) != 0);
+        }
+
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            if ((flags & ~SUPPORTED_SOCKET_MESSAGE_FLAGS) != 0) {
+                return EINVAL;
+            }
+            if (!memory.isBacked(messageAddress, MSGHDR_FLAGS_OFFSET + Integer.BYTES)) {
+                return EFAULT;
+            }
+
+            long nameAddress = memory.readLong(messageAddress + MSGHDR_NAME_OFFSET);
+            long nameLength = Integer.toUnsignedLong(memory.readInt(messageAddress + MSGHDR_NAME_LENGTH_OFFSET));
+            if (nameAddress != 0) {
+                UnixAddressResult addressResult = readUnixSocketAddress(nameAddress, nameLength);
+                if (addressResult.error() != 0) {
+                    return addressResult.error();
+                }
+                return EISCONN;
+            }
+
+            long iovecAddress = memory.readLong(messageAddress + MSGHDR_IOV_OFFSET);
+            long iovecCount = memory.readLong(messageAddress + MSGHDR_IOV_LENGTH_OFFSET);
+            if (iovecCount < 0 || iovecCount > IOV_MAX) {
+                return EINVAL;
+            }
+            long byteCount = iovByteCount(iovecAddress, iovecCount);
+            if (byteCount < 0) {
+                return byteCount;
+            }
+            if (byteCount > Integer.MAX_VALUE) {
+                return EINVAL;
+            }
+            byte @Nullable [] bytes = readIovPrefix(iovecAddress, iovecCount, (int) byteCount);
+            if (bytes == null) {
+                return EFAULT;
+            }
+            return unixSocket.send(
+                    ByteBuffer.wrap(bytes),
                     socketNonblocking(fileDescriptor) || (flags & MSG_DONTWAIT) != 0);
         }
 
@@ -2606,6 +2756,51 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     : copyBufferPrefix(buffer, result.count()));
         }
 
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            if ((flags & ~SUPPORTED_SOCKET_MESSAGE_FLAGS) != 0) {
+                return EINVAL;
+            }
+            if (!memory.isBacked(messageAddress, MSGHDR_FLAGS_OFFSET + Integer.BYTES)) {
+                return EFAULT;
+            }
+
+            long iovecAddress = memory.readLong(messageAddress + MSGHDR_IOV_OFFSET);
+            long iovecCount = memory.readLong(messageAddress + MSGHDR_IOV_LENGTH_OFFSET);
+            if (iovecCount < 0 || iovecCount > IOV_MAX) {
+                return EINVAL;
+            }
+            long byteCount = iovByteCount(iovecAddress, iovecCount);
+            if (byteCount < 0) {
+                return byteCount;
+            }
+            if (byteCount > Integer.MAX_VALUE) {
+                return EINVAL;
+            }
+
+            byte[] buffer = new byte[(int) byteCount];
+            UnixReceiveResult result = unixSocket.receive(
+                    ByteBuffer.wrap(buffer),
+                    socketNonblocking(fileDescriptor) || (flags & MSG_DONTWAIT) != 0);
+            if (result.error() != 0) {
+                return result.error();
+            }
+            memory.writeInt(messageAddress + MSGHDR_FLAGS_OFFSET, 0);
+            long nameAddress = memory.readLong(messageAddress + MSGHDR_NAME_OFFSET);
+            long nameLength = Integer.toUnsignedLong(memory.readInt(messageAddress + MSGHDR_NAME_LENGTH_OFFSET));
+            @Nullable String source = result.address();
+            if (source != null && nameAddress != 0 && nameLength >= unixSockaddrSize(source)) {
+                long writeResult = writeUnixSocketAddress(source, nameAddress, 0);
+                if (writeResult != 0) {
+                    return writeResult;
+                }
+                memory.writeInt(messageAddress + MSGHDR_NAME_LENGTH_OFFSET, (int) unixSockaddrSize(source));
+            }
+            return writeIovBytes(iovecAddress, iovecCount, result.count() == buffer.length
+                    ? buffer
+                    : copyBufferPrefix(buffer, result.count()));
+        }
+
         @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
         if (socket == null) {
             return ENOTSOCK;
@@ -2645,6 +2840,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     : writeInetSocketAddress(socketAddress, internetSocket.domain(), address, lengthAddress);
         }
 
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            return writeUnixSocketAddress(unixSocket.localPath(), address, lengthAddress);
+        }
+
         @Nullable NetlinkRouteSocket socket = netlinkRouteSocket(fileDescriptor);
         if (socket == null) {
             return ENOTSOCK;
@@ -2661,14 +2861,20 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     ? ENOTCONN
                     : writeInetSocketAddress(socketAddress, internetSocket.domain(), address, lengthAddress);
         }
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            @Nullable String socketAddress = unixSocket.peerPath();
+            return socketAddress == null ? ENOTCONN : writeUnixSocketAddress(socketAddress, address, lengthAddress);
+        }
         return netlinkRouteSocket(fileDescriptor) == null ? ENOTSOCK : EINVAL;
     }
 
-    /// Reads bytes from a guest Internet socket or falls back to generic descriptor reads.
+    /// Reads bytes from a guest network socket or falls back to generic descriptor reads.
     @Override
     protected long read(int fileDescriptor, long address, long length) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        if (socket == null) {
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (socket == null && unixSocket == null) {
             return super.read(fileDescriptor, address, length);
         }
         if (length < 0 || length > Integer.MAX_VALUE) {
@@ -2678,21 +2884,32 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return EFAULT;
         }
         byte[] buffer = new byte[(int) length];
-        ReceiveResult result = socket.receive(ByteBuffer.wrap(buffer), socketNonblocking(fileDescriptor));
-        if (result.error() != 0) {
-            return result.error();
+        int count;
+        if (socket != null) {
+            ReceiveResult result = socket.receive(ByteBuffer.wrap(buffer), socketNonblocking(fileDescriptor));
+            if (result.error() != 0) {
+                return result.error();
+            }
+            count = result.count();
+        } else {
+            UnixReceiveResult result = unixSocket.receive(ByteBuffer.wrap(buffer), socketNonblocking(fileDescriptor));
+            if (result.error() != 0) {
+                return result.error();
+            }
+            count = result.count();
         }
-        if (result.count() > 0) {
-            memory.writeBytes(address, buffer, 0, result.count());
+        if (count > 0) {
+            memory.writeBytes(address, buffer, 0, count);
         }
-        return result.count();
+        return count;
     }
 
-    /// Writes bytes to a guest Internet socket or falls back to generic descriptor writes.
+    /// Writes bytes to a guest network socket or falls back to generic descriptor writes.
     @Override
     protected long write(int fileDescriptor, long address, long length) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        if (socket == null) {
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (socket == null && unixSocket == null) {
             return super.write(fileDescriptor, address, length);
         }
         if (length < 0 || length > Integer.MAX_VALUE) {
@@ -2701,23 +2918,34 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         if (!memory.isBacked(address, length)) {
             return EFAULT;
         }
-        return socket.send(ByteBuffer.wrap(memory.readBytes(address, length)), null, socketNonblocking(fileDescriptor));
+        ByteBuffer source = ByteBuffer.wrap(memory.readBytes(address, length));
+        return socket != null
+                ? socket.send(source, null, socketNonblocking(fileDescriptor))
+                : unixSocket.send(source, socketNonblocking(fileDescriptor));
     }
 
-    /// Computes readiness for guest Internet sockets or falls back to generic descriptor readiness.
+    /// Computes readiness for guest network sockets or falls back to generic descriptor readiness.
     @Override
     protected int readyEventsFor(int fileDescriptor) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        return socket == null ? super.readyEventsFor(fileDescriptor) : socket.readyEvents();
+        if (socket != null) {
+            return socket.readyEvents();
+        }
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        return unixSocket == null ? super.readyEventsFor(fileDescriptor) : unixSocket.readyEvents();
     }
 
-    /// Computes readiness for guest Internet sockets or falls back to generic descriptor readiness.
+    /// Computes readiness for guest network sockets or falls back to generic descriptor readiness.
     @Override
     protected int readyEventsFor(int fileDescriptor, boolean requireImmediateTerminalInput) {
         @Nullable InternetSocket socket = internetSocket(fileDescriptor);
-        return socket == null
+        if (socket != null) {
+            return socket.readyEvents();
+        }
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        return unixSocket == null
                 ? super.readyEventsFor(fileDescriptor, requireImmediateTerminalInput)
-                : socket.readyEvents();
+                : unixSocket.readyEvents();
     }
 
     /// Returns the Internet socket backing a descriptor, or null when it is not one.
@@ -2729,6 +2957,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
         GuestSocket socket = openFile.socket();
         return socket instanceof InternetSocket internetSocket ? internetSocket : null;
+    }
+
+    /// Returns the Unix-domain stream socket backing a descriptor, or null when it is not one.
+    private @Nullable UnixStreamSocket unixStreamSocket(int fileDescriptor) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.isSocket()) {
+            return null;
+        }
+
+        GuestSocket socket = openFile.socket();
+        return socket instanceof UnixStreamSocket unixSocket ? unixSocket : null;
     }
 
     /// Returns true when a socket descriptor is currently marked nonblocking.
@@ -2770,6 +3009,55 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
     }
 
+    /// Reads one guest Unix-domain socket address and maps it through the host filesystem namespace.
+    private UnixAddressResult readUnixSocketAddress(long address, long length) {
+        if (address == 0 || length < Short.BYTES || !memory.isBacked(address, Short.BYTES)) {
+            return UnixAddressResult.error(EFAULT);
+        }
+        if (Short.toUnsignedLong(memory.readShort(address + SOCKADDR_FAMILY_OFFSET)) != AF_UNIX) {
+            return UnixAddressResult.error(EAFNOSUPPORT);
+        }
+
+        long suppliedPathLength = length - SOCKADDR_UN_PATH_OFFSET;
+        if (suppliedPathLength <= 0) {
+            return UnixAddressResult.error(EINVAL);
+        }
+        int pathLength = (int) Math.min(suppliedPathLength, SOCKADDR_UN_PATH_SIZE);
+        if (!memory.isBacked(address + SOCKADDR_UN_PATH_OFFSET, pathLength)) {
+            return UnixAddressResult.error(EFAULT);
+        }
+
+        byte[] pathBytes = memory.readBytes(address + SOCKADDR_UN_PATH_OFFSET, pathLength);
+        if (pathBytes.length == 0 || pathBytes[0] == 0) {
+            return UnixAddressResult.error(EAFNOSUPPORT);
+        }
+
+        int terminator = 0;
+        while (terminator < pathBytes.length && pathBytes[terminator] != 0) {
+            terminator++;
+        }
+        if (terminator == 0) {
+            return UnixAddressResult.error(EINVAL);
+        }
+
+        String guestPath = new String(pathBytes, 0, terminator, StandardCharsets.UTF_8);
+        String absoluteGuestPath = GuestFileSystem.isAbsoluteGuestPath(guestPath)
+                ? guestPath
+                : GuestFileSystem.appendGuestPath(guestWorkingDirectory, guestPath);
+        @Nullable String normalizedGuestPath = GuestFileSystem.normalizeAbsoluteGuestPath(absoluteGuestPath);
+        if (normalizedGuestPath == null) {
+            return UnixAddressResult.error(EINVAL);
+        }
+
+        @Nullable Path hostPath = fileSystem.resolveHostFile(normalizedGuestPath);
+        if (hostPath == null) {
+            return UnixAddressResult.error(EACCES);
+        }
+        return UnixAddressResult.address(new UnixSocketAddress(
+                normalizedGuestPath,
+                UnixDomainSocketAddress.of(hostPath)));
+    }
+
     /// Writes one host socket address as a guest IPv4 or IPv6 socket address.
     private long writeInetSocketAddress(
             InetSocketAddress socketAddress,
@@ -2809,6 +3097,45 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             memory.writeInt(lengthAddress, (int) size);
         }
         return 0;
+    }
+
+    /// Writes one guest Unix-domain socket address.
+    private long writeUnixSocketAddress(@Nullable String guestPath, long address, long lengthAddress) {
+        if (lengthAddress != 0 && !memory.isBacked(lengthAddress, Integer.BYTES)) {
+            return EFAULT;
+        }
+
+        byte @Nullable [] pathBytes = guestPath == null ? null : guestPath.getBytes(StandardCharsets.UTF_8);
+        if (pathBytes != null && pathBytes.length >= SOCKADDR_UN_PATH_SIZE) {
+            return EINVAL;
+        }
+
+        long size = unixSockaddrSize(pathBytes);
+        if (address != 0) {
+            if (!memory.isBacked(address, size)) {
+                return EFAULT;
+            }
+            memory.clear(address, size);
+            memory.writeShort(address + SOCKADDR_FAMILY_OFFSET, (short) AF_UNIX);
+            if (pathBytes != null) {
+                memory.writeBytes(address + SOCKADDR_UN_PATH_OFFSET, pathBytes, 0, pathBytes.length);
+                memory.writeByte(address + SOCKADDR_UN_PATH_OFFSET + pathBytes.length, (byte) 0);
+            }
+        }
+        if (lengthAddress != 0) {
+            memory.writeInt(lengthAddress, (int) size);
+        }
+        return 0;
+    }
+
+    /// Returns the byte size of a guest Unix-domain socket address.
+    private static long unixSockaddrSize(@Nullable String guestPath) {
+        return unixSockaddrSize(guestPath == null ? null : guestPath.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /// Returns the byte size of a guest Unix-domain socket address.
+    private static long unixSockaddrSize(byte @Nullable [] pathBytes) {
+        return pathBytes == null ? SOCKADDR_UN_PATH_OFFSET : SOCKADDR_UN_PATH_OFFSET + pathBytes.length + 1L;
     }
 
     /// Writes a wildcard socket address for an unbound guest Internet socket.
@@ -2873,6 +3200,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Converts one host network exception into a raw negative Linux errno.
     private static long networkException(IOException exception) {
+        if (exception instanceof NoSuchFileException) {
+            return ENOENT;
+        }
+        if (exception instanceof AccessDeniedException) {
+            return EACCES;
+        }
         if (exception instanceof BindException) {
             return EADDRINUSE;
         }
@@ -2888,9 +3221,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         if (exception instanceof ProtocolException) {
             return EPROTONOSUPPORT;
         }
-        if (exception instanceof SocketException && exception.getMessage() != null
-                && exception.getMessage().toLowerCase(java.util.Locale.ROOT).contains("reset")) {
-            return ECONNRESET;
+        if (exception instanceof SocketException && exception.getMessage() != null) {
+            String message = exception.getMessage().toLowerCase(java.util.Locale.ROOT);
+            if (message.contains("reset")) {
+                return ECONNRESET;
+            }
+            if (message.contains("no such file")) {
+                return ENOENT;
+            }
+            if (message.contains("permission denied")) {
+                return EACCES;
+            }
         }
         return EINVAL;
     }
@@ -2911,6 +3252,29 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
     }
 
+    /// Stores the result of reading a guest Unix-domain socket address.
+    ///
+    /// @param address the decoded guest-to-host Unix-domain socket address
+    /// @param error the raw negative Linux error, or zero on success
+    private record UnixAddressResult(@Nullable UnixSocketAddress address, long error) {
+        /// Creates a successful address result.
+        static UnixAddressResult address(UnixSocketAddress address) {
+            return new UnixAddressResult(address, 0);
+        }
+
+        /// Creates a failed address result.
+        static UnixAddressResult error(long error) {
+            return new UnixAddressResult(null, error);
+        }
+    }
+
+    /// Stores a guest-visible Unix path and the corresponding host socket address.
+    ///
+    /// @param guestPath the normalized guest path supplied to `connect`
+    /// @param hostAddress the host Unix-domain socket address reached through a bind mount
+    private record UnixSocketAddress(String guestPath, UnixDomainSocketAddress hostAddress) {
+    }
+
     /// Stores the result of receiving bytes from a guest Internet socket.
     ///
     /// @param count the number of received bytes
@@ -2925,6 +3289,23 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         /// Creates a failed receive result.
         static ReceiveResult error(long error) {
             return new ReceiveResult(0, null, error);
+        }
+    }
+
+    /// Stores the result of receiving bytes from a guest Unix-domain stream socket.
+    ///
+    /// @param count the number of received bytes
+    /// @param address the peer guest path, or null when not available
+    /// @param error the raw negative Linux error, or zero on success
+    private record UnixReceiveResult(int count, @Nullable String address, long error) {
+        /// Creates a successful receive result.
+        static UnixReceiveResult success(int count, @Nullable String address) {
+            return new UnixReceiveResult(count, address, 0);
+        }
+
+        /// Creates a failed receive result.
+        static UnixReceiveResult error(long error) {
+            return new UnixReceiveResult(0, null, error);
         }
     }
 
@@ -2961,6 +3342,302 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         /// Creates a failed option result.
         static OptionResult error(long error) {
             return new OptionResult(0, error);
+        }
+    }
+
+    /// Host-backed guest Unix-domain stream socket.
+    private final class UnixStreamSocket implements GuestSocket {
+        /// The host Unix-domain stream channel.
+        private final SocketChannel channel;
+
+        /// The connected peer path in the guest namespace, or null when not connected.
+        private @Nullable String peerPath;
+
+        /// The configured send buffer size, or zero when not explicitly configured.
+        private int sendBufferSize;
+
+        /// The configured receive buffer size, or zero when not explicitly configured.
+        private int receiveBufferSize;
+
+        /// The pending socket error reported by `SO_ERROR`.
+        private int socketError;
+
+        /// Whether the read side has been shut down.
+        private boolean readShutdown;
+
+        /// Whether the write side has been shut down.
+        private boolean writeShutdown;
+
+        /// Creates an unconnected host-backed Unix-domain stream socket.
+        UnixStreamSocket() throws IOException {
+            channel = networkBackend.openUnixSocketChannel();
+        }
+
+        /// Connects the socket to a host Unix-domain socket reached through the guest namespace.
+        long connect(@Nullable UnixSocketAddress address, boolean nonblocking) {
+            if (address == null) {
+                return EFAULT;
+            }
+            try {
+                if (channel.isConnectionPending()) {
+                    return nonblocking ? EALREADY : finishConnectBlocking();
+                }
+                if (channel.isConnected()) {
+                    return EISCONN;
+                }
+
+                boolean connected = channel.connect(address.hostAddress());
+                peerPath = address.guestPath();
+                if (connected) {
+                    return 0;
+                }
+                if (nonblocking) {
+                    return EINPROGRESS;
+                }
+                return finishConnectBlocking();
+            } catch (AlreadyConnectedException exception) {
+                return EISCONN;
+            } catch (ConnectionPendingException exception) {
+                return EALREADY;
+            } catch (IOException exception) {
+                long error = networkException(exception);
+                recordSocketError(error);
+                return error;
+            } catch (UnsupportedOperationException | UnresolvedAddressException exception) {
+                return EADDRNOTAVAIL;
+            }
+        }
+
+        /// Sends bytes to the connected peer.
+        long send(ByteBuffer source, boolean nonblocking) {
+            if (!source.hasRemaining()) {
+                return 0;
+            }
+            if (writeShutdown) {
+                return EPIPE;
+            }
+            try {
+                SocketChannel connectedChannel = connectedChannel();
+                int count = connectedChannel.write(source);
+                if (count == 0 && !nonblocking) {
+                    long ready = waitReady(connectedChannel, SelectionKey.OP_WRITE);
+                    if (ready != 0) {
+                        return ready;
+                    }
+                    count = connectedChannel.write(source);
+                }
+                return count == 0 ? EAGAIN : count;
+            } catch (NotYetConnectedException exception) {
+                return ENOTCONN;
+            } catch (IOException exception) {
+                return networkException(exception);
+            }
+        }
+
+        /// Receives bytes from the connected peer.
+        UnixReceiveResult receive(ByteBuffer target, boolean nonblocking) {
+            if (!target.hasRemaining()) {
+                return UnixReceiveResult.success(0, null);
+            }
+            if (readShutdown) {
+                return UnixReceiveResult.success(0, peerPath);
+            }
+            try {
+                SocketChannel connectedChannel = connectedChannel();
+                int count = connectedChannel.read(target);
+                if (count == 0 && !nonblocking) {
+                    long ready = waitReady(connectedChannel, SelectionKey.OP_READ);
+                    if (ready != 0) {
+                        return UnixReceiveResult.error(ready);
+                    }
+                    count = connectedChannel.read(target);
+                }
+                return count < 0
+                        ? UnixReceiveResult.success(0, peerPath)
+                        : count == 0 ? UnixReceiveResult.error(EAGAIN) : UnixReceiveResult.success(count, peerPath);
+            } catch (NotYetConnectedException exception) {
+                return UnixReceiveResult.error(ENOTCONN);
+            } catch (IOException exception) {
+                return UnixReceiveResult.error(networkException(exception));
+            }
+        }
+
+        /// Returns the bound local guest path, or null for unnamed client sockets.
+        @Nullable String localPath() {
+            return null;
+        }
+
+        /// Returns the connected peer guest path, or null when not connected.
+        @Nullable String peerPath() {
+            return channel.isConnected() ? peerPath : null;
+        }
+
+        /// Sets one supported Unix-domain socket option.
+        long setOption(long level, long option, int value) {
+            if (level != SOL_SOCKET) {
+                return ENOPROTOOPT;
+            }
+            try {
+                if (option == SO_SNDBUF) {
+                    if (value <= 0) {
+                        return EINVAL;
+                    }
+                    sendBufferSize = value;
+                    channel.setOption(StandardSocketOptions.SO_SNDBUF, value);
+                    return 0;
+                }
+                if (option == SO_RCVBUF) {
+                    if (value <= 0) {
+                        return EINVAL;
+                    }
+                    receiveBufferSize = value;
+                    channel.setOption(StandardSocketOptions.SO_RCVBUF, value);
+                    return 0;
+                }
+                return ENOPROTOOPT;
+            } catch (IOException exception) {
+                return networkException(exception);
+            } catch (UnsupportedOperationException exception) {
+                return ENOPROTOOPT;
+            }
+        }
+
+        /// Gets one supported Unix-domain socket option.
+        OptionResult getOption(long level, long option) {
+            if (level != SOL_SOCKET) {
+                return OptionResult.error(ENOPROTOOPT);
+            }
+            try {
+                if (option == SO_SNDBUF) {
+                    return OptionResult.value(integerOption(StandardSocketOptions.SO_SNDBUF, sendBufferSize));
+                }
+                if (option == SO_RCVBUF) {
+                    return OptionResult.value(integerOption(StandardSocketOptions.SO_RCVBUF, receiveBufferSize));
+                }
+                if (option == SO_ERROR) {
+                    if (channel.isConnectionPending()) {
+                        long result = finishConnectIfReady();
+                        if (result < 0 && result != EINPROGRESS) {
+                            recordSocketError(result);
+                        }
+                    }
+                    int result = socketError;
+                    socketError = 0;
+                    return OptionResult.value(result);
+                }
+                return OptionResult.error(ENOPROTOOPT);
+            } catch (IOException exception) {
+                return OptionResult.error(networkException(exception));
+            } catch (UnsupportedOperationException exception) {
+                return OptionResult.error(ENOPROTOOPT);
+            }
+        }
+
+        /// Shuts down one or both stream socket directions.
+        long shutdown(long how) {
+            if (!channel.isConnected()) {
+                return ENOTCONN;
+            }
+            if (how < SHUT_RD || how > SHUT_RDWR) {
+                return EINVAL;
+            }
+            try {
+                if (how == SHUT_RD || how == SHUT_RDWR) {
+                    channel.shutdownInput();
+                    readShutdown = true;
+                }
+                if (how == SHUT_WR || how == SHUT_RDWR) {
+                    channel.shutdownOutput();
+                    writeShutdown = true;
+                }
+                return 0;
+            } catch (IOException exception) {
+                return networkException(exception);
+            }
+        }
+
+        /// Computes readiness events for poll and epoll.
+        int readyEvents() {
+            int events = 0;
+            if (channel.isConnectionPending()) {
+                return readyNow(channel, SelectionKey.OP_CONNECT) ? EPOLLOUT : 0;
+            }
+            if (!channel.isConnected()) {
+                return EPOLLOUT;
+            }
+            if (!readShutdown && readyNow(channel, SelectionKey.OP_READ)) {
+                events |= EPOLLIN;
+            }
+            if (!writeShutdown && readyNow(channel, SelectionKey.OP_WRITE)) {
+                events |= EPOLLOUT;
+            }
+            return events;
+        }
+
+        /// Releases the host Unix-domain stream channel.
+        @Override
+        public void close() throws IOException {
+            channel.close();
+        }
+
+        /// Returns the connected stream channel or throws a Linux-like Java exception.
+        private SocketChannel connectedChannel() throws IOException {
+            if (channel.isConnectionPending()) {
+                long result = finishConnectIfReady();
+                if (result != 0) {
+                    throw new NotYetConnectedException();
+                }
+            }
+            if (!channel.isConnected()) {
+                throw new NotYetConnectedException();
+            }
+            return channel;
+        }
+
+        /// Completes a pending connect, blocking when necessary.
+        private long finishConnectBlocking() throws IOException {
+            long ready = waitReady(channel, SelectionKey.OP_CONNECT);
+            if (ready != 0) {
+                return ready;
+            }
+            return finishConnect();
+        }
+
+        /// Completes a pending connect when the host reports it is ready.
+        private long finishConnectIfReady() throws IOException {
+            if (!channel.isConnectionPending()) {
+                return channel.isConnected() ? 0 : ENOTCONN;
+            }
+            if (!readyNow(channel, SelectionKey.OP_CONNECT)) {
+                return EINPROGRESS;
+            }
+            return finishConnect();
+        }
+
+        /// Completes a pending connect now.
+        private long finishConnect() throws IOException {
+            try {
+                return channel.finishConnect() ? 0 : EINPROGRESS;
+            } catch (NoConnectionPendingException exception) {
+                return channel.isConnected() ? 0 : ENOTCONN;
+            } catch (IOException exception) {
+                long error = networkException(exception);
+                recordSocketError(error);
+                return error;
+            }
+        }
+
+        /// Gets an integer option from the open channel or returns the cached value.
+        private int integerOption(java.net.SocketOption<Integer> option, int cachedValue) throws IOException {
+            @Nullable Integer value = channel.getOption(option);
+            return value == null ? cachedValue : value;
+        }
+
+        /// Stores a socket error for later `SO_ERROR` retrieval.
+        private void recordSocketError(long error) {
+            if (error < 0) {
+                socketError = (int) -error;
+            }
         }
     }
 

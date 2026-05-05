@@ -11,10 +11,10 @@ import java.nio.channels.DatagramChannel;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 
-/// Creates host resources for guest Internet sockets.
+/// Creates host resources for guest network sockets.
 @NotNullByDefault
 public interface GuestNetworkBackend {
-    /// Returns true when guest Internet sockets may access host networking.
+    /// Returns true when guest sockets may access host networking.
     boolean enabled();
 
     /// Opens a nonblocking host TCP client channel for the requested protocol family.
@@ -25,4 +25,7 @@ public interface GuestNetworkBackend {
 
     /// Opens a nonblocking host UDP channel for the requested protocol family.
     DatagramChannel openDatagramChannel(ProtocolFamily family) throws IOException;
+
+    /// Opens a nonblocking host Unix-domain stream client channel.
+    SocketChannel openUnixSocketChannel() throws IOException;
 }

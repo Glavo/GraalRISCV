@@ -7,11 +7,12 @@ import org.jetbrains.annotations.NotNullByDefault;
 
 import java.io.IOException;
 import java.net.ProtocolFamily;
+import java.net.StandardProtocolFamily;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 
-/// Opens host Java NIO channels for guest Internet sockets.
+/// Opens host Java NIO channels for guest network sockets.
 @NotNullByDefault
 public final class HostGuestNetworkBackend implements GuestNetworkBackend {
     /// The shared host passthrough network backend.
@@ -47,6 +48,14 @@ public final class HostGuestNetworkBackend implements GuestNetworkBackend {
     @Override
     public DatagramChannel openDatagramChannel(ProtocolFamily family) throws IOException {
         DatagramChannel channel = DatagramChannel.open(family);
+        channel.configureBlocking(false);
+        return channel;
+    }
+
+    /// Opens a nonblocking host Unix-domain stream client channel.
+    @Override
+    public SocketChannel openUnixSocketChannel() throws IOException {
+        SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX);
         channel.configureBlocking(false);
         return channel;
     }

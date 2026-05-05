@@ -48,7 +48,7 @@ public final class Main {
               --mount <spec>             Mount a filesystem:
                                           type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory]
                                           or type=tmpfs,dst=<guest>[,readonly|rw].
-              --network <none|host>      Guest Internet socket backend. Default is none.
+              --network <none|host>      Guest host socket backend. Default is none.
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
               --framebuffer <width>x<height>
                                           Open a Swing framebuffer and expose it as guest /dev/fb0.

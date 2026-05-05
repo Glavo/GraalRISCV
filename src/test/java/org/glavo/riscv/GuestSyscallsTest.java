@@ -31,6 +31,11 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -977,6 +982,12 @@ public final class GuestSyscallsTest {
 
     /// Byte size of Linux `struct sockaddr_in6`.
     private static final int SOCKADDR_IN6_SIZE = 28;
+
+    /// Byte size of Linux `struct sockaddr_un`.
+    private static final int SOCKADDR_UN_SIZE = 110;
+
+    /// Byte offset of `sun_path` inside Linux `struct sockaddr_un`.
+    private static final int SOCKADDR_UN_PATH_OFFSET = 2;
 
     /// Byte offset of the port field in Linux Internet socket addresses.
     private static final int SOCKADDR_PORT_OFFSET = 2;
@@ -6459,9 +6470,9 @@ public final class GuestSyscallsTest {
         }
     }
 
-    /// Verifies Internet sockets are disabled unless the host network backend is configured.
+    /// Verifies host-backed network sockets are disabled unless the host network backend is configured.
     @Test
-    public void internetSocketsRequireHostNetworkBackend() {
+    public void hostBackedNetworkSocketsRequireHostNetworkBackend() {
         try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
             RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
 
@@ -6472,6 +6483,98 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SOCKET, AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EAFNOSUPPORT, state.register(10));
+
+            setSyscall(state, SYS_SOCKET, AF_UNIX, SOCK_STREAM, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAFNOSUPPORT, state.register(10));
+        }
+    }
+
+    /// Verifies host networking supports filesystem-backed Unix-domain stream client sockets.
+    @Test
+    public void hostNetworkUnixStreamClientConnectsToBoundHostSocket() throws Exception {
+        Path socketDirectory = tempDirectory.resolve("x11");
+        Files.createDirectories(socketDirectory);
+        Path socketPath = socketDirectory.resolve("X99");
+
+        try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            server.bind(UnixDomainSocketAddress.of(socketPath));
+            RiscVThreadState state = hostNetworkState(memory, new String[]{
+                    "type=bind,src=" + socketDirectory + ",dst=/tmp/.X11-unix,readonly"
+            });
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 128;
+            long bufferAddress = memory.baseAddress() + 256;
+            long optionAddress = memory.baseAddress() + 384;
+            long optionLengthAddress = memory.baseAddress() + 392;
+            long iovecAddress = memory.baseAddress() + 512;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> serverTask = executor.submit(() -> {
+                    try (SocketChannel socket = server.accept()) {
+                        ByteBuffer request = ByteBuffer.allocate(4);
+                        readFully(socket, request);
+                        assertEquals("ping", new String(request.array(), StandardCharsets.UTF_8));
+                        writeFully(socket, ByteBuffer.wrap("pong".getBytes(StandardCharsets.UTF_8)));
+                    }
+                    return null;
+                });
+
+                setSyscall(state, SYS_SOCKET, AF_UNIX, SOCK_STREAM, 0);
+                state.syscalls().handle(state, TEST_PC);
+                int socketFileDescriptor = (int) state.register(10);
+                assertEquals(3, socketFileDescriptor);
+
+                String guestSocketPath = "/tmp/.X11-unix/X99";
+                int sockaddrLength = writeUnixSockaddr(memory, sockaddrAddress, guestSocketPath);
+                setSyscall(state, SYS_CONNECT, socketFileDescriptor, sockaddrAddress, sockaddrLength);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                memory.writeInt(optionLengthAddress, Integer.BYTES);
+                setSyscall(state, SYS_GETSOCKOPT, socketFileDescriptor, SOL_SOCKET, SO_ERROR, optionAddress, optionLengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                assertEquals(0, memory.readInt(optionAddress));
+
+                memory.writeInt(lengthAddress, SOCKADDR_UN_SIZE);
+                setSyscall(state, SYS_GETPEERNAME, socketFileDescriptor, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                assertEquals(AF_UNIX, memory.readUnsignedShort(sockaddrAddress));
+                assertEquals(guestSocketPath, readGuestCString(
+                        memory,
+                        sockaddrAddress + SOCKADDR_UN_PATH_OFFSET,
+                        SOCKADDR_UN_SIZE - SOCKADDR_UN_PATH_OFFSET));
+
+                byte[] requestPart1 = "pi".getBytes(StandardCharsets.UTF_8);
+                byte[] requestPart2 = "ng".getBytes(StandardCharsets.UTF_8);
+                memory.writeBytes(bufferAddress, requestPart1, 0, requestPart1.length);
+                memory.writeBytes(bufferAddress + 16, requestPart2, 0, requestPart2.length);
+                memory.writeLong(iovecAddress + IOVEC_BASE_OFFSET, bufferAddress);
+                memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, requestPart1.length);
+                memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_BASE_OFFSET, bufferAddress + 16);
+                memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, requestPart2.length);
+                setSyscall(state, SYS_WRITEV, socketFileDescriptor, iovecAddress, 2);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(requestPart1.length + requestPart2.length, state.register(10));
+
+                setSyscall(state, SYS_READ, socketFileDescriptor, bufferAddress, 4);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(4, state.register(10));
+                assertEquals("pong", readGuestString(memory, bufferAddress, 4));
+
+                setSyscall(state, SYS_CLOSE, socketFileDescriptor, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                waitForNetworkTask(serverTask);
+            } finally {
+                executor.shutdownNow();
+                Files.deleteIfExists(socketPath);
+            }
+        } catch (UnsupportedOperationException exception) {
+            assumeTrue(false, "Unix-domain sockets are unavailable: " + exception.getMessage());
         }
     }
 
@@ -8562,13 +8665,18 @@ public final class GuestSyscallsTest {
 
     /// Creates test machine state with host guest networking enabled.
     private static RiscVThreadState hostNetworkState(Memory memory) {
+        return hostNetworkState(memory, new String[0]);
+    }
+
+    /// Creates test machine state with host guest networking and filesystem mounts enabled.
+    private static RiscVThreadState hostNetworkState(Memory memory, String @Unmodifiable [] filesystemMounts) {
         GuestSyscalls syscalls = new LinuxGuestSyscalls(
                 memory,
                 new ByteArrayInputStream(new byte[0]),
                 new ByteArrayOutputStream(),
                 new ByteArrayOutputStream(),
                 memory.baseAddress(),
-                new String[0],
+                filesystemMounts,
                 TimeSource.system(),
                 false,
                 GuestCredentials.defaultUser(),
@@ -8676,6 +8784,16 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Writes one Unix-domain socket address into guest memory and returns its byte length.
+    private static int writeUnixSockaddr(Memory memory, long address, String guestPath) {
+        byte[] bytes = guestPath.getBytes(StandardCharsets.UTF_8);
+        memory.clear(address, SOCKADDR_UN_SIZE);
+        memory.writeShort(address, (short) AF_UNIX);
+        memory.writeBytes(address + SOCKADDR_UN_PATH_OFFSET, bytes, 0, bytes.length);
+        memory.writeByte(address + SOCKADDR_UN_PATH_OFFSET + bytes.length, (byte) 0);
+        return SOCKADDR_UN_PATH_OFFSET + bytes.length + 1;
+    }
+
     /// Reads one network-endian port from guest memory.
     private static int readNetworkPort(Memory memory, long address) {
         return (memory.readUnsignedByte(address) << Byte.SIZE) | memory.readUnsignedByte(address + 1);
@@ -8690,6 +8808,22 @@ public final class GuestSyscallsTest {
     /// Waits for a background host networking task.
     private static void waitForNetworkTask(Future<?> task) throws Exception {
         task.get(5, TimeUnit.SECONDS);
+    }
+
+    /// Reads until the target buffer is full or the peer closes unexpectedly.
+    private static void readFully(SocketChannel socket, ByteBuffer target) throws IOException {
+        while (target.hasRemaining()) {
+            if (socket.read(target) < 0) {
+                throw new IOException("Socket closed before reading expected bytes");
+            }
+        }
+    }
+
+    /// Writes until the source buffer is empty.
+    private static void writeFully(SocketChannel socket, ByteBuffer source) throws IOException {
+        while (source.hasRemaining()) {
+            socket.write(source);
+        }
     }
 
     /// Sets an integer socket option and verifies the returned value.
