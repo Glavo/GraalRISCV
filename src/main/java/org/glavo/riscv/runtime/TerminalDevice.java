@@ -187,11 +187,14 @@ final class TerminalDevice implements AutoCloseable {
     /// The next buffered canonical input byte returned to the guest.
     private int pendingInputOffset = 0;
 
-    /// Raw-mode input bytes already echoed by the guest-side Windows line discipline.
+    /// Raw-mode input bytes currently visible because of guest-side local echo.
     private byte[] rawEchoedInput = new byte[0];
 
+    /// Raw-mode guest output bytes that replay local echo and should be suppressed.
+    private byte[] rawEchoReplay = new byte[0];
+
     /// The next raw-mode replay byte to suppress from guest output.
-    private int rawEchoedInputOffset = 0;
+    private int rawEchoReplayOffset = 0;
 
     /// The current raw-mode escape sequence parsing state for local echo suppression.
     private int rawEscapeState = 0;
@@ -221,6 +224,11 @@ final class TerminalDevice implements AutoCloseable {
         return new TerminalDevice(new StreamBackend(in, out, WindowsConsoleMode.openStandardInput()));
     }
 
+    /// Creates a stream-backed terminal that always applies guest-side line discipline.
+    static TerminalDevice openWithGuestLineDiscipline(InputStream in, OutputStream out) {
+        return new TerminalDevice(new GuestLineDisciplineStreamBackend(in, out));
+    }
+
     /// Adds one process-level reference to this shared terminal.
     synchronized TerminalDevice retain() {
         references++;
@@ -245,7 +253,7 @@ final class TerminalDevice implements AutoCloseable {
             byte[] bytes = offset == 0 ? buffer : Arrays.copyOfRange(buffer, offset, length);
             backend.write(bytes, bytes.length);
             if (containsLineBreak(bytes, bytes.length)) {
-                clearRawEchoReplay();
+                clearRawEchoState();
             }
         }
     }
@@ -497,13 +505,14 @@ final class TerminalDevice implements AutoCloseable {
             if (unsignedInput == controlChar(TERMIOS_ERASE_INDEX)) {
                 if (rawEchoedInput.length > 0) {
                     rawEchoedInput = Arrays.copyOf(rawEchoedInput, rawEchoedInput.length - 1);
-                    rawEchoedInputOffset = Math.min(rawEchoedInputOffset, rawEchoedInput.length);
                     byte[] bytes = {'\b', ' ', '\b'};
                     backend.write(bytes, bytes.length);
+                    appendRawEchoReplay(bytes);
                 }
             } else if (input >= 0x20 && input != 0x7f) {
                 byte[] bytes = {input};
                 backend.write(bytes, bytes.length);
+                appendRawEchoedInput(input);
                 appendRawEchoReplay(input);
             }
         }
@@ -534,37 +543,59 @@ final class TerminalDevice implements AutoCloseable {
         return true;
     }
 
-    /// Appends one locally echoed raw input byte to the replay suppression buffer.
-    private void appendRawEchoReplay(byte input) {
+    /// Appends one locally echoed raw input byte to the visible raw input buffer.
+    private void appendRawEchoedInput(byte input) {
         int length = rawEchoedInput.length;
         rawEchoedInput = Arrays.copyOf(rawEchoedInput, length + 1);
         rawEchoedInput[length] = input;
     }
 
+    /// Appends one locally echoed raw output byte to the replay suppression buffer.
+    private void appendRawEchoReplay(byte input) {
+        int length = rawEchoReplay.length;
+        rawEchoReplay = Arrays.copyOf(rawEchoReplay, length + 1);
+        rawEchoReplay[length] = input;
+    }
+
+    /// Appends locally echoed raw output bytes to the replay suppression buffer.
+    private void appendRawEchoReplay(byte[] bytes) {
+        int length = rawEchoReplay.length;
+        rawEchoReplay = Arrays.copyOf(rawEchoReplay, length + bytes.length);
+        System.arraycopy(bytes, 0, rawEchoReplay, length, bytes.length);
+    }
+
     /// Suppresses guest output that replays raw input already locally echoed by this terminal.
     private int suppressRawEchoReplay(byte[] buffer, int length) {
-        if (rawEchoedInputOffset >= rawEchoedInput.length) {
+        if (rawEchoReplayOffset >= rawEchoReplay.length) {
             return 0;
         }
 
         int offset = 0;
         while (offset < length
-                && rawEchoedInputOffset < rawEchoedInput.length
-                && buffer[offset] == rawEchoedInput[rawEchoedInputOffset]) {
+                && rawEchoReplayOffset < rawEchoReplay.length
+                && buffer[offset] == rawEchoReplay[rawEchoReplayOffset]) {
             offset++;
-            rawEchoedInputOffset++;
+            rawEchoReplayOffset++;
         }
-        if (offset == 0) {
+        if (rawEchoReplayOffset == rawEchoReplay.length) {
             clearRawEchoReplay();
+        } else if (offset < length) {
+            clearRawEchoState();
         }
         return offset;
     }
 
-    /// Clears raw input replay suppression state.
-    private void clearRawEchoReplay() {
+    /// Clears raw input local echo and replay suppression state.
+    private void clearRawEchoState() {
         rawEchoedInput = new byte[0];
-        rawEchoedInputOffset = 0;
+        clearRawEchoReplay();
         rawEscapeState = 0;
+    }
+
+    /// Clears raw input replay suppression state while keeping visible local echo state.
+    private void clearRawEchoReplay() {
+        rawEchoReplay = new byte[0];
+        rawEchoReplayOffset = 0;
     }
 
     /// Returns true when the byte prefix contains a line break.
@@ -621,6 +652,43 @@ final class TerminalDevice implements AutoCloseable {
     /// @param rows the row count
     /// @param columns the column count
     private record WindowSize(short rows, short columns) {
+    }
+
+    /// Implements stream I/O while asking the terminal device to process guest line discipline.
+    ///
+    /// @param in the input stream used for terminal reads
+    /// @param out the output stream used for terminal writes
+    private record GuestLineDisciplineStreamBackend(InputStream in, OutputStream out) implements Backend {
+        /// Reads bytes from the configured input stream.
+        @Override
+        public int read(byte[] buffer, int length) throws IOException {
+            int count = in.read(buffer, 0, length);
+            return Math.max(count, 0);
+        }
+
+        /// Writes bytes to the configured output stream.
+        @Override
+        public void write(byte[] buffer, int length) throws IOException {
+            out.write(buffer, 0, length);
+            out.flush();
+        }
+
+        /// Returns null because stream tests do not expose a host window size.
+        @Override
+        public @Nullable WindowSize windowSize() {
+            return null;
+        }
+
+        /// Returns true because this backend intentionally uses guest-side line discipline.
+        @Override
+        public boolean usesGuestLineDiscipline() {
+            return true;
+        }
+
+        /// Leaves externally owned streams open.
+        @Override
+        public void close() {
+        }
     }
 
     /// Implements terminal I/O using the Java streams configured for the guest process.
