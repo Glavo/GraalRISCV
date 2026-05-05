@@ -3794,6 +3794,42 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies immediate `ppoll` checks tty input readiness without breaking blocking waits.
+    @Test
+    public void ppollChecksDevTtyInputReadinessOnlyForImmediateTimeout() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress());
+            long pathAddress = memory.baseAddress();
+            long pollFileDescriptorsAddress = memory.baseAddress() + 128;
+            long timeoutAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/dev/tty");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 0, fileDescriptor, POLLIN);
+            setSyscall(state, SYS_PPOLL, pollFileDescriptorsAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertEquals(POLLIN, pollRevents(memory, pollFileDescriptorsAddress, 0));
+
+            memory.writeLong(timeoutAddress, 0);
+            memory.writeLong(timeoutAddress + Long.BYTES, 0);
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 0, fileDescriptor, POLLIN);
+            setSyscall(state, SYS_PPOLL, pollFileDescriptorsAddress, 1, timeoutAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, pollRevents(memory, pollFileDescriptorsAddress, 0));
+        }
+    }
+
     /// Verifies that `openat` exposes writable host files below the configured root mount.
     @Test
     public void openatWritesHostFilesBelowRoot() throws Exception {

@@ -2026,6 +2026,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 || !isBackedFdSet(exceptionFileDescriptorsAddress, fileDescriptorSetSize)) {
             return EFAULT;
         }
+        boolean immediateTimeout = false;
         if (timeoutAddress != 0) {
             if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
                 return EFAULT;
@@ -2035,6 +2036,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (seconds < 0 || nanoseconds < 0 || nanoseconds >= NANOSECONDS_PER_SECOND) {
                 return EINVAL;
             }
+            immediateTimeout = seconds == 0 && nanoseconds == 0;
         }
 
         long signalMaskAddress = 0;
@@ -2076,7 +2078,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
             int readyCount = 0;
             for (int fileDescriptor = 0; fileDescriptor < descriptorLimit; fileDescriptor++) {
-                int readyEvents = readyEventsFor(fileDescriptor);
+                int readyEvents = readyEventsFor(fileDescriptor, immediateTimeout);
                 boolean descriptorReady = false;
                 if (requestedReadFileDescriptors[fileDescriptor]
                         && (readyEvents & (EPOLLIN | EPOLLERR | EPOLLHUP)) != 0) {
@@ -2171,6 +2173,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (fileDescriptorCount > 0 && !memory.isBacked(fileDescriptorsAddress, fileDescriptorsSize)) {
             return EFAULT;
         }
+        boolean immediateTimeout = false;
         if (timeoutAddress != 0) {
             if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
                 return EFAULT;
@@ -2180,6 +2183,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (seconds < 0 || nanoseconds < 0 || nanoseconds >= NANOSECONDS_PER_SECOND) {
                 return EINVAL;
             }
+            immediateTimeout = seconds == 0 && nanoseconds == 0;
         }
         if (signalMaskAddress != 0 && !memory.isBacked(signalMaskAddress, KERNEL_SIGSET_SIZE)) {
             return EFAULT;
@@ -2203,7 +2207,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 } else if (!isOpenFileDescriptor(fileDescriptor)) {
                     reportedEvents = POLLNVAL;
                 } else {
-                    int readyEvents = readyEventsFor(fileDescriptor);
+                    int readyEvents = readyEventsFor(fileDescriptor, immediateTimeout);
                     reportedEvents = (readyEvents & requestedEvents) | (readyEvents & (POLLERR | POLLHUP));
                 }
 
@@ -4626,9 +4630,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Computes the currently ready low-level `epoll` event bits for one guest descriptor.
     protected int readyEventsFor(int fileDescriptor) {
+        return readyEventsFor(fileDescriptor, false);
+    }
+
+    /// Computes the currently ready low-level `epoll` event bits for one guest descriptor.
+    protected int readyEventsFor(int fileDescriptor, boolean requireImmediateTerminalInput) {
         int standardFileDescriptor = standardFileDescriptorFor(fileDescriptor);
         if (standardFileDescriptor == 0) {
-            if (!terminalDevice.supportsStandardFileDescriptors()) {
+            if (!requireImmediateTerminalInput || !terminalDevice.supportsStandardFileDescriptors()) {
                 return EPOLLIN;
             }
             return terminalDevice.hasReadableInput() ? EPOLLIN : 0;
@@ -4665,7 +4674,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile.isTerminalDevice() || openFile.isCharacterDevice()) {
             int events = 0;
             if (openFile.readable()) {
-                if (!openFile.isTerminalDevice() || openFile.terminalDevice().hasReadableInput()) {
+                if (!requireImmediateTerminalInput
+                        || !openFile.isTerminalDevice()
+                        || openFile.terminalDevice().hasReadableInput()) {
                     events |= EPOLLIN;
                 }
             }

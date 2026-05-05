@@ -2711,6 +2711,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return socket == null ? super.readyEventsFor(fileDescriptor) : socket.readyEvents();
     }
 
+    /// Computes readiness for guest Internet sockets or falls back to generic descriptor readiness.
+    @Override
+    protected int readyEventsFor(int fileDescriptor, boolean requireImmediateTerminalInput) {
+        @Nullable InternetSocket socket = internetSocket(fileDescriptor);
+        return socket == null
+                ? super.readyEventsFor(fileDescriptor, requireImmediateTerminalInput)
+                : socket.readyEvents();
+    }
+
     /// Returns the Internet socket backing a descriptor, or null when it is not one.
     private @Nullable InternetSocket internetSocket(int fileDescriptor) {
         @Nullable OpenFile openFile = openFile(fileDescriptor);
