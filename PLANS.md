@@ -9,16 +9,37 @@
 ## Current Baseline
 
 - ISA support targets RVA23U64 when the configured VLEN is profile-valid; shorter vector configurations expose the RVA22U64 capability surface.
-- Linux workloads currently cover static C/musl/Go programs, SQLite, CoreMark, RVV examples, `riscv-tests`, Ubuntu Base dynamic-linking smoke tests, interactive shell use, fastfetch, and BellSoft JDK 25 interpreted `java -version` and `jshell --version`.
+- Linux workload coverage includes static C/musl/Go programs, SQLite, CoreMark, RVV examples, `riscv-tests`, Ubuntu Base dynamic-linking smoke tests, interactive shells, fastfetch, curl, and interpreted BellSoft JDK 25 `java -version` and `jshell --version`.
+- FreeBSD support covers the static user-mode programs needed by the FreeBSD Go hello-world smoke workload.
 - Gradle-managed external downloads are cached under project-root `downloads/` so `clean` preserves them.
-- FreeBSD support currently covers static user-mode programs needed by the FreeBSD Go hello-world smoke workload.
-- The runtime includes Docker-like bind/tar/tmpfs mounts, gzip-compressed memory tar mounts with fork-inherited writable state, virtual `/proc`, minimal virtual `/sys` DMI, PCI, and class stubs, Linux-like `/dev`, deterministic `NETLINK_ROUTE` interface and default-route metadata, opt-in host passthrough networking for IPv4/IPv6 TCP client/server sockets, UDP datagrams, batched message syscalls, resolver-file fallback for rootfs images with broken `/etc/resolv.conf` symlinks, bind-mounted Unix-domain stream client sockets for X11/Swing workloads, local Unix-domain stream socket pairs, guest credentials with CLI environment overrides, deterministic time, process/thread state, `clone`/`wait4`, `utimensat`, descriptor close-on-exec handling across `execve`, Linux `#!` script binary-format rewriting for initial and `execve` loads, terminal handling with input readiness, nonblocking tty reads, and alternate-screen raw input rendering for full-screen programs, and Gradle-managed example/test tasks. Filesystem namespace and mount-spec parsing live under `org.glavo.riscv.runtime.fs`, network backend selection lives under `org.glavo.riscv.runtime.net`, while host paths use `java.nio.file.Path` directly.
-- Filesystem metadata now includes guest-visible uid, gid, chmod mode bits, and process `umask` handling for host and tar mounts, with Linux-style owner/group/other DAC, setgid directory inheritance, sticky-directory mutation checks, and ancestor-directory search checks for access, open, metadata, directory mutation, truncate, chdir, chmod, and chown paths.
+
+### Runtime Surface
+
 - Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.
-- LTP syscall work currently includes a coverage report and an ABI-table driven static smoke ELF for core identity, process/resource, time, random, and file-system behavior.
-- CLI execution runs through the plain Java `RiscVEngine` and `RiscVInterpreter` loop. Decoded blocks and traces use `ExecutableBlock` and `ExecutableTrace`, with `TraceCompiler` reserved as the future bytecode trace compiler boundary.
-- The Java interpreter includes a PC-indexed `DecodedCodeSegment` fast path for batched integer blocks, backed by a local segment cache, segment-local operand rewrites, packed register operands, segment-internal fast-slice dispatch, batched retire accounting, lazy memory-fault PC materialization, and aligned scalar memory helpers. `MemoryAccess` owns a non-null software TLB directly, while direct `Memory` API paths create short-lived non-null caches without `ThreadLocal` state. Unsupported, checked, traced, syscall, CSR, floating-point, vector, atomic, and active LR/SC reservation paths fall back to the existing block interpreter.
-- Graphical-device groundwork now includes host-side framebuffer geometry, packed pixel-format metadata, dirty-region tracking, immutable framebuffer snapshots, host ARGB conversion, a Swing framebuffer presentation backend, a Gradle-runnable Swing framebuffer demo, optional `RiscVContext`/syscall-layer framebuffer hook, CLI-created Swing framebuffer windows, minimal Linux `/dev/fb0` access, fbdev screen-info ioctls, write-based framebuffer updates, and a static RISC-V Linux framebuffer demo.
+- Linux runtime support includes process/thread state, guest credentials, deterministic time, `clone`/`wait4`, descriptor close-on-exec handling, Linux `#!` binary-format rewriting, terminal raw-mode behavior, and CLI environment overrides.
+- LTP syscall work includes a coverage report and an ABI-table driven static smoke ELF for core identity, process/resource, time, random, and filesystem behavior.
+
+### Filesystems And Devices
+
+- The filesystem layer supports Docker-like bind/tar/tmpfs mounts, gzip-compressed memory tar mounts with fork-inherited writable state, virtual `/proc`, minimal virtual `/sys`, Linux-like `/dev`, and resolver-file fallback for rootfs images with broken `/etc/resolv.conf` symlinks.
+- Filesystem metadata includes guest-visible uid, gid, chmod mode bits, process `umask`, Linux-style DAC, setgid directory inheritance, sticky-directory mutation checks, and ancestor-directory search checks.
+- Filesystem namespace and mount-spec parsing live under `org.glavo.riscv.runtime.fs`; host paths use `java.nio.file.Path` directly.
+
+### Networking
+
+- Network backend selection lives under `org.glavo.riscv.runtime.net`.
+- The opt-in host networking backend supports IPv4/IPv6 TCP client/server sockets, UDP datagrams, batched message syscalls, deterministic `NETLINK_ROUTE` metadata, bind-mounted Unix-domain stream client sockets for X11/Swing workloads, and local Unix-domain stream socket pairs.
+
+### Execution Engine
+
+- CLI execution runs through the plain Java `RiscVEngine` and `RiscVInterpreter` loop.
+- Decoded blocks and traces use `ExecutableBlock` and `ExecutableTrace`, with `TraceCompiler` reserved as the future bytecode trace compiler boundary.
+- The Java interpreter includes a PC-indexed `DecodedCodeSegment` fast path for batched integer blocks, local segment caches, segment-local operand rewrites, packed register operands, segment-internal fast-slice dispatch, batched retire accounting, lazy memory-fault PC materialization, and aligned scalar memory helpers.
+- `MemoryAccess` owns a non-null software TLB directly, while direct `Memory` API paths create short-lived non-null caches without `ThreadLocal` state.
+
+### Graphics
+
+- Graphical-device groundwork includes framebuffer geometry, packed pixel-format metadata, dirty-region tracking, immutable framebuffer snapshots, host ARGB conversion, a Swing framebuffer presentation backend, a Gradle-runnable Swing framebuffer demo, CLI-created Swing framebuffer windows, minimal Linux `/dev/fb0` access, fbdev screen-info ioctls, write-based framebuffer updates, and a static RISC-V Linux framebuffer demo.
 
 ## Maintenance Principles
 
