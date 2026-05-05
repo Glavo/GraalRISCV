@@ -426,6 +426,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux `CLONE_PIDFD`.
     private static final long CLONE_PIDFD = 0x00001000L;
 
+    /// Linux `CLONE_VFORK`.
+    private static final long CLONE_VFORK = 0x00004000L;
+
     /// Linux `CLONE_THREAD`.
     private static final long CLONE_THREAD = 0x00010000L;
 
@@ -466,8 +469,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Clone flags accepted for independent child-process creation.
     private static final long SUPPORTED_PROCESS_CLONE_FLAGS =
             CLONE_EXIT_SIGNAL_MASK
+                    | CLONE_VM
                     | CLONE_FS
                     | CLONE_FILES
+                    | CLONE_VFORK
                     | CLONE_SYSVSEM
                     | CLONE_SETTLS
                     | CLONE_PARENT_SETTID
@@ -884,7 +889,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             long childTidAddress) {
         long exitSignal = flags & CLONE_EXIT_SIGNAL_MASK;
         if ((flags & ~SUPPORTED_PROCESS_CLONE_FLAGS) != 0
-                || (flags & CLONE_VM) != 0
+                || ((flags & CLONE_VM) != 0 && (flags & CLONE_VFORK) == 0)
                 || exitSignal != SIGNAL_CHILD && exitSignal != 0) {
             return EINVAL;
         }
@@ -2154,25 +2159,32 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         if ((typeFlags & ~SUPPORTED_SOCKET_TYPE_FLAGS) != 0) {
             return EINVAL;
         }
+        boolean nonblocking = (typeFlags & O_NONBLOCK) != 0;
+        boolean closeOnExec = (typeFlags & O_CLOEXEC) != 0;
         if (domain == AF_INET || domain == AF_INET6) {
-            return internetSocket((int) domain, socketType, protocol, (typeFlags & O_NONBLOCK) != 0);
+            return internetSocket((int) domain, socketType, protocol, nonblocking, closeOnExec);
         }
         if (domain == AF_NETLINK
                 && (socketType == SOCK_RAW || socketType == SOCK_DGRAM)
                 && protocol == NETLINK_ROUTE) {
-            return addOpenFile(OpenFile.socket(new NetlinkRouteSocket(), (typeFlags & O_NONBLOCK) != 0));
+            return addOpenFile(OpenFile.socket(new NetlinkRouteSocket(), nonblocking), closeOnExec);
         }
         if (domain == AF_UNIX && socketType == SOCK_STREAM && protocol == 0) {
-            return unixStreamSocket((typeFlags & O_NONBLOCK) != 0);
+            return unixStreamSocket(nonblocking, closeOnExec);
         }
         if (domain == AF_UNIX && socketType == SOCK_DGRAM && protocol == 0) {
-            return addOpenFile(OpenFile.socket(new NetworkInterfaceIoctlSocket(), (typeFlags & O_NONBLOCK) != 0));
+            return addOpenFile(OpenFile.socket(new NetworkInterfaceIoctlSocket(), nonblocking), closeOnExec);
         }
         return EAFNOSUPPORT;
     }
 
     /// Creates a guest Internet socket through the configured network backend.
-    private long internetSocket(int domain, long socketType, long protocol, boolean nonblocking) {
+    private long internetSocket(
+            int domain,
+            long socketType,
+            long protocol,
+            boolean nonblocking,
+            boolean closeOnExec) {
         if (!networkBackend.enabled()) {
             return EAFNOSUPPORT;
         }
@@ -2189,20 +2201,22 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         }
 
         try {
-            return addOpenFile(OpenFile.socket(new InternetSocket(domain, (int) socketType, protocol), nonblocking));
+            return addOpenFile(
+                    OpenFile.socket(new InternetSocket(domain, (int) socketType, protocol), nonblocking),
+                    closeOnExec);
         } catch (IOException exception) {
             return networkException(exception);
         }
     }
 
     /// Creates a guest Unix-domain stream socket through the configured network backend.
-    private long unixStreamSocket(boolean nonblocking) {
+    private long unixStreamSocket(boolean nonblocking, boolean closeOnExec) {
         if (!networkBackend.enabled()) {
             return EAFNOSUPPORT;
         }
 
         try {
-            return addOpenFile(OpenFile.socket(new HostUnixStreamSocket(), nonblocking));
+            return addOpenFile(OpenFile.socket(new HostUnixStreamSocket(), nonblocking), closeOnExec);
         } catch (IOException exception) {
             return networkException(exception);
         } catch (UnsupportedOperationException exception) {
@@ -2233,12 +2247,13 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         PipeBuffer firstToSecond = new PipeBuffer();
         PipeBuffer secondToFirst = new PipeBuffer();
         boolean nonblocking = (typeFlags & O_NONBLOCK) != 0;
+        boolean closeOnExec = (typeFlags & O_CLOEXEC) != 0;
         long firstFileDescriptor = addOpenFile(OpenFile.socket(
                 new LocalUnixStreamSocket(secondToFirst, firstToSecond),
-                nonblocking));
+                nonblocking), closeOnExec);
         long secondFileDescriptor = addOpenFile(OpenFile.socket(
                 new LocalUnixStreamSocket(firstToSecond, secondToFirst),
-                nonblocking));
+                nonblocking), closeOnExec);
         memory.writeInt(pairAddress, (int) firstFileDescriptor);
         memory.writeInt(pairAddress + Integer.BYTES, (int) secondFileDescriptor);
         return 0;
@@ -2410,7 +2425,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 return writeResult;
             }
         }
-        return addOpenFile(OpenFile.socket(acceptedSocket, (flags & O_NONBLOCK) != 0));
+        return addOpenFile(
+                OpenFile.socket(acceptedSocket, (flags & O_NONBLOCK) != 0),
+                (flags & O_CLOEXEC) != 0);
     }
 
     /// Sets one supported guest socket option.
@@ -5328,6 +5345,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `fdatasync`.
     private static final int SYS_FDATASYNC = 83;
 
+    /// The Linux RISC-V syscall number for `utimensat`.
+    private static final int SYS_UTIMENSAT = 88;
+
     /// The Linux RISC-V syscall number for `exit`.
     private static final int SYS_EXIT = 93;
 
@@ -5725,6 +5745,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_SYNC -> state.setRegister(10, sync());
             case SYS_FSYNC -> state.setRegister(10, fsync((int) state.register(10)));
             case SYS_FDATASYNC -> state.setRegister(10, fdatasync((int) state.register(10)));
+            case SYS_UTIMENSAT -> state.setRegister(10, utimensat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_EXIT_GROUP -> {
                 requestProcessExit(state.register(10));
                 throw new ProgramExitException(state.register(10));

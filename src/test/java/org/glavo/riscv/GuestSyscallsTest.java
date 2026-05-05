@@ -287,6 +287,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `fdatasync`.
     private static final long SYS_FDATASYNC = 83;
 
+    /// The Linux RISC-V syscall number for `utimensat`.
+    private static final long SYS_UTIMENSAT = 88;
+
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final long SYS_SET_TID_ADDRESS = 96;
 
@@ -752,6 +755,12 @@ public final class GuestSyscallsTest {
     /// Linux `AT_SYMLINK_NOFOLLOW`.
     private static final long AT_SYMLINK_NOFOLLOW = 0x100;
 
+    /// Linux `UTIME_NOW`.
+    private static final long UTIME_NOW = 0x3fff_ffffL;
+
+    /// Linux `UTIME_OMIT`.
+    private static final long UTIME_OMIT = 0x3fff_fffeL;
+
     /// Linux `AT_STATX_FORCE_SYNC`.
     private static final long AT_STATX_FORCE_SYNC = 0x2000;
 
@@ -907,6 +916,15 @@ public final class GuestSyscallsTest {
 
     /// Linux `F_DUPFD`.
     private static final long F_DUPFD = 0;
+
+    /// Linux `F_GETFD`.
+    private static final long F_GETFD = 1;
+
+    /// Linux `F_SETFD`.
+    private static final long F_SETFD = 2;
+
+    /// Linux `FD_CLOEXEC`.
+    private static final long FD_CLOEXEC = 1;
 
     /// Linux `F_GETFL`.
     private static final long F_GETFL = 3;
@@ -1355,6 +1373,9 @@ public final class GuestSyscallsTest {
     /// Linux `CLONE_PIDFD`.
     private static final long CLONE_PIDFD = 0x00001000L;
 
+    /// Linux `CLONE_VFORK`.
+    private static final long CLONE_VFORK = 0x00004000L;
+
     /// Linux `CLONE_THREAD`.
     private static final long CLONE_THREAD = 0x00010000L;
 
@@ -1685,6 +1706,18 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             int duplicatedFileDescriptor = (int) state.register(10);
             assertEquals(10, duplicatedFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, duplicatedFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, duplicatedFileDescriptor, F_SETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, duplicatedFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
 
             setSyscall(state, SYS_CLOSE, directoryFileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -2714,6 +2747,64 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `utimensat` updates host timestamps and accepts writable tmpfs timestamps.
+    @Test
+    public void utimensatUpdatesHostAndTmpfsTimestamps() throws Exception {
+        Path hostFile = tempDirectory.resolve("timestamp.txt");
+        Files.writeString(hostFile, "timestamp", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long timesAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/timestamp.txt");
+            writeTimespec(memory, timesAddress, 0, UTIME_OMIT);
+            writeTimespec(memory, timesAddress + 2L * Long.BYTES, 1_700_000_123L, 456_789_000L);
+            setSyscall(state, SYS_UTIMENSAT, AT_FDCWD, pathAddress, timesAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            Instant modified = Files.getLastModifiedTime(hostFile).toInstant();
+            assertEquals(1_700_000_123L, modified.getEpochSecond());
+
+            writeTimespec(memory, timesAddress + 2L * Long.BYTES, 1_700_000_123L, 1_000_000_000L);
+            setSyscall(state, SYS_UTIMENSAT, AT_FDCWD, pathAddress, timesAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tmpfs,dst=/tmp",
+                "type=tmpfs,dst=/ro,readonly"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem);
+            long pathAddress = memory.baseAddress();
+
+            writeGuestString(memory, pathAddress, "/tmp");
+            setSyscall(state, SYS_UTIMENSAT, AT_FDCWD, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/ro");
+            setSyscall(state, SYS_UTIMENSAT, AT_FDCWD, pathAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EROFS, state.register(10));
+        }
+    }
+
     /// Verifies forked child processes inherit writable memory tar changes made before `clone`.
     @Test
     public void cloneInheritsWritableMemoryTarChanges() throws Exception {
@@ -3561,13 +3652,21 @@ public final class GuestSyscallsTest {
             long bufferAddress = memory.baseAddress() + 32;
             long statAddress = memory.baseAddress() + 128;
 
-            setSyscall(state, SYS_PIPE2, pipeAddress, O_NONBLOCK, 0);
+            setSyscall(state, SYS_PIPE2, pipeAddress, O_NONBLOCK | O_CLOEXEC, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
             int readFileDescriptor = memory.readInt(pipeAddress);
             int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
             assertEquals(3, readFileDescriptor);
             assertEquals(4, writeFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, readFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, writeFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
 
             setSyscall(state, SYS_READ, readFileDescriptor, bufferAddress, 1);
             state.syscalls().handle(state, TEST_PC);
@@ -5232,6 +5331,14 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EAGAIN, state.register(10));
 
+            setSyscall(state, SYS_CLONE, CLONE_VM | 17, stackAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLONE, CLONE_VM | CLONE_VFORK | 17, stackAddress, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
             setSyscall(state, SYS_CLONE, REQUIRED_THREAD_CLONE_FLAGS & ~CLONE_THREAD, stackAddress, 0, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
@@ -5266,7 +5373,16 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EAGAIN, state.register(10));
 
+            memory.writeLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET, CLONE_VM | CLONE_VFORK);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_EXIT_SIGNAL_OFFSET, 17);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_STACK_OFFSET, 0);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_STACK_SIZE_OFFSET, 0);
+            setSyscall(state, SYS_CLONE3, argumentsAddress, CLONE_ARGS_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
             memory.writeLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET, CLONE_PIDFD);
+            memory.writeLong(argumentsAddress + CLONE_ARGS_EXIT_SIGNAL_OFFSET, 0);
             setSyscall(state, SYS_CLONE3, argumentsAddress, CLONE_ARGS_SIZE, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
@@ -8801,6 +8917,12 @@ public final class GuestSyscallsTest {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         memory.writeBytes(address, bytes, 0, bytes.length);
         memory.writeByte(address + bytes.length, (byte) 0);
+    }
+
+    /// Writes one Linux RISC-V 64-bit `struct timespec` into guest memory.
+    private static void writeTimespec(Memory memory, long address, long seconds, long nanoseconds) {
+        memory.writeLong(address, seconds);
+        memory.writeLong(address + Long.BYTES, nanoseconds);
     }
 
     /// Writes one regular tar entry with explicit Linux metadata to an open archive.

@@ -41,10 +41,14 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.attribute.FileTime;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -312,6 +316,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `fchmodat2` flags accepted by this simulator.
     protected static final long SUPPORTED_FCHMODAT2_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
 
+    /// Linux `utimensat` flags accepted by this simulator.
+    protected static final long SUPPORTED_UTIMENSAT_FLAGS = AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH;
+
+    /// Linux `UTIME_NOW`.
+    protected static final long UTIME_NOW = 0x3fff_ffffL;
+
+    /// Linux `UTIME_OMIT`.
+    protected static final long UTIME_OMIT = 0x3fff_fffeL;
+
     /// Linux `O_ACCMODE`.
     protected static final long O_ACCMODE = 0x3;
 
@@ -437,6 +450,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Linux `F_SETFD`.
     protected static final long F_SETFD = 2;
+
+    /// Linux `FD_CLOEXEC`.
+    protected static final long FD_CLOEXEC = 1;
 
     /// Linux `F_GETFL`.
     protected static final long F_GETFL = 3;
@@ -1203,6 +1219,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Overrides for standard descriptors when guest code redirects stdin, stdout, or stderr.
     protected final @Nullable OpenFile[] standardFiles = new @Nullable OpenFile[3];
 
+    /// Descriptor flags for standard descriptors.
+    protected final boolean[] standardFileCloseOnExec = new boolean[3];
+
+    /// Descriptor flags for guest-opened file descriptors.
+    protected final ArrayList<Boolean> openFileCloseOnExecFlags = new ArrayList<>();
+
     /// Allocates process and thread ids for this emulator run.
     protected final GuestProcessRegistry processRegistry;
 
@@ -1886,7 +1908,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         try {
-            replaceOpenFile(newFileDescriptor, source);
+            replaceOpenFile(newFileDescriptor, source, (flags & O_CLOEXEC) != 0);
             return newFileDescriptor;
         } catch (IOException exception) {
             try {
@@ -1909,7 +1931,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 counterValue,
                 (flags & EFD_SEMAPHORE) != 0,
                 (flags & O_NONBLOCK) != 0);
-        return addOpenFile(OpenFile.eventFile(counter));
+        return addOpenFile(OpenFile.eventFile(counter), (flags & O_CLOEXEC) != 0);
     }
 
     /// Creates an in-memory Linux `epoll` descriptor.
@@ -1917,7 +1939,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if ((flags & ~SUPPORTED_EPOLL_CREATE1_FLAGS) != 0) {
             return EINVAL;
         }
-        return addOpenFile(OpenFile.epollFile(new EpollSet()));
+        return addOpenFile(OpenFile.epollFile(new EpollSet()), (flags & O_CLOEXEC) != 0);
     }
 
     /// Adds, modifies, or removes one descriptor interest from an in-memory `epoll` set.
@@ -2233,9 +2255,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         boolean nonblocking = (flags & O_NONBLOCK) != 0;
+        boolean closeOnExec = (flags & O_CLOEXEC) != 0;
         PipeBuffer pipe = new PipeBuffer();
-        long readFileDescriptor = addOpenFile(OpenFile.pipeReader(pipe, nonblocking));
-        long writeFileDescriptor = addOpenFile(OpenFile.pipeWriter(pipe, nonblocking));
+        long readFileDescriptor = addOpenFile(OpenFile.pipeReader(pipe, nonblocking), closeOnExec);
+        long writeFileDescriptor = addOpenFile(OpenFile.pipeWriter(pipe, nonblocking), closeOnExec);
         memory.writeInt(pipeAddress, (int) readFileDescriptor);
         memory.writeInt(pipeAddress + Integer.BYTES, (int) writeFileDescriptor);
         return 0;
@@ -3566,6 +3589,244 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return normalizedMode;
     }
 
+    /// Updates access and modification times for a sandboxed path or open descriptor.
+    protected long utimensat(long directoryFileDescriptor, long pathAddress, long timesAddress, long flags) {
+        if ((flags & ~SUPPORTED_UTIMENSAT_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (pathAddress == 0) {
+            return EFAULT;
+        }
+
+        TimestampUpdate @Nullable [] updates = timestampUpdates(timesAddress);
+        if (updates == null) {
+            return timesAddress == 0 || memory.isBacked(timesAddress, 2L * TIMESPEC_SIZE) ? EINVAL : EFAULT;
+        }
+        TimestampUpdate accessTime = updates[0];
+        TimestampUpdate modificationTime = updates[1];
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+
+        if (guestPath.isEmpty()) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return ENOENT;
+            }
+            if (directoryFileDescriptor == AT_FDCWD) {
+                @Nullable Path currentDirectory = currentHostWorkingDirectory();
+                return currentDirectory == null
+                        ? EACCES
+                        : updateHostFileTimes(currentDirectory, accessTime, modificationTime, flags, true);
+            }
+            if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
+                return EBADF;
+            }
+            return updateFileDescriptorTimes(
+                    (int) directoryFileDescriptor,
+                    accessTime,
+                    modificationTime);
+        }
+
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        boolean followFinalSymlink = (flags & AT_SYMLINK_NOFOLLOW) == 0;
+        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath, followFinalSymlink);
+        if (tarPath != null) {
+            return updateTarPathTimes(tarPath, accessTime, modificationTime, true);
+        }
+
+        @Nullable VirtualPath virtualPath = resolveVirtualPath(directoryFileDescriptor, guestPath, followFinalSymlink);
+        if (virtualPath != null) {
+            return updateVirtualPathTimes(virtualPath, accessTime, modificationTime);
+        }
+
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+        return updateHostFileTimes(hostFile, accessTime, modificationTime, flags, true);
+    }
+
+    /// Updates access and modification times for an open descriptor.
+    private long updateFileDescriptorTimes(
+            int fileDescriptor,
+            TimestampUpdate accessTime,
+            TimestampUpdate modificationTime) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return accessTime.omit() && modificationTime.omit() ? 0 : EINVAL;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+
+        @Nullable Path path = openFile.path();
+        if (path != null) {
+            return updateHostFileTimes(path, accessTime, modificationTime, 0, false);
+        }
+        @Nullable TarNode tarNode = openFile.tarNode();
+        if (tarNode != null) {
+            @Nullable String guestPath = openFile.guestPath();
+            @Nullable TarPath tarPath = guestPath == null ? null : fileSystem.resolveTarPath(guestPath, false);
+            return tarPath == null ? EACCES : updateTarPathTimes(tarPath, accessTime, modificationTime, false);
+        }
+        @Nullable VirtualNode virtualNode = openFile.virtualNode();
+        if (virtualNode != null) {
+            return updateVirtualNodeTimes(virtualNode, accessTime, modificationTime);
+        }
+        return accessTime.omit() && modificationTime.omit() ? 0 : EINVAL;
+    }
+
+    /// Updates access and modification times for an existing sandboxed host filesystem entry.
+    private long updateHostFileTimes(
+            Path hostFile,
+            TimestampUpdate accessTime,
+            TimestampUpdate modificationTime,
+            long flags,
+            boolean requireParentSearch) {
+        try {
+            if (!pathEntryExists(hostFile)) {
+                return ENOENT;
+            }
+            if ((flags & AT_SYMLINK_NOFOLLOW) == 0 || !Files.isSymbolicLink(hostFile)) {
+                if (!canonicalFileStaysBelowMount(hostFile)) {
+                    return EACCES;
+                }
+            } else if (mountForHostFile(hostFile) == null) {
+                return EACCES;
+            }
+            if (requireParentSearch) {
+                long parentAccess = accessHostParent(hostFile);
+                if (parentAccess != 0) {
+                    return parentAccess;
+                }
+            }
+            if (accessTime.omit() && modificationTime.omit()) {
+                return 0;
+            }
+            if (hostFileOnReadOnlyMount(hostFile)) {
+                return EROFS;
+            }
+
+            BasicFileAttributeView view = (flags & AT_SYMLINK_NOFOLLOW) == 0
+                    ? Files.getFileAttributeView(hostFile, BasicFileAttributeView.class)
+                    : Files.getFileAttributeView(hostFile, BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+            if (view == null) {
+                return ENOTSUP;
+            }
+            view.setTimes(modificationTime.fileTime(), accessTime.fileTime(), null);
+            return 0;
+        } catch (NoSuchFileException exception) {
+            return ENOENT;
+        } catch (UnsupportedOperationException exception) {
+            return ENOTSUP;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Updates access and modification times for a tar filesystem node.
+    private long updateTarPathTimes(
+            TarPath tarPath,
+            TimestampUpdate accessTime,
+            TimestampUpdate modificationTime,
+            boolean requireParentSearch) {
+        @Nullable TarNode node = tarPath.node();
+        if (node == null) {
+            return ENOENT;
+        }
+        if (accessTime.omit() && modificationTime.omit()) {
+            return 0;
+        }
+        if (tarPath.mount().readOnly()) {
+            return EROFS;
+        }
+        if (requireParentSearch && !canSearchTarAncestors(node)) {
+            return EACCES;
+        }
+        return 0;
+    }
+
+    /// Updates access and modification times for a virtual filesystem path.
+    private long updateVirtualPathTimes(
+            VirtualPath virtualPath,
+            TimestampUpdate accessTime,
+            TimestampUpdate modificationTime) {
+        @Nullable VirtualNode node = virtualPath.node();
+        return node == null ? ENOENT : updateVirtualNodeTimes(node, accessTime, modificationTime);
+    }
+
+    /// Updates access and modification times for a virtual filesystem node.
+    private long updateVirtualNodeTimes(
+            VirtualNode node,
+            TimestampUpdate accessTime,
+            TimestampUpdate modificationTime) {
+        return accessTime.omit() && modificationTime.omit() ? 0 : EROFS;
+    }
+
+    /// Reads the two `timespec` updates supplied to `utimensat`.
+    private TimestampUpdate @Nullable [] timestampUpdates(long timesAddress) {
+        if (timesAddress == 0) {
+            Instant now = timeSource.realtimeInstant();
+            return new TimestampUpdate[]{
+                    TimestampUpdate.set(FileTime.from(now)),
+                    TimestampUpdate.set(FileTime.from(now))
+            };
+        }
+        if (!memory.isBacked(timesAddress, 2L * TIMESPEC_SIZE)) {
+            return null;
+        }
+
+        Instant now = timeSource.realtimeInstant();
+        @Nullable TimestampUpdate accessTime = timestampUpdate(timesAddress, now);
+        @Nullable TimestampUpdate modificationTime = timestampUpdate(timesAddress + TIMESPEC_SIZE, now);
+        if (accessTime == null || modificationTime == null) {
+            return null;
+        }
+        return new TimestampUpdate[]{accessTime, modificationTime};
+    }
+
+    /// Reads one `timespec` timestamp update.
+    private @Nullable TimestampUpdate timestampUpdate(long address, Instant now) {
+        long seconds = memory.readLong(address + TIMESPEC_SECONDS_OFFSET);
+        long nanoseconds = memory.readLong(address + TIMESPEC_NANOSECONDS_OFFSET);
+        if (nanoseconds == UTIME_OMIT) {
+            return TimestampUpdate.omitted();
+        }
+        if (nanoseconds == UTIME_NOW) {
+            return TimestampUpdate.set(FileTime.from(now));
+        }
+        if (nanoseconds < 0 || nanoseconds >= NANOSECONDS_PER_SECOND) {
+            return null;
+        }
+        try {
+            return TimestampUpdate.set(FileTime.from(Instant.ofEpochSecond(seconds, nanoseconds)));
+        } catch (ArithmeticException | DateTimeException exception) {
+            return null;
+        }
+    }
+
+    /// Describes one access-time or modification-time update.
+    ///
+    /// @param omit whether this timestamp should be left unchanged
+    /// @param fileTime the timestamp to apply, or null when omitted
+    private record TimestampUpdate(boolean omit, @Nullable FileTime fileTime) {
+        /// Creates a timestamp update that leaves the existing value unchanged.
+        static TimestampUpdate omitted() {
+            return new TimestampUpdate(true, null);
+        }
+
+        /// Creates a timestamp update that applies a concrete value.
+        static TimestampUpdate set(FileTime fileTime) {
+            return new TimestampUpdate(false, fileTime);
+        }
+    }
+
     /// Opens a host file or directory below a configured filesystem mount.
     protected long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
         long accessMode = flags & O_ACCMODE;
@@ -3624,6 +3885,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
         boolean directoryOnly = (flags & O_DIRECTORY) != 0;
+        boolean closeOnExec = (flags & O_CLOEXEC) != 0;
         boolean writeIntent = writable || create || truncate || append;
 
         if (hostMount.readOnly() && writeIntent) {
@@ -3691,7 +3953,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 if (!canAccess(metadata, R_OK | X_OK, true)) {
                     return EACCES;
                 }
-                return addOpenFile(OpenFile.hostDirectory(hostFile, absoluteGuestPath));
+                return addOpenFile(OpenFile.hostDirectory(hostFile, absoluteGuestPath), closeOnExec);
             }
             if (directoryOnly) {
                 return ENOTDIR;
@@ -3743,7 +4005,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                                 createdEntryGroupId(createParentMetadata),
                                 createdFileMode(mode)));
             }
-            return addOpenFile(OpenFile.hostFile(hostFile, absoluteGuestPath, channel, readable, writable, append));
+            return addOpenFile(
+                    OpenFile.hostFile(hostFile, absoluteGuestPath, channel, readable, writable, append),
+                    closeOnExec);
         } catch (IOException | SecurityException exception) {
             return EACCES;
         }
@@ -3758,6 +4022,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
         boolean directoryOnly = (flags & O_DIRECTORY) != 0;
+        boolean closeOnExec = (flags & O_CLOEXEC) != 0;
 
         if ((truncate || append) && !writable) {
             return EACCES;
@@ -3790,7 +4055,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 }
                 try {
                     SeekableByteChannel channel = mount.fileSystem().openFileChannel(created, writable || truncate || append);
-                    return addOpenFile(OpenFile.tarFile(created, absoluteGuestPath, channel, readable, writable, append));
+                    return addOpenFile(
+                            OpenFile.tarFile(created, absoluteGuestPath, channel, readable, writable, append),
+                            closeOnExec);
                 } catch (IOException exception) {
                     throw new RiscVException("Guest tar open syscall failed", exception);
                 }
@@ -3817,7 +4084,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (!canAccess(node, X_OK)) {
                 return EACCES;
             }
-            return addOpenFile(OpenFile.tarDirectory(node, absoluteGuestPath));
+            return addOpenFile(OpenFile.tarDirectory(node, absoluteGuestPath), closeOnExec);
         }
         if (directoryOnly) {
             return ENOTDIR;
@@ -3834,7 +4101,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (append) {
                 channel.position(channel.size());
             }
-            return addOpenFile(OpenFile.tarFile(node, absoluteGuestPath, channel, readable, writable, append));
+            return addOpenFile(
+                    OpenFile.tarFile(node, absoluteGuestPath, channel, readable, writable, append),
+                    closeOnExec);
         } catch (IOException exception) {
             throw new RiscVException("Guest tar open syscall failed", exception);
         }
@@ -3849,6 +4118,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         boolean truncate = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
         boolean directoryOnly = (flags & O_DIRECTORY) != 0;
+        boolean closeOnExec = (flags & O_CLOEXEC) != 0;
 
         @Nullable VirtualPath virtualPath = resolveVirtualPath(mount, absoluteGuestPath, true);
         @Nullable VirtualNode node = virtualPath == null ? null : virtualPath.node();
@@ -3880,7 +4150,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if ((readable && !canAccess(node, R_OK)) || !canAccess(node, X_OK)) {
                 return EACCES;
             }
-            return addOpenFile(OpenFile.virtualDirectory(node, virtualPath.mount(), virtualPath.guestPath()));
+            return addOpenFile(
+                    OpenFile.virtualDirectory(node, virtualPath.mount(), virtualPath.guestPath()),
+                    closeOnExec);
         }
         if (node.isSymbolicLink()) {
             return openVirtualLinkTarget(virtualPath.mount(), node, flags);
@@ -3900,7 +4172,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 virtualPath.mount(),
                 virtualPath.guestPath(),
                 new ByteArraySeekableByteChannel(virtualPath.mount().fileSystem().fileData(node)),
-                true));
+                true), closeOnExec);
     }
 
     /// Opens one virtual character device node.
@@ -3920,14 +4192,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return ENODEV;
         }
 
+        boolean closeOnExec = (flags & O_CLOEXEC) != 0;
         return switch (deviceFile) {
-            case NULL -> addOpenFile(OpenFile.nullDevice(node, mount, guestPath, readable, writable));
+            case NULL -> addOpenFile(OpenFile.nullDevice(node, mount, guestPath, readable, writable), closeOnExec);
             case ZERO, RANDOM, URANDOM -> addOpenFile(OpenFile.characterDevice(
                     node,
                     mount,
                     guestPath,
                     readable,
-                    writable));
+                    writable), closeOnExec);
             case FRAMEBUFFER -> framebufferDevice == null
                     ? ENODEV
                     : addOpenFile(OpenFile.characterDevice(
@@ -3935,14 +4208,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                             mount,
                             guestPath,
                             readable,
-                            writable));
+                            writable), closeOnExec);
             case TTY, CONSOLE -> addOpenFile(OpenFile.terminalDevice(
                     node,
                     mount,
                     guestPath,
                     terminalDevice,
                     readable,
-                    writable));
+                    writable), closeOnExec);
         };
     }
 
@@ -4738,6 +5011,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (openFile != null) {
                 try {
                     standardFiles[fileDescriptor] = null;
+                    standardFileCloseOnExec[fileDescriptor] = false;
                     releaseOpenFile(openFile);
                 } catch (IOException exception) {
                     throw new RiscVException("Guest close syscall failed", exception);
@@ -4758,6 +5032,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         try {
             openFiles.set(index, null);
+            setOpenFileCloseOnExec(index, false);
             releaseOpenFile(openFile);
             return 0;
         } catch (IOException exception) {
@@ -5928,12 +6203,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (duplicate == null) {
                 return EBADF;
             }
-            return addOpenFileAtLeast(duplicate, (int) argument);
+            return addOpenFileAtLeast(duplicate, (int) argument, command == F_DUPFD_CLOEXEC);
         }
         if (command == F_GETFD) {
-            return 0;
+            return fileDescriptorCloseOnExec(fileDescriptor) ? FD_CLOEXEC : 0;
         }
         if (command == F_SETFD) {
+            setFileDescriptorCloseOnExec(fileDescriptor, (argument & FD_CLOEXEC) != 0);
             return 0;
         }
         if (command == F_GETFL) {
@@ -6469,6 +6745,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Resets syscall-owned process metadata after a successful `execve`.
     protected void resetForExec(RiscVThreadState state, long newInitialProgramBreak, @Nullable String executablePath) {
+        closeFileDescriptorsOnExec();
         initialProgramBreak = newInitialProgramBreak;
         programBreak = newInitialProgramBreak;
         programBreakBackingEnd = newInitialProgramBreak;
@@ -6480,6 +6757,43 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         futexWaiters.clear();
         state.guestThread().resetForExec();
         setProcessNameFromExecutablePath(executablePath);
+    }
+
+    /// Closes non-inherited descriptors after a successful `execve`.
+    protected void closeFileDescriptorsOnExec() {
+        for (int index = 0; index < standardFiles.length; index++) {
+            if (!standardFileCloseOnExec[index]) {
+                continue;
+            }
+            standardFileCloseOnExec[index] = false;
+            @Nullable OpenFile openFile = standardFiles[index];
+            if (openFile == null) {
+                continue;
+            }
+            standardFiles[index] = null;
+            try {
+                releaseOpenFile(openFile);
+            } catch (IOException exception) {
+                throw new RiscVException("Guest execve close-on-exec failed", exception);
+            }
+        }
+
+        for (int index = 0; index < openFiles.size(); index++) {
+            if (!openFileCloseOnExec(index)) {
+                continue;
+            }
+            setOpenFileCloseOnExec(index, false);
+            @Nullable OpenFile openFile = openFiles.get(index);
+            if (openFile == null) {
+                continue;
+            }
+            openFiles.set(index, null);
+            try {
+                releaseOpenFile(openFile);
+            } catch (IOException exception) {
+                throw new RiscVException("Guest execve close-on-exec failed", exception);
+            }
+        }
     }
 
     /// Updates the Linux task command name from an executable path.
@@ -8438,56 +8752,117 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Adds an open file description to the guest descriptor table.
     protected long addOpenFile(OpenFile openFile) {
+        return addOpenFile(openFile, false);
+    }
+
+    /// Adds an open file description to the guest descriptor table.
+    protected long addOpenFile(OpenFile openFile, boolean closeOnExec) {
         for (int index = 0; index < openFiles.size(); index++) {
             if (openFiles.get(index) == null) {
                 openFiles.set(index, openFile);
+                setOpenFileCloseOnExec(index, closeOnExec);
                 return index + 3L;
             }
         }
 
         openFiles.add(openFile);
+        openFileCloseOnExecFlags.add(closeOnExec);
         return openFiles.size() + 2L;
     }
 
     /// Adds an open file description to the lowest guest descriptor no lower than the requested minimum.
     protected long addOpenFileAtLeast(OpenFile openFile, int minimumFileDescriptor) {
+        return addOpenFileAtLeast(openFile, minimumFileDescriptor, false);
+    }
+
+    /// Adds an open file description to the lowest guest descriptor no lower than the requested minimum.
+    protected long addOpenFileAtLeast(OpenFile openFile, int minimumFileDescriptor, boolean closeOnExec) {
         int startIndex = Math.max(0, openFileIndex(minimumFileDescriptor));
         for (int index = startIndex; index < openFiles.size(); index++) {
             if (openFiles.get(index) == null) {
                 openFiles.set(index, openFile);
+                setOpenFileCloseOnExec(index, closeOnExec);
                 return index + 3L;
             }
         }
 
         while (openFiles.size() < startIndex) {
             openFiles.add(null);
+            openFileCloseOnExecFlags.add(false);
         }
         openFiles.add(openFile);
+        openFileCloseOnExecFlags.add(closeOnExec);
         return openFiles.size() + 2L;
     }
 
     /// Stores an open file description at an explicit non-standard descriptor.
     protected void replaceOpenFile(int fileDescriptor, OpenFile openFile) throws IOException {
+        replaceOpenFile(fileDescriptor, openFile, false);
+    }
+
+    /// Stores an open file description at an explicit descriptor.
+    protected void replaceOpenFile(int fileDescriptor, OpenFile openFile, boolean closeOnExec) throws IOException {
         @Nullable OpenFile previous = openFile(fileDescriptor);
         if (previous != null) {
             setOpenFile(fileDescriptor, null);
             releaseOpenFile(previous);
         }
         setOpenFile(fileDescriptor, openFile);
+        setFileDescriptorCloseOnExec(fileDescriptor, closeOnExec);
     }
 
     /// Stores an open file description at an explicit descriptor.
     protected void setOpenFile(int fileDescriptor, @Nullable OpenFile openFile) {
         if (isStandardFileDescriptor(fileDescriptor)) {
             standardFiles[fileDescriptor] = openFile;
+            if (openFile == null) {
+                standardFileCloseOnExec[fileDescriptor] = false;
+            }
             return;
         }
 
         int index = openFileIndex(fileDescriptor);
         while (openFiles.size() <= index) {
             openFiles.add(null);
+            openFileCloseOnExecFlags.add(false);
         }
         openFiles.set(index, openFile);
+        if (openFile == null) {
+            setOpenFileCloseOnExec(index, false);
+        }
+    }
+
+    /// Returns true when a descriptor has `FD_CLOEXEC` set.
+    protected boolean fileDescriptorCloseOnExec(int fileDescriptor) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            return standardFileCloseOnExec[fileDescriptor];
+        }
+
+        int index = openFileIndex(fileDescriptor);
+        return openFileCloseOnExec(index);
+    }
+
+    /// Updates whether a descriptor has `FD_CLOEXEC` set.
+    protected void setFileDescriptorCloseOnExec(int fileDescriptor, boolean closeOnExec) {
+        if (isStandardFileDescriptor(fileDescriptor)) {
+            standardFileCloseOnExec[fileDescriptor] = closeOnExec;
+            return;
+        }
+
+        setOpenFileCloseOnExec(openFileIndex(fileDescriptor), closeOnExec);
+    }
+
+    /// Returns true when a non-standard descriptor table slot has `FD_CLOEXEC` set.
+    protected boolean openFileCloseOnExec(int index) {
+        return index >= 0 && index < openFileCloseOnExecFlags.size() && openFileCloseOnExecFlags.get(index);
+    }
+
+    /// Updates whether a non-standard descriptor table slot has `FD_CLOEXEC` set.
+    protected void setOpenFileCloseOnExec(int index, boolean closeOnExec) {
+        while (openFileCloseOnExecFlags.size() <= index) {
+            openFileCloseOnExecFlags.add(false);
+        }
+        openFileCloseOnExecFlags.set(index, closeOnExec);
     }
 
     /// Copies the parent's descriptor table using Linux fork-style shared open file descriptions.
@@ -8498,16 +8873,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 openFile.retain();
             }
             standardFiles[index] = openFile;
+            standardFileCloseOnExec[index] = parent.standardFileCloseOnExec[index];
         }
     }
 
     /// Copies the parent's non-standard descriptor table using Linux fork-style shared open file descriptions.
     protected void copyOpenFilesFrom(GuestSyscalls parent) {
-        for (@Nullable OpenFile openFile : parent.openFiles) {
+        for (int index = 0; index < parent.openFiles.size(); index++) {
+            @Nullable OpenFile openFile = parent.openFiles.get(index);
             if (openFile != null) {
                 openFile.retain();
             }
             openFiles.add(openFile);
+            openFileCloseOnExecFlags.add(parent.openFileCloseOnExec(index));
         }
     }
 
