@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -61,6 +62,42 @@ public final class TerminalDeviceTest {
             assertArrayEquals(new byte[]{'A'}, buffer);
             assertEquals(TerminalDevice.READ_WOULD_BLOCK, terminal.read(buffer, buffer.length, true));
             assertArrayEquals(new byte[0], out.toByteArray());
+        }
+    }
+
+    /// Verifies full-screen alternate-screen applications are allowed to draw their own raw input.
+    @Test
+    public void alternateScreenDisablesRawLocalEcho() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024);
+             TerminalDevice terminal = TerminalDevice.openWithGuestLineDiscipline(
+                     new ByteArrayInputStream(new byte[]{'1', '2'}),
+                     out)) {
+            long termiosAddress = memory.baseAddress();
+            terminal.writeTermios(memory, termiosAddress);
+            int localFlags = memory.readInt(termiosAddress + TERMIOS_LOCAL_FLAGS_OFFSET);
+            localFlags &= ~(TERMIOS_LOCAL_CANONICAL | TERMIOS_LOCAL_ECHO);
+            localFlags |= TERMIOS_LOCAL_ECHO_ERASE | TERMIOS_LOCAL_ECHO_KILL;
+            memory.writeInt(termiosAddress + TERMIOS_LOCAL_FLAGS_OFFSET, localFlags);
+            terminal.readTermios(memory, termiosAddress, TCSETS);
+
+            byte[] alternateScreenEnter = "\033[?1049h".getBytes(StandardCharsets.US_ASCII);
+            terminal.write(alternateScreenEnter, alternateScreenEnter.length);
+            out.reset();
+
+            byte[] buffer = new byte[1];
+            assertEquals(1, terminal.read(buffer, buffer.length));
+            assertArrayEquals(new byte[]{'1'}, buffer);
+            assertArrayEquals(new byte[0], out.toByteArray());
+
+            byte[] alternateScreenExit = "\033[?1049l".getBytes(StandardCharsets.US_ASCII);
+            terminal.write(alternateScreenExit, alternateScreenExit.length);
+            out.reset();
+
+            assertEquals(1, terminal.read(buffer, buffer.length));
+            assertArrayEquals(new byte[]{'2'}, buffer);
+            assertArrayEquals(new byte[]{'2'}, out.toByteArray());
         }
     }
 

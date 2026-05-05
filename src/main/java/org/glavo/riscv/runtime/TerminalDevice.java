@@ -208,6 +208,9 @@ final class TerminalDevice implements AutoCloseable {
     /// The current raw-mode escape sequence parsing state for local echo suppression.
     private int rawEscapeState = 0;
 
+    /// Whether the guest is currently drawing on an alternate terminal screen.
+    private boolean alternateScreenActive = false;
+
     /// The number of guest process syscall handlers sharing this terminal.
     private int references = 1;
 
@@ -268,6 +271,7 @@ final class TerminalDevice implements AutoCloseable {
         int offset = suppressRawEchoReplay(buffer, length);
         if (offset < length) {
             byte[] bytes = offset == 0 ? buffer : Arrays.copyOfRange(buffer, offset, length);
+            updateAlternateScreenState(bytes, bytes.length);
             backend.write(bytes, bytes.length);
             if (containsLineBreak(bytes, bytes.length)) {
                 clearRawEchoState();
@@ -545,7 +549,8 @@ final class TerminalDevice implements AutoCloseable {
     /// Echoes printable raw-mode bytes when Windows-backed readline defers redisplay.
     private void echoRawInput(byte[] buffer, int length) throws IOException {
         int localFlags = readLocalFlags(termios);
-        if ((localFlags & TERMIOS_LOCAL_CANONICAL) != 0
+        if (alternateScreenActive
+                || (localFlags & TERMIOS_LOCAL_CANONICAL) != 0
                 || (localFlags & TERMIOS_LOCAL_ECHO) != 0
                 || (localFlags & (TERMIOS_LOCAL_ECHO_ERASE | TERMIOS_LOCAL_ECHO_KILL)) == 0) {
             return;
@@ -651,6 +656,45 @@ final class TerminalDevice implements AutoCloseable {
     private void clearRawEchoReplay() {
         rawEchoReplay = new byte[0];
         rawEchoReplayOffset = 0;
+    }
+
+    /// Tracks alternate screen control sequences emitted by full-screen terminal applications.
+    private void updateAlternateScreenState(byte[] buffer, int length) {
+        if (containsControlSequence(buffer, length, "\033[?1049h")
+                || containsControlSequence(buffer, length, "\033[?1047h")
+                || containsControlSequence(buffer, length, "\033[?47h")) {
+            alternateScreenActive = true;
+            clearRawEchoState();
+        }
+        if (containsControlSequence(buffer, length, "\033[?1049l")
+                || containsControlSequence(buffer, length, "\033[?1047l")
+                || containsControlSequence(buffer, length, "\033[?47l")) {
+            alternateScreenActive = false;
+            clearRawEchoState();
+        }
+    }
+
+    /// Returns true when a byte buffer contains the supplied ASCII control sequence.
+    private static boolean containsControlSequence(byte[] buffer, int length, String sequence) {
+        byte[] bytes = sequence.getBytes(StandardCharsets.US_ASCII);
+        if (bytes.length > length) {
+            return false;
+        }
+
+        int limit = length - bytes.length;
+        for (int index = 0; index <= limit; index++) {
+            boolean matched = true;
+            for (int sequenceIndex = 0; sequenceIndex < bytes.length; sequenceIndex++) {
+                if (buffer[index + sequenceIndex] != bytes[sequenceIndex]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Returns true when the byte prefix contains a line break.
