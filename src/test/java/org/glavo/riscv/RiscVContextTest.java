@@ -4,6 +4,8 @@
 package org.glavo.riscv;
 
 import org.glavo.riscv.runtime.GuestCredentials;
+import org.glavo.riscv.runtime.net.GuestNetworkBackend;
+import org.glavo.riscv.runtime.net.GuestNetworkMode;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /// Tests simulator context option normalization.
 @NotNullByDefault
@@ -67,8 +70,25 @@ public final class RiscVContextTest {
                 credentials.initialEnvironment());
     }
 
+    /// Verifies that guest Internet sockets are disabled by default.
+    @Test
+    public void defaultNetworkBackendIsDisabled() throws Exception {
+        assertTrue(!context(writePasswdRoot(), null).networkBackend().enabled());
+    }
+
+    /// Verifies that an explicit host network backend is stored in the context.
+    @Test
+    public void explicitHostNetworkBackendIsEnabled() throws Exception {
+        assertTrue(context(writePasswdRoot(), null, GuestNetworkMode.HOST.backend()).networkBackend().enabled());
+    }
+
     /// Creates a context using the supplied host root and optional login name.
     private static RiscVContext context(Path root, @Nullable String userName) {
+        return context(root, userName, GuestNetworkMode.NONE.backend());
+    }
+
+    /// Creates a context using the supplied host root, login name, and network backend.
+    private static RiscVContext context(Path root, @Nullable String userName, GuestNetworkBackend networkBackend) {
         return new RiscVContext(
                 new ByteArrayInputStream(new byte[0]),
                 new ByteArrayOutputStream(),
@@ -93,7 +113,9 @@ public final class RiscVContextTest {
                 "",
                 "",
                 "",
-                new String[]{"program"});
+                new String[]{"program"},
+                null,
+                networkBackend);
     }
 
     /// Creates a host root containing a guest passwd file.

@@ -10,6 +10,8 @@ import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.TimeSource;
 import org.glavo.riscv.runtime.VectorUnit;
 import org.glavo.riscv.runtime.fs.FilesystemMountSpec;
+import org.glavo.riscv.runtime.net.GuestNetworkBackend;
+import org.glavo.riscv.runtime.net.GuestNetworkMode;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -113,6 +115,9 @@ public final class RiscVContext {
     /// The optional framebuffer device exposed by graphical guest device integrations.
     private final @Nullable FramebufferDevice framebufferDevice;
 
+    /// The backend used for guest Internet sockets.
+    private final GuestNetworkBackend networkBackend;
+
     /// Creates a simulator context.
     public RiscVContext(
             InputStream in,
@@ -194,6 +199,63 @@ public final class RiscVContext {
             @Nullable String guestShell,
             String @Unmodifiable [] programArguments,
             @Nullable FramebufferDevice framebufferDevice) {
+        this(
+                in,
+                out,
+                err,
+                memoryBase,
+                memorySize,
+                pageSize,
+                maxCommittedPages,
+                hugePageSize,
+                hugePages,
+                vectorVlenBits,
+                maxInstructions,
+                trace,
+                timeSource,
+                hostRoot,
+                filesystemMounts,
+                guestProgramPath,
+                useHostTty,
+                guestUserName,
+                guestUid,
+                guestGid,
+                guestGroups,
+                guestHome,
+                guestShell,
+                programArguments,
+                framebufferDevice,
+                GuestNetworkMode.NONE.backend());
+    }
+
+    /// Creates a simulator context with optional framebuffer and network devices.
+    public RiscVContext(
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long memoryBase,
+            long memorySize,
+            long pageSize,
+            long maxCommittedPages,
+            long hugePageSize,
+            long hugePages,
+            long vectorVlenBits,
+            long maxInstructions,
+            boolean trace,
+            TimeSource timeSource,
+            String hostRoot,
+            String filesystemMounts,
+            String guestProgramPath,
+            boolean useHostTty,
+            @Nullable String guestUserName,
+            long guestUid,
+            long guestGid,
+            String guestGroups,
+            @Nullable String guestHome,
+            @Nullable String guestShell,
+            String @Unmodifiable [] programArguments,
+            @Nullable FramebufferDevice framebufferDevice,
+            GuestNetworkBackend networkBackend) {
         if (memoryBase < 0 && memoryBase != AUTO_MEMORY_BASE) {
             throw new RiscVException("riscv.memoryBase must be non-negative or -1 for auto: " + memoryBase);
         }
@@ -252,6 +314,7 @@ public final class RiscVContext {
         this.guestCredentials = parsedGuestCredentials;
         this.programArguments = programArguments.clone();
         this.framebufferDevice = framebufferDevice;
+        this.networkBackend = networkBackend;
     }
 
     /// Returns host standard input exposed to guest syscalls.
@@ -352,6 +415,11 @@ public final class RiscVContext {
     /// Returns the optional framebuffer device exposed by graphical guest device integrations.
     public @Nullable FramebufferDevice framebufferDevice() {
         return framebufferDevice;
+    }
+
+    /// Returns the backend used for guest Internet sockets.
+    public GuestNetworkBackend networkBackend() {
+        return networkBackend;
     }
 
     /// Creates the guest time source from the fixed-clock debug option.

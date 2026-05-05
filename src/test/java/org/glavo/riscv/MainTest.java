@@ -662,6 +662,48 @@ public final class MainTest {
         assertTrue(err.toString(StandardCharsets.UTF_8).contains("Unknown option: --host-root"));
     }
 
+    /// Verifies that `--network host` is accepted by the CLI.
+    @Test
+    public void acceptsHostNetworkOption() throws Exception {
+        Path elfPath = tempDirectory.resolve("network-option.elf");
+        Files.write(elfPath, ElfTestImages.executable(helloWorldCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--network", "host",
+                        "--max-instructions", "1000",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("Hello World!\n", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that invalid `--network` values are rejected.
+    @Test
+    public void rejectsInvalidNetworkOption() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--network", "bridge",
+                        tempDirectory.resolve("unused.elf").toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(2, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertTrue(err.toString(StandardCharsets.UTF_8).contains("Invalid value for --network: bridge"));
+    }
+
     /// Verifies that an explicit memory base above the ELF load address reports a useful layout error.
     @Test
     public void reportsElfSegmentBelowMemoryBase() throws Exception {

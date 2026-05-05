@@ -11,6 +11,7 @@ import org.glavo.riscv.runtime.FramebufferPixelFormat;
 import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.fs.FilesystemMountSpec;
 import org.glavo.riscv.runtime.fs.FilesystemMountSpec.Type;
+import org.glavo.riscv.runtime.net.GuestNetworkMode;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -46,6 +47,7 @@ public final class Main {
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
               --mount <spec>             Mount a host path:
                                           type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
+              --network <none|host>      Guest Internet socket backend. Default is none.
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
               --framebuffer <width>x<height>
                                           Open a Swing framebuffer and expose it as guest /dev/fb0.
@@ -160,7 +162,8 @@ public final class Main {
                 options.guestHome(),
                 options.guestShell(),
                 options.applicationArguments(),
-                framebufferDevice);
+                framebufferDevice,
+                options.networkMode().backend());
     }
 
     /// Parses command-line arguments.
@@ -182,6 +185,7 @@ public final class Main {
         @Nullable String guestShell = null;
         @Nullable String framebuffer = null;
         @Nullable String framebufferScale = null;
+        GuestNetworkMode networkMode = GuestNetworkMode.NONE;
         ArrayList<MountOption> mounts = new ArrayList<>();
         boolean useHostTty = false;
         boolean debugTraceCompilation = false;
@@ -207,6 +211,21 @@ public final class Main {
             }
             if (parseOptions && "--use-host-tty".equals(argument)) {
                 useHostTty = true;
+                continue;
+            }
+            if (parseOptions && "--network".equals(argument)) {
+                index++;
+                if (index >= args.length) {
+                    err.println("Missing value for --network.");
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                @Nullable GuestNetworkMode parsedNetworkMode = parseNetworkModeOption(args[index], err);
+                if (parsedNetworkMode == null) {
+                    printUsage(err);
+                    return CliOptions.error();
+                }
+                networkMode = parsedNetworkMode;
                 continue;
             }
             if (parseOptions && "--root".equals(argument)) {
@@ -548,6 +567,7 @@ public final class Main {
                 guestShell,
                 framebuffer,
                 framebufferScale,
+                networkMode,
                 debugTraceCompilation,
                 trace);
     }
@@ -611,6 +631,17 @@ public final class Main {
             return null;
         }
         return width + "x" + height;
+    }
+
+    /// Parses a guest networking mode option.
+    private static @Nullable GuestNetworkMode parseNetworkModeOption(String value, PrintStream err) {
+        try {
+            return GuestNetworkMode.parse(value);
+        } catch (IllegalArgumentException exception) {
+            err.println("Invalid value for --network: " + value);
+            err.println("Expected --network <none|host>.");
+            return null;
+        }
     }
 
     /// Creates a framebuffer device from a normalized `widthxheight` option value.
@@ -789,6 +820,7 @@ public final class Main {
     /// @param guestShell the optional guest shell option value
     /// @param framebuffer the optional CLI-created framebuffer geometry option value
     /// @param framebufferScale the optional CLI-created Swing framebuffer scale option value
+    /// @param networkMode the guest Internet socket backend mode
     /// @param debugTraceCompilation whether trace compilation diagnostics were requested
     /// @param trace whether instruction tracing is enabled
     @NotNullByDefault
@@ -816,6 +848,7 @@ public final class Main {
             @Nullable String guestShell,
             @Nullable String framebuffer,
             @Nullable String framebufferScale,
+            GuestNetworkMode networkMode,
             boolean debugTraceCompilation,
             boolean trace) {
         /// Creates parsed command-line options.
@@ -862,6 +895,7 @@ public final class Main {
                     null,
                     null,
                     null,
+                    GuestNetworkMode.NONE,
                     false,
                     false);
         }
@@ -892,6 +926,7 @@ public final class Main {
                     null,
                     null,
                     null,
+                    GuestNetworkMode.NONE,
                     false,
                     false);
         }
@@ -920,6 +955,7 @@ public final class Main {
                 @Nullable String guestShell,
                 @Nullable String framebuffer,
                 @Nullable String framebufferScale,
+                GuestNetworkMode networkMode,
                 boolean debugTraceCompilation,
                 boolean trace) {
             return new CliOptions(
@@ -946,6 +982,7 @@ public final class Main {
                     guestShell,
                     framebuffer,
                     framebufferScale,
+                    networkMode,
                     debugTraceCompilation,
                     trace);
         }

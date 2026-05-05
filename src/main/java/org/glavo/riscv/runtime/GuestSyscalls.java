@@ -24,6 +24,7 @@ import org.glavo.riscv.runtime.fs.GuestFileSystem.TarPath;
 import org.glavo.riscv.runtime.fs.GuestFileSystem.VirtualMount;
 import org.glavo.riscv.runtime.fs.GuestFileSystem.VirtualNode;
 import org.glavo.riscv.runtime.fs.GuestFileSystem.VirtualPath;
+import org.glavo.riscv.runtime.net.GuestSocket;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -153,8 +154,47 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `EPIPE` as a raw negative syscall result.
     protected static final long EPIPE = -32;
 
+    /// Linux `EDESTADDRREQ` as a raw negative syscall result.
+    protected static final long EDESTADDRREQ = -89;
+
+    /// Linux `EMSGSIZE` as a raw negative syscall result.
+    protected static final long EMSGSIZE = -90;
+
+    /// Linux `ENOPROTOOPT` as a raw negative syscall result.
+    protected static final long ENOPROTOOPT = -92;
+
+    /// Linux `EPROTONOSUPPORT` as a raw negative syscall result.
+    protected static final long EPROTONOSUPPORT = -93;
+
+    /// Linux `EADDRINUSE` as a raw negative syscall result.
+    protected static final long EADDRINUSE = -98;
+
+    /// Linux `EADDRNOTAVAIL` as a raw negative syscall result.
+    protected static final long EADDRNOTAVAIL = -99;
+
+    /// Linux `ENETUNREACH` as a raw negative syscall result.
+    protected static final long ENETUNREACH = -101;
+
+    /// Linux `ECONNRESET` as a raw negative syscall result.
+    protected static final long ECONNRESET = -104;
+
+    /// Linux `EISCONN` as a raw negative syscall result.
+    protected static final long EISCONN = -106;
+
+    /// Linux `ENOTCONN` as a raw negative syscall result.
+    protected static final long ENOTCONN = -107;
+
     /// Linux `ETIMEDOUT` as a raw negative syscall result.
     protected static final long ETIMEDOUT = -110;
+
+    /// Linux `ECONNREFUSED` as a raw negative syscall result.
+    protected static final long ECONNREFUSED = -111;
+
+    /// Linux `EALREADY` as a raw negative syscall result.
+    protected static final long EALREADY = -114;
+
+    /// Linux `EINPROGRESS` as a raw negative syscall result.
+    protected static final long EINPROGRESS = -115;
 
     /// The maximum Linux `iovcnt` accepted by `readv` and `writev`.
     protected static final long IOV_MAX = 1024;
@@ -5876,6 +5916,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return statusFlagsFor(fileDescriptor);
         }
         if (command == F_SETFL) {
+            @Nullable OpenFile openFile = openFile(fileDescriptor);
+            if (openFile != null) {
+                openFile.setNonblocking((argument & O_NONBLOCK) != 0);
+            }
             return 0;
         }
         if (command == F_GETLK) {
@@ -9436,14 +9480,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
-    /// Describes a guest socket object stored in the shared descriptor table.
-    protected interface GuestSocket extends AutoCloseable {
-        /// Releases socket-local resources.
-        @Override
-        default void close() throws IOException {
-        }
-    }
-
     /// Describes an open file description referenced by one or more guest file descriptors.
     @NotNullByDefault
     protected static final class OpenFile {
@@ -9505,7 +9541,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private final boolean append;
 
         /// Whether empty pipe reads should return `EAGAIN`.
-        private final boolean nonblocking;
+        private boolean nonblocking;
 
         /// The cached directory entries for this descriptor, or null until first `getdents64`.
         private @Nullable DirectoryEntry[] directoryEntries;
@@ -10175,6 +10211,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when pipe reads are nonblocking.
         boolean nonblocking() {
             return nonblocking;
+        }
+
+        /// Updates whether the open-file status flags include `O_NONBLOCK`.
+        void setNonblocking(boolean nonblocking) {
+            this.nonblocking = nonblocking;
         }
 
         /// Returns cached directory entries, or null when the descriptor has not been listed yet.

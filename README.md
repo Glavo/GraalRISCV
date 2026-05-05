@@ -52,6 +52,7 @@ Options:
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
   --mount <spec>             Mount a host path:
                               type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
+  --network <none|host>      Guest Internet socket backend. Default is none.
   --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
   --framebuffer <width>x<height>
                               Open a Swing framebuffer and expose it as guest /dev/fb0.
@@ -87,6 +88,9 @@ By default, guest `/dev/tty` is backed by the configured process streams; pass
 `--use-host-tty` to try a real host controlling terminal when available. Pass
 `--framebuffer <width>x<height>` to create a Swing-backed XRGB8888 framebuffer
 that guest Linux programs can access through `/dev/fb0`.
+Guest Internet sockets are disabled by default. Pass `--network host` to map
+Linux IPv4 and IPv6 TCP/UDP sockets to host Java NIO sockets; `NETLINK_ROUTE`
+and network-interface ioctl metadata remain synthetic.
 
 ## Supported ELF Inputs
 
@@ -106,7 +110,10 @@ common dynamically linked Ubuntu Base shell, coreutils, and findutils commands.
 File access is sandboxed under configured `--mount` entries, with built-in
 `/proc` and `/dev` virtual filesystems for process metadata and basic character
 devices. Guest uid, gid, supplementary groups, login name, home, and shell can be
-configured with CLI options.
+configured with CLI options. Host passthrough networking is opt-in with
+`--network host`, which enables IPv4 and IPv6 TCP client/server sockets and UDP
+datagrams through the host network stack while keeping synthetic netlink and
+interface ioctl metadata available.
 
 ## Examples
 

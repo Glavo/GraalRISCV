@@ -11,6 +11,7 @@ import org.glavo.riscv.memory.*;
 import org.glavo.riscv.parser.*;
 import org.glavo.riscv.runtime.*;
 import org.glavo.riscv.runtime.fs.*;
+import org.glavo.riscv.runtime.net.GuestNetworkMode;
 import org.glavo.riscv.constants.Rva22Profile;
 import org.glavo.riscv.constants.Rva23Profile;
 import org.jetbrains.annotations.NotNullByDefault;
@@ -24,10 +25,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -78,6 +89,9 @@ public final class GuestSyscallsTest {
     /// Linux `EAGAIN` as a raw negative syscall result.
     private static final long EAGAIN = -11;
 
+    /// Linux `EINPROGRESS` as a raw negative syscall result.
+    private static final long EINPROGRESS = -115;
+
     /// Linux `EBUSY` as a raw negative syscall result.
     private static final long EBUSY = -16;
 
@@ -113,6 +127,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `EAFNOSUPPORT` as a raw negative syscall result.
     private static final long EAFNOSUPPORT = -97;
+
+    /// Linux `ENOTCONN` as a raw negative syscall result.
+    private static final long ENOTCONN = -107;
 
     /// Linux `ENOTEMPTY` as a raw negative syscall result.
     private static final long ENOTEMPTY = -39;
@@ -393,6 +410,15 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `bind`.
     private static final long SYS_BIND = 200;
 
+    /// The Linux RISC-V syscall number for `listen`.
+    private static final long SYS_LISTEN = 201;
+
+    /// The Linux RISC-V syscall number for `accept`.
+    private static final long SYS_ACCEPT = 202;
+
+    /// The Linux RISC-V syscall number for `connect`.
+    private static final long SYS_CONNECT = 203;
+
     /// The Linux RISC-V syscall number for `getsockname`.
     private static final long SYS_GETSOCKNAME = 204;
 
@@ -404,6 +430,18 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `recvfrom`.
     private static final long SYS_RECVFROM = 207;
+
+    /// The Linux RISC-V syscall number for `setsockopt`.
+    private static final long SYS_SETSOCKOPT = 208;
+
+    /// The Linux RISC-V syscall number for `getsockopt`.
+    private static final long SYS_GETSOCKOPT = 209;
+
+    /// The Linux RISC-V syscall number for `shutdown`.
+    private static final long SYS_SHUTDOWN = 210;
+
+    /// The Linux RISC-V syscall number for `sendmsg`.
+    private static final long SYS_SENDMSG = 211;
 
     /// The Linux RISC-V syscall number for `recvmsg`.
     private static final long SYS_RECVMSG = 212;
@@ -428,6 +466,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `mprotect`.
     private static final long SYS_MPROTECT = 226;
+
+    /// The Linux RISC-V syscall number for `accept4`.
+    private static final long SYS_ACCEPT4 = 242;
 
     /// The Linux RISC-V syscall number for `mincore`.
     private static final long SYS_MINCORE = 232;
@@ -870,6 +911,15 @@ public final class GuestSyscallsTest {
     /// Linux address family number for Unix domain sockets.
     private static final long AF_UNIX = 1;
 
+    /// Linux address family number for IPv4 sockets.
+    private static final long AF_INET = 2;
+
+    /// Linux address family number for IPv6 sockets.
+    private static final long AF_INET6 = 10;
+
+    /// Linux stream socket type.
+    private static final long SOCK_STREAM = 1;
+
     /// Linux datagram socket type.
     private static final long SOCK_DGRAM = 2;
 
@@ -878,6 +928,42 @@ public final class GuestSyscallsTest {
 
     /// Linux netlink protocol number for route and interface metadata.
     private static final long NETLINK_ROUTE = 0;
+
+    /// Linux TCP protocol number.
+    private static final long IPPROTO_TCP = 6;
+
+    /// Linux UDP protocol number.
+    private static final long IPPROTO_UDP = 17;
+
+    /// Linux socket option level for generic socket options.
+    private static final long SOL_SOCKET = 1;
+
+    /// Linux `SO_REUSEADDR`.
+    private static final long SO_REUSEADDR = 2;
+
+    /// Linux `SO_ERROR`.
+    private static final long SO_ERROR = 4;
+
+    /// Linux `O_NONBLOCK` accepted in socket type flags.
+    private static final long SOCK_NONBLOCK = O_NONBLOCK;
+
+    /// Byte size of Linux `struct sockaddr_in`.
+    private static final int SOCKADDR_IN_SIZE = 16;
+
+    /// Byte size of Linux `struct sockaddr_in6`.
+    private static final int SOCKADDR_IN6_SIZE = 28;
+
+    /// Byte offset of the port field in Linux Internet socket addresses.
+    private static final int SOCKADDR_PORT_OFFSET = 2;
+
+    /// Byte offset of `sin_addr` inside Linux `struct sockaddr_in`.
+    private static final int SOCKADDR_IN_ADDRESS_OFFSET = 4;
+
+    /// Byte offset of `sin6_addr` inside Linux `struct sockaddr_in6`.
+    private static final int SOCKADDR_IN6_ADDRESS_OFFSET = 8;
+
+    /// Byte offset of `sin6_scope_id` inside Linux `struct sockaddr_in6`.
+    private static final int SOCKADDR_IN6_SCOPE_ID_OFFSET = 24;
 
     /// Linux `SIOCGIFNAME` ioctl request number.
     private static final long SIOCGIFNAME = 0x8910L;
@@ -6095,6 +6181,234 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies Internet sockets are disabled unless the host network backend is configured.
+    @Test
+    public void internetSocketsRequireHostNetworkBackend() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAFNOSUPPORT, state.register(10));
+
+            setSyscall(state, SYS_SOCKET, AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAFNOSUPPORT, state.register(10));
+        }
+    }
+
+    /// Verifies host networking supports IPv4 TCP client sockets.
+    @Test
+    public void hostNetworkTcpIpv4ClientConnectsToLoopbackServer() throws Exception {
+        assertGuestTcpClientEcho(InetAddress.getByName("127.0.0.1"));
+    }
+
+    /// Verifies host networking supports IPv6 TCP client sockets.
+    @Test
+    public void hostNetworkTcpIpv6ClientConnectsToLoopbackServer() throws Exception {
+        InetAddress loopback = InetAddress.getByName("::1");
+        try (ServerSocket ignored = new ServerSocket(0, 1, loopback)) {
+            assertGuestTcpClientEcho(loopback);
+        } catch (IOException exception) {
+            assumeTrue(false, "IPv6 loopback is unavailable: " + exception.getMessage());
+        }
+    }
+
+    /// Verifies a guest TCP client can bind a local address before connecting.
+    @Test
+    public void hostNetworkTcpClientBindBeforeConnectUsesLocalPort() throws Exception {
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        try (ServerSocket server = new ServerSocket(0, 1, loopback);
+             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 64;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<Integer> remotePort = executor.submit(() -> {
+                    try (Socket socket = server.accept()) {
+                        return socket.getPort();
+                    }
+                });
+
+                setSyscall(state, SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                state.syscalls().handle(state, TEST_PC);
+                int socketFileDescriptor = (int) state.register(10);
+                assertEquals(3, socketFileDescriptor);
+
+                writeInetSockaddr(memory, sockaddrAddress, loopback, 0);
+                setSyscall(state, SYS_BIND, socketFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+                setSyscall(state, SYS_GETSOCKNAME, socketFileDescriptor, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                int localPort = readNetworkPort(memory, sockaddrAddress + SOCKADDR_PORT_OFFSET);
+                assertTrue(localPort > 0);
+
+                writeInetSockaddr(memory, sockaddrAddress, loopback, server.getLocalPort());
+                setSyscall(state, SYS_CONNECT, socketFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                assertEquals(localPort, remotePort.get(5, TimeUnit.SECONDS));
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    /// Verifies a guest TCP server can accept a host loopback client.
+    @Test
+    public void hostNetworkTcpServerAcceptsHostClient() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            InetAddress loopback = InetAddress.getByName("127.0.0.1");
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 64;
+            long bufferAddress = memory.baseAddress() + 128;
+            long optionAddress = memory.baseAddress() + 256;
+            long optionLengthAddress = memory.baseAddress() + 264;
+
+            setSyscall(state, SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            state.syscalls().handle(state, TEST_PC);
+            int serverFileDescriptor = (int) state.register(10);
+            assertEquals(3, serverFileDescriptor);
+
+            memory.writeInt(optionAddress, 1);
+            setSyscall(state, SYS_SETSOCKOPT, serverFileDescriptor, SOL_SOCKET, SO_REUSEADDR, optionAddress, Integer.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeInt(optionLengthAddress, Integer.BYTES);
+            setSyscall(state, SYS_GETSOCKOPT, serverFileDescriptor, SOL_SOCKET, SO_REUSEADDR, optionAddress, optionLengthAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1, memory.readInt(optionAddress));
+
+            writeInetSockaddr(memory, sockaddrAddress, loopback, 0);
+            setSyscall(state, SYS_BIND, serverFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+            setSyscall(state, SYS_GETSOCKNAME, serverFileDescriptor, sockaddrAddress, lengthAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int port = readNetworkPort(memory, sockaddrAddress + SOCKADDR_PORT_OFFSET);
+            assertTrue(port > 0);
+
+            setSyscall(state, SYS_LISTEN, serverFileDescriptor, 16, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> client = executor.submit(() -> {
+                    try (Socket socket = new Socket(loopback, port)) {
+                        socket.getOutputStream().write("host".getBytes(StandardCharsets.UTF_8));
+                        byte[] response = socket.getInputStream().readNBytes(5);
+                        assertEquals("guest", new String(response, StandardCharsets.UTF_8));
+                    }
+                    return null;
+                });
+
+                memory.writeInt(lengthAddress, SOCKADDR_IN_SIZE);
+                setSyscall(state, SYS_ACCEPT4, serverFileDescriptor, sockaddrAddress, lengthAddress, 0);
+                state.syscalls().handle(state, TEST_PC);
+                int acceptedFileDescriptor = (int) state.register(10);
+                assertTrue(acceptedFileDescriptor >= 4);
+
+                setSyscall(state, SYS_READ, acceptedFileDescriptor, bufferAddress, 4);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(4, state.register(10));
+                assertEquals("host", readGuestString(memory, bufferAddress, 4));
+
+                byte[] response = "guest".getBytes(StandardCharsets.UTF_8);
+                memory.writeBytes(bufferAddress, response, 0, response.length);
+                setSyscall(state, SYS_WRITE, acceptedFileDescriptor, bufferAddress, response.length);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(response.length, state.register(10));
+                waitForNetworkTask(client);
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    /// Verifies host networking supports IPv4 UDP datagrams.
+    @Test
+    public void hostNetworkUdpIpv4DatagramsReachLoopbackServer() throws Exception {
+        assertGuestUdpEcho(InetAddress.getByName("127.0.0.1"));
+    }
+
+    /// Verifies host networking supports IPv6 UDP datagrams.
+    @Test
+    public void hostNetworkUdpIpv6DatagramsReachLoopbackServer() throws Exception {
+        InetAddress loopback = InetAddress.getByName("::1");
+        try (DatagramSocket ignored = new DatagramSocket(new InetSocketAddress(loopback, 0))) {
+            assertGuestUdpEcho(loopback);
+        } catch (IOException exception) {
+            assumeTrue(false, "IPv6 UDP loopback is unavailable: " + exception.getMessage());
+        }
+    }
+
+    /// Verifies host sockets report readiness through poll and epoll.
+    @Test
+    public void hostNetworkSocketReadinessIsReportedToPollAndEpoll() throws Exception {
+        InetAddress loopback = InetAddress.getByName("127.0.0.1");
+        try (ServerSocket server = new ServerSocket(0, 1, loopback);
+             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long sockaddrAddress = memory.baseAddress();
+            long pollAddress = memory.baseAddress() + 128;
+            long eventAddress = memory.baseAddress() + 256;
+            long eventsAddress = memory.baseAddress() + 384;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> serverTask = executor.submit(() -> {
+                    try (Socket socket = server.accept()) {
+                        socket.getOutputStream().write("ready".getBytes(StandardCharsets.UTF_8));
+                        Thread.sleep(250);
+                    }
+                    return null;
+                });
+
+                setSyscall(state, SYS_SOCKET, AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                state.syscalls().handle(state, TEST_PC);
+                int socketFileDescriptor = (int) state.register(10);
+                assertEquals(3, socketFileDescriptor);
+
+                writeInetSockaddr(memory, sockaddrAddress, loopback, server.getLocalPort());
+                setSyscall(state, SYS_CONNECT, socketFileDescriptor, sockaddrAddress, SOCKADDR_IN_SIZE);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                writePollFileDescriptor(memory, pollAddress, 0, socketFileDescriptor, POLLIN);
+                waitForPollReady(state, pollAddress);
+                assertEquals(POLLIN, pollRevents(memory, pollAddress, 0));
+
+                setSyscall(state, SYS_EPOLL_CREATE1, 0, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                int epollFileDescriptor = (int) state.register(10);
+                assertTrue(epollFileDescriptor >= 4);
+
+                writeEpollEvent(memory, eventAddress, EPOLLIN, 0x77);
+                setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, socketFileDescriptor, eventAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                waitForEpollReady(state, epollFileDescriptor, eventsAddress);
+                assertEquals(EPOLLIN, memory.readInt(eventsAddress + EPOLL_EVENT_EVENTS_OFFSET));
+                assertEquals(0x77, readEpollEventData(memory, eventsAddress));
+                waitForNetworkTask(serverTask);
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
     /// Verifies callers can mount a custom virtual filesystem provider.
     @Test
     public void customVirtualFilesystemMountCanServeFiles() {
@@ -7561,6 +7875,140 @@ public final class GuestSyscallsTest {
                 syscalls);
     }
 
+    /// Verifies a guest TCP client can exchange bytes with a host loopback server.
+    private static void assertGuestTcpClientEcho(InetAddress loopback) throws Exception {
+        try (ServerSocket server = new ServerSocket(0, 1, loopback);
+             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 64;
+            long bufferAddress = memory.baseAddress() + 128;
+            long optionAddress = memory.baseAddress() + 256;
+            long optionLengthAddress = memory.baseAddress() + 264;
+            int sockaddrSize = loopback.getAddress().length == Integer.BYTES ? SOCKADDR_IN_SIZE : SOCKADDR_IN6_SIZE;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> serverTask = executor.submit(() -> {
+                    try (Socket socket = server.accept()) {
+                        byte[] request = socket.getInputStream().readNBytes(4);
+                        assertEquals("ping", new String(request, StandardCharsets.UTF_8));
+                        socket.getOutputStream().write("pong".getBytes(StandardCharsets.UTF_8));
+                    }
+                    return null;
+                });
+
+                setSyscall(
+                        state,
+                        SYS_SOCKET,
+                        sockaddrSize == SOCKADDR_IN_SIZE ? AF_INET : AF_INET6,
+                        SOCK_STREAM,
+                        IPPROTO_TCP);
+                state.syscalls().handle(state, TEST_PC);
+                int socketFileDescriptor = (int) state.register(10);
+                assertEquals(3, socketFileDescriptor);
+
+                writeInetSockaddr(memory, sockaddrAddress, loopback, server.getLocalPort());
+                setSyscall(state, SYS_CONNECT, socketFileDescriptor, sockaddrAddress, sockaddrSize);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+
+                memory.writeInt(optionLengthAddress, Integer.BYTES);
+                setSyscall(state, SYS_GETSOCKOPT, socketFileDescriptor, SOL_SOCKET, SO_ERROR, optionAddress, optionLengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10));
+                assertEquals(0, memory.readInt(optionAddress));
+
+                byte[] request = "ping".getBytes(StandardCharsets.UTF_8);
+                memory.writeBytes(bufferAddress, request, 0, request.length);
+                setSyscall(state, SYS_WRITE, socketFileDescriptor, bufferAddress, request.length);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(request.length, state.register(10));
+
+                setSyscall(state, SYS_READ, socketFileDescriptor, bufferAddress, 4);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(4, state.register(10));
+                assertEquals("pong", readGuestString(memory, bufferAddress, 4));
+                waitForNetworkTask(serverTask);
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    /// Verifies a guest UDP socket can exchange datagrams with a host loopback server.
+    private static void assertGuestUdpEcho(InetAddress loopback) throws Exception {
+        try (DatagramSocket server = new DatagramSocket(new InetSocketAddress(loopback, 0));
+             Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 8192)) {
+            RiscVThreadState state = hostNetworkState(memory);
+            long sockaddrAddress = memory.baseAddress();
+            long lengthAddress = memory.baseAddress() + 64;
+            long bufferAddress = memory.baseAddress() + 128;
+            int sockaddrSize = loopback.getAddress().length == Integer.BYTES ? SOCKADDR_IN_SIZE : SOCKADDR_IN6_SIZE;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<?> serverTask = executor.submit(() -> {
+                    byte[] request = new byte[4];
+                    DatagramPacket packet = new DatagramPacket(request, request.length);
+                    server.receive(packet);
+                    assertEquals("ping", new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8));
+                    byte[] response = "pong".getBytes(StandardCharsets.UTF_8);
+                    server.send(new DatagramPacket(response, response.length, packet.getSocketAddress()));
+                    return null;
+                });
+
+                setSyscall(
+                        state,
+                        SYS_SOCKET,
+                        sockaddrSize == SOCKADDR_IN_SIZE ? AF_INET : AF_INET6,
+                        SOCK_DGRAM,
+                        IPPROTO_UDP);
+                state.syscalls().handle(state, TEST_PC);
+                int socketFileDescriptor = (int) state.register(10);
+                assertEquals(3, socketFileDescriptor);
+
+                byte[] request = "ping".getBytes(StandardCharsets.UTF_8);
+                memory.writeBytes(bufferAddress, request, 0, request.length);
+                writeInetSockaddr(memory, sockaddrAddress, loopback, server.getLocalPort());
+                setSyscall(state, SYS_SENDTO, socketFileDescriptor, bufferAddress, request.length, 0, sockaddrAddress, sockaddrSize);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(request.length, state.register(10));
+
+                memory.writeInt(lengthAddress, sockaddrSize);
+                setSyscall(state, SYS_RECVFROM, socketFileDescriptor, bufferAddress, 4, 0, sockaddrAddress, lengthAddress);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(4, state.register(10));
+                assertEquals("pong", readGuestString(memory, bufferAddress, 4));
+                waitForNetworkTask(serverTask);
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    /// Creates test machine state with host guest networking enabled.
+    private static RiscVThreadState hostNetworkState(Memory memory) {
+        GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                memory,
+                new ByteArrayInputStream(new byte[0]),
+                new ByteArrayOutputStream(),
+                new ByteArrayOutputStream(),
+                memory.baseAddress(),
+                new String[0],
+                TimeSource.system(),
+                false,
+                GuestCredentials.defaultUser(),
+                null,
+                null,
+                GuestNetworkMode.HOST.backend());
+        return new RiscVThreadState(
+                memory,
+                0,
+                false,
+                ElfImage.ABSENT_ADDRESS,
+                ElfImage.ABSENT_ADDRESS,
+                syscalls);
+    }
+
     /// Creates test machine state with a syscall handler, root mount, and guest time source.
     private static RiscVThreadState state(
             Memory memory,
@@ -7635,6 +8083,67 @@ public final class GuestSyscallsTest {
             bytes[index] = (byte) memory.readUnsignedByte(address + index);
         }
         return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /// Writes one IPv4 or IPv6 socket address into guest memory.
+    private static void writeInetSockaddr(Memory memory, long address, InetAddress hostAddress, int port) {
+        byte[] bytes = hostAddress.getAddress();
+        memory.clear(address, bytes.length == Integer.BYTES ? SOCKADDR_IN_SIZE : SOCKADDR_IN6_SIZE);
+        if (bytes.length == Integer.BYTES) {
+            memory.writeShort(address, (short) AF_INET);
+            writeNetworkPort(memory, address + SOCKADDR_PORT_OFFSET, port);
+            memory.writeBytes(address + SOCKADDR_IN_ADDRESS_OFFSET, bytes, 0, bytes.length);
+        } else {
+            memory.writeShort(address, (short) AF_INET6);
+            writeNetworkPort(memory, address + SOCKADDR_PORT_OFFSET, port);
+            memory.writeBytes(address + SOCKADDR_IN6_ADDRESS_OFFSET, bytes, 0, bytes.length);
+            memory.writeInt(address + SOCKADDR_IN6_SCOPE_ID_OFFSET, 0);
+        }
+    }
+
+    /// Reads one network-endian port from guest memory.
+    private static int readNetworkPort(Memory memory, long address) {
+        return (memory.readUnsignedByte(address) << Byte.SIZE) | memory.readUnsignedByte(address + 1);
+    }
+
+    /// Writes one network-endian port to guest memory.
+    private static void writeNetworkPort(Memory memory, long address, int port) {
+        memory.writeByte(address, (byte) (port >>> Byte.SIZE));
+        memory.writeByte(address + 1, (byte) port);
+    }
+
+    /// Waits for a background host networking task.
+    private static void waitForNetworkTask(Future<?> task) throws Exception {
+        task.get(5, TimeUnit.SECONDS);
+    }
+
+    /// Waits until one poll descriptor reports readiness.
+    private static void waitForPollReady(RiscVThreadState state, long pollAddress) throws Exception {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            setSyscall(state, SYS_PPOLL, pollAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            if (state.register(10) == 1) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        assertEquals(1, state.register(10));
+    }
+
+    /// Waits until one epoll interest reports readiness.
+    private static void waitForEpollReady(
+            RiscVThreadState state,
+            int epollFileDescriptor,
+            long eventsAddress) throws Exception {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            if (state.register(10) == 1) {
+                return;
+            }
+            Thread.sleep(10);
+        }
+        assertEquals(1, state.register(10));
     }
 
     /// Reads a null-terminated UTF-8 string from guest memory.
