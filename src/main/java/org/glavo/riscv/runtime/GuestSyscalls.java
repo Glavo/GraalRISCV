@@ -6499,6 +6499,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     expectedValue,
                     timeoutAddress,
                     FUTEX_BITSET_MATCH_ANY,
+                    false,
                     (flags & FUTEX_CLOCK_REALTIME) != 0);
             case (int) FUTEX_WAKE -> futexWake(address, expectedValue, FUTEX_BITSET_MATCH_ANY);
             case (int) FUTEX_WAIT_BITSET -> futexWait(
@@ -6506,6 +6507,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     expectedValue,
                     timeoutAddress,
                     thirdValue,
+                    true,
                     (flags & FUTEX_CLOCK_REALTIME) != 0);
             case (int) FUTEX_WAKE_BITSET -> futexWake(address, expectedValue, thirdValue);
             default -> ENOSYS;
@@ -6513,7 +6515,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Handles a futex wait, blocking only when guest threading is active.
-    protected long futexWait(long address, long expectedValue, long timeoutAddress, long bitset, boolean realtimeTimeout) {
+    protected long futexWait(
+            long address,
+            long expectedValue,
+            long timeoutAddress,
+            long bitset,
+            boolean absoluteTimeout,
+            boolean realtimeTimeout) {
         if ((bitset & 0xffff_ffffL) == 0) {
             return EINVAL;
         }
@@ -6525,7 +6533,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (!isValidTimespec(seconds, nanoseconds)) {
                 return EINVAL;
             }
-            timeoutNanos = futexTimeoutNanos(seconds, nanoseconds, realtimeTimeout);
+            timeoutNanos = futexTimeoutNanos(seconds, nanoseconds, absoluteTimeout, realtimeTimeout);
         }
 
         synchronized (threadLock) {
@@ -6613,13 +6621,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Converts a futex timeout to a relative nanosecond count.
-    protected long futexTimeoutNanos(long seconds, long nanoseconds, boolean realtimeTimeout) {
+    protected long futexTimeoutNanos(
+            long seconds,
+            long nanoseconds,
+            boolean absoluteTimeout,
+            boolean realtimeTimeout) {
         long targetNanos = timespecToSaturatedNanoseconds(seconds, nanoseconds);
-        if (!realtimeTimeout) {
+        if (!absoluteTimeout) {
             return targetNanos;
         }
 
-        long nowNanos = instantToSaturatedNanoseconds(timeSource.realtimeInstant());
+        long nowNanos = realtimeTimeout
+                ? instantToSaturatedNanoseconds(timeSource.realtimeInstant())
+                : timeSource.monotonicNanoseconds();
         return targetNanos <= nowNanos ? 0 : targetNanos - nowNanos;
     }
 

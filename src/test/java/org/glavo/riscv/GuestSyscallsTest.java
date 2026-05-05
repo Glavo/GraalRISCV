@@ -5452,6 +5452,55 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `FUTEX_WAIT_BITSET` interprets timeout values as absolute monotonic deadlines.
+    @Test
+    public void futexWaitBitsetUsesAbsoluteTimeout() {
+        GuestThreadRunner runner = (childMemory, childState) -> {
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    ".",
+                    TimeSource.system(),
+                    runner);
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long futexAddress = memory.baseAddress() + 64;
+            long timeoutAddress = memory.baseAddress() + 80;
+
+            memory.writeInt(futexAddress, 7);
+            writeTimespec(memory, timeoutAddress, 1, 0);
+
+            long startNanos = System.nanoTime();
+            setSyscall(
+                    state,
+                    SYS_FUTEX,
+                    futexAddress,
+                    FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG,
+                    7,
+                    timeoutAddress,
+                    0,
+                    FUTEX_BITSET_MATCH_ANY);
+            state.syscalls().handle(state, TEST_PC);
+            long elapsedNanos = System.nanoTime() - startNanos;
+
+            assertEquals(ETIMEDOUT, state.register(10));
+            assertTrue(
+                    elapsedNanos < TimeUnit.MILLISECONDS.toNanos(250),
+                    "`FUTEX_WAIT_BITSET` timeout was treated as a relative duration");
+        }
+    }
+
     /// Verifies futex wake operations against the empty waiter set.
     @Test
     public void futexWakeReportsNoWaiters() {

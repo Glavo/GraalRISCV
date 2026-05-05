@@ -946,7 +946,7 @@ public final class FreeBsdGuestSyscalls extends GuestSyscalls {
     private long freeBsdUmtxOp(long address, long operation, long value, long value2, long timeoutAddress) {
         return switch ((int) operation) {
             case (int) FREEBSD_UMTX_OP_WAIT_UINT, (int) FREEBSD_UMTX_OP_WAIT_UINT_PRIVATE ->
-                    freeBsdErrno(futexWait(address, value, timeoutAddress, FUTEX_BITSET_MATCH_ANY, false));
+                    freeBsdErrno(futexWait(address, value, timeoutAddress, FUTEX_BITSET_MATCH_ANY, false, false));
             case (int) FREEBSD_UMTX_OP_WAKE, (int) FREEBSD_UMTX_OP_WAKE_PRIVATE ->
                     futexWake(address, value, FUTEX_BITSET_MATCH_ANY);
             default -> ENOSYS;

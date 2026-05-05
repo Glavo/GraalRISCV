@@ -33,6 +33,7 @@ val jdk25ArchiveFile = downloadFile("jdk25/$jdk25Version/$jdk25ArchiveName")
 val jdk25TarFile = downloadFile("jdk25/$jdk25Version/$jdk25TarName")
 val jdk25MountPath = "/opt/jdk25"
 val jdk25GuestJavaPath = "$jdk25MountPath/$jdk25ArchiveRoot/bin/java"
+val jdk25GuestJshellPath = "$jdk25MountPath/$jdk25ArchiveRoot/bin/jshell"
 val jdk25GuestTempDirectory = layout.buildDirectory.dir("tmp/jdk25-guest-tmp")
 
 val jdk25UbuntuBaseVersion = "26.04"
@@ -97,6 +98,50 @@ tasks.register("decompressJdk25Archive") {
             throw GradleException("Failed to decompress JDK 25 gzip archive: $archive", exception)
         } finally {
             delete(temporaryTar)
+        }
+    }
+}
+
+tasks.register<JavaExec>("testJdk25JshellVersion") {
+    group = "verification"
+    description = "Runs jshell --version from the downloaded BellSoft JDK 25 RISC-V archive."
+
+    dependsOn("classes", "decompressUbuntuBaseImage", "decompressJdk25Archive")
+    classpath = jdk25SourceSets.named("main").get().runtimeClasspath
+    mainClass = jdk25MainClassName
+    jvmArgs(jdk25ApplicationDefaultJvmArgs)
+    isIgnoreExitValue = true
+
+    val stdout = ByteArrayOutputStream()
+    val stderr = ByteArrayOutputStream()
+    standardOutput = stdout
+    errorOutput = stderr
+
+    doFirst {
+        stdout.reset()
+        stderr.reset()
+        setArgs(listOf(
+            "--memory-size", jdk25GuestMemorySize,
+            "--mount", "type=tar,src=${jdk25UbuntuBaseTarFile.get().asFile.absolutePath},dst=/",
+            "--mount", "type=tar,src=${jdk25TarFile.get().asFile.absolutePath},dst=$jdk25MountPath",
+            "--mount", "type=tmpfs,dst=/tmp",
+            "--home", "/tmp",
+            "--guest-program", jdk25GuestJshellPath,
+        ) + jdk25GuestJavaArgs.map { "-J$it" } + listOf(
+            "--version"
+        ))
+    }
+
+    doLast {
+        val exitCode = executionResult.get().exitValue
+        val actualOutput = stdout.toString(StandardCharsets.UTF_8)
+        val actualError = stderr.toString(StandardCharsets.UTF_8)
+        val combinedOutput = actualOutput + actualError
+        if (exitCode != 0) {
+            throw GradleException("$name exited with $exitCode. stderr: $actualError")
+        }
+        if (!combinedOutput.contains("jshell $jdk25FeatureVersion")) {
+            throw GradleException("$name wrote unexpected output. stdout: $actualOutput stderr: $actualError")
         }
     }
 }
