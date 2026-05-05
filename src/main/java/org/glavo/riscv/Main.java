@@ -45,8 +45,9 @@ public final class Main {
               --huge-pages <n>           Guest HugeTLB page pool size.
               --vector-vlen <bits>       Vector register length in bits. Default is 128.
               --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-              --mount <spec>             Mount a host path:
-                                          type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
+              --mount <spec>             Mount a filesystem:
+                                          type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory]
+                                          or type=tmpfs,dst=<guest>[,readonly|rw].
               --network <none|host>      Guest Internet socket backend. Default is none.
               --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
               --framebuffer <width>x<height>
@@ -699,14 +700,15 @@ public final class Main {
     private static @Nullable MountOption parseMountOption(String value, PrintStream err) {
         try {
             FilesystemMountSpec spec = FilesystemMountSpec.parse(value);
-            @Nullable Path hostPath = parsePathOption("--mount", spec.hostPath(), err);
-            return hostPath == null
+            @Nullable Path hostPath = spec.type() == Type.TMPFS ? null : parsePathOption("--mount", spec.hostPath(), err);
+            return hostPath == null && spec.type() != Type.TMPFS
                     ? null
                     : new MountOption(spec.guestPath(), hostPath, spec.type(), spec.readOnly(), spec.memory());
         } catch (RiscVException exception) {
             err.println("Invalid value for --mount: " + value);
             err.println(exception.getMessage());
-            err.println("Expected --mount type=bind|tar,src=<host-path>,dst=<guest-path>[,readonly|rw][,memory].");
+            err.println("Expected --mount type=bind|tar,src=<host-path>,dst=<guest-path>[,readonly|rw][,memory]");
+            err.println("        or --mount type=tmpfs,dst=<guest-path>[,readonly|rw].");
             return null;
         }
     }
@@ -749,7 +751,7 @@ public final class Main {
             }
             builder.append(new FilesystemMountSpec(
                     mount.guestPath(),
-                    mount.hostPath().toString(),
+                    mount.hostPath() == null ? "" : mount.hostPath().toString(),
                     mount.type(),
                     mount.readOnly(),
                     mount.memory()).encode());
@@ -1004,14 +1006,14 @@ public final class Main {
     /// Stores one command-line filesystem mount.
     ///
     /// @param guestPath the absolute guest-visible mount point
-    /// @param hostPath the host path backing the mount point
+    /// @param hostPath the host path backing the mount point, or null for tmpfs
     /// @param type the requested mount type, or `AUTO` to infer it from the host path
     /// @param readOnly the explicit read-only setting, or null to use the mount-type default
     /// @param memory whether a tar mount should be loaded into process memory
     @NotNullByDefault
     private record MountOption(
             String guestPath,
-            Path hostPath,
+            @Nullable Path hostPath,
             Type type,
             @Nullable Boolean readOnly,
             boolean memory) {

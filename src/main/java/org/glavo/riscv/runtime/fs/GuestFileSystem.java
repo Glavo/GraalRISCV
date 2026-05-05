@@ -82,6 +82,9 @@ public final class GuestFileSystem {
     /// Linux permission bits for user, group, and other.
     public static final int STAT_MODE_ALL = 0777;
 
+    /// Linux sticky mode bit.
+    public static final int STAT_MODE_STICKY = 01000;
+
     /// Linux permission and special mode bits changed by `chmod`.
     public static final int STAT_MODE_CHANGE_BITS = 07777;
 
@@ -620,8 +623,16 @@ public final class GuestFileSystem {
         FilesystemMountSpec mountSpec = FilesystemMountSpec.parse(spec);
 
         try {
-            Path root = Path.of(mountSpec.hostPath()).toAbsolutePath().normalize();
             FilesystemMountSpec.Type type = mountSpec.type();
+            if (type == FilesystemMountSpec.Type.TMPFS) {
+                return new TarMount(
+                        mountSpec.guestPath(),
+                        TarFileSystem.emptyMemory(STAT_MODE_ALL | STAT_MODE_STICKY),
+                        mountSpec.tmpfsReadOnly(),
+                        true);
+            }
+
+            Path root = Path.of(mountSpec.hostPath()).toAbsolutePath().normalize();
             if (type == FilesystemMountSpec.Type.AUTO) {
                 type = Files.isRegularFile(root) ? FilesystemMountSpec.Type.TAR : FilesystemMountSpec.Type.BIND;
             }
@@ -701,7 +712,12 @@ public final class GuestFileSystem {
     /// @param guestPath the absolute guest-visible mount point
     /// @param fileSystem the tar filesystem tree backing the mount point
     /// @param readOnly whether guest writes through this mount are rejected
-    public record TarMount(String guestPath, TarFileSystem fileSystem, boolean readOnly) implements Mount {
+    /// @param tmpfs whether this mount is an empty tmpfs tree rather than an archive-backed tree
+    public record TarMount(String guestPath, TarFileSystem fileSystem, boolean readOnly, boolean tmpfs) implements Mount {
+        /// Creates an archive-backed tar mount.
+        public TarMount(String guestPath, TarFileSystem fileSystem, boolean readOnly) {
+            this(guestPath, fileSystem, readOnly, false);
+        }
     }
 
     /// Describes one mounted virtual filesystem provider.
@@ -833,20 +849,31 @@ public final class GuestFileSystem {
 
     /// Stores a filesystem built from a tar archive.
     public static final class TarFileSystem {
-        /// The synthetic root directory of the archive.
-        private final TarNode root = TarNode.directory("", "", null, STAT_MODE_ALL, 0, 0);
+        /// The synthetic root directory of the tree.
+        private final TarNode root;
 
         /// The seekable tar reader used by lazy mounts, or null for memory mounts.
         private final @Nullable TarArchiveReader reader;
 
         /// Creates a tar filesystem.
         private TarFileSystem(@Nullable TarArchiveReader reader) {
+            this(reader, STAT_MODE_ALL);
+        }
+
+        /// Creates a tar filesystem with the supplied root directory mode.
+        private TarFileSystem(@Nullable TarArchiveReader reader, int rootMode) {
+            this.root = TarNode.directory("", "", null, rootMode, 0, 0);
             this.reader = reader;
         }
 
         /// Returns the synthetic root directory of the archive.
         public TarNode root() {
             return root;
+        }
+
+        /// Creates an empty in-memory filesystem tree.
+        static TarFileSystem emptyMemory(int rootMode) {
+            return new TarFileSystem(null, rootMode);
         }
 
         /// Reads a tar archive into an in-memory filesystem tree.

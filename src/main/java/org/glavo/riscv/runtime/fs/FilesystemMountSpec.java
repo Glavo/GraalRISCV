@@ -23,7 +23,7 @@ public record FilesystemMountSpec(
     /// Creates a normalized mount specification.
     ///
     /// @param guestPath the absolute guest-visible mount point
-    /// @param hostPath the host path backing the mount
+    /// @param hostPath the host path backing the mount, or empty for tmpfs mounts
     /// @param type the requested mount type, or `AUTO` to infer it from the host path
     /// @param readOnly the explicit read-only setting, or null to use the mount-type default
     /// @param memory whether a tar mount should be loaded into mutable process memory
@@ -32,20 +32,23 @@ public record FilesystemMountSpec(
         if (normalizedGuestPath == null) {
             throw new RiscVException("Filesystem mount guest path must use absolute Linux syntax: " + guestPath);
         }
-        if (hostPath.isEmpty()) {
+        if (memory && type == Type.AUTO) {
+            type = Type.TAR;
+        }
+        if (hostPath.isEmpty() && type != Type.TMPFS) {
             throw new RiscVException("Filesystem mount source must not be empty");
         }
         if (memory && type == Type.BIND) {
-            throw new RiscVException("Filesystem mount memory option is only valid for tar mounts");
+            throw new RiscVException("Filesystem mount memory option is not valid for bind mounts");
+        }
+        if (memory && type == Type.TMPFS) {
+            memory = false;
         }
         if (!memory && type == Type.TAR && Boolean.FALSE.equals(readOnly)) {
             throw new RiscVException("Writable tar mounts require memory=true");
         }
 
         guestPath = normalizedGuestPath;
-        if (memory && type == Type.AUTO) {
-            type = Type.TAR;
-        }
     }
 
     /// Parses one mount specification.
@@ -59,8 +62,10 @@ public record FilesystemMountSpec(
         if (type != Type.AUTO) {
             builder.append("type=").append(type.optionName()).append(',');
         }
-        builder.append("source=").append(encodeValue(hostPath));
-        builder.append(",target=").append(encodeValue(guestPath));
+        if (!hostPath.isEmpty()) {
+            builder.append("source=").append(encodeValue(hostPath)).append(',');
+        }
+        builder.append("target=").append(encodeValue(guestPath));
         if (readOnly != null) {
             builder.append(",readonly=").append(readOnly);
         }
@@ -78,6 +83,11 @@ public record FilesystemMountSpec(
     /// Returns the read-only flag to apply to a tar mount.
     public boolean tarReadOnly() {
         return readOnly == null || readOnly;
+    }
+
+    /// Returns the read-only flag to apply to a tmpfs mount.
+    public boolean tmpfsReadOnly() {
+        return Boolean.TRUE.equals(readOnly);
     }
 
     /// Parses a Docker-like key-value mount specification.
@@ -129,13 +139,14 @@ public record FilesystemMountSpec(
             }
         }
 
-        if (source == null) {
+        Type resolvedType = type == null ? Type.AUTO : type;
+        if (source == null && resolvedType != Type.TMPFS) {
             throw new RiscVException("Filesystem mount source option is required");
         }
         if (target == null) {
             throw new RiscVException("Filesystem mount target option is required");
         }
-        return new FilesystemMountSpec(target, source, type == null ? Type.AUTO : type, readOnly, memory);
+        return new FilesystemMountSpec(target, source == null ? "" : source, resolvedType, readOnly, memory);
     }
 
     /// Splits a key-value mount spec on commas.
@@ -159,6 +170,7 @@ public record FilesystemMountSpec(
         return switch (value.toLowerCase()) {
             case "bind" -> Type.BIND;
             case "tar" -> Type.TAR;
+            case "tmpfs" -> Type.TMPFS;
             default -> throw new RiscVException("Unsupported filesystem mount type: " + value);
         };
     }
@@ -230,7 +242,10 @@ public record FilesystemMountSpec(
         BIND("bind"),
 
         /// Mount a tar archive.
-        TAR("tar");
+        TAR("tar"),
+
+        /// Mount an empty in-memory filesystem tree.
+        TMPFS("tmpfs");
 
         /// The command-line option spelling for this type.
         private final String optionName;

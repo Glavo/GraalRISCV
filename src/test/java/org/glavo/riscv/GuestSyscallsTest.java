@@ -2792,6 +2792,70 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies tmpfs mounts expose empty writable in-memory directories without host sources.
+    @Test
+    public void tmpfsMountSupportsGuestWrites() throws Exception {
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tmpfs,dst=/tmp"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem);
+            long pathAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 256;
+            long statAddress = memory.baseAddress() + 512;
+            long statfsAddress = memory.baseAddress() + 1024;
+            byte[] data = "tmpfs-data".getBytes(StandardCharsets.UTF_8);
+
+            writeGuestString(memory, pathAddress, "/tmp");
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0040000 | 01777, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            writeGuestString(memory, pathAddress, "/tmp/message.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            state.syscalls().handle(state, TEST_PC);
+            long writeFileDescriptor = state.register(10);
+            assertEquals(3, writeFileDescriptor);
+
+            memory.writeBytes(dataAddress, data, 0, data.length);
+            setSyscall(state, SYS_WRITE, writeFileDescriptor, dataAddress, data.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(data.length, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, writeFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long readFileDescriptor = state.register(10);
+            assertEquals(3, readFileDescriptor);
+
+            setSyscall(state, SYS_READ, readFileDescriptor, dataAddress, data.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(data.length, state.register(10));
+            assertEquals("tmpfs-data", readGuestString(memory, dataAddress, data.length));
+
+            writeGuestString(memory, pathAddress, "/tmp");
+            setSyscall(state, SYS_STATFS, pathAddress, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatfs(memory, statfsAddress);
+
+            setSyscall(state, SYS_FSTATFS, readFileDescriptor, statfsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertStatfs(memory, statfsAddress);
+        }
+    }
+
     /// Verifies that `umask` masks host file and directory creation modes.
     @Test
     public void umaskMasksHostCreatedEntryModes() throws Exception {

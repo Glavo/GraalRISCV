@@ -524,6 +524,29 @@ public final class MainTest {
         assertTrue(Arrays.equals(originalArchiveBytes, Files.readAllBytes(archive)));
     }
 
+    /// Verifies that tmpfs mounts expose an empty writable in-memory tree without a host source.
+    @Test
+    public void tmpfsMountStoresGuestWritesInMemory() throws Exception {
+        Path elfPath = tempDirectory.resolve("tmpfs-write.elf");
+        Files.write(elfPath, ElfTestImages.executable(createAndReadMemoryTarFileCode()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "2000",
+                        "--mount", "type=tmpfs,dst=/data",
+                        elfPath.toString()
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("changed", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Verifies that `--guest-program` loads the executable from configured guest mounts.
     @Test
     public void guestProgramOptionLoadsExecutableFromTarMount() throws Exception {

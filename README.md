@@ -50,8 +50,9 @@ Options:
   --huge-pages <n>           Guest HugeTLB page pool size.
   --vector-vlen <bits>       Vector register length in bits. Default is 128.
   --max-instructions <count> Maximum guest instruction count; 0 means unlimited.
-  --mount <spec>             Mount a host path:
-                              type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory].
+  --mount <spec>             Mount a filesystem:
+                              type=bind|tar,src=<path>,dst=<guest>[,readonly|rw][,memory]
+                              or type=tmpfs,dst=<guest>[,readonly|rw].
   --network <none|host>      Guest Internet socket backend. Default is none.
   --use-host-tty             Try to connect guest /dev/tty to the host controlling terminal.
   --framebuffer <width>x<height>
@@ -73,17 +74,19 @@ Options:
 
 `<program.elf>` is interpreted as a host path. Use `--guest-program` when the
 executable should be loaded from the guest filesystem. `--mount` controls the
-host directories and tar archives visible to guest file syscalls. Mount specs
-use Docker-like key-value syntax, for example
+host directories, tar archives, and tmpfs trees visible to guest file syscalls.
+Mount specs use Docker-like key-value syntax, for example
 `--mount type=bind,src=./root,dst=/,readonly` or
-`--mount type=tar,src=ubuntu-base.tar,dst=/`. When `type` is omitted, regular
-host files are inferred as tar mounts and other host paths are inferred as bind
-mounts. Non-memory tar mounts are lazy and read file payloads from the archive
-only when opened. `memory` is valid only for tar mounts; memory tar mounts accept
-plain tar archives and gzip-compressed tar archives such as `.tar.gz`.
-`memory,rw` loads the archive into process memory and allows guest writes that
-are discarded when the process exits. If no `/` mount is provided for a host
-executable, the CLI mounts the directory containing that executable at `/`.
+`--mount type=tar,src=ubuntu-base.tar,dst=/`, or
+`--mount type=tmpfs,dst=/tmp`. When `type` is omitted, regular host files are
+inferred as tar mounts and other host paths are inferred as bind mounts.
+Non-memory tar mounts are lazy and read file payloads from the archive only when
+opened. `memory` is meaningful for tar mounts; memory tar mounts accept plain tar
+archives and gzip-compressed tar archives such as `.tar.gz`. `memory,rw` loads
+the archive into process memory and allows guest writes that are discarded when
+the process exits. Tmpfs mounts are empty writable in-memory trees by default.
+If no `/` mount is provided for a host executable, the CLI mounts the directory
+containing that executable at `/`.
 By default, guest `/dev/tty` is backed by the configured process streams; pass
 `--use-host-tty` to try a real host controlling terminal when available. Pass
 `--framebuffer <width>x<height>` to create a Swing-backed XRGB8888 framebuffer
