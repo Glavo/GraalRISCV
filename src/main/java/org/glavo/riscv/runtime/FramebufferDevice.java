@@ -9,6 +9,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /// Stores the pixel backing for one guest-visible linear framebuffer.
 ///
@@ -21,6 +22,9 @@ public final class FramebufferDevice {
 
     /// The mutable pixel backing bytes.
     private final byte[] pixels;
+
+    /// Actions invoked before host-side snapshot reads sample the framebuffer.
+    private final CopyOnWriteArrayList<Runnable> refreshHooks = new CopyOnWriteArrayList<>();
 
     /// Incremented after each write, explicit clear, or explicit dirty-region mark.
     private long modificationCounter;
@@ -40,32 +44,61 @@ public final class FramebufferDevice {
     }
 
     /// Returns the number of writes, explicit clears, and explicit dirty-region marks applied to this framebuffer.
-    public synchronized long modificationCounter() {
-        return modificationCounter;
+    public long modificationCounter() {
+        refreshMappedSources();
+        synchronized (this) {
+            return modificationCounter;
+        }
     }
 
     /// Returns the current accumulated dirty region without clearing it.
-    public synchronized @Nullable FramebufferDirtyRegion dirtyRegion() {
-        return dirtyRegion;
+    public @Nullable FramebufferDirtyRegion dirtyRegion() {
+        refreshMappedSources();
+        synchronized (this) {
+            return dirtyRegion;
+        }
     }
 
     /// Returns and clears the current accumulated dirty region.
-    public synchronized @Nullable FramebufferDirtyRegion takeDirtyRegion() {
-        @Nullable FramebufferDirtyRegion result = dirtyRegion;
-        dirtyRegion = null;
-        return result;
+    public @Nullable FramebufferDirtyRegion takeDirtyRegion() {
+        refreshMappedSources();
+        synchronized (this) {
+            @Nullable FramebufferDirtyRegion result = dirtyRegion;
+            dirtyRegion = null;
+            return result;
+        }
     }
 
     /// Returns a copy of the current framebuffer pixels and dirty state.
-    public synchronized FramebufferSnapshot snapshot() {
-        return new FramebufferSnapshot(geometry, pixels, modificationCounter, dirtyRegion);
+    public FramebufferSnapshot snapshot() {
+        refreshMappedSources();
+        synchronized (this) {
+            return new FramebufferSnapshot(geometry, pixels, modificationCounter, dirtyRegion);
+        }
     }
 
     /// Returns a copy of the current framebuffer pixels and clears the accumulated dirty region.
-    public synchronized FramebufferSnapshot takeSnapshot() {
-        FramebufferSnapshot result = new FramebufferSnapshot(geometry, pixels, modificationCounter, dirtyRegion);
-        dirtyRegion = null;
-        return result;
+    public FramebufferSnapshot takeSnapshot() {
+        refreshMappedSources();
+        synchronized (this) {
+            FramebufferSnapshot result = new FramebufferSnapshot(geometry, pixels, modificationCounter, dirtyRegion);
+            dirtyRegion = null;
+            return result;
+        }
+    }
+
+    /// Registers an action that refreshes external framebuffer sources before host-side snapshots.
+    public Runnable registerRefreshHook(Runnable refreshHook) {
+        Objects.requireNonNull(refreshHook, "refreshHook");
+        refreshHooks.add(refreshHook);
+        return () -> refreshHooks.remove(refreshHook);
+    }
+
+    /// Refreshes external framebuffer sources registered by the syscall layer.
+    public void refreshMappedSources() {
+        for (Runnable refreshHook : refreshHooks) {
+            refreshHook.run();
+        }
     }
 
     /// Copies bytes from the framebuffer into a host buffer.

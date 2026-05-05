@@ -8224,6 +8224,52 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that framebuffer snapshots can observe live shared `/dev/fb0` mmap writes before `munmap`.
+    @Test
+    public void framebufferSnapshotsRefreshSharedMmapWrites() {
+        FramebufferDevice framebuffer = new FramebufferDevice(FramebufferGeometry.packed(
+                2,
+                1,
+                FramebufferPixelFormat.XRGB8888));
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            RiscVThreadState state = framebufferState(memory, initialBreak, framebuffer);
+            try {
+                long pathAddress = memory.baseAddress();
+                writeGuestString(memory, pathAddress, "/dev/fb0");
+
+                setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+                state.syscalls().handle(state, TEST_PC);
+                long fileDescriptor = state.register(10);
+                assertTrue(fileDescriptor >= 3);
+
+                setSyscall(
+                        state,
+                        SYS_MMAP,
+                        0,
+                        PAGE_SIZE,
+                        PROT_READ | PROT_WRITE,
+                        MAP_SHARED,
+                        fileDescriptor,
+                        0);
+                state.syscalls().handle(state, TEST_PC);
+                long mappedAddress = state.register(10);
+                assertEquals(initialBreak, mappedAddress);
+
+                memory.writeInt(mappedAddress + 4, 0x0011_2233);
+                byte[] deviceBytes = new byte[8];
+                assertEquals(8, framebuffer.read(0, deviceBytes, 0, deviceBytes.length));
+                assertArrayEquals(new byte[8], deviceBytes);
+
+                assertArrayEquals(
+                        new byte[]{0, 0, 0, 0, 0x33, 0x22, 0x11, 0},
+                        framebuffer.snapshot().pixels());
+            } finally {
+                state.syscalls().close();
+            }
+        }
+    }
+
     /// Verifies that shared read-only file-backed `mmap` copies data and appears in `/proc/self/maps`.
     @Test
     public void mmapMapsSharedReadOnlyRegularFilePages() throws Exception {
@@ -8992,6 +9038,32 @@ public final class GuestSyscallsTest {
                 fileSystem,
                 TimeSource.system(),
                 credentials);
+        return new RiscVThreadState(
+                memory,
+                0,
+                false,
+                ElfImage.ABSENT_ADDRESS,
+                ElfImage.ABSENT_ADDRESS,
+                syscalls);
+    }
+
+    /// Creates test machine state with an attached framebuffer device.
+    private static RiscVThreadState framebufferState(
+            Memory memory,
+            long initialProgramBreak,
+            FramebufferDevice framebufferDevice) {
+        GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                memory,
+                new ByteArrayInputStream(new byte[0]),
+                new ByteArrayOutputStream(),
+                new ByteArrayOutputStream(),
+                initialProgramBreak,
+                new String[0],
+                TimeSource.system(),
+                false,
+                GuestCredentials.defaultUser(),
+                null,
+                framebufferDevice);
         return new RiscVThreadState(
                 memory,
                 0,

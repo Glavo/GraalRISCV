@@ -95,6 +95,26 @@ public final class FramebufferDeviceTest {
         assertEquals(1, device.modificationCounter());
     }
 
+    /// Verifies snapshot reads refresh registered external framebuffer sources first.
+    @Test
+    public void snapshotsRefreshMappedSources() {
+        FramebufferGeometry geometry = FramebufferGeometry.packed(1, 1, FramebufferPixelFormat.XRGB8888);
+        FramebufferDevice device = new FramebufferDevice(geometry);
+        int[] refreshCount = new int[1];
+        Runnable unregister = device.registerRefreshHook(() -> {
+            refreshCount[0]++;
+            device.write(0, new byte[]{1, 2, 3, 4}, 0, 4);
+        });
+
+        FramebufferSnapshot snapshot = device.snapshot();
+        assertEquals(1, refreshCount[0]);
+        assertArrayEquals(new byte[]{1, 2, 3, 4}, snapshot.pixels());
+
+        unregister.run();
+        device.clear();
+        assertEquals(1, refreshCount[0]);
+    }
+
     /// Verifies invalid framebuffer layouts are rejected.
     @Test
     public void rejectsInvalidGeometryAndPixelFormats() {

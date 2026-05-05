@@ -56,6 +56,7 @@ import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /// Provides shared state and helpers for guest syscall ABI implementations.
 @SuppressWarnings("OctalInteger")
@@ -1180,6 +1181,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The optional framebuffer device configured for graphical guest integrations.
     protected final @Nullable FramebufferDevice framebufferDevice;
 
+    /// Removes the currently registered framebuffer refresh hook, or null when no hook is registered.
+    private @Nullable Runnable framebufferRefreshHookRemoval;
+
     /// The Linux user and group identity exposed to this guest process.
     protected final GuestCredentials credentials;
 
@@ -1211,7 +1215,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     protected long programBreakBackingEnd;
 
     /// The active mappings created by `mmap`.
-    protected final ArrayList<MemoryMapping> memoryMappings = new ArrayList<>();
+    protected final CopyOnWriteArrayList<MemoryMapping> memoryMappings = new CopyOnWriteArrayList<>();
 
     /// The guest base page size used for page-based memory syscalls.
     protected final long pageSize;
@@ -1710,6 +1714,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.programBreak = parent.programBreak;
         this.programBreakBackingEnd = parent.programBreakBackingEnd;
         this.memoryMappings.addAll(parent.memoryMappings);
+        updateFramebufferRefreshHook();
         this.pageSize = memory.pageSize();
         this.processRegistry = parent.processRegistry;
         this.process = process;
@@ -1836,6 +1841,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     @Override
     public void close() {
         syncSharedDeviceMappings();
+        closeFramebufferRefreshHook();
         closeChildProcesses();
         for (int index = 0; index < standardFiles.length; index++) {
             @Nullable OpenFile openFile = standardFiles[index];
@@ -6780,6 +6786,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             String @Unmodifiable [] arguments,
             String @Unmodifiable [] environment) {
         syncSharedDeviceMappings();
+        closeFramebufferRefreshHook();
         memory.resetAddressSpace();
         LinuxProgramLoader.LoadedProcess loadedProcess =
                 LinuxProgramLoader.initialize(memory, program, arguments, environment, credentials, pageSize);
@@ -6798,6 +6805,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         initialProgramBreak = newInitialProgramBreak;
         programBreak = newInitialProgramBreak;
         programBreakBackingEnd = newInitialProgramBreak;
+        closeFramebufferRefreshHook();
         memoryMappings.clear();
         auxiliaryVectorBytes = encodeAuxiliaryVector(new long[]{0, 0});
         procCommandLineBytes = new byte[0];
@@ -9209,6 +9217,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             insertionIndex++;
         }
         memoryMappings.add(insertionIndex, mapping);
+        if (deviceFile != null && shared) {
+            ensureFramebufferRefreshHook();
+        }
     }
 
     /// Removes or splits active anonymous mappings overlapped by a guest range.
@@ -9239,6 +9250,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 index++;
             }
         }
+        updateFramebufferRefreshHook();
     }
 
     /// Resizes tracked metadata for a mapping that stayed at the same guest address.
@@ -9332,6 +9344,46 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         for (MemoryMapping mapping : memoryMappings) {
             syncSharedDeviceMappingRange(mapping, mapping.address(), mapping.length());
         }
+    }
+
+    /// Ensures the framebuffer device refreshes live mappings before host snapshots.
+    private void ensureFramebufferRefreshHook() {
+        if (framebufferRefreshHookRemoval != null) {
+            return;
+        }
+
+        @Nullable FramebufferDevice device = framebufferDevice;
+        if (device != null) {
+            framebufferRefreshHookRemoval = device.registerRefreshHook(this::syncSharedDeviceMappings);
+        }
+    }
+
+    /// Removes the framebuffer refresh hook when no live device mapping remains.
+    private void closeFramebufferRefreshHook() {
+        @Nullable Runnable removal = framebufferRefreshHookRemoval;
+        if (removal != null) {
+            framebufferRefreshHookRemoval = null;
+            removal.run();
+        }
+    }
+
+    /// Updates whether this process needs a framebuffer refresh hook.
+    private void updateFramebufferRefreshHook() {
+        if (hasSharedDeviceMapping()) {
+            ensureFramebufferRefreshHook();
+        } else {
+            closeFramebufferRefreshHook();
+        }
+    }
+
+    /// Returns true when at least one shared device mapping is still active.
+    private boolean hasSharedDeviceMapping() {
+        for (MemoryMapping mapping : memoryMappings) {
+            if (mapping.deviceFile() != null && mapping.shared()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// Synchronizes a shared device-backed mapping range back to its backing device.
