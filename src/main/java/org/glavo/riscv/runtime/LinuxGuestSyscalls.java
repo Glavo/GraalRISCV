@@ -6156,8 +6156,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `epoll_pwait2`.
     private static final int SYS_EPOLL_PWAIT2 = 441;
 
+    /// The Linux RISC-V syscall number for `futex_waitv`.
+    private static final int SYS_FUTEX_WAITV = 449;
+
     /// The Linux RISC-V syscall number for `fchmodat2`.
     private static final int SYS_FCHMODAT2 = 452;
+
+    /// The Linux RISC-V syscall number for `futex_wake`.
+    private static final int SYS_FUTEX_WAKE = 454;
+
+    /// The Linux RISC-V syscall number for `futex_wait`.
+    private static final int SYS_FUTEX_WAIT = 455;
 
     /// Executes the Linux syscall described by the guest argument registers at the supplied program counter.
     @Override
@@ -6675,11 +6684,29 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(13),
                     state.register(14),
                     state.register(15)));
+            case SYS_FUTEX_WAITV -> state.setRegister(10, futexWaitv(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_FCHMODAT2 -> state.setRegister(10, fchmodat(
                     state.register(10),
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_FUTEX_WAKE -> state.setRegister(10, futexWake2(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_FUTEX_WAIT -> state.setRegister(10, futexWait2(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
             case SYS_CLOSE_RANGE -> state.setRegister(10, closeRange(
                     state.register(10),
                     state.register(11),

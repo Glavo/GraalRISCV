@@ -628,6 +628,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The byte size of Linux RISC-V 64-bit `struct itimerval`.
     protected static final int ITIMERVAL_SIZE = 2 * TIMEVAL_SIZE;
 
+    /// The byte offset of `val` inside Linux `struct futex_waitv`.
+    protected static final int FUTEX_WAITV_VALUE_OFFSET = 0;
+
+    /// The byte offset of `uaddr` inside Linux `struct futex_waitv`.
+    protected static final int FUTEX_WAITV_ADDRESS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `flags` inside Linux `struct futex_waitv`.
+    protected static final int FUTEX_WAITV_FLAGS_OFFSET = 2 * Long.BYTES;
+
+    /// The byte offset of `__reserved` inside Linux `struct futex_waitv`.
+    protected static final int FUTEX_WAITV_RESERVED_OFFSET = FUTEX_WAITV_FLAGS_OFFSET + Integer.BYTES;
+
+    /// The byte size of Linux `struct futex_waitv`.
+    protected static final int FUTEX_WAITV_SIZE = 3 * Long.BYTES;
+
     /// The byte offset of `tz_minuteswest` inside Linux `struct timezone`.
     protected static final int TIMEZONE_MINUTESWEST_OFFSET = 0;
 
@@ -873,6 +888,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Linux `FUTEX_WAKE_BITSET`.
     protected static final long FUTEX_WAKE_BITSET = 10;
+
+    /// Linux `FUTEX2_SIZE_U32`.
+    protected static final long FUTEX2_SIZE_U32 = 2;
+
+    /// Linux futex2 size mask.
+    protected static final long FUTEX2_SIZE_MASK = 3;
+
+    /// The maximum Linux `futex_waitv` waiter count.
+    protected static final long FUTEX_WAITV_MAX = 128;
 
     /// Linux futex command mask.
     protected static final long FUTEX_COMMAND_MASK = 0x7f;
@@ -7440,8 +7464,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         long timeoutNanos = -1;
         if (timeoutAddress != 0) {
-            long seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
-            long nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            long seconds;
+            long nanoseconds;
+            try {
+                seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
+                nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            } catch (RiscVException exception) {
+                return EFAULT;
+            }
             if (!isValidTimespec(seconds, nanoseconds)) {
                 return EINVAL;
             }
@@ -7449,7 +7479,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         synchronized (threadLock) {
-            int currentValue = memory.readInt(address);
+            int currentValue;
+            try {
+                currentValue = memory.readInt(address);
+            } catch (RiscVException exception) {
+                return EFAULT;
+            }
             if (currentValue != (int) expectedValue) {
                 return EAGAIN;
             }
@@ -7460,7 +7495,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return ETIMEDOUT;
             }
 
-            FutexWaiter waiter = new FutexWaiter(address, bitset);
+            FutexWaiter waiter = new FutexWaiter(address, bitset, -1, null);
             futexWaiters.add(waiter);
             try {
                 long remainingNanos = timeoutNanos;
@@ -7492,10 +7527,154 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Handles Linux `futex_wait`.
+    protected long futexWait2(
+            long address,
+            long expectedValue,
+            long bitset,
+            long flags,
+            long timeoutAddress,
+            long clockId) {
+        if ((address & (Integer.BYTES - 1L)) != 0
+                || !isSupportedFutex2Flags(flags)
+                || (bitset & 0xffff_ffffL) == 0
+                || !isSupportedFutex2Clock(clockId)) {
+            return EINVAL;
+        }
+        return futexWait(address, expectedValue, timeoutAddress, bitset, true, clockId == CLOCK_REALTIME);
+    }
+
+    /// Handles Linux `futex_wake`.
+    protected long futexWake2(long address, long bitset, long count, long flags) {
+        if ((address & (Integer.BYTES - 1L)) != 0 || !isSupportedFutex2Flags(flags)) {
+            return EINVAL;
+        }
+        return futexWake(address, count, bitset);
+    }
+
+    /// Handles Linux `futex_waitv`.
+    protected long futexWaitv(
+            long waitersAddress,
+            long waiterCount,
+            long flags,
+            long timeoutAddress,
+            long clockId) {
+        if (waitersAddress == 0 || waiterCount <= 0 || waiterCount > FUTEX_WAITV_MAX || flags != 0
+                || !isSupportedFutex2Clock(clockId)) {
+            return EINVAL;
+        }
+        long waitersByteSize = waiterCount * FUTEX_WAITV_SIZE;
+        if (!memory.isBacked(waitersAddress, waitersByteSize)) {
+            return EFAULT;
+        }
+
+        int count = (int) waiterCount;
+        long[] addresses = new long[count];
+        long[] expectedValues = new long[count];
+        long[] bitsets = new long[count];
+        for (int index = 0; index < count; index++) {
+            long waiterAddress = waitersAddress + (long) index * FUTEX_WAITV_SIZE;
+            long waiterFlags;
+            long reserved;
+            try {
+                expectedValues[index] = memory.readLong(waiterAddress + FUTEX_WAITV_VALUE_OFFSET);
+                addresses[index] = memory.readLong(waiterAddress + FUTEX_WAITV_ADDRESS_OFFSET);
+                waiterFlags = memory.readUnsignedInt(waiterAddress + FUTEX_WAITV_FLAGS_OFFSET);
+                reserved = memory.readUnsignedInt(waiterAddress + FUTEX_WAITV_RESERVED_OFFSET);
+            } catch (RiscVException exception) {
+                return EFAULT;
+            }
+
+            if ((addresses[index] & (Integer.BYTES - 1L)) != 0
+                    || reserved != 0
+                    || !isSupportedFutex2Flags(waiterFlags)) {
+                return EINVAL;
+            }
+            if (!memory.isBacked(addresses[index], Integer.BYTES)) {
+                return EFAULT;
+            }
+            bitsets[index] = FUTEX_BITSET_MATCH_ANY;
+        }
+
+        long timeoutNanos = -1;
+        if (timeoutAddress != 0) {
+            long seconds;
+            long nanoseconds;
+            try {
+                seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
+                nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            } catch (RiscVException exception) {
+                return EFAULT;
+            }
+            if (!isValidTimespec(seconds, nanoseconds)) {
+                return EINVAL;
+            }
+            timeoutNanos = futexTimeoutNanos(seconds, nanoseconds, true, clockId == CLOCK_REALTIME);
+        }
+
+        synchronized (threadLock) {
+            for (int index = 0; index < count; index++) {
+                int currentValue;
+                try {
+                    currentValue = memory.readInt(addresses[index]);
+                } catch (RiscVException exception) {
+                    return EFAULT;
+                }
+                if (currentValue != (int) expectedValues[index]) {
+                    return EAGAIN;
+                }
+            }
+            if (!guestThreadingEnabled()) {
+                return ETIMEDOUT;
+            }
+            if (timeoutNanos == 0) {
+                return ETIMEDOUT;
+            }
+
+            FutexWaitGroup group = new FutexWaitGroup();
+            ArrayList<FutexWaiter> waiters = new ArrayList<>(count);
+            for (int index = 0; index < count; index++) {
+                FutexWaiter waiter = new FutexWaiter(addresses[index], bitsets[index], index, group);
+                waiters.add(waiter);
+                futexWaiters.add(waiter);
+            }
+            try {
+                long remainingNanos = timeoutNanos;
+                long lastNanos = timeoutNanos >= 0 ? timeSource.monotonicNanoseconds() : 0;
+                while (group.wokenIndex < 0 && !processExitRequested && threadFailure == null) {
+                    if (remainingNanos >= 0) {
+                        if (remainingNanos <= 0) {
+                            return ETIMEDOUT;
+                        }
+                        waitNanos(remainingNanos);
+                        long now = timeSource.monotonicNanoseconds();
+                        long elapsed = Math.max(0, now - lastNanos);
+                        remainingNanos = elapsed >= remainingNanos ? 0 : remainingNanos - elapsed;
+                        lastNanos = now;
+                    } else {
+                        threadLock.wait();
+                    }
+                }
+                if (threadFailure != null || processExitRequested) {
+                    return EINTR;
+                }
+                return group.wokenIndex;
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return EINTR;
+            } finally {
+                futexWaiters.removeAll(waiters);
+            }
+        }
+    }
+
     /// Handles a futex wake against guest waiters.
     protected long futexWake(long address, long count, long bitset) {
         if (count < 0 || (bitset & 0xffff_ffffL) == 0) {
             return EINVAL;
+        }
+        if (!memory.isBacked(address, Integer.BYTES)) {
+            return EFAULT;
         }
 
         synchronized (threadLock) {
@@ -7516,6 +7695,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             if (waiter.address == address && (waiter.bitset & bitset) != 0) {
                 waiter.woken = true;
+                if (waiter.group != null && waiter.group.wokenIndex < 0) {
+                    waiter.group.wokenIndex = waiter.index;
+                }
                 woken++;
             }
         }
@@ -7523,6 +7705,17 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             threadLock.notifyAll();
         }
         return woken;
+    }
+
+    /// Returns true when Linux futex2 flags select supported 32-bit futex words.
+    protected static boolean isSupportedFutex2Flags(long flags) {
+        return (flags & ~(FUTEX2_SIZE_MASK | FUTEX_PRIVATE_FLAG)) == 0
+                && (flags & FUTEX2_SIZE_MASK) == FUTEX2_SIZE_U32;
+    }
+
+    /// Returns true when Linux futex2 timeout clock selection is supported.
+    protected static boolean isSupportedFutex2Clock(long clockId) {
+        return clockId == CLOCK_MONOTONIC || clockId == CLOCK_REALTIME;
     }
 
     /// Waits on `threadLock` for at most the supplied nanosecond count.
@@ -11202,6 +11395,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             long length) {
     }
 
+    /// Stores the wake result shared by one vector futex wait operation.
+    protected static final class FutexWaitGroup {
+        /// The index selected by a matching wake, or a negative value while still blocked.
+        private int wokenIndex = -1;
+    }
+
     /// Stores one guest thread blocked in a futex wait operation.
     protected static final class FutexWaiter {
         /// The guest futex word address being waited on.
@@ -11210,13 +11409,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// The futex bitset mask used to match wake operations.
         private final long bitset;
 
+        /// The vector waiter index returned when this waiter is woken.
+        private final int index;
+
+        /// The vector wait operation shared by this waiter, or `null` for scalar waits.
+        private final @Nullable FutexWaitGroup group;
+
         /// Whether a matching futex wake selected this waiter.
         private boolean woken;
 
         /// Creates a waiter for the supplied futex word and bitset.
-        private FutexWaiter(long address, long bitset) {
+        private FutexWaiter(long address, long bitset, int index, @Nullable FutexWaitGroup group) {
             this.address = address;
             this.bitset = bitset;
+            this.index = index;
+            this.group = group;
         }
     }
 

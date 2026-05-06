@@ -637,8 +637,17 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final long SYS_FACCESSAT2 = 439;
 
+    /// The Linux RISC-V syscall number for `futex_waitv`.
+    private static final long SYS_FUTEX_WAITV = 449;
+
     /// The Linux RISC-V syscall number for `fchmodat2`.
     private static final long SYS_FCHMODAT2 = 452;
+
+    /// The Linux RISC-V syscall number for `futex_wake`.
+    private static final long SYS_FUTEX_WAKE = 454;
+
+    /// The Linux RISC-V syscall number for `futex_wait`.
+    private static final long SYS_FUTEX_WAIT = 455;
 
     /// The Linux generic tty `TCGETS` ioctl request number.
     private static final long TCGETS = 0x5401;
@@ -1510,6 +1519,9 @@ public final class GuestSyscallsTest {
     /// Linux `FUTEX_WAKE_BITSET`.
     private static final long FUTEX_WAKE_BITSET = 10;
 
+    /// Linux `FUTEX2_SIZE_U32`.
+    private static final long FUTEX2_SIZE_U32 = 2;
+
     /// Linux `FUTEX_PRIVATE_FLAG`.
     private static final long FUTEX_PRIVATE_FLAG = 128;
 
@@ -1518,6 +1530,21 @@ public final class GuestSyscallsTest {
 
     /// Linux `FUTEX_BITSET_MATCH_ANY`.
     private static final long FUTEX_BITSET_MATCH_ANY = 0xffff_ffffL;
+
+    /// The byte offset of `val` inside Linux `struct futex_waitv`.
+    private static final int FUTEX_WAITV_VALUE_OFFSET = 0;
+
+    /// The byte offset of `uaddr` inside Linux `struct futex_waitv`.
+    private static final int FUTEX_WAITV_ADDRESS_OFFSET = Long.BYTES;
+
+    /// The byte offset of `flags` inside Linux `struct futex_waitv`.
+    private static final int FUTEX_WAITV_FLAGS_OFFSET = 2 * Long.BYTES;
+
+    /// The byte offset of `__reserved` inside Linux `struct futex_waitv`.
+    private static final int FUTEX_WAITV_RESERVED_OFFSET = FUTEX_WAITV_FLAGS_OFFSET + Integer.BYTES;
+
+    /// The byte size of Linux `struct futex_waitv`.
+    private static final int FUTEX_WAITV_SIZE = 3 * Long.BYTES;
 
     /// Linux `CLONE_VM`.
     private static final long CLONE_VM = 0x00000100L;
@@ -6648,6 +6675,242 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies Linux split `futex_wait` and `futex_wake` validation paths.
+    @Test
+    public void futex2WaitAndWakeValidateArguments() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long futexAddress = memory.baseAddress() + 64;
+            long timeoutAddress = memory.baseAddress() + 80;
+            long flags = FUTEX2_SIZE_U32 | FUTEX_PRIVATE_FLAG;
+
+            memory.writeInt(futexAddress, 7);
+            setSyscall(
+                    state,
+                    SYS_FUTEX_WAIT,
+                    futexAddress,
+                    9,
+                    FUTEX_BITSET_MATCH_ANY,
+                    flags,
+                    0,
+                    CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_FUTEX_WAIT,
+                    futexAddress,
+                    7,
+                    FUTEX_BITSET_MATCH_ANY,
+                    flags,
+                    0,
+                    CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ETIMEDOUT, state.register(10));
+
+            writeTimespec(memory, timeoutAddress, 0, 1_000_000_000L);
+            setSyscall(
+                    state,
+                    SYS_FUTEX_WAIT,
+                    futexAddress,
+                    7,
+                    FUTEX_BITSET_MATCH_ANY,
+                    flags,
+                    timeoutAddress,
+                    CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_FUTEX_WAIT,
+                    futexAddress + 1,
+                    7,
+                    FUTEX_BITSET_MATCH_ANY,
+                    flags,
+                    0,
+                    CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAIT, futexAddress, 7, 0, flags, 0, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_FUTEX_WAIT,
+                    futexAddress,
+                    7,
+                    FUTEX_BITSET_MATCH_ANY,
+                    FUTEX_PRIVATE_FLAG,
+                    0,
+                    CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAIT, futexAddress, 7, FUTEX_BITSET_MATCH_ANY, flags, 0, CLOCK_BOOTTIME);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAIT, futexAddress, 7, FUTEX_BITSET_MATCH_ANY, flags, memory.endAddress(), CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAKE, futexAddress, FUTEX_BITSET_MATCH_ANY, 1, flags);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAKE, memory.endAddress(), FUTEX_BITSET_MATCH_ANY, 1, flags);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAKE, futexAddress, 0, 1, flags);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAKE, futexAddress, FUTEX_BITSET_MATCH_ANY, -1, flags);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAKE, futexAddress, FUTEX_BITSET_MATCH_ANY, 1, FUTEX_PRIVATE_FLAG);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies Linux `futex_waitv` validation for waiter arrays and absolute timeouts.
+    @Test
+    public void futexWaitvValidatesWaiterArray() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            long futexAddress = memory.baseAddress() + 64;
+            long waitersAddress = memory.baseAddress() + 128;
+            long timeoutAddress = memory.baseAddress() + 512;
+            long flags = FUTEX2_SIZE_U32 | FUTEX_PRIVATE_FLAG;
+
+            memory.writeInt(futexAddress, 0);
+            writeTimespec(memory, timeoutAddress, 1, 0);
+            writeFutexWaitv(memory, waitersAddress, 0, 0, futexAddress, flags, 0);
+
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 0, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 129, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAITV, 0, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 1, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_BOOTTIME);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeFutexWaitv(memory, waitersAddress, 0, 0, futexAddress, FUTEX_PRIVATE_FLAG, 0);
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeFutexWaitv(memory, waitersAddress, 0, 0, futexAddress + 1, flags, 0);
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeFutexWaitv(memory, waitersAddress, 0, 0, 0, flags, 0);
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            writeFutexWaitv(memory, waitersAddress, 0, 0, futexAddress, flags, 1);
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeFutexWaitv(memory, waitersAddress, 0, 1, futexAddress, flags, 0);
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            writeFutexWaitv(memory, waitersAddress, 0, 0, futexAddress, flags, 0);
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ETIMEDOUT, state.register(10));
+
+            writeTimespec(memory, timeoutAddress, 0, 1_000_000_000L);
+            setSyscall(state, SYS_FUTEX_WAITV, waitersAddress, 1, 0, timeoutAddress, CLOCK_MONOTONIC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies Linux `futex_waitv` returns the index selected by a matching futex wake.
+    @Test
+    public void futexWaitvReturnsWokenIndex() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState waitState = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            RiscVThreadState wakeState = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long firstFutexAddress = memory.baseAddress() + 64;
+            long secondFutexAddress = memory.baseAddress() + 68;
+            long waitersAddress = memory.baseAddress() + 128;
+            long flags = FUTEX2_SIZE_U32 | FUTEX_PRIVATE_FLAG;
+
+            memory.writeInt(firstFutexAddress, 0);
+            memory.writeInt(secondFutexAddress, 0);
+            writeFutexWaitv(memory, waitersAddress, 0, 0, firstFutexAddress, flags, 0);
+            writeFutexWaitv(memory, waitersAddress, 1, 0, secondFutexAddress, flags, 0);
+
+            Future<Long> waitResult = executor.submit(() -> {
+                setSyscall(waitState, SYS_FUTEX_WAITV, waitersAddress, 2, 0, 0, CLOCK_MONOTONIC);
+                waitState.syscalls().handle(waitState, TEST_PC);
+                return waitState.register(10);
+            });
+
+            Thread.sleep(50);
+            assertTrue(!waitResult.isDone());
+
+            setSyscall(wakeState, SYS_FUTEX_WAKE, secondFutexAddress, FUTEX_BITSET_MATCH_ANY, 1, flags);
+            wakeState.syscalls().handle(wakeState, TEST_PC);
+            assertEquals(1, wakeState.register(10));
+            assertEquals(1, waitResult.get(5, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     /// Verifies `nanosleep` validation and successful short sleeps.
     @Test
     public void nanosleepValidatesTimespec() {
@@ -10670,6 +10933,22 @@ public final class GuestSyscallsTest {
     private static void writeTimespec(Memory memory, long address, long seconds, long nanoseconds) {
         memory.writeLong(address, seconds);
         memory.writeLong(address + Long.BYTES, nanoseconds);
+    }
+
+    /// Writes one Linux `struct futex_waitv` entry into guest memory.
+    private static void writeFutexWaitv(
+            Memory memory,
+            long address,
+            int index,
+            long value,
+            long futexAddress,
+            long flags,
+            long reserved) {
+        long entryAddress = address + (long) index * FUTEX_WAITV_SIZE;
+        memory.writeLong(entryAddress + FUTEX_WAITV_VALUE_OFFSET, value);
+        memory.writeLong(entryAddress + FUTEX_WAITV_ADDRESS_OFFSET, futexAddress);
+        memory.writeInt(entryAddress + FUTEX_WAITV_FLAGS_OFFSET, (int) flags);
+        memory.writeInt(entryAddress + FUTEX_WAITV_RESERVED_OFFSET, (int) reserved);
     }
 
     /// Writes one Linux RISC-V 64-bit `struct itimerval` into guest memory.
