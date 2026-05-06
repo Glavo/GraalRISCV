@@ -2042,7 +2042,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         EpollSet epollSet = epollFile.epollSet();
         if (operation == EPOLL_CTL_DEL) {
-            return epollSet.remove(fileDescriptor);
+            long result = epollSet.remove(fileDescriptor);
+            if (result == 0) {
+                notifyPollWaiters();
+            }
+            return result;
         }
         if (operation != EPOLL_CTL_ADD && operation != EPOLL_CTL_MOD) {
             return EINVAL;
@@ -2053,13 +2057,16 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         int events = memory.readInt(eventAddress + EPOLL_EVENT_EVENTS_OFFSET);
         long data = readLongUnaligned(eventAddress + EPOLL_EVENT_DATA_OFFSET);
-        if (operation == EPOLL_CTL_ADD) {
-            return epollSet.add(fileDescriptor, events, data);
+        long result = operation == EPOLL_CTL_ADD
+                ? epollSet.add(fileDescriptor, events, data)
+                : epollSet.modify(fileDescriptor, events, data);
+        if (result == 0) {
+            notifyPollWaiters();
         }
-        return epollSet.modify(fileDescriptor, events, data);
+        return result;
     }
 
-    /// Returns currently ready events from an in-memory `epoll` descriptor without blocking the host thread.
+    /// Reports events from an in-memory `epoll` descriptor, waiting for readiness or timeout when needed.
     protected long epollPwait(
             RiscVThreadState state,
             int epollFileDescriptor,
@@ -2073,6 +2080,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
         if (signalMaskAddress != 0 && signalSetSize != KERNEL_SIGSET_SIZE) {
             return EINVAL;
+        }
+        if (signalMaskAddress != 0 && !memory.isBacked(signalMaskAddress, KERNEL_SIGSET_SIZE)) {
+            return EFAULT;
+        }
+        long eventsByteSize = (long) maximumEvents * EPOLL_EVENT_SIZE;
+        if (!memory.isBacked(eventsAddress, eventsByteSize)) {
+            return EFAULT;
         }
 
         @Nullable OpenFile epollFile = openFile(epollFileDescriptor);
@@ -2088,9 +2102,40 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (signalMaskAddress != 0) {
             thread.setSignalMask(memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK);
         }
+        long timeoutNanoseconds = epollTimeoutNanoseconds(timeoutMilliseconds);
+        boolean immediateTimeout = timeoutMilliseconds == 0;
+        long deadlineNanoseconds = pollDeadlineNanoseconds(timeoutNanoseconds);
         try {
-            int count = 0;
             EpollSet epollSet = epollFile.epollSet();
+            while (true) {
+                long observedPollGeneration = pollGeneration;
+                int count = reportEpollEvents(epollSet, eventsAddress, maximumEvents);
+                if (count != 0 || immediateTimeout) {
+                    return count;
+                }
+                if (hasExitedChildProcess()) {
+                    return EINTR;
+                }
+                long remainingNanoseconds = remainingPollNanoseconds(deadlineNanoseconds);
+                if (remainingNanoseconds == 0) {
+                    return 0;
+                }
+                long waitResult = waitForPollChange(observedPollGeneration, remainingNanoseconds);
+                if (waitResult != 0) {
+                    return waitResult;
+                }
+            }
+        } finally {
+            if (signalMaskAddress != 0) {
+                thread.setSignalMask(savedSignalMask);
+            }
+        }
+    }
+
+    /// Writes currently ready `epoll` events and returns the number of reported interests.
+    protected int reportEpollEvents(EpollSet epollSet, long eventsAddress, int maximumEvents) {
+        synchronized (epollSet) {
+            int count = 0;
             for (int index = 0; index < epollSet.size() && count < maximumEvents; index++) {
                 EpollInterest interest = epollSet.interest(index);
                 int readyEvents = readyEventsFor(interest.fileDescriptor());
@@ -2103,11 +2148,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 count++;
             }
             return count;
-        } finally {
-            if (signalMaskAddress != 0) {
-                thread.setSignalMask(savedSignalMask);
-            }
         }
+    }
+
+    /// Converts a Linux `epoll_wait` millisecond timeout to nanoseconds.
+    protected static long epollTimeoutNanoseconds(int timeoutMilliseconds) {
+        if (timeoutMilliseconds < 0) {
+            return -1;
+        }
+        long milliseconds = timeoutMilliseconds;
+        return milliseconds > Long.MAX_VALUE / NANOSECONDS_PER_MILLISECOND
+                ? Long.MAX_VALUE
+                : milliseconds * NANOSECONDS_PER_MILLISECOND;
     }
 
     /// Reports descriptor readiness through Linux `pselect6`, waiting for readiness or timeout when needed.
@@ -10496,7 +10548,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private final ArrayList<EpollInterest> interests = new ArrayList<>();
 
         /// Adds a new descriptor interest or returns a raw negative Linux error.
-        long add(int fileDescriptor, int events, long data) {
+        synchronized long add(int fileDescriptor, int events, long data) {
             if (findIndex(fileDescriptor) >= 0) {
                 return EEXIST;
             }
@@ -10506,7 +10558,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Replaces an existing descriptor interest or returns a raw negative Linux error.
-        long modify(int fileDescriptor, int events, long data) {
+        synchronized long modify(int fileDescriptor, int events, long data) {
             int index = findIndex(fileDescriptor);
             if (index < 0) {
                 return ENOENT;
@@ -10517,7 +10569,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Removes an existing descriptor interest or returns a raw negative Linux error.
-        long remove(int fileDescriptor) {
+        synchronized long remove(int fileDescriptor) {
             int index = findIndex(fileDescriptor);
             if (index < 0) {
                 return ENOENT;
@@ -10528,12 +10580,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Returns the number of registered descriptor interests.
-        int size() {
+        synchronized int size() {
             return interests.size();
         }
 
         /// Returns the descriptor interest at the supplied index.
-        EpollInterest interest(int index) {
+        synchronized EpollInterest interest(int index) {
             return interests.get(index);
         }
 

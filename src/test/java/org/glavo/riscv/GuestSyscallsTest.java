@@ -4064,6 +4064,64 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `epoll_pwait` waits for guest-internal descriptor readiness changes.
+    @Test
+    public void epollPwaitWaitsForEventfdReadiness() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState pollState = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    state.syscalls());
+            long bufferAddress = memory.baseAddress();
+            long eventAddress = memory.baseAddress() + 128;
+            long eventsAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_EVENTFD2, 0, O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int eventFileDescriptor = (int) state.register(10);
+            assertEquals(3, eventFileDescriptor);
+
+            setSyscall(state, SYS_EPOLL_CREATE1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int epollFileDescriptor = (int) state.register(10);
+            assertEquals(4, epollFileDescriptor);
+
+            writeEpollEvent(memory, eventAddress, EPOLLIN, 0x66);
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, eventFileDescriptor, eventAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, memory.endAddress(), 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            Future<Long> pollResult = executor.submit(() -> {
+                setSyscall(pollState, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, -1, 0, 0);
+                pollState.syscalls().handle(pollState, TEST_PC);
+                return pollState.register(10);
+            });
+
+            Thread.sleep(50);
+            assertTrue(!pollResult.isDone());
+
+            memory.writeLong(bufferAddress, 9);
+            setSyscall(state, SYS_WRITE, eventFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+
+            assertEquals(1, pollResult.get(5, TimeUnit.SECONDS));
+            assertEquals(EPOLLIN, memory.readInt(eventsAddress + EPOLL_EVENT_EVENTS_OFFSET));
+            assertEquals(0x66, readEpollEventData(memory, eventsAddress));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     /// Verifies deterministic `pselect6` readiness for descriptor sets.
     @Test
     public void pselect6ReportsDescriptorReadiness() {
