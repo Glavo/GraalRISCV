@@ -514,6 +514,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     | CLONE_VM
                     | CLONE_FS
                     | CLONE_FILES
+                    | CLONE_PIDFD
                     | CLONE_VFORK
                     | CLONE_SYSVSEM
                     | CLONE_SETTLS
@@ -529,6 +530,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The byte offset of `flags` inside `struct clone_args`.
     private static final long CLONE_ARGS_FLAGS_OFFSET = 0;
+
+    /// The byte offset of `pidfd` inside `struct clone_args`.
+    private static final long CLONE_ARGS_PIDFD_OFFSET = Long.BYTES;
 
     /// The byte offset of `child_tid` inside `struct clone_args`.
     private static final long CLONE_ARGS_CHILD_TID_OFFSET = 16;
@@ -758,6 +762,27 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             long parentTidAddress,
             long tlsAddress,
             long childTidAddress) {
+        return clone(
+                state,
+                pc,
+                flags,
+                stackAddress,
+                parentTidAddress,
+                tlsAddress,
+                childTidAddress,
+                (flags & CLONE_PIDFD) == 0 ? 0 : parentTidAddress);
+    }
+
+    /// Handles the parent return path for Linux `clone` requests with an optional pidfd result address.
+    protected long clone(
+            RiscVThreadState state,
+            long pc,
+            long flags,
+            long stackAddress,
+            long parentTidAddress,
+            long tlsAddress,
+            long childTidAddress,
+            long pidFileDescriptorAddress) {
         long exitSignal = flags & CLONE_EXIT_SIGNAL_MASK;
         long controlFlags = flags & ~CLONE_EXIT_SIGNAL_MASK;
         if ((controlFlags & CLONE_THREAD) != 0) {
@@ -766,7 +791,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             }
             return cloneThread(state, pc, controlFlags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
         }
-        return cloneProcess(state, pc, flags, stackAddress, parentTidAddress, tlsAddress, childTidAddress);
+        return cloneProcess(
+                state,
+                pc,
+                flags,
+                stackAddress,
+                parentTidAddress,
+                tlsAddress,
+                childTidAddress,
+                pidFileDescriptorAddress);
     }
 
     /// Handles Linux `clone3` by translating `struct clone_args` to the existing clone implementation.
@@ -799,6 +832,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return EINVAL;
         }
 
+        long pidFileDescriptorAddress = memory.readLong(argumentsAddress + CLONE_ARGS_PIDFD_OFFSET);
         long childTidAddress = memory.readLong(argumentsAddress + CLONE_ARGS_CHILD_TID_OFFSET);
         long parentTidAddress = memory.readLong(argumentsAddress + CLONE_ARGS_PARENT_TID_OFFSET);
         long stackAddress = memory.readLong(argumentsAddress + CLONE_ARGS_STACK_OFFSET);
@@ -807,7 +841,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         long setTidAddress = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_SET_TID_OFFSET);
         long setTidSize = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_SET_TID_SIZE_OFFSET);
         long cgroup = cloneArgumentLong(argumentsAddress, size, CLONE_ARGS_CGROUP_OFFSET);
-        if ((flags & CLONE_PIDFD) != 0 || setTidAddress != 0 || setTidSize != 0 || cgroup != 0) {
+        if (setTidAddress != 0 || setTidSize != 0 || cgroup != 0) {
             return EINVAL;
         }
 
@@ -822,7 +856,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 childStackAddress,
                 parentTidAddress,
                 tlsAddress,
-                childTidAddress);
+                childTidAddress,
+                pidFileDescriptorAddress);
     }
 
     /// Reads an optional 64-bit `struct clone_args` field when it is present in the supplied size.
@@ -931,12 +966,22 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             long stackAddress,
             long parentTidAddress,
             long tlsAddress,
-            long childTidAddress) {
+            long childTidAddress,
+            long pidFileDescriptorAddress) {
         long exitSignal = flags & CLONE_EXIT_SIGNAL_MASK;
         if ((flags & ~SUPPORTED_PROCESS_CLONE_FLAGS) != 0
                 || ((flags & CLONE_VM) != 0 && (flags & CLONE_VFORK) == 0)
                 || exitSignal != SIGNAL_CHILD && exitSignal != 0) {
             return EINVAL;
+        }
+        boolean createPidFileDescriptor = (flags & CLONE_PIDFD) != 0;
+        if (createPidFileDescriptor) {
+            if ((flags & CLONE_PARENT_SETTID) != 0 && pidFileDescriptorAddress == parentTidAddress) {
+                return EINVAL;
+            }
+            if (!memory.isBacked(pidFileDescriptorAddress, Integer.BYTES)) {
+                return EFAULT;
+            }
         }
         if (!guestThreadingEnabled()) {
             return EAGAIN;
@@ -1020,6 +1065,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             childSyscalls.close();
             childMemory.close();
             return EAGAIN;
+        }
+        if (createPidFileDescriptor) {
+            long fileDescriptor = addOpenFile(
+                    OpenFile.pidFile(new PidFile(childSyscalls, childRecord), false),
+                    true);
+            memory.writeInt(pidFileDescriptorAddress, (int) fileDescriptor);
         }
         return childProcess.id();
     }
@@ -6153,6 +6204,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `rseq`.
     private static final int SYS_RSEQ = 293;
 
+    /// The Linux RISC-V syscall number for `pidfd_send_signal`.
+    private static final int SYS_PIDFD_SEND_SIGNAL = 424;
+
+    /// The Linux RISC-V syscall number for `pidfd_open`.
+    private static final int SYS_PIDFD_OPEN = 434;
+
+    /// The Linux RISC-V syscall number for `pidfd_getfd`.
+    private static final int SYS_PIDFD_GETFD = 438;
+
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final int SYS_FACCESSAT2 = 439;
 
@@ -6680,6 +6740,16 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_PIDFD_SEND_SIGNAL -> state.setRegister(10, pidfdSendSignal(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_PIDFD_OPEN -> state.setRegister(10, pidfdOpen(state.register(10), state.register(11)));
+            case SYS_PIDFD_GETFD -> state.setRegister(10, pidfdGetfd(
+                    (int) state.register(10),
+                    (int) state.register(11),
+                    state.register(12)));
             case SYS_FACCESSAT2 -> state.setRegister(10, faccessat(
                     state.register(10),
                     state.register(11),

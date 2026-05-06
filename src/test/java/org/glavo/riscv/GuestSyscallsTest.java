@@ -637,6 +637,15 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rseq`.
     private static final long SYS_RSEQ = 293;
 
+    /// The Linux RISC-V syscall number for `pidfd_send_signal`.
+    private static final long SYS_PIDFD_SEND_SIGNAL = 424;
+
+    /// The Linux RISC-V syscall number for `pidfd_open`.
+    private static final long SYS_PIDFD_OPEN = 434;
+
+    /// The Linux RISC-V syscall number for `pidfd_getfd`.
+    private static final long SYS_PIDFD_GETFD = 438;
+
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final long SYS_FACCESSAT2 = 439;
 
@@ -6697,6 +6706,253 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `pidfd_open` creates a close-on-exec pidfd for the current process.
+    @Test
+    public void pidfdOpenSelfValidatesFlagsAndSignals() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_PIDFD_OPEN, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_OPEN, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_OPEN, 1, O_CLOEXEC, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_OPEN, 1, O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int pidFileDescriptor = (int) state.register(10);
+            assertEquals(3, pidFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, pidFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, pidFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_SEND_SIGNAL, pidFileDescriptor, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_SEND_SIGNAL, pidFileDescriptor, 65, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_SEND_SIGNAL, pidFileDescriptor, 0, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_SEND_SIGNAL, 99, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies `pidfd_getfd` duplicates a target process descriptor into the caller.
+    @Test
+    public void pidfdGetfdDuplicatesTargetDescriptor() throws Exception {
+        Path file = tempDirectory.resolve("pidfd.txt");
+        Files.writeString(file, "pidfd");
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 256;
+            writeGuestString(memory, pathAddress, "/pidfd.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_PIDFD_OPEN, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int pidFileDescriptor = (int) state.register(10);
+            assertEquals(4, pidFileDescriptor);
+
+            setSyscall(state, SYS_PIDFD_GETFD, pidFileDescriptor, fileDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicatedFileDescriptor = (int) state.register(10);
+            assertEquals(5, duplicatedFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, duplicatedFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_READ, duplicatedFileDescriptor, bufferAddress, 5);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5, state.register(10));
+            assertEquals("pidfd", new String(memory.readBytes(bufferAddress, 5), StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_PIDFD_GETFD, pidFileDescriptor, fileDescriptor, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_GETFD, pidFileDescriptor, 99, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_GETFD, fileDescriptor, fileDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies child pidfds become readable after process exit.
+    @Test
+    public void pidfdOpenChildReportsExitReadiness() throws Exception {
+        CountDownLatch releaseChild = new CountDownLatch(1);
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                if (!releaseChild.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Timed out waiting to release child process");
+                }
+                childState.syscalls().recordThreadExit(childState, 0);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long timeoutAddress = memory.baseAddress() + 64;
+            long pollFileDescriptorsAddress = memory.baseAddress() + 128;
+            long statusAddress = memory.baseAddress() + 256;
+            memory.writeLong(timeoutAddress, 0);
+            memory.writeLong(timeoutAddress + Long.BYTES, 0);
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+
+            setSyscall(state, SYS_PIDFD_OPEN, childProcessId, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int pidFileDescriptor = (int) state.register(10);
+            assertEquals(3, pidFileDescriptor);
+
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 0, pidFileDescriptor, POLLIN);
+            setSyscall(state, SYS_PPOLL, pollFileDescriptorsAddress, 1, timeoutAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, pollRevents(memory, pollFileDescriptorsAddress, 0));
+
+            setSyscall(state, SYS_PIDFD_SEND_SIGNAL, pidFileDescriptor, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            releaseChild.countDown();
+            childExited.get(5, TimeUnit.SECONDS);
+
+            writePollFileDescriptor(memory, pollFileDescriptorsAddress, 0, pidFileDescriptor, POLLIN);
+            setSyscall(state, SYS_PPOLL, pollFileDescriptorsAddress, 1, timeoutAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+            assertEquals(POLLIN, pollRevents(memory, pollFileDescriptorsAddress, 0));
+
+            setSyscall(state, SYS_PIDFD_SEND_SIGNAL, pidFileDescriptor, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+        }
+    }
+
+    /// Verifies `CLONE_PIDFD` writes a close-on-exec pidfd to the parent.
+    @Test
+    public void clonePidfdWritesParentDescriptor() throws Exception {
+        CountDownLatch releaseChild = new CountDownLatch(1);
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                if (!releaseChild.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Timed out waiting to release child process");
+                }
+                childState.syscalls().recordThreadExit(childState, 0);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long pidFileDescriptorAddress = memory.baseAddress() + 64;
+            long statusAddress = memory.baseAddress() + 128;
+
+            setSyscall(state, SYS_CLONE, CLONE_PIDFD, 0, pidFileDescriptorAddress, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+            int pidFileDescriptor = memory.readInt(pidFileDescriptorAddress);
+            assertEquals(3, pidFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, pidFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_PIDFD_SEND_SIGNAL, pidFileDescriptor, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            releaseChild.countDown();
+            childExited.get(5, TimeUnit.SECONDS);
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+        }
+    }
+
     /// Verifies that thread-style `clone` requires a guest thread runner.
     @Test
     public void cloneRequiresThreadCreationContext() {
@@ -6789,7 +7045,7 @@ public final class GuestSyscallsTest {
             memory.writeLong(argumentsAddress + CLONE_ARGS_EXIT_SIGNAL_OFFSET, 0);
             setSyscall(state, SYS_CLONE3, argumentsAddress, CLONE_ARGS_SIZE, 0);
             state.syscalls().handle(state, TEST_PC);
-            assertEquals(EINVAL, state.register(10));
+            assertEquals(EAGAIN, state.register(10));
 
             memory.writeLong(argumentsAddress + CLONE_ARGS_FLAGS_OFFSET, 0);
             setSyscall(state, SYS_CLONE3, argumentsAddress, 63, 0);

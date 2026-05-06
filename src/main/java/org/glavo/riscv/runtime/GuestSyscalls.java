@@ -1072,6 +1072,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux flags accepted by `timerfd_create`.
     protected static final long SUPPORTED_TIMERFD_CREATE_FLAGS = O_NONBLOCK | O_CLOEXEC;
 
+    /// Linux flags accepted by `pidfd_open`.
+    protected static final long SUPPORTED_PIDFD_OPEN_FLAGS = O_NONBLOCK;
+
     /// Linux flags accepted by `timerfd_settime`.
     protected static final long SUPPORTED_TIMERFD_SETTIME_FLAGS = TFD_TIMER_ABSTIME;
 
@@ -5754,6 +5757,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile.isTimerFile()) {
             return openFile.timerFile().isReadable() ? EPOLLIN : 0;
         }
+        if (openFile.isPidFile()) {
+            return openFile.pidFile().exited() ? EPOLLIN : 0;
+        }
         if (openFile.isPtyEndpoint()) {
             PtyEndpoint endpoint = openFile.ptyEndpoint();
             int events = 0;
@@ -8554,6 +8560,77 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         memory.writeInt(infoAddress + WAITID_SIGNAL_INFO_CHILD_STATUS_OFFSET, child.exitCode());
     }
 
+    /// Opens a Linux pidfd for the current process or a tracked child process.
+    protected long pidfdOpen(long processId, long flags) {
+        if (processId <= 0 || processId != (int) processId || (flags & ~SUPPORTED_PIDFD_OPEN_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable PidFile pidFile = pidFileForProcess((int) processId);
+        if (pidFile == null) {
+            return ESRCH;
+        }
+        return addOpenFile(OpenFile.pidFile(pidFile, (flags & O_NONBLOCK) != 0), true);
+    }
+
+    /// Sends a signal through a Linux pidfd descriptor.
+    protected long pidfdSendSignal(int fileDescriptor, long signalNumber, long signalInfoAddress, long flags) {
+        if (flags != 0 || !isValidSignalNumber(signalNumber)) {
+            return EINVAL;
+        }
+        if (signalInfoAddress != 0 && !memory.isBacked(signalInfoAddress, WAITID_SIGNAL_INFO_SIZE)) {
+            return EFAULT;
+        }
+
+        @Nullable PidFile pidFile = pidFileForDescriptor(fileDescriptor);
+        if (pidFile == null) {
+            return EBADF;
+        }
+        return pidFile.exited() ? ESRCH : 0;
+    }
+
+    /// Duplicates a target process descriptor through a Linux pidfd descriptor.
+    protected long pidfdGetfd(int fileDescriptor, int targetFileDescriptor, long flags) {
+        if (flags != 0) {
+            return EINVAL;
+        }
+        if (targetFileDescriptor < 0) {
+            return EBADF;
+        }
+
+        @Nullable PidFile pidFile = pidFileForDescriptor(fileDescriptor);
+        if (pidFile == null) {
+            return EBADF;
+        }
+        if (pidFile.exited()) {
+            return ESRCH;
+        }
+
+        @Nullable OpenFile duplicate = pidFile.syscalls().duplicateOpenFile(targetFileDescriptor);
+        if (duplicate == null) {
+            return EBADF;
+        }
+        return addOpenFile(duplicate, true);
+    }
+
+    /// Returns the pidfd backing the supplied descriptor, or null when it is not a pidfd.
+    protected @Nullable PidFile pidFileForDescriptor(int fileDescriptor) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        return openFile != null && openFile.isPidFile() ? openFile.pidFile() : null;
+    }
+
+    /// Returns a pidfd target for the current process or a tracked child process.
+    protected @Nullable PidFile pidFileForProcess(int processId) {
+        if (process.id() == processId) {
+            return new PidFile(this, null);
+        }
+
+        synchronized (childProcessLock) {
+            @Nullable ChildProcess child = childProcess(processId);
+            return child == null ? null : new PidFile(child.syscalls(), child);
+        }
+    }
+
     /// Reports the simulated single CPU and NUMA node.
     protected long getcpu(long cpuAddress, long nodeAddress) {
         if (cpuAddress != 0) {
@@ -9865,6 +9942,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
         if (openFile.isEpollFile()) {
             return "anon_inode:[eventpoll]";
+        }
+        if (openFile.isPidFile()) {
+            return "anon_inode:[pidfd]";
         }
         return "anon_inode:[jriscv]";
     }
@@ -11329,10 +11409,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private final Thread thread;
 
         /// Whether the child process has reported a final exit code.
-        private boolean exited;
+        private volatile boolean exited;
 
         /// The low eight bits of the child process exit code.
-        private int exitCode;
+        private volatile int exitCode;
 
         /// Creates a tracked child process.
         protected ChildProcess(int processId, int processGroupId, GuestSyscalls syscalls, Thread thread) {
@@ -11412,6 +11492,31 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns the Linux wait status for a normal process exit.
         private int waitStatus() {
             return exitCode << 8;
+        }
+    }
+
+    /// Stores the process object referenced by one Linux pidfd open file description.
+    protected static final class PidFile {
+        /// The syscall handler that owns the target process descriptor table.
+        private final GuestSyscalls syscalls;
+
+        /// The child-process record when this pidfd targets a child process.
+        private final @Nullable ChildProcess child;
+
+        /// Creates a pidfd target.
+        protected PidFile(GuestSyscalls syscalls, @Nullable ChildProcess child) {
+            this.syscalls = syscalls;
+            this.child = child;
+        }
+
+        /// Returns the syscall handler that owns the target descriptor table.
+        private GuestSyscalls syscalls() {
+            return syscalls;
+        }
+
+        /// Returns true when the target process has exited.
+        private boolean exited() {
+            return child == null ? syscalls.processExitRequested : child.exited();
         }
     }
 
@@ -12186,6 +12291,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// The interest set backing an epoll descriptor.
         private final @Nullable EpollSet epollSet;
 
+        /// The pidfd target backing this descriptor, or null for non-pidfd entries.
+        private final @Nullable PidFile pidFile;
+
         /// The socket object backing this descriptor, or null for non-socket entries.
         private final @Nullable GuestSocket socket;
 
@@ -12265,6 +12373,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     null,
                     epollSet,
                     null,
+                    null,
                     terminalDevice,
                     null,
                     nullDevice,
@@ -12290,6 +12399,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 @Nullable EventCounter eventCounter,
                 @Nullable TimerFile timerFile,
                 @Nullable EpollSet epollSet,
+                @Nullable PidFile pidFile,
                 @Nullable GuestSocket socket,
                 @Nullable TerminalDevice terminalDevice,
                 @Nullable PtyEndpoint ptyEndpoint,
@@ -12312,6 +12422,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             this.eventCounter = eventCounter;
             this.timerFile = timerFile;
             this.epollSet = epollSet;
+            this.pidFile = pidFile;
             this.socket = socket;
             this.terminalDevice = terminalDevice;
             this.ptyEndpoint = ptyEndpoint;
@@ -12539,6 +12650,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     null,
                     null,
                     null,
+                    null,
                     ptyEndpoint,
                     false,
                     false,
@@ -12726,6 +12838,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     null,
                     null,
                     null,
+                    null,
                     false,
                     false,
                     false,
@@ -12774,6 +12887,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     null,
                     null,
                     null,
+                    null,
                     socket,
                     null,
                     null,
@@ -12783,6 +12897,34 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     false,
                     true,
                     true,
+                    false,
+                    nonblocking);
+        }
+
+        /// Creates an entry backed by a Linux pidfd target.
+        static OpenFile pidFile(PidFile pidFile, boolean nonblocking) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    pidFile,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    false,
                     false,
                     nonblocking);
         }
@@ -12820,6 +12962,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when this entry is backed by an epoll interest set.
         boolean isEpollFile() {
             return epollSet != null;
+        }
+
+        /// Returns true when this entry is backed by a Linux pidfd target.
+        boolean isPidFile() {
+            return pidFile != null;
         }
 
         /// Returns true when this entry is backed by a guest socket.
@@ -12885,6 +13032,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         EpollSet epollSet() {
             assert epollSet != null;
             return epollSet;
+        }
+
+        /// Returns the Linux pidfd target backing this descriptor.
+        PidFile pidFile() {
+            assert pidFile != null;
+            return pidFile;
         }
 
         /// Returns the guest socket backing this descriptor.
