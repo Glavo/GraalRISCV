@@ -313,6 +313,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `capset`.
     private static final long SYS_CAPSET = 91;
 
+    /// The Linux RISC-V syscall number for `waitid`.
+    private static final long SYS_WAITID = 95;
+
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final long SYS_SET_TID_ADDRESS = 96;
 
@@ -1342,6 +1345,27 @@ public final class GuestSyscallsTest {
     /// Linux `SIGCHLD`.
     private static final long SIGCHLD = 17;
 
+    /// Linux `P_ALL`.
+    private static final long P_ALL = 0;
+
+    /// Linux `P_PID`.
+    private static final long P_PID = 1;
+
+    /// Linux `P_PGID`.
+    private static final long P_PGID = 2;
+
+    /// Linux `WNOHANG`.
+    private static final long WNOHANG = 0x00000001L;
+
+    /// Linux `WEXITED`.
+    private static final long WEXITED = 0x00000004L;
+
+    /// Linux `WNOWAIT`.
+    private static final long WNOWAIT = 0x01000000L;
+
+    /// Linux `CLD_EXITED`.
+    private static final long CLD_EXITED = 1;
+
     /// Linux `SIGKILL`.
     private static final long SIGKILL = 9;
 
@@ -1372,8 +1396,20 @@ public final class GuestSyscallsTest {
     /// The rounded byte size of Linux RISC-V 64-bit `rt_sigframe`.
     private static final long SIGNAL_FRAME_SIZE = 1088;
 
+    /// The byte offset of `si_signo` inside Linux generic 64-bit `siginfo_t`.
+    private static final long SIGNAL_INFO_SIGNO_OFFSET = 0;
+
     /// The byte offset of `si_code` inside Linux generic 64-bit `siginfo_t`.
     private static final long SIGNAL_INFO_CODE_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `si_pid` inside the Linux generic 64-bit `siginfo_t` child union.
+    private static final long SIGNAL_INFO_CHILD_PID_OFFSET = 2L * Long.BYTES;
+
+    /// The byte offset of `si_uid` inside the Linux generic 64-bit `siginfo_t` child union.
+    private static final long SIGNAL_INFO_CHILD_UID_OFFSET = SIGNAL_INFO_CHILD_PID_OFFSET + Integer.BYTES;
+
+    /// The byte offset of `si_status` inside the Linux generic 64-bit `siginfo_t` child union.
+    private static final long SIGNAL_INFO_CHILD_STATUS_OFFSET = SIGNAL_INFO_CHILD_UID_OFFSET + Integer.BYTES;
 
     /// The byte offset of `si_addr` inside the Linux generic 64-bit `siginfo_t` fault union.
     private static final long SIGNAL_INFO_FAULT_ADDRESS_OFFSET = 2L * Long.BYTES;
@@ -6274,6 +6310,262 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `waitid` validates options and reports no children.
+    @Test
+    public void waitidWithoutChildrenReportsEchild() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long infoAddress = memory.baseAddress() + 64;
+            long rusageAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_WAITID, P_ALL, 0, infoAddress, WNOHANG, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_WAITID, P_ALL, 0, infoAddress, WNOHANG | WEXITED, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ECHILD, state.register(10));
+
+            setSyscall(state, SYS_WAITID, 99, 0, infoAddress, WEXITED, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_WAITID, P_ALL, 0, memory.endAddress(), WEXITED, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_WAITID, P_ALL, 0, infoAddress, WEXITED, memory.endAddress());
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_WAITID, P_ALL, 0, infoAddress, WEXITED, rusageAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ECHILD, state.register(10));
+        }
+    }
+
+    /// Verifies `waitid` reports normal child exits through Linux `siginfo_t`.
+    @Test
+    public void waitidReportsExitedChildSiginfo() throws Exception {
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                childState.syscalls().recordThreadExit(childState, 123);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long infoAddress = memory.baseAddress() + 64;
+            long rusageAddress = memory.baseAddress() + 256;
+            long statusAddress = memory.baseAddress() + 512;
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+            childExited.get(5, TimeUnit.SECONDS);
+
+            setSyscall(state, SYS_WAITID, P_ALL, 0, infoAddress, WEXITED, rusageAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertWaitidSiginfo(memory, infoAddress, childProcessId, 123);
+            assertEquals(0, memory.readLong(rusageAddress));
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, WNOHANG, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ECHILD, state.register(10));
+        }
+    }
+
+    /// Verifies `waitid(WNOHANG)` leaves `si_pid` zero when a matching child has not exited.
+    @Test
+    public void waitidNohangReportsNoExitedChild() throws Exception {
+        CountDownLatch releaseChild = new CountDownLatch(1);
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                if (!releaseChild.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Timed out waiting to release child process");
+                }
+                childState.syscalls().recordThreadExit(childState, 0);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long infoAddress = memory.baseAddress() + 64;
+            long statusAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+
+            memory.writeInt(infoAddress + SIGNAL_INFO_CHILD_PID_OFFSET, -1);
+            setSyscall(state, SYS_WAITID, P_ALL, 0, infoAddress, WNOHANG | WEXITED, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readInt(infoAddress + SIGNAL_INFO_CHILD_PID_OFFSET));
+
+            releaseChild.countDown();
+            childExited.get(5, TimeUnit.SECONDS);
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+            assertEquals(0, memory.readInt(statusAddress));
+        }
+    }
+
+    /// Verifies `waitid(WNOWAIT)` observes child exit state without reaping it.
+    @Test
+    public void waitidNoReapLeavesChildWaitable() throws Exception {
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                childState.syscalls().recordThreadExit(childState, 7);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long infoAddress = memory.baseAddress() + 64;
+            long statusAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+            childExited.get(5, TimeUnit.SECONDS);
+
+            setSyscall(state, SYS_WAITID, P_PID, childProcessId, infoAddress, WEXITED | WNOWAIT, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertWaitidSiginfo(memory, infoAddress, childProcessId, 7);
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+            assertEquals(7 << 8, memory.readInt(statusAddress));
+        }
+    }
+
+    /// Verifies `waitid` filters exited children by process id and process group id.
+    @Test
+    public void waitidFiltersChildSelectors() throws Exception {
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                childState.syscalls().recordThreadExit(childState, 0);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long infoAddress = memory.baseAddress() + 64;
+
+            setSyscall(state, SYS_GETPGID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long processGroupId = state.register(10);
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+            childExited.get(5, TimeUnit.SECONDS);
+
+            setSyscall(state, SYS_WAITID, P_PID, childProcessId + 1, infoAddress, WEXITED, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ECHILD, state.register(10));
+
+            setSyscall(state, SYS_WAITID, P_PGID, processGroupId + 1, infoAddress, WEXITED, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ECHILD, state.register(10));
+
+            setSyscall(state, SYS_WAITID, P_PGID, processGroupId, infoAddress, WEXITED, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertWaitidSiginfo(memory, infoAddress, childProcessId, 0);
+        }
+    }
+
     /// Verifies child-process exits queue a `SIGCHLD` frame before the next syscall returns to user code.
     @Test
     public void childExitQueuesSigchldSignalFrame() throws Exception {
@@ -10949,6 +11241,15 @@ public final class GuestSyscallsTest {
         memory.writeLong(entryAddress + FUTEX_WAITV_ADDRESS_OFFSET, futexAddress);
         memory.writeInt(entryAddress + FUTEX_WAITV_FLAGS_OFFSET, (int) flags);
         memory.writeInt(entryAddress + FUTEX_WAITV_RESERVED_OFFSET, (int) reserved);
+    }
+
+    /// Asserts a Linux `waitid` child-exit `siginfo_t` in guest memory.
+    private static void assertWaitidSiginfo(Memory memory, long address, long processId, long status) {
+        assertEquals(SIGCHLD, memory.readInt(address + SIGNAL_INFO_SIGNO_OFFSET));
+        assertEquals(CLD_EXITED, memory.readInt(address + SIGNAL_INFO_CODE_OFFSET));
+        assertEquals(processId, memory.readInt(address + SIGNAL_INFO_CHILD_PID_OFFSET));
+        assertEquals(GuestCredentials.DEFAULT_USER_ID, memory.readInt(address + SIGNAL_INFO_CHILD_UID_OFFSET));
+        assertEquals(status, memory.readInt(address + SIGNAL_INFO_CHILD_STATUS_OFFSET));
     }
 
     /// Writes one Linux RISC-V 64-bit `struct itimerval` into guest memory.

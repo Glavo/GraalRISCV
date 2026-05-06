@@ -919,11 +919,59 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `WUNTRACED`.
     protected static final long WAIT_UNTRACED = 0x00000002L;
 
+    /// Linux `WEXITED`.
+    protected static final long WAIT_EXITED = 0x00000004L;
+
     /// Linux `WCONTINUED`.
     protected static final long WAIT_CONTINUED = 0x00000008L;
 
+    /// Linux `WNOWAIT`.
+    protected static final long WAIT_NO_REAP = 0x01000000L;
+
     /// Wait options accepted by the simulator.
     protected static final long SUPPORTED_WAIT_OPTIONS = WAIT_NO_HANG | WAIT_UNTRACED | WAIT_CONTINUED;
+
+    /// Wait options accepted by `waitid`.
+    protected static final long SUPPORTED_WAITID_OPTIONS =
+            WAIT_NO_HANG | WAIT_UNTRACED | WAIT_EXITED | WAIT_CONTINUED | WAIT_NO_REAP;
+
+    /// Linux `P_ALL`.
+    protected static final long WAIT_ID_ALL = 0;
+
+    /// Linux `P_PID`.
+    protected static final long WAIT_ID_PROCESS = 1;
+
+    /// Linux `P_PGID`.
+    protected static final long WAIT_ID_PROCESS_GROUP = 2;
+
+    /// Linux `SIGCHLD`.
+    protected static final long SIGNAL_CHILD = 17;
+
+    /// Linux `CLD_EXITED`.
+    protected static final int SIGNAL_CODE_CHILD_EXITED = 1;
+
+    /// The byte size of Linux generic 64-bit `siginfo_t` written by `waitid`.
+    protected static final long WAITID_SIGNAL_INFO_SIZE = 128;
+
+    /// The byte offset of `si_signo` inside Linux generic 64-bit `siginfo_t`.
+    protected static final long WAITID_SIGNAL_INFO_SIGNO_OFFSET = 0;
+
+    /// The byte offset of `si_errno` inside Linux generic 64-bit `siginfo_t`.
+    protected static final long WAITID_SIGNAL_INFO_ERRNO_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `si_code` inside Linux generic 64-bit `siginfo_t`.
+    protected static final long WAITID_SIGNAL_INFO_CODE_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `si_pid` inside the Linux generic 64-bit `siginfo_t` child union.
+    protected static final long WAITID_SIGNAL_INFO_CHILD_PID_OFFSET = 2L * Long.BYTES;
+
+    /// The byte offset of `si_uid` inside the Linux generic 64-bit `siginfo_t` child union.
+    protected static final long WAITID_SIGNAL_INFO_CHILD_UID_OFFSET =
+            WAITID_SIGNAL_INFO_CHILD_PID_OFFSET + Integer.BYTES;
+
+    /// The byte offset of `si_status` inside the Linux generic 64-bit `siginfo_t` child union.
+    protected static final long WAITID_SIGNAL_INFO_CHILD_STATUS_OFFSET =
+            WAITID_SIGNAL_INFO_CHILD_UID_OFFSET + Integer.BYTES;
 
     /// The byte size of Linux generic 64-bit kernel `sigset_t`.
     protected static final long KERNEL_SIGSET_SIZE = 8;
@@ -8415,6 +8463,97 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return exitedChild.processId();
     }
 
+    /// Waits for an exited child process and reports Linux `siginfo_t` status.
+    protected long waitid(long idType, long id, long infoAddress, long options, long rusageAddress) {
+        if ((options & ~SUPPORTED_WAITID_OPTIONS) != 0
+                || (options & (WAIT_EXITED | WAIT_UNTRACED | WAIT_CONTINUED)) == 0
+                || (options & WAIT_EXITED) == 0
+                || !isSupportedWaitIdSelector(idType, id)) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(infoAddress, WAITID_SIGNAL_INFO_SIZE)
+                || (rusageAddress != 0 && !memory.isBacked(rusageAddress, RUSAGE_SIZE))) {
+            return EFAULT;
+        }
+
+        @Nullable ChildProcess exitedChild = null;
+        while (true) {
+            synchronized (childProcessLock) {
+                if (processExitRequested || threadFailure != null) {
+                    return EINTR;
+                }
+                boolean hasMatchingChild = false;
+                for (int index = 0; index < childProcesses.size(); index++) {
+                    ChildProcess child = childProcesses.get(index);
+                    if (!child.matchesWaitId(idType, id, process.processGroupId())) {
+                        continue;
+                    }
+                    hasMatchingChild = true;
+                    if (child.exited()) {
+                        exitedChild = child;
+                        if ((options & WAIT_NO_REAP) == 0) {
+                            childProcesses.remove(index);
+                        }
+                        break;
+                    }
+                }
+
+                if (exitedChild == null && hasMatchingChild) {
+                    if ((options & WAIT_NO_HANG) != 0) {
+                        memory.clear(infoAddress, WAITID_SIGNAL_INFO_SIZE);
+                        if (rusageAddress != 0) {
+                            memory.clear(rusageAddress, RUSAGE_SIZE);
+                        }
+                        return 0;
+                    }
+                    try {
+                        childProcessLock.wait();
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        return EINTR;
+                    }
+                    continue;
+                }
+                if (!hasMatchingChild) {
+                    return ECHILD;
+                }
+                break;
+            }
+        }
+
+        writeWaitidSignalInfo(infoAddress, exitedChild);
+        if (rusageAddress != 0) {
+            memory.clear(rusageAddress, RUSAGE_SIZE);
+        }
+        if ((options & WAIT_NO_REAP) == 0) {
+            joinChildProcess(exitedChild);
+        }
+        return 0;
+    }
+
+    /// Returns true when a Linux `waitid` selector is accepted.
+    protected static boolean isSupportedWaitIdSelector(long idType, long id) {
+        if (id < 0 || id != (int) id) {
+            return false;
+        }
+        return idType == WAIT_ID_ALL
+                || idType == WAIT_ID_PROCESS
+                || idType == WAIT_ID_PROCESS_GROUP;
+    }
+
+    /// Writes a Linux `waitid` child-exit `siginfo_t`.
+    protected void writeWaitidSignalInfo(long infoAddress, ChildProcess child) {
+        memory.clear(infoAddress, WAITID_SIGNAL_INFO_SIZE);
+        memory.writeInt(infoAddress + WAITID_SIGNAL_INFO_SIGNO_OFFSET, (int) SIGNAL_CHILD);
+        memory.writeInt(infoAddress + WAITID_SIGNAL_INFO_ERRNO_OFFSET, 0);
+        memory.writeInt(infoAddress + WAITID_SIGNAL_INFO_CODE_OFFSET, SIGNAL_CODE_CHILD_EXITED);
+        memory.writeInt(infoAddress + WAITID_SIGNAL_INFO_CHILD_PID_OFFSET, child.processId());
+        memory.writeInt(
+                infoAddress + WAITID_SIGNAL_INFO_CHILD_UID_OFFSET,
+                GuestCredentials.idToInt(child.syscalls().credentials.realUserId()));
+        memory.writeInt(infoAddress + WAITID_SIGNAL_INFO_CHILD_STATUS_OFFSET, child.exitCode());
+    }
+
     /// Reports the simulated single CPU and NUMA node.
     protected long getcpu(long cpuAddress, long nodeAddress) {
         if (cpuAddress != 0) {
@@ -11242,6 +11381,16 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return waitProcessId < -1 && -waitProcessId == processGroupId;
         }
 
+        /// Returns true when this child matches a Linux `waitid` selector.
+        private boolean matchesWaitId(long idType, long id, long currentProcessGroupId) {
+            return switch ((int) idType) {
+                case (int) WAIT_ID_ALL -> true;
+                case (int) WAIT_ID_PROCESS -> id == processId;
+                case (int) WAIT_ID_PROCESS_GROUP -> (id == 0 ? currentProcessGroupId : id) == processGroupId;
+                default -> false;
+            };
+        }
+
         /// Records the final child exit code.
         private void recordExit(long exitCode) {
             if (!exited) {
@@ -11253,6 +11402,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true after the child has exited.
         private boolean exited() {
             return exited;
+        }
+
+        /// Returns the low eight bits of the normal child exit code.
+        private int exitCode() {
+            return exitCode;
         }
 
         /// Returns the Linux wait status for a normal process exit.

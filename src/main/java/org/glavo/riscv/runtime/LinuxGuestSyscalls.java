@@ -5811,6 +5811,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `exit_group`.
     private static final int SYS_EXIT_GROUP = 94;
 
+    /// The Linux RISC-V syscall number for `waitid`.
+    private static final int SYS_WAITID = 95;
+
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final int SYS_SET_TID_ADDRESS = 96;
 
@@ -6349,6 +6352,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 requestProcessExit(state.register(10));
                 throw new ProgramExitException(state.register(10));
             }
+            case SYS_WAITID -> state.setRegister(10, waitid(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_EXIT -> exitThread(state, state.register(10));
             case SYS_SET_TID_ADDRESS -> state.setRegister(10, setTidAddress(state, state.register(10)));
             case SYS_FUTEX -> state.setRegister(10, futex(
