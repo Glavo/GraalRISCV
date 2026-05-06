@@ -16,12 +16,12 @@
 ### Runtime Surface
 
 - Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.
-- Linux runtime support includes process/thread state, mutable guest credentials, setuid/setgid exec credential transitions, deterministic time, `clone`/`wait4`, descriptor close-on-exec handling, Linux `#!` binary-format rewriting, terminal raw-mode behavior, and CLI environment overrides.
+- Linux runtime support includes process/thread state, mutable guest credentials, setuid/setgid exec credential transitions, child-exit `SIGCHLD` delivery, deterministic time, `clone`/`wait4`, descriptor close-on-exec and `close_range` handling, Linux `#!` binary-format rewriting, terminal raw-mode behavior, and CLI environment overrides.
 - LTP syscall work includes a coverage report and an ABI-table driven static smoke ELF for core identity, process/resource, time, random, and filesystem behavior.
 
 ### Filesystems And Devices
 
-- The filesystem layer supports Docker-like bind/tar/tmpfs mounts, gzip-compressed memory tar mounts with fork-inherited writable state, virtual `/proc`, minimal virtual `/sys`, Linux-like `/dev`, and resolver-file fallback for rootfs images with broken `/etc/resolv.conf` symlinks.
+- The filesystem layer supports Docker-like bind/tar/tmpfs mounts, gzip-compressed memory tar mounts with fork-inherited writable state, virtual `/proc`, minimal virtual `/sys`, Linux-like `/dev` with a basic `/dev/ptmx` and `/dev/pts/0` pseudoterminal pair, and resolver-file fallback for rootfs images with broken `/etc/resolv.conf` symlinks.
 - Filesystem metadata includes guest-visible uid, gid, chmod mode bits, process `umask`, Linux-style DAC, setgid directory inheritance, sticky-directory mutation checks, and ancestor-directory search checks.
 - Filesystem namespace and mount-spec parsing live under `org.glavo.riscv.runtime.fs`; host paths use `java.nio.file.Path` directly.
 

@@ -344,6 +344,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `O_EXCL`.
     protected static final long O_EXCL = 00000200L;
 
+    /// Linux `O_NOCTTY`.
+    protected static final long O_NOCTTY = 00000400L;
+
     /// Linux `O_TRUNC`.
     protected static final long O_TRUNC = 00001000L;
 
@@ -358,6 +361,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Linux `O_CLOEXEC`.
     protected static final long O_CLOEXEC = 02000000L;
+
+    /// Linux flags accepted by `TIOCGPTPEER`.
+    protected static final long SUPPORTED_TIOCGPTPEER_FLAGS =
+            O_ACCMODE | O_NOCTTY | O_NONBLOCK | O_CLOEXEC;
 
     /// Linux `EFD_SEMAPHORE`.
     protected static final long EFD_SEMAPHORE = 1;
@@ -455,6 +462,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `FD_CLOEXEC`.
     protected static final long FD_CLOEXEC = 1;
 
+    /// Linux `CLOSE_RANGE_UNSHARE`.
+    protected static final long CLOSE_RANGE_UNSHARE = 1L << 1;
+
+    /// Linux `CLOSE_RANGE_CLOEXEC`.
+    protected static final long CLOSE_RANGE_CLOEXEC = 1L << 2;
+
+    /// Flags supported by `close_range`.
+    protected static final long SUPPORTED_CLOSE_RANGE_FLAGS = CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC;
+
     /// Linux `F_GETFL`.
     protected static final long F_GETFL = 3;
 
@@ -532,6 +548,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// The Linux generic tty `TIOCSWINSZ` ioctl request number.
     protected static final long TIOCSWINSZ = 0x5414;
+
+    /// The Linux generic tty `TIOCGSID` ioctl request number.
+    protected static final long TIOCGSID = 0x5429;
+
+    /// The Linux generic tty `TIOCGPTN` ioctl request number.
+    protected static final long TIOCGPTN = 0x80045430L;
+
+    /// The Linux generic tty `TIOCSPTLCK` ioctl request number.
+    protected static final long TIOCSPTLCK = 0x40045431L;
+
+    /// The Linux generic tty `TIOCGPTPEER` ioctl request number.
+    protected static final long TIOCGPTPEER = 0x5441;
 
     /// The Linux framebuffer `FBIOGET_VSCREENINFO` ioctl request number.
     protected static final long FBIOGET_VSCREENINFO = 0x4600;
@@ -1235,6 +1263,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Descriptor flags for guest-opened file descriptors.
     protected final ArrayList<Boolean> openFileCloseOnExecFlags = new ArrayList<>();
 
+    /// The most recently allocated pseudoterminal pair exposed through `/dev/pts/0`.
+    protected @Nullable PtyDevice currentPtyDevice;
+
     /// Allocates process and thread ids for this emulator run.
     protected final GuestProcessRegistry processRegistry;
 
@@ -1733,6 +1764,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         System.arraycopy(parent.resourceLimitMaximum, 0, resourceLimitMaximum, 0, resourceLimitMaximum.length);
         this.randomState = parent.randomState;
         this.timeSource = parent.timeSource;
+        this.currentPtyDevice = parent.currentPtyDevice;
         copyStandardFilesFrom(parent);
         copyOpenFilesFrom(parent);
     }
@@ -2092,6 +2124,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EFAULT;
         }
         boolean immediateTimeout = false;
+        long timeoutNanoseconds = -1;
         if (timeoutAddress != 0) {
             if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
                 return EFAULT;
@@ -2101,7 +2134,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (seconds < 0 || nanoseconds < 0 || nanoseconds >= NANOSECONDS_PER_SECOND) {
                 return EINVAL;
             }
-            immediateTimeout = seconds == 0 && nanoseconds == 0;
+            timeoutNanoseconds = timespecToSaturatedNanoseconds(seconds, nanoseconds);
+            immediateTimeout = timeoutNanoseconds == 0;
         }
 
         long signalMaskAddress = 0;
@@ -2156,6 +2190,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 }
                 if (descriptorReady) {
                     readyCount++;
+                }
+            }
+            if (readyCount == 0 && !immediateTimeout) {
+                if (hasExitedChildProcess()) {
+                    return EINTR;
+                }
+                long waitResult = waitForEmptyPoll(timeoutNanoseconds);
+                if (waitResult != 0) {
+                    return waitResult;
                 }
             }
             return readyCount;
@@ -2239,6 +2282,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EFAULT;
         }
         boolean immediateTimeout = false;
+        long timeoutNanoseconds = -1;
         if (timeoutAddress != 0) {
             if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
                 return EFAULT;
@@ -2248,7 +2292,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (seconds < 0 || nanoseconds < 0 || nanoseconds >= NANOSECONDS_PER_SECOND) {
                 return EINVAL;
             }
-            immediateTimeout = seconds == 0 && nanoseconds == 0;
+            timeoutNanoseconds = timespecToSaturatedNanoseconds(seconds, nanoseconds);
+            immediateTimeout = timeoutNanoseconds == 0;
         }
         if (signalMaskAddress != 0 && !memory.isBacked(signalMaskAddress, KERNEL_SIGSET_SIZE)) {
             return EFAULT;
@@ -2283,11 +2328,51 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     readyCount++;
                 }
             }
+            if (readyCount == 0 && !immediateTimeout) {
+                if (hasExitedChildProcess()) {
+                    return EINTR;
+                }
+                long waitResult = waitForEmptyPoll(timeoutNanoseconds);
+                if (waitResult != 0) {
+                    return waitResult;
+                }
+            }
             return readyCount;
         } finally {
             if (signalMaskAddress != 0) {
                 thread.setSignalMask(savedSignalMask);
             }
+        }
+    }
+
+    /// Returns true when a child process has an unreaped exit status.
+    protected boolean hasExitedChildProcess() {
+        synchronized (childProcessLock) {
+            for (ChildProcess child : childProcesses) {
+                if (child.exited()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /// Briefly yields for a blocking poll that found no ready descriptors.
+    protected static long waitForEmptyPoll(long timeoutNanoseconds) {
+        long waitNanoseconds = timeoutNanoseconds < 0
+                ? NANOSECONDS_PER_MILLISECOND
+                : Math.min(timeoutNanoseconds, NANOSECONDS_PER_MILLISECOND);
+        if (waitNanoseconds <= 0) {
+            return 0;
+        }
+        try {
+            Thread.sleep(
+                    waitNanoseconds / NANOSECONDS_PER_MILLISECOND,
+                    (int) (waitNanoseconds % NANOSECONDS_PER_MILLISECOND));
+            return 0;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
         }
     }
 
@@ -3424,7 +3509,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Changes ownership metadata for a virtual filesystem node.
     protected long chownVirtualNode(VirtualNode node, long owner, long group) {
-        return owner == -1L && group == -1L ? 0 : EROFS;
+        return owner == -1L && group == -1L || deviceFileFor(node) == DeviceFile.PTS0 ? 0 : EROFS;
     }
 
     /// Sets the process file creation mask and returns the previous mask.
@@ -3549,8 +3634,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             @Nullable TarPath tarPath = guestPath == null ? null : fileSystem.resolveTarPath(guestPath, false);
             return tarPath == null ? EACCES : chmodTarPath(tarPath, mode, 0, false);
         }
-        if (openFile.virtualNode() != null) {
-            return EROFS;
+        @Nullable VirtualNode virtualNode = openFile.virtualNode();
+        if (virtualNode != null) {
+            return chmodVirtualNode(virtualNode, mode);
         }
         return EINVAL;
     }
@@ -3613,7 +3699,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Changes permission metadata for a virtual filesystem path.
     protected long chmodVirtualPath(VirtualPath virtualPath, long mode) {
-        return virtualPath.node() == null ? ENOENT : EROFS;
+        @Nullable VirtualNode node = virtualPath.node();
+        return node == null ? ENOENT : chmodVirtualNode(node, mode);
+    }
+
+    /// Changes permission metadata for a virtual filesystem node.
+    protected long chmodVirtualNode(VirtualNode node, long mode) {
+        return deviceFileFor(node) == DeviceFile.PTS0 ? 0 : EROFS;
     }
 
     /// Returns true when the current credentials may change a file's Linux mode.
@@ -4252,6 +4344,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                             guestPath,
                             readable,
                             writable), closeOnExec);
+            case PTMX -> openPtyMaster(node, mount, guestPath, flags, readable, writable);
+            case PTS0 -> openPtySlave(node, mount, guestPath, flags, readable, writable);
             case TTY, CONSOLE -> addOpenFile(OpenFile.terminalDevice(
                     node,
                     mount,
@@ -4260,6 +4354,49 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     readable,
                     writable), closeOnExec);
         };
+    }
+
+    /// Opens `/dev/ptmx` as a new pseudoterminal master endpoint.
+    protected long openPtyMaster(
+            VirtualNode node,
+            VirtualMount mount,
+            String guestPath,
+            long flags,
+            boolean readable,
+            boolean writable) {
+        PtyDevice ptyDevice = new PtyDevice(0);
+        currentPtyDevice = ptyDevice;
+        return addOpenFile(OpenFile.ptyEndpoint(
+                node,
+                mount,
+                guestPath,
+                PtyEndpoint.master(ptyDevice),
+                readable,
+                writable,
+                (flags & O_NONBLOCK) != 0), (flags & O_CLOEXEC) != 0);
+    }
+
+    /// Opens `/dev/pts/0` as the slave endpoint of the current pseudoterminal.
+    protected long openPtySlave(
+            VirtualNode node,
+            VirtualMount mount,
+            String guestPath,
+            long flags,
+            boolean readable,
+            boolean writable) {
+        @Nullable PtyDevice ptyDevice = currentPtyDevice;
+        if (ptyDevice == null) {
+            ptyDevice = new PtyDevice(0);
+            currentPtyDevice = ptyDevice;
+        }
+        return addOpenFile(OpenFile.ptyEndpoint(
+                node,
+                mount,
+                guestPath,
+                PtyEndpoint.slave(ptyDevice),
+                readable,
+                writable,
+                (flags & O_NONBLOCK) != 0), (flags & O_CLOEXEC) != 0);
     }
 
     /// Opens the target of a virtual symbolic link through normal guest path resolution.
@@ -4332,6 +4469,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 int count = openFile.terminalDevice().read(buffer, buffer.length, openFile.nonblocking());
                 if (count == TerminalDevice.READ_WOULD_BLOCK) {
                     return EAGAIN;
+                }
+                memory.writeBytes(address, buffer, 0, count);
+                return count;
+            }
+            if (openFile.isPtyEndpoint()) {
+                byte[] buffer = new byte[(int) length];
+                int count = openFile.ptyEndpoint().read(buffer, buffer.length, openFile.nonblocking());
+                if (count < 0) {
+                    return count;
                 }
                 memory.writeBytes(address, buffer, 0, count);
                 return count;
@@ -4712,6 +4858,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             int count = openFile.terminalDevice().read(buffer, length, nonblocking || openFile.nonblocking());
             return count == TerminalDevice.READ_WOULD_BLOCK ? EAGAIN : count;
         }
+        if (openFile.isPtyEndpoint()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return openFile.ptyEndpoint().read(buffer, length, nonblocking || openFile.nonblocking());
+        }
         @Nullable DeviceFile deviceFile = deviceFileFor(openFile);
         if (deviceFile != null) {
             if (offsetAddress != 0) {
@@ -4770,6 +4922,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             openFile.terminalDevice().write(buffer, length);
             return length;
         }
+        if (openFile.isPtyEndpoint()) {
+            if (offsetAddress != 0) {
+                return ESPIPE;
+            }
+            return openFile.ptyEndpoint().write(copyBufferPrefix(buffer, length));
+        }
         if (isDiscardingDeviceFile(openFile)) {
             if (offsetAddress != 0) {
                 return ESPIPE;
@@ -4824,6 +4982,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile.isTerminalDevice()) {
             openFile.terminalDevice().write(bytes, bytes.length);
             return bytes.length;
+        }
+        if (openFile.isPtyEndpoint()) {
+            return openFile.ptyEndpoint().write(bytes);
         }
         if (isDiscardingDeviceFile(openFile)) {
             return bytes.length;
@@ -4881,7 +5042,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             case RANDOM, URANDOM -> writeDeterministicRandomBytes(address, length);
             case FRAMEBUFFER -> EINVAL;
-            case TTY, CONSOLE -> EBADF;
+            case TTY, CONSOLE, PTMX, PTS0 -> EBADF;
         };
     }
 
@@ -4898,7 +5059,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 yield length;
             }
             case FRAMEBUFFER -> EINVAL;
-            case TTY, CONSOLE -> EBADF;
+            case TTY, CONSOLE, PTMX, PTS0 -> EBADF;
         };
     }
 
@@ -4914,7 +5075,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns the built-in virtual device file for an open descriptor entry.
     protected static @Nullable DeviceFile deviceFileFor(OpenFile openFile) {
         @Nullable VirtualNode node = openFile.virtualNode();
-        if (node == null || !node.isCharacterDevice()) {
+        return node == null ? null : deviceFileFor(node);
+    }
+
+    /// Returns the built-in virtual device file for a virtual filesystem node.
+    protected static @Nullable DeviceFile deviceFileFor(VirtualNode node) {
+        if (!node.isCharacterDevice()) {
             return null;
         }
         Object fileKey = node.fileKey();
@@ -4974,6 +5140,20 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             if (counter.isWritable()) {
                 events |= EPOLLOUT;
+            }
+            return events;
+        }
+        if (openFile.isPtyEndpoint()) {
+            PtyEndpoint endpoint = openFile.ptyEndpoint();
+            int events = 0;
+            if (openFile.readable() && endpoint.isReadable()) {
+                events |= EPOLLIN;
+            }
+            if (openFile.writable()) {
+                events |= endpoint.isPeerReaderOpen() ? EPOLLOUT : EPOLLERR;
+            }
+            if (!endpoint.isPeerWriterOpen()) {
+                events |= EPOLLHUP;
             }
             return events;
         }
@@ -5081,6 +5261,69 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         } catch (IOException exception) {
             throw new RiscVException("Guest close syscall failed", exception);
         }
+    }
+
+    /// Handles Linux `close_range` for open descriptors in the current descriptor table.
+    protected long closeRange(long firstFileDescriptor, long lastFileDescriptor, long flags) {
+        long first = unsignedIntArgument(firstFileDescriptor);
+        long last = unsignedIntArgument(lastFileDescriptor);
+        if (first < 0 || last < 0 || first > last || (flags & ~SUPPORTED_CLOSE_RANGE_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        boolean closeOnExec = (flags & CLOSE_RANGE_CLOEXEC) != 0;
+        try {
+            for (int fileDescriptor = 0; fileDescriptor < standardFiles.length; fileDescriptor++) {
+                if (fileDescriptor < first || fileDescriptor > last) {
+                    continue;
+                }
+                if (closeOnExec) {
+                    standardFileCloseOnExec[fileDescriptor] = true;
+                    continue;
+                }
+
+                @Nullable OpenFile openFile = standardFiles[fileDescriptor];
+                if (openFile == null) {
+                    continue;
+                }
+                standardFiles[fileDescriptor] = null;
+                standardFileCloseOnExec[fileDescriptor] = false;
+                releaseOpenFile(openFile);
+            }
+
+            for (int index = 0; index < openFiles.size(); index++) {
+                long fileDescriptor = index + 3L;
+                if (fileDescriptor < first || fileDescriptor > last) {
+                    continue;
+                }
+                if (closeOnExec) {
+                    setOpenFileCloseOnExec(index, true);
+                    continue;
+                }
+
+                @Nullable OpenFile openFile = openFiles.get(index);
+                if (openFile == null) {
+                    continue;
+                }
+                openFiles.set(index, null);
+                setOpenFileCloseOnExec(index, false);
+                releaseOpenFile(openFile);
+            }
+            return 0;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest close_range syscall failed", exception);
+        }
+    }
+
+    /// Interprets a syscall argument as a Linux unsigned int, accepting sign-extended values.
+    protected static long unsignedIntArgument(long value) {
+        if ((value & 0xffff_ffff_0000_0000L) == 0) {
+            return value;
+        }
+        if ((value & 0xffff_ffff_0000_0000L) == 0xffff_ffff_0000_0000L) {
+            return Integer.toUnsignedLong((int) value);
+        }
+        return -1;
     }
 
     /// Handles `lseek` for guest-opened host files while rejecting standard streams.
@@ -6057,6 +6300,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile != null && deviceFileFor(openFile) == DeviceFile.FRAMEBUFFER) {
             return framebufferIoctl(request, argument);
         }
+        if (openFile != null && openFile.isPtyEndpoint()) {
+            return ptyIoctl(openFile, request, argument);
+        }
 
         @Nullable TerminalDevice terminal = terminalDeviceFor(fileDescriptor);
         if (terminal == null) {
@@ -6065,6 +6311,74 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             return ENOTTY;
         }
+        return terminalIoctl(terminal, request, argument);
+    }
+
+    /// Handles pseudoterminal-specific ioctls before falling back to terminal ioctls.
+    protected long ptyIoctl(OpenFile openFile, long request, long argument) {
+        PtyEndpoint endpoint = openFile.ptyEndpoint();
+        if (request == TIOCGPTN) {
+            if (!endpoint.master()) {
+                return ENOTTY;
+            }
+            if (!memory.isBacked(argument, Integer.BYTES)) {
+                return EFAULT;
+            }
+            memory.writeInt(argument, endpoint.device().number());
+            return 0;
+        }
+        if (request == TIOCSPTLCK) {
+            if (!endpoint.master()) {
+                return ENOTTY;
+            }
+            if (!memory.isBacked(argument, Integer.BYTES)) {
+                return EFAULT;
+            }
+            endpoint.device().setLocked(memory.readInt(argument) != 0);
+            return 0;
+        }
+        if (request == TIOCGPTPEER) {
+            if (!endpoint.master()) {
+                return ENOTTY;
+            }
+            return openPtyPeer(openFile, argument);
+        }
+        return terminalIoctl(terminalDevice, request, argument);
+    }
+
+    /// Opens the slave peer for a pseudoterminal master through `TIOCGPTPEER`.
+    protected long openPtyPeer(OpenFile masterFile, long flags) {
+        long accessMode = flags & O_ACCMODE;
+        if (accessMode != O_RDONLY && accessMode != O_WRONLY && accessMode != O_RDWR) {
+            return EINVAL;
+        }
+        if ((flags & ~SUPPORTED_TIOCGPTPEER_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable VirtualMount mount = masterFile.virtualMount();
+        if (mount == null) {
+            return ENODEV;
+        }
+        boolean readable = accessMode == O_RDONLY || accessMode == O_RDWR;
+        boolean writable = accessMode == O_WRONLY || accessMode == O_RDWR;
+        return addOpenFile(OpenFile.ptyEndpoint(
+                ptySlaveNode(),
+                mount,
+                DEV_MOUNT_PATH + "/pts/0",
+                PtyEndpoint.slave(masterFile.ptyEndpoint().device()),
+                readable,
+                writable,
+                (flags & O_NONBLOCK) != 0), (flags & O_CLOEXEC) != 0);
+    }
+
+    /// Returns the built-in `/dev/pts/0` virtual node.
+    protected static VirtualNode ptySlaveNode() {
+        return VirtualNode.characterDevice(DEV_MOUNT_PATH + "/pts/0", DeviceFile.PTS0);
+    }
+
+    /// Handles terminal-like ioctls shared by controlling terminals and pseudoterminals.
+    protected long terminalIoctl(TerminalDevice terminal, long request, long argument) {
         if (request == TCGETS) {
             if (!memory.isBacked(argument, TERMIOS_SIZE)) {
                 return EFAULT;
@@ -6122,6 +6436,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return processGroupId <= 0 ? EINVAL : 0;
         }
         if (request == TIOCSCTTY) {
+            return 0;
+        }
+        if (request == TIOCGSID) {
+            if (!memory.isBacked(argument, Integer.BYTES)) {
+                return EFAULT;
+            }
+            memory.writeInt(argument, process.processGroupId());
             return 0;
         }
         return ENOTTY;
@@ -7829,6 +8150,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// The non-blocking random source exposed as `/dev/urandom`.
         URANDOM,
 
+        /// The pseudoterminal multiplexer exposed as `/dev/ptmx`.
+        PTMX,
+
+        /// The first pseudoterminal slave exposed as `/dev/pts/0`.
+        PTS0,
+
         /// The optional linear framebuffer exposed as `/dev/fb0`.
         FRAMEBUFFER
     }
@@ -7849,9 +8176,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return devNode(absoluteGuestPath, framebufferDevice != null);
         }
 
-        /// Returns the child device nodes for `/dev`.
+        /// Returns the child device nodes for `/dev` or `/dev/pts`.
         @Override
         public VirtualNode @Unmodifiable [] childNodes(String directoryGuestPath) {
+            if (DEV_MOUNT_PATH.concat("/pts").equals(directoryGuestPath)) {
+                return new VirtualNode[]{VirtualNode.characterDevice(DEV_MOUNT_PATH + "/pts/0", DeviceFile.PTS0)};
+            }
             if (!DEV_MOUNT_PATH.equals(directoryGuestPath)) {
                 return new VirtualNode[0];
             }
@@ -7862,6 +8192,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             children.add(VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/fd", PROC_MOUNT_PATH + "/self/fd"));
             children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/null", DeviceFile.NULL));
+            children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/ptmx", DeviceFile.PTMX));
+            children.add(VirtualNode.directory(DEV_MOUNT_PATH + "/pts"));
             children.add(VirtualNode.characterDevice(DEV_MOUNT_PATH + "/random", DeviceFile.RANDOM));
             children.add(VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stderr", PROC_MOUNT_PATH + "/self/fd/2"));
             children.add(VirtualNode.symbolicLink(DEV_MOUNT_PATH + "/stdin", PROC_MOUNT_PATH + "/self/fd/0"));
@@ -7898,6 +8230,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                         VirtualNode.symbolicLink(absoluteGuestPath, PROC_MOUNT_PATH + "/self/fd");
                 case DEV_MOUNT_PATH + "/null" ->
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.NULL);
+                case DEV_MOUNT_PATH + "/ptmx" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.PTMX);
+                case DEV_MOUNT_PATH + "/pts" ->
+                        VirtualNode.directory(absoluteGuestPath);
+                case DEV_MOUNT_PATH + "/pts/0" ->
+                        VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.PTS0);
                 case DEV_MOUNT_PATH + "/random" ->
                         VirtualNode.characterDevice(absoluteGuestPath, DeviceFile.RANDOM);
                 case DEV_MOUNT_PATH + "/stderr" ->
@@ -10253,6 +10591,108 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Stores the two byte streams that make up one pseudoterminal pair.
+    protected static final class PtyDevice {
+        /// The stable slave number exposed below `/dev/pts`.
+        private final int number;
+
+        /// Bytes written by the slave endpoint and read by the master endpoint.
+        private final PipeBuffer masterInput = new PipeBuffer();
+
+        /// Bytes written by the master endpoint and read by the slave endpoint.
+        private final PipeBuffer slaveInput = new PipeBuffer();
+
+        /// Whether the slave endpoint is currently locked against path-based opens.
+        private boolean locked = true;
+
+        /// Creates a pseudoterminal pair with the supplied slave number.
+        PtyDevice(int number) {
+            this.number = number;
+        }
+
+        /// Returns the slave number exposed through `TIOCGPTN`.
+        int number() {
+            return number;
+        }
+
+        /// Updates whether the slave endpoint is locked.
+        synchronized void setLocked(boolean locked) {
+            this.locked = locked;
+        }
+
+        /// Returns whether the slave endpoint is locked.
+        synchronized boolean locked() {
+            return locked;
+        }
+
+        /// Returns the buffer read by the master endpoint.
+        PipeBuffer masterInput() {
+            return masterInput;
+        }
+
+        /// Returns the buffer read by the slave endpoint.
+        PipeBuffer slaveInput() {
+            return slaveInput;
+        }
+    }
+
+    /// Describes one open endpoint of a pseudoterminal pair.
+    ///
+    /// @param device the pseudoterminal pair backing this endpoint
+    /// @param master whether this endpoint is the master side
+    protected record PtyEndpoint(PtyDevice device, boolean master) {
+        /// Creates the master endpoint of a pseudoterminal pair.
+        static PtyEndpoint master(PtyDevice device) {
+            return new PtyEndpoint(device, true);
+        }
+
+        /// Creates the slave endpoint of a pseudoterminal pair.
+        static PtyEndpoint slave(PtyDevice device) {
+            return new PtyEndpoint(device, false);
+        }
+
+        /// Reads bytes visible to this endpoint.
+        int read(byte[] destination, int maximumLength, boolean nonblocking) throws InterruptedException {
+            return input().read(destination, maximumLength, nonblocking);
+        }
+
+        /// Writes bytes to the peer endpoint.
+        long write(byte[] source) {
+            return output().write(source);
+        }
+
+        /// Returns true when a read can complete immediately.
+        boolean isReadable() {
+            return input().isReadable();
+        }
+
+        /// Returns true when the peer still has a write endpoint open.
+        boolean isPeerWriterOpen() {
+            return input().isWriterOpen();
+        }
+
+        /// Returns true when the peer still has a read endpoint open.
+        boolean isPeerReaderOpen() {
+            return output().isReaderOpen();
+        }
+
+        /// Closes this endpoint's read and write sides.
+        void close() {
+            input().closeReader();
+            output().closeWriter();
+        }
+
+        /// Returns the buffer this endpoint reads from.
+        private PipeBuffer input() {
+            return master ? device.masterInput() : device.slaveInput();
+        }
+
+        /// Returns the buffer this endpoint writes to.
+        private PipeBuffer output() {
+            return master ? device.slaveInput() : device.masterInput();
+        }
+    }
+
     /// Describes an open file description referenced by one or more guest file descriptors.
     @NotNullByDefault
     protected static final class OpenFile {
@@ -10291,6 +10731,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         /// The terminal device backing this descriptor, or null for non-terminal entries.
         private final @Nullable TerminalDevice terminalDevice;
+
+        /// The pseudoterminal endpoint backing this descriptor, or null for non-PTY entries.
+        private final @Nullable PtyEndpoint ptyEndpoint;
 
         /// Whether this descriptor is backed by `/dev/null`.
         private final boolean nullDevice;
@@ -10362,6 +10805,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     epollSet,
                     null,
                     terminalDevice,
+                    null,
                     nullDevice,
                     directory,
                     pipeReader,
@@ -10386,6 +10830,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 @Nullable EpollSet epollSet,
                 @Nullable GuestSocket socket,
                 @Nullable TerminalDevice terminalDevice,
+                @Nullable PtyEndpoint ptyEndpoint,
                 boolean nullDevice,
                 boolean directory,
                 boolean pipeReader,
@@ -10406,6 +10851,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             this.epollSet = epollSet;
             this.socket = socket;
             this.terminalDevice = terminalDevice;
+            this.ptyEndpoint = ptyEndpoint;
             this.nullDevice = nullDevice;
             this.directory = directory;
             this.pipeReader = pipeReader;
@@ -10607,6 +11053,39 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     false);
         }
 
+        /// Creates an entry backed by a virtual pseudoterminal endpoint.
+        static OpenFile ptyEndpoint(
+                VirtualNode node,
+                VirtualMount mount,
+                String guestPath,
+                PtyEndpoint ptyEndpoint,
+                boolean readable,
+                boolean writable,
+                boolean nonblocking) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    guestPath,
+                    null,
+                    node,
+                    mount,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    ptyEndpoint,
+                    false,
+                    false,
+                    false,
+                    false,
+                    readable,
+                    writable,
+                    false,
+                    nonblocking);
+        }
+
         /// Creates an entry backed by the virtual `/dev/null` character device.
         static OpenFile nullDevice(
                 VirtualNode node,
@@ -10805,6 +11284,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     null,
                     socket,
                     null,
+                    null,
                     false,
                     false,
                     false,
@@ -10853,6 +11333,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when this entry is backed by a virtual terminal device.
         boolean isTerminalDevice() {
             return terminalDevice != null;
+        }
+
+        /// Returns true when this entry is backed by a pseudoterminal endpoint.
+        boolean isPtyEndpoint() {
+            return ptyEndpoint != null;
         }
 
         /// Returns true when this entry is backed by `/dev/null`.
@@ -10909,6 +11394,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         TerminalDevice terminalDevice() {
             assert terminalDevice != null;
             return terminalDevice;
+        }
+
+        /// Returns the pseudoterminal endpoint backing this descriptor.
+        PtyEndpoint ptyEndpoint() {
+            assert ptyEndpoint != null;
+            return ptyEndpoint;
         }
 
         /// Returns the host path backing this descriptor.
@@ -11038,6 +11529,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 if (pipeWriter) {
                     pipe.closeWriter();
                 }
+                return;
+            }
+            if (ptyEndpoint != null) {
+                ptyEndpoint.close();
                 return;
             }
             if (socket != null) {

@@ -42,6 +42,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -291,6 +292,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `utimensat`.
     private static final long SYS_UTIMENSAT = 88;
 
+    /// The Linux RISC-V syscall number for `capget`.
+    private static final long SYS_CAPGET = 90;
+
+    /// The Linux RISC-V syscall number for `capset`.
+    private static final long SYS_CAPSET = 91;
+
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final long SYS_SET_TID_ADDRESS = 96;
 
@@ -342,6 +349,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigreturn`.
     private static final long SYS_RT_SIGRETURN = 139;
 
+    /// The Linux RISC-V syscall number for `setpriority`.
+    private static final long SYS_SETPRIORITY = 140;
+
+    /// The Linux RISC-V syscall number for `getpriority`.
+    private static final long SYS_GETPRIORITY = 141;
+
     /// The Linux RISC-V syscall number for `setgid`.
     private static final long SYS_SETGID = 144;
 
@@ -374,6 +387,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `getpgid`.
     private static final long SYS_GETPGID = 155;
+
+    /// The Linux RISC-V syscall number for `getsid`.
+    private static final long SYS_GETSID = 156;
 
     /// The Linux RISC-V syscall number for `setsid`.
     private static final long SYS_SETSID = 157;
@@ -486,6 +502,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `clone3`.
     private static final long SYS_CLONE3 = 435;
 
+    /// The Linux RISC-V syscall number for `close_range`.
+    private static final long SYS_CLOSE_RANGE = 436;
+
     /// The Linux RISC-V syscall number for `mmap`.
     private static final long SYS_MMAP = 222;
 
@@ -566,6 +585,15 @@ public final class GuestSyscallsTest {
 
     /// The Linux generic tty `TIOCSWINSZ` ioctl request number.
     private static final long TIOCSWINSZ = 0x5414;
+
+    /// The Linux generic tty `TIOCGPTN` ioctl request number.
+    private static final long TIOCGPTN = 0x80045430L;
+
+    /// The Linux generic tty `TIOCSPTLCK` ioctl request number.
+    private static final long TIOCSPTLCK = 0x40045431L;
+
+    /// The Linux generic tty `TIOCGPTPEER` ioctl request number.
+    private static final long TIOCGPTPEER = 0x5441;
 
     /// The byte size of Linux generic `struct termios`.
     private static final int TERMIOS_SIZE = 36;
@@ -918,6 +946,9 @@ public final class GuestSyscallsTest {
     /// Linux `O_EXCL`.
     private static final long O_EXCL = 00000200L;
 
+    /// Linux `O_NOCTTY`.
+    private static final long O_NOCTTY = 00000400L;
+
     /// Linux `O_TRUNC`.
     private static final long O_TRUNC = 00001000L;
 
@@ -941,6 +972,12 @@ public final class GuestSyscallsTest {
 
     /// Linux `FD_CLOEXEC`.
     private static final long FD_CLOEXEC = 1;
+
+    /// Linux `CLOSE_RANGE_CLOEXEC`.
+    private static final long CLOSE_RANGE_CLOEXEC = 1L << 2;
+
+    /// Linux capability ABI version 3.
+    private static final int LINUX_CAPABILITY_VERSION_3 = 0x2008_0522;
 
     /// Linux `F_GETFL`.
     private static final long F_GETFL = 3;
@@ -1202,6 +1239,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `SIGILL`.
     private static final long SIGILL = 4;
+
+    /// Linux `SIGCHLD`.
+    private static final long SIGCHLD = 17;
 
     /// Linux `SIGKILL`.
     private static final long SIGKILL = 9;
@@ -3722,6 +3762,30 @@ public final class GuestSyscallsTest {
             assertEquals(4, state.register(10));
             assertArrayEquals("pipe".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 4));
 
+            setSyscall(state, SYS_CLOSE_RANGE, writeFileDescriptor, writeFileDescriptor, CLOSE_RANGE_CLOEXEC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, writeFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_CLOSE_RANGE, writeFileDescriptor, writeFileDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READ, readFileDescriptor, bufferAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_CLOSE_RANGE, readFileDescriptor, -1L, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, readFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
             setSyscall(state, SYS_PIPE2, pipeAddress, O_APPEND, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
@@ -4785,6 +4849,98 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that `/dev/ptmx` opens a pseudoterminal pair with a usable slave peer.
+    @Test
+    public void openatOpensPseudoterminalPair() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long pathAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 128;
+            long ioctlAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/dev/ptmx");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long masterFileDescriptor = state.register(10);
+            assertEquals(3, masterFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, masterFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_IOCTL, masterFileDescriptor, TIOCGPTN, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readInt(ioctlAddress));
+
+            memory.writeInt(ioctlAddress, 0);
+            setSyscall(state, SYS_IOCTL, masterFileDescriptor, TIOCSPTLCK, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/dev/pts/0");
+            setSyscall(state, SYS_FCHOWNAT, AT_FDCWD, pathAddress, 0, 1000, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCHMODAT, AT_FDCWD, pathAddress, 0620, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_IOCTL, masterFileDescriptor, TIOCGPTPEER, O_RDWR | O_NOCTTY | O_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            long slaveFileDescriptor = state.register(10);
+            assertEquals(4, slaveFileDescriptor);
+
+            memory.clear(ioctlAddress, TERMIOS_SIZE);
+            setSyscall(state, SYS_IOCTL, slaveFileDescriptor, TCGETS, ioctlAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            byte[] slaveBytes = "slave".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(dataAddress, slaveBytes, 0, slaveBytes.length);
+            setSyscall(state, SYS_WRITE, slaveFileDescriptor, dataAddress, slaveBytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(slaveBytes.length, state.register(10));
+
+            memory.clear(dataAddress, slaveBytes.length);
+            setSyscall(state, SYS_READ, masterFileDescriptor, dataAddress, slaveBytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(slaveBytes.length, state.register(10));
+            assertEquals("slave", readGuestString(memory, dataAddress, slaveBytes.length));
+
+            byte[] masterBytes = "master".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(dataAddress, masterBytes, 0, masterBytes.length);
+            setSyscall(state, SYS_WRITE, masterFileDescriptor, dataAddress, masterBytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(masterBytes.length, state.register(10));
+
+            memory.clear(dataAddress, masterBytes.length);
+            setSyscall(state, SYS_READ, slaveFileDescriptor, dataAddress, masterBytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(masterBytes.length, state.register(10));
+            assertEquals("master", readGuestString(memory, dataAddress, masterBytes.length));
+
+            writeGuestString(memory, pathAddress, "/dev/pts/0");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR | O_NOCTTY | O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long pathSlaveFileDescriptor = state.register(10);
+            assertEquals(5, pathSlaveFileDescriptor);
+
+            byte[] pathBytes = "path".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(dataAddress, pathBytes, 0, pathBytes.length);
+            setSyscall(state, SYS_WRITE, pathSlaveFileDescriptor, dataAddress, pathBytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(pathBytes.length, state.register(10));
+
+            memory.clear(dataAddress, pathBytes.length);
+            setSyscall(state, SYS_READ, masterFileDescriptor, dataAddress, pathBytes.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(pathBytes.length, state.register(10));
+            assertEquals("path", readGuestString(memory, dataAddress, pathBytes.length));
+        }
+    }
+
     /// Verifies that `/dev/null` consumes writes and returns end-of-file on reads.
     @Test
     public void openatOpensDevNullAsNullDevice() {
@@ -4914,13 +5070,15 @@ public final class GuestSyscallsTest {
             nextAddress = assertDirectoryEntry(memory, nextAddress, "console", DIRECTORY_ENTRY_CHARACTER_DEVICE, 3);
             nextAddress = assertDirectoryEntry(memory, nextAddress, "fd", DIRECTORY_ENTRY_SYMBOLIC_LINK, 4);
             nextAddress = assertDirectoryEntry(memory, nextAddress, "null", DIRECTORY_ENTRY_CHARACTER_DEVICE, 5);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "random", DIRECTORY_ENTRY_CHARACTER_DEVICE, 6);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "stderr", DIRECTORY_ENTRY_SYMBOLIC_LINK, 7);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdin", DIRECTORY_ENTRY_SYMBOLIC_LINK, 8);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdout", DIRECTORY_ENTRY_SYMBOLIC_LINK, 9);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "tty", DIRECTORY_ENTRY_CHARACTER_DEVICE, 10);
-            nextAddress = assertDirectoryEntry(memory, nextAddress, "urandom", DIRECTORY_ENTRY_CHARACTER_DEVICE, 11);
-            assertDirectoryEntry(memory, nextAddress, "zero", DIRECTORY_ENTRY_CHARACTER_DEVICE, 12);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "ptmx", DIRECTORY_ENTRY_CHARACTER_DEVICE, 6);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "pts", DIRECTORY_ENTRY_DIRECTORY, 7);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "random", DIRECTORY_ENTRY_CHARACTER_DEVICE, 8);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stderr", DIRECTORY_ENTRY_SYMBOLIC_LINK, 9);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdin", DIRECTORY_ENTRY_SYMBOLIC_LINK, 10);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "stdout", DIRECTORY_ENTRY_SYMBOLIC_LINK, 11);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "tty", DIRECTORY_ENTRY_CHARACTER_DEVICE, 12);
+            nextAddress = assertDirectoryEntry(memory, nextAddress, "urandom", DIRECTORY_ENTRY_CHARACTER_DEVICE, 13);
+            assertDirectoryEntry(memory, nextAddress, "zero", DIRECTORY_ENTRY_CHARACTER_DEVICE, 14);
 
             writeGuestString(memory, pathAddress, "/dev/stdout");
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
@@ -5033,6 +5191,10 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
 
+            setSyscall(state, SYS_GETSID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
             setSyscall(state, SYS_SETPGID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
@@ -5052,6 +5214,18 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SETSID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_GETPRIORITY, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(20, state.register(10));
+
+            setSyscall(state, SYS_SETPRIORITY, 0, 0, 5);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETPRIORITY, 3, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
 
             setSyscall(state, SYS_GETTID, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -5093,6 +5267,21 @@ public final class GuestSyscallsTest {
             assertEquals(1000, memory.readInt(realIdAddress));
             assertEquals(1000, memory.readInt(effectiveIdAddress));
             assertEquals(1000, memory.readInt(savedIdAddress));
+
+            long capabilityHeaderAddress = memory.baseAddress() + 160;
+            long capabilityDataAddress = memory.baseAddress() + 192;
+            memory.writeInt(capabilityHeaderAddress, LINUX_CAPABILITY_VERSION_3);
+            memory.writeInt(capabilityHeaderAddress + Integer.BYTES, 0);
+            setSyscall(state, SYS_CAPGET, capabilityHeaderAddress, capabilityDataAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readInt(capabilityDataAddress));
+            assertEquals(0, memory.readInt(capabilityDataAddress + Integer.BYTES));
+            assertEquals(0, memory.readInt(capabilityDataAddress + 2L * Integer.BYTES));
+
+            setSyscall(state, SYS_CAPGET, capabilityHeaderAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
 
             setSyscall(state, SYS_SETRESUID, 1000, 1000, 1000);
             state.syscalls().handle(state, TEST_PC);
@@ -5157,6 +5346,10 @@ public final class GuestSyscallsTest {
             assertEquals(EFAULT, state.register(10));
 
             setSyscall(state, SYS_GETPGID, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_GETSID, 99, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ESRCH, state.register(10));
 
@@ -5248,6 +5441,8 @@ public final class GuestSyscallsTest {
             long effectiveIdAddress = memory.baseAddress() + 68;
             long savedIdAddress = memory.baseAddress() + 72;
             long groupsAddress = memory.baseAddress() + 96;
+            long capabilityHeaderAddress = memory.baseAddress() + 128;
+            long capabilityDataAddress = memory.baseAddress() + 160;
 
             memory.writeInt(groupsAddress, 0);
             memory.writeInt(groupsAddress + Integer.BYTES, 42);
@@ -5260,6 +5455,18 @@ public final class GuestSyscallsTest {
             assertEquals(2, state.register(10));
             assertEquals(0, memory.readInt(groupsAddress));
             assertEquals(42, memory.readInt(groupsAddress + Integer.BYTES));
+
+            memory.writeInt(capabilityHeaderAddress, LINUX_CAPABILITY_VERSION_3);
+            memory.writeInt(capabilityHeaderAddress + Integer.BYTES, 0);
+            setSyscall(state, SYS_CAPGET, capabilityHeaderAddress, capabilityDataAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(memory.readUnsignedInt(capabilityDataAddress) != 0);
+            assertTrue(memory.readUnsignedInt(capabilityDataAddress + Integer.BYTES) != 0);
+
+            setSyscall(state, SYS_CAPSET, capabilityHeaderAddress, capabilityDataAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
 
             setSyscall(state, SYS_SETGID, 2345, 0, 0);
             state.syscalls().handle(state, TEST_PC);
@@ -5392,6 +5599,97 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
 
             assertEquals(ECHILD, state.register(10));
+        }
+    }
+
+    /// Verifies child-process exits queue a `SIGCHLD` frame before the next syscall returns to user code.
+    @Test
+    public void childExitQueuesSigchldSignalFrame() throws Exception {
+        CountDownLatch releaseChild = new CountDownLatch(1);
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                if (!releaseChild.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Timed out waiting to release child process");
+                }
+                childState.syscalls().recordThreadExit(childState, 0);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 65536)) {
+            long base = memory.baseAddress();
+            assertTrue(memory.map(base, 16384));
+
+            GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    base + 16384,
+                    new String[0],
+                    TimeSource.system(),
+                    runner);
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+
+            long actionAddress = base + 64;
+            long handlerAddress = base + 512;
+            long stackPointer = base + 8192;
+            long statusAddress = base + 12288;
+
+            memory.writeLong(actionAddress, handlerAddress);
+            memory.writeLong(actionAddress + Long.BYTES, SA_SIGINFO);
+            memory.writeLong(actionAddress + 2L * Long.BYTES, 0);
+            setSyscall(state, SYS_RT_SIGACTION, SIGCHLD, actionAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            state.setRegister(2, stackPointer);
+            state.setPc(TEST_PC);
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+
+            releaseChild.countDown();
+            childExited.get(5, TimeUnit.SECONDS);
+
+            state.setPc(TEST_PC);
+            setSyscall(state, SYS_GETPID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long frameAddress = state.register(2);
+            long infoAddress = state.register(11);
+            long contextAddress = state.register(12);
+            long registersAddress = contextAddress + SIGNAL_CONTEXT_MACHINE_OFFSET;
+
+            assertEquals(handlerAddress, state.pc());
+            assertEquals(SIGCHLD, state.register(10));
+            assertEquals(frameAddress, infoAddress);
+            assertEquals(frameAddress + SIGNAL_INFO_SIZE, contextAddress);
+            assertEquals(SIGCHLD, memory.readInt(infoAddress));
+            assertEquals(TEST_PC + Integer.BYTES, memory.readLong(registersAddress));
+            assertEquals(1, memory.readLong(registersAddress + 10L * Long.BYTES));
+
+            long resumePc = base + 14000;
+            memory.writeLong(registersAddress, resumePc);
+            setSyscall(state, SYS_RT_SIGRETURN, 0, 0, 0);
+            state.syscalls().handle(state, state.pc());
+            assertEquals(resumePc, state.pc());
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+            assertEquals(0, memory.readInt(statusAddress));
         }
     }
 

@@ -329,6 +329,48 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux `SIG_IGN`.
     private static final long SIGNAL_IGNORE_HANDLER = 1L;
 
+    /// Linux capability ABI version 1.
+    private static final int LINUX_CAPABILITY_VERSION_1 = 0x1998_0330;
+
+    /// Linux capability ABI version 2.
+    private static final int LINUX_CAPABILITY_VERSION_2 = 0x2007_1026;
+
+    /// Linux capability ABI version 3.
+    private static final int LINUX_CAPABILITY_VERSION_3 = 0x2008_0522;
+
+    /// Linux `PRIO_PROCESS`.
+    private static final long PRIO_PROCESS = 0;
+
+    /// Linux `PRIO_PGRP`.
+    private static final long PRIO_PROCESS_GROUP = 1;
+
+    /// Linux `PRIO_USER`.
+    private static final long PRIO_USER = 2;
+
+    /// The raw Linux syscall value for nice level zero.
+    private static final long DEFAULT_RAW_PRIORITY = 20;
+
+    /// The byte offset of `version` inside `struct __user_cap_header_struct`.
+    private static final long CAPABILITY_HEADER_VERSION_OFFSET = 0;
+
+    /// The byte offset of `pid` inside `struct __user_cap_header_struct`.
+    private static final long CAPABILITY_HEADER_PID_OFFSET = Integer.BYTES;
+
+    /// The byte size of one `struct __user_cap_data_struct`.
+    private static final long CAPABILITY_DATA_SIZE = 3L * Integer.BYTES;
+
+    /// The byte offset of `effective` inside `struct __user_cap_data_struct`.
+    private static final long CAPABILITY_EFFECTIVE_OFFSET = 0;
+
+    /// The byte offset of `permitted` inside `struct __user_cap_data_struct`.
+    private static final long CAPABILITY_PERMITTED_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `inheritable` inside `struct __user_cap_data_struct`.
+    private static final long CAPABILITY_INHERITABLE_OFFSET = 2L * Integer.BYTES;
+
+    /// Linux `CAP_LAST_CAP` exposed by the simulator.
+    private static final int CAPABILITY_LAST_CAP = 40;
+
     /// Linux `ILL_ILLOPC`.
     private static final int SIGNAL_CODE_ILLEGAL_OPCODE = 1;
 
@@ -691,6 +733,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Lazily mapped signal-return trampoline, or zero before allocation.
     private long signalTrampolineAddress;
+
+    /// Whether a child-exit `SIGCHLD` is pending for this process.
+    private boolean childSignalPending;
 
     /// The default disabled RISC-V userspace pointer mask length.
     private static final int POINTER_MASK_LENGTH_DISABLED = 0;
@@ -1218,6 +1263,137 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
     }
 
+    /// Reads Linux capability sets for the current process.
+    protected long capget(long headerAddress, long dataAddress) {
+        CapabilityHeader header = readCapabilityHeader(headerAddress);
+        if (header.result() != 0) {
+            return header.result();
+        }
+        if (dataAddress == 0) {
+            return 0;
+        }
+
+        int wordCount = capabilityWordCount(header.version());
+        long capabilities = credentials.effectiveUserId() == 0 ? rootCapabilityMask() : 0;
+        try {
+            for (int index = 0; index < wordCount; index++) {
+                int word = (int) (capabilities >>> (Integer.SIZE * index));
+                long entryAddress = dataAddress + (long) index * CAPABILITY_DATA_SIZE;
+                memory.writeInt(entryAddress + CAPABILITY_EFFECTIVE_OFFSET, word);
+                memory.writeInt(entryAddress + CAPABILITY_PERMITTED_OFFSET, word);
+                memory.writeInt(entryAddress + CAPABILITY_INHERITABLE_OFFSET, 0);
+            }
+            return 0;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+    }
+
+    /// Accepts Linux capability set updates that fit the current deterministic privilege model.
+    protected long capset(long headerAddress, long dataAddress) {
+        CapabilityHeader header = readCapabilityHeader(headerAddress);
+        if (header.result() != 0) {
+            return header.result();
+        }
+        if (dataAddress == 0) {
+            return EFAULT;
+        }
+
+        int wordCount = capabilityWordCount(header.version());
+        try {
+            long requested = 0;
+            for (int index = 0; index < wordCount; index++) {
+                long entryAddress = dataAddress + (long) index * CAPABILITY_DATA_SIZE;
+                requested |= memory.readUnsignedInt(entryAddress + CAPABILITY_EFFECTIVE_OFFSET)
+                        << (Integer.SIZE * index);
+                requested |= memory.readUnsignedInt(entryAddress + CAPABILITY_PERMITTED_OFFSET)
+                        << (Integer.SIZE * index);
+                requested |= memory.readUnsignedInt(entryAddress + CAPABILITY_INHERITABLE_OFFSET)
+                        << (Integer.SIZE * index);
+            }
+            if (credentials.effectiveUserId() != 0 && requested != 0) {
+                return EPERM;
+            }
+            return 0;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+    }
+
+    /// Reads and validates the Linux capability syscall header.
+    protected CapabilityHeader readCapabilityHeader(long headerAddress) {
+        if (headerAddress == 0) {
+            return new CapabilityHeader(0, 0, EFAULT);
+        }
+        try {
+            int version = memory.readInt(headerAddress + CAPABILITY_HEADER_VERSION_OFFSET);
+            int pid = memory.readInt(headerAddress + CAPABILITY_HEADER_PID_OFFSET);
+            if (!isSupportedCapabilityVersion(version)) {
+                memory.writeInt(headerAddress + CAPABILITY_HEADER_VERSION_OFFSET, LINUX_CAPABILITY_VERSION_3);
+                return new CapabilityHeader(version, pid, EINVAL);
+            }
+            if (pid != 0 && pid != process.id()) {
+                return new CapabilityHeader(version, pid, ESRCH);
+            }
+            return new CapabilityHeader(version, pid, 0);
+        } catch (RiscVException exception) {
+            return new CapabilityHeader(0, 0, EFAULT);
+        }
+    }
+
+    /// Returns true when the Linux capability ABI version is supported.
+    protected static boolean isSupportedCapabilityVersion(int version) {
+        return version == LINUX_CAPABILITY_VERSION_1
+                || version == LINUX_CAPABILITY_VERSION_2
+                || version == LINUX_CAPABILITY_VERSION_3;
+    }
+
+    /// Returns the number of 32-bit capability words used by the supplied ABI version.
+    protected static int capabilityWordCount(int version) {
+        return version == LINUX_CAPABILITY_VERSION_1 ? 1 : 2;
+    }
+
+    /// Returns a mask containing every root capability exposed by this simulator.
+    protected static long rootCapabilityMask() {
+        return (1L << (CAPABILITY_LAST_CAP + 1)) - 1L;
+    }
+
+    /// Updates deterministic process priority when the target exists.
+    protected long setpriority(long which, long who, long priority) {
+        if (priority < -20 || priority > 19) {
+            return EINVAL;
+        }
+        return priorityTargetExists(which, who) ? 0 : priorityTargetError(which);
+    }
+
+    /// Returns the deterministic raw Linux priority for an existing target.
+    protected long getpriority(long which, long who) {
+        return priorityTargetExists(which, who) ? DEFAULT_RAW_PRIORITY : priorityTargetError(which);
+    }
+
+    /// Returns true when a priority syscall target exists in this runtime.
+    protected boolean priorityTargetExists(long which, long who) {
+        if (which == PRIO_PROCESS) {
+            if (who == 0 || who == process.id()) {
+                return true;
+            }
+            return who == (int) who && isKnownChildProcessId(who);
+        }
+        if (which == PRIO_PROCESS_GROUP) {
+            long processGroupId = who == 0 ? process.processGroupId() : who;
+            return processGroupId == (int) processGroupId && isKnownOrSelfProcessGroupId((int) processGroupId);
+        }
+        if (which == PRIO_USER) {
+            return who == 0 || who == credentials.realUserId() || who == credentials.effectiveUserId();
+        }
+        return false;
+    }
+
+    /// Returns the raw Linux error for a priority syscall target lookup.
+    protected static long priorityTargetError(long which) {
+        return which == PRIO_PROCESS || which == PRIO_PROCESS_GROUP || which == PRIO_USER ? ESRCH : EINVAL;
+    }
+
 
     /// Returns the process group id for the current process or a tracked child process.
     protected long getpgid(long processId) {
@@ -1234,6 +1410,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             }
         }
         return ESRCH;
+    }
+
+    /// Returns the deterministic session id for the current process or a tracked child process.
+    protected long getsid(long processId) {
+        return getpgid(processId);
     }
 
 
@@ -1408,6 +1589,43 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
         deliverSignal(state, SIGNAL_SEGMENTATION_FAULT, exception.signalCode(), exception.address(), action);
         return true;
+    }
+
+    /// Records an exited child and queues the process-level `SIGCHLD` notification.
+    @Override
+    protected void recordChildProcessExit(int processId, long exitCode) {
+        super.recordChildProcessExit(processId, exitCode);
+        synchronized (childProcessLock) {
+            childSignalPending = true;
+            childProcessLock.notifyAll();
+        }
+    }
+
+    /// Delivers a queued child-exit signal if the current guest thread can receive it.
+    protected void deliverPendingChildSignal(RiscVThreadState state, long syscallPc) {
+        @Nullable SignalAction action;
+        synchronized (childProcessLock) {
+            if (!childSignalPending) {
+                return;
+            }
+            if ((state.guestThread().signalMask() & signalMask(SIGNAL_CHILD)) != 0) {
+                return;
+            }
+
+            action = signalActions[(int) SIGNAL_CHILD];
+            if (action == null
+                    || action.handler() == SIGNAL_DEFAULT_HANDLER
+                    || action.handler() == SIGNAL_IGNORE_HANDLER) {
+                childSignalPending = false;
+                return;
+            }
+            childSignalPending = false;
+        }
+
+        if (state.pc() == syscallPc) {
+            state.setPc(syscallPc + Integer.BYTES);
+        }
+        deliverSignal(state, SIGNAL_CHILD, 0, 0, action);
     }
 
     /// Builds a Linux RISC-V `rt_sigframe` and redirects execution to a guest signal handler.
@@ -5542,6 +5760,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `utimensat`.
     private static final int SYS_UTIMENSAT = 88;
 
+    /// The Linux RISC-V syscall number for `capget`.
+    private static final int SYS_CAPGET = 90;
+
+    /// The Linux RISC-V syscall number for `capset`.
+    private static final int SYS_CAPSET = 91;
+
     /// The Linux RISC-V syscall number for `exit`.
     private static final int SYS_EXIT = 93;
 
@@ -5599,6 +5823,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `rt_sigreturn`.
     private static final int SYS_RT_SIGRETURN = 139;
 
+    /// The Linux RISC-V syscall number for `setpriority`.
+    private static final int SYS_SETPRIORITY = 140;
+
+    /// The Linux RISC-V syscall number for `getpriority`.
+    private static final int SYS_GETPRIORITY = 141;
+
     /// The Linux RISC-V syscall number for `setregid`.
     private static final int SYS_SETREGID = 143;
 
@@ -5637,6 +5867,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `getpgid`.
     private static final int SYS_GETPGID = 155;
+
+    /// The Linux RISC-V syscall number for `getsid`.
+    private static final int SYS_GETSID = 156;
 
     /// The Linux RISC-V syscall number for `setsid`.
     private static final int SYS_SETSID = 157;
@@ -5749,6 +5982,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `clone3`.
     private static final int SYS_CLONE3 = 435;
 
+    /// The Linux RISC-V syscall number for `close_range`.
+    private static final int SYS_CLOSE_RANGE = 436;
+
     /// The Linux RISC-V syscall number for `execve`.
     private static final int SYS_EXECVE = 221;
 
@@ -5781,6 +6017,18 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final int SYS_PRLIMIT64 = 261;
+
+    /// The Linux RISC-V syscall number for `fanotify_init`.
+    private static final int SYS_FANOTIFY_INIT = 262;
+
+    /// The Linux RISC-V syscall number for `fanotify_mark`.
+    private static final int SYS_FANOTIFY_MARK = 263;
+
+    /// The Linux RISC-V syscall number for `name_to_handle_at`.
+    private static final int SYS_NAME_TO_HANDLE_AT = 264;
+
+    /// The Linux RISC-V syscall number for `open_by_handle_at`.
+    private static final int SYS_OPEN_BY_HANDLE_AT = 265;
 
     /// The Linux RISC-V syscall number for `syncfs`.
     private static final int SYS_SYNCFS = 267;
@@ -5965,6 +6213,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_CAPGET -> state.setRegister(10, capget(state.register(10), state.register(11)));
+            case SYS_CAPSET -> state.setRegister(10, capset(state.register(10), state.register(11)));
             case SYS_EXIT_GROUP -> {
                 requestProcessExit(state.register(10));
                 throw new ProgramExitException(state.register(10));
@@ -6010,6 +6260,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(12),
                     state.register(13)));
             case SYS_RT_SIGRETURN -> rtSigreturn(state);
+            case SYS_SETPRIORITY -> state.setRegister(10, setpriority(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_GETPRIORITY -> state.setRegister(10, getpriority(state.register(10), state.register(11)));
             case SYS_SETREGID -> state.setRegister(10, setresgid(
                     state.register(10),
                     state.register(11),
@@ -6057,6 +6312,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_TIMES -> state.setRegister(10, times(state.register(10)));
             case SYS_SETPGID -> state.setRegister(10, setpgid(state.register(10), state.register(11)));
             case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
+            case SYS_GETSID -> state.setRegister(10, getsid(state.register(10)));
             case SYS_SETSID -> state.setRegister(10, setsid());
             case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
             case SYS_SETGROUPS -> state.setRegister(10, setgroups(state.register(10), state.register(11)));
@@ -6221,6 +6477,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_FANOTIFY_INIT,
+                 SYS_FANOTIFY_MARK,
+                 SYS_NAME_TO_HANDLE_AT,
+                 SYS_OPEN_BY_HANDLE_AT -> state.setRegister(10, ENOSYS);
             case SYS_SYNCFS -> state.setRegister(10, syncfs((int) state.register(10)));
             case SYS_RENAMEAT2 -> state.setRegister(10, renameat2(
                     state.register(10),
@@ -6252,17 +6512,31 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_CLOSE_RANGE -> state.setRegister(10, closeRange(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
                 default -> throw new RiscVException(unsupportedEcallMessage(state, pc, callNumber));
             }
         } finally {
             state.restorePointerMask(previousMask);
         }
+        deliverPendingChildSignal(state, pc);
     }
 
     /// Creates a child-process Linux syscall handler.
     @Override
     protected GuestSyscalls createChildSyscalls(Memory childMemory, GuestProcess childProcess) {
         return new LinuxGuestSyscalls(this, childMemory, childProcess);
+    }
+
+    /// Stores a validated Linux capability syscall header.
+    ///
+    /// @param version the capability ABI version supplied by the guest
+    /// @param processId the target process id supplied by the guest
+    /// @param result the raw Linux syscall result for header validation
+    @NotNullByDefault
+    protected record CapabilityHeader(int version, int processId, long result) {
     }
 
     /// Linux RISC-V kernel signal action state.
