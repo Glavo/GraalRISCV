@@ -247,6 +247,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The maximum transient buffer size used by one `splice` copy step.
     protected static final int SPLICE_BUFFER_SIZE = 64 * 1024;
 
+    /// The maximum transient buffer size used by one `copy_file_range` copy step.
+    protected static final int COPY_FILE_RANGE_BUFFER_SIZE = 64 * 1024;
+
+    /// The maximum transient buffer size used by one `sendfile` copy step.
+    protected static final int SENDFILE_BUFFER_SIZE = 64 * 1024;
+
     /// Linux `SPLICE_F_MOVE`.
     protected static final long SPLICE_F_MOVE = 1;
 
@@ -5297,6 +5303,116 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return total;
         } catch (IOException exception) {
             throw new RiscVException("Guest pwritev2 syscall failed", exception);
+        }
+    }
+
+    /// Copies bytes between two seekable file descriptors using Linux `copy_file_range` semantics.
+    protected long copyFileRange(
+            int inputFileDescriptor,
+            long inputOffsetAddress,
+            int outputFileDescriptor,
+            long outputOffsetAddress,
+            long length,
+            long flags) {
+        if (length < 0 || flags != 0) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        long inputOffset = 0;
+        if (inputOffsetAddress != 0) {
+            if (!memory.isBacked(inputOffsetAddress, Long.BYTES)) {
+                return EFAULT;
+            }
+            inputOffset = memory.readLong(inputOffsetAddress);
+            if (inputOffset < 0) {
+                return EINVAL;
+            }
+        }
+
+        long outputOffset = 0;
+        if (outputOffsetAddress != 0) {
+            if (!memory.isBacked(outputOffsetAddress, Long.BYTES)) {
+                return EFAULT;
+            }
+            outputOffset = memory.readLong(outputOffsetAddress);
+            if (outputOffset < 0) {
+                return EINVAL;
+            }
+        }
+
+        if (standardFileDescriptorFor(inputFileDescriptor) >= 0
+                || standardFileDescriptorFor(outputFileDescriptor) >= 0) {
+            return ESPIPE;
+        }
+
+        @Nullable OpenFile inputFile = openFile(inputFileDescriptor);
+        if (inputFile == null || !inputFile.readable()) {
+            return EBADF;
+        }
+        if (inputFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (!inputFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        @Nullable OpenFile outputFile = openFile(outputFileDescriptor);
+        if (outputFile == null || !outputFile.writable()) {
+            return EBADF;
+        }
+        if (outputFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (outputFile.append()) {
+            return EINVAL;
+        }
+        if (!outputFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        byte[] buffer = new byte[(int) Math.min(length, COPY_FILE_RANGE_BUFFER_SIZE)];
+        long total = 0;
+        try {
+            while (total < length) {
+                int requested = (int) Math.min(buffer.length, length - total);
+                ByteBuffer byteBuffer = ByteBuffer.wrap(buffer, 0, requested);
+                int readCount = inputOffsetAddress == 0
+                        ? inputFile.channel().read(byteBuffer)
+                        : readHostFileAt(inputFile.channel(), inputOffset, byteBuffer);
+                if (readCount < 0) {
+                    return total;
+                }
+                if (readCount == 0) {
+                    return total;
+                }
+
+                long writeCount = outputOffsetAddress == 0
+                        ? writeOpenFile(outputFile, copyBufferPrefix(buffer, readCount))
+                        : writeHostFileAt(outputFile, copyBufferPrefix(buffer, readCount), outputOffset);
+                if (writeCount <= 0) {
+                    return total;
+                }
+
+                if (inputOffsetAddress != 0) {
+                    inputOffset += writeCount;
+                    memory.writeLong(inputOffsetAddress, inputOffset);
+                }
+                if (outputOffsetAddress != 0) {
+                    outputOffset += writeCount;
+                    memory.writeLong(outputOffsetAddress, outputOffset);
+                }
+
+                total += writeCount;
+                if (writeCount < readCount || readCount < requested) {
+                    return total;
+                }
+            }
+            return total;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest copy_file_range syscall failed", exception);
         }
     }
 

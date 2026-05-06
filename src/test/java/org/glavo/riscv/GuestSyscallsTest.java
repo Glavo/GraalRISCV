@@ -271,6 +271,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `pwritev`.
     private static final long SYS_PWRITEV = 70;
 
+    /// The Linux RISC-V syscall number for `sendfile`.
+    private static final long SYS_SENDFILE = 71;
+
     /// The Linux RISC-V syscall number for `pselect6`.
     private static final long SYS_PSELECT6 = 72;
 
@@ -624,6 +627,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `mlock2`.
     private static final long SYS_MLOCK2 = 284;
+
+    /// The Linux RISC-V syscall number for `copy_file_range`.
+    private static final long SYS_COPY_FILE_RANGE = 285;
 
     /// The Linux RISC-V syscall number for `preadv2`.
     private static final long SYS_PREADV2 = 286;
@@ -5140,6 +5146,415 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SYNCFS, 99, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies `sendfile` copies from a regular file and handles explicit and descriptor input offsets.
+    @Test
+    public void sendfileCopiesRegularFile() throws Exception {
+        Files.writeString(tempDirectory.resolve("sendfile-source.txt"), "0123456789", StandardCharsets.UTF_8);
+        Files.writeString(tempDirectory.resolve("sendfile-destination.txt"), "abcdefghij", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long sourcePathAddress = memory.baseAddress();
+            long destinationPathAddress = memory.baseAddress() + 128;
+            long offsetAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, sourcePathAddress, "sendfile-source.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, sourcePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int inputFileDescriptor = (int) state.register(10);
+            assertEquals(3, inputFileDescriptor);
+
+            writeGuestString(memory, destinationPathAddress, "sendfile-destination.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, destinationPathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int outputFileDescriptor = (int) state.register(10);
+            assertEquals(4, outputFileDescriptor);
+
+            setSyscall(state, SYS_LSEEK, inputFileDescriptor, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, outputFileDescriptor, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            memory.writeLong(offsetAddress, 4);
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, inputFileDescriptor, offsetAddress, 3);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertEquals(7, memory.readLong(offsetAddress));
+            assertEquals("ab456fghij", Files.readString(tempDirectory.resolve("sendfile-destination.txt")));
+
+            setSyscall(state, SYS_LSEEK, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, outputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5, state.register(10));
+
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, inputFileDescriptor, 0, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals("ab45612hij", Files.readString(tempDirectory.resolve("sendfile-destination.txt")));
+
+            setSyscall(state, SYS_LSEEK, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, outputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(7, state.register(10));
+        }
+    }
+
+    /// Verifies `sendfile` can write to connected Unix-domain stream sockets.
+    @Test
+    public void sendfileWritesToUnixSocketpair() throws Exception {
+        Files.writeString(tempDirectory.resolve("sendfile-source.txt"), "socket-data", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long sourcePathAddress = memory.baseAddress();
+            long pairAddress = memory.baseAddress() + 128;
+            long bufferAddress = memory.baseAddress() + 256;
+            long offsetAddress = memory.baseAddress() + 384;
+
+            writeGuestString(memory, sourcePathAddress, "sendfile-source.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, sourcePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int inputFileDescriptor = (int) state.register(10);
+            assertEquals(3, inputFileDescriptor);
+
+            setSyscall(state, SYS_SOCKETPAIR, AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, pairAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int firstSocket = memory.readInt(pairAddress);
+            int secondSocket = memory.readInt(pairAddress + Integer.BYTES);
+            assertEquals(4, firstSocket);
+            assertEquals(5, secondSocket);
+
+            memory.writeLong(offsetAddress, 0);
+            setSyscall(state, SYS_SENDFILE, firstSocket, inputFileDescriptor, offsetAddress, 6);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+            assertEquals(6, memory.readLong(offsetAddress));
+
+            setSyscall(state, SYS_READ, secondSocket, bufferAddress, 6);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+            assertEquals("socket", readGuestString(memory, bufferAddress, 6));
+
+            setSyscall(state, SYS_LSEEK, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies `sendfile` validates descriptors, counts, and offset pointers.
+    @Test
+    public void sendfileValidatesArguments() throws Exception {
+        Files.writeString(tempDirectory.resolve("sendfile-source.txt"), "source", StandardCharsets.UTF_8);
+        Files.writeString(tempDirectory.resolve("sendfile-destination.txt"), "target", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long sourcePathAddress = memory.baseAddress();
+            long destinationPathAddress = memory.baseAddress() + 128;
+            long directoryPathAddress = memory.baseAddress() + 256;
+            long offsetAddress = memory.baseAddress() + 384;
+
+            writeGuestString(memory, sourcePathAddress, "sendfile-source.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, sourcePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int inputFileDescriptor = (int) state.register(10);
+            assertEquals(3, inputFileDescriptor);
+
+            writeGuestString(memory, destinationPathAddress, "sendfile-destination.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, destinationPathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int outputFileDescriptor = (int) state.register(10);
+            assertEquals(4, outputFileDescriptor);
+
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, inputFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, inputFileDescriptor, 0, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(offsetAddress, -1);
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, inputFileDescriptor, offsetAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, inputFileDescriptor, memory.endAddress(), 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, 99, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_SENDFILE, 99, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, destinationPathAddress, O_WRONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int writeOnlyFileDescriptor = (int) state.register(10);
+            assertEquals(5, writeOnlyFileDescriptor);
+
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, writeOnlyFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, sourcePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int readOnlyOutputFileDescriptor = (int) state.register(10);
+            assertEquals(6, readOnlyOutputFileDescriptor);
+
+            setSyscall(state, SYS_SENDFILE, readOnlyOutputFileDescriptor, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, destinationPathAddress, O_WRONLY | O_APPEND, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int appendFileDescriptor = (int) state.register(10);
+            assertEquals(7, appendFileDescriptor);
+
+            setSyscall(state, SYS_SENDFILE, appendFileDescriptor, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, directoryPathAddress, ".");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, directoryPathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(8, directoryFileDescriptor);
+
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, directoryFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EISDIR, state.register(10));
+
+            memory.writeLong(offsetAddress, 0);
+            assertTrue(memory.protect(memory.baseAddress(), 4096, Memory.PROTECTION_READ));
+            setSyscall(state, SYS_SENDFILE, outputFileDescriptor, inputFileDescriptor, offsetAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+        }
+    }
+
+    /// Verifies `copy_file_range` copies between regular files and preserves explicit descriptor offsets.
+    @Test
+    public void copyFileRangeCopiesRegularFiles() throws Exception {
+        Files.writeString(tempDirectory.resolve("copy-source.txt"), "0123456789", StandardCharsets.UTF_8);
+        Files.writeString(tempDirectory.resolve("copy-destination.txt"), "abcdefghij", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long sourcePathAddress = memory.baseAddress();
+            long destinationPathAddress = memory.baseAddress() + 128;
+            long inputOffsetAddress = memory.baseAddress() + 256;
+            long outputOffsetAddress = memory.baseAddress() + 264;
+
+            writeGuestString(memory, sourcePathAddress, "copy-source.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, sourcePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int inputFileDescriptor = (int) state.register(10);
+            assertEquals(3, inputFileDescriptor);
+
+            writeGuestString(memory, destinationPathAddress, "copy-destination.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, destinationPathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int outputFileDescriptor = (int) state.register(10);
+            assertEquals(4, outputFileDescriptor);
+
+            setSyscall(state, SYS_LSEEK, inputFileDescriptor, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, outputFileDescriptor, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            memory.writeLong(inputOffsetAddress, 3);
+            memory.writeLong(outputOffsetAddress, 4);
+            setSyscall(
+                    state,
+                    SYS_COPY_FILE_RANGE,
+                    inputFileDescriptor,
+                    inputOffsetAddress,
+                    outputFileDescriptor,
+                    outputOffsetAddress,
+                    4,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertEquals(7, memory.readLong(inputOffsetAddress));
+            assertEquals(8, memory.readLong(outputOffsetAddress));
+
+            setSyscall(state, SYS_LSEEK, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, outputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals("abcd3456ij", Files.readString(tempDirectory.resolve("copy-destination.txt")));
+
+            setSyscall(
+                    state,
+                    SYS_COPY_FILE_RANGE,
+                    inputFileDescriptor,
+                    0,
+                    outputFileDescriptor,
+                    0,
+                    2,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals("ab123456ij", Files.readString(tempDirectory.resolve("copy-destination.txt")));
+
+            setSyscall(state, SYS_LSEEK, inputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, outputFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+        }
+    }
+
+    /// Verifies `copy_file_range` validates descriptors, offsets, and flags.
+    @Test
+    public void copyFileRangeValidatesArguments() throws Exception {
+        Files.writeString(tempDirectory.resolve("copy-source.txt"), "source", StandardCharsets.UTF_8);
+        Files.writeString(tempDirectory.resolve("copy-destination.txt"), "target", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long sourcePathAddress = memory.baseAddress();
+            long destinationPathAddress = memory.baseAddress() + 128;
+            long directoryPathAddress = memory.baseAddress() + 256;
+            long offsetAddress = memory.baseAddress() + 384;
+            long pipeAddress = memory.baseAddress() + 512;
+
+            writeGuestString(memory, sourcePathAddress, "copy-source.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, sourcePathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int inputFileDescriptor = (int) state.register(10);
+            assertEquals(3, inputFileDescriptor);
+
+            writeGuestString(memory, destinationPathAddress, "copy-destination.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, destinationPathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int outputFileDescriptor = (int) state.register(10);
+            assertEquals(4, outputFileDescriptor);
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, inputFileDescriptor, 0, outputFileDescriptor, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, inputFileDescriptor, 0, outputFileDescriptor, 0, 1, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(offsetAddress, -1);
+            setSyscall(state, SYS_COPY_FILE_RANGE, inputFileDescriptor, offsetAddress, outputFileDescriptor, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_COPY_FILE_RANGE,
+                    inputFileDescriptor,
+                    memory.endAddress(),
+                    outputFileDescriptor,
+                    0,
+                    1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, 99, 0, outputFileDescriptor, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, inputFileDescriptor, 0, 99, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, 0, 0, outputFileDescriptor, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESPIPE, state.register(10));
+
+            writeGuestString(memory, directoryPathAddress, ".");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, directoryPathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(5, directoryFileDescriptor);
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, directoryFileDescriptor, 0, outputFileDescriptor, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EISDIR, state.register(10));
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, readFileDescriptor, 0, outputFileDescriptor, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESPIPE, state.register(10));
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, inputFileDescriptor, 0, writeFileDescriptor, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESPIPE, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, destinationPathAddress, O_WRONLY | O_APPEND, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int appendFileDescriptor = (int) state.register(10);
+            assertEquals(8, appendFileDescriptor);
+
+            setSyscall(state, SYS_COPY_FILE_RANGE, inputFileDescriptor, 0, appendFileDescriptor, 0, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 

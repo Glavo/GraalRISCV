@@ -3426,6 +3426,106 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 : unixSocket.send(source, socketNonblocking(fileDescriptor));
     }
 
+    /// Copies bytes from a seekable input file descriptor to an output descriptor using Linux `sendfile`.
+    protected long sendfile(int outputFileDescriptor, int inputFileDescriptor, long offsetAddress, long count) {
+        if (count < 0) {
+            return EINVAL;
+        }
+        if (count == 0) {
+            return 0;
+        }
+
+        long inputOffset = 0;
+        if (offsetAddress != 0) {
+            if (!memory.isBacked(offsetAddress, Long.BYTES)) {
+                return EFAULT;
+            }
+            try {
+                inputOffset = memory.readLong(offsetAddress);
+                memory.writeLong(offsetAddress, inputOffset);
+            } catch (MemoryAccessException exception) {
+                return EFAULT;
+            }
+            if (inputOffset < 0) {
+                return EINVAL;
+            }
+        }
+
+        if (standardFileDescriptorFor(inputFileDescriptor) >= 0) {
+            return ESPIPE;
+        }
+
+        @Nullable OpenFile inputFile = openFile(inputFileDescriptor);
+        if (inputFile == null || !inputFile.readable()) {
+            return EBADF;
+        }
+        if (inputFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (!inputFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        byte[] buffer = new byte[(int) Math.min(count, SENDFILE_BUFFER_SIZE)];
+        long total = 0;
+        try {
+            long inputPosition = offsetAddress == 0 ? inputFile.channel().position() : inputOffset;
+            while (total < count) {
+                int requested = (int) Math.min(buffer.length, count - total);
+                int readCount = readHostFileAt(inputFile.channel(), inputPosition, ByteBuffer.wrap(buffer, 0, requested));
+                if (readCount <= 0) {
+                    return total;
+                }
+
+                long writeCount = writeSendfileOutput(outputFileDescriptor, buffer, readCount);
+                if (writeCount < 0) {
+                    return total == 0 ? writeCount : total;
+                }
+                if (writeCount == 0) {
+                    return total;
+                }
+
+                inputPosition += writeCount;
+                if (offsetAddress != 0) {
+                    try {
+                        memory.writeLong(offsetAddress, inputPosition);
+                    } catch (MemoryAccessException exception) {
+                        return total == 0 ? EFAULT : total;
+                    }
+                } else {
+                    inputFile.channel().position(inputPosition);
+                }
+
+                total += writeCount;
+                if (writeCount < readCount || readCount < requested) {
+                    return total;
+                }
+            }
+            return total;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest sendfile syscall failed", exception);
+        }
+    }
+
+    /// Writes one `sendfile` buffer chunk to a regular output descriptor or guest socket.
+    private long writeSendfileOutput(int fileDescriptor, byte[] buffer, int length) throws IOException {
+        @Nullable InternetSocket socket = internetSocket(fileDescriptor);
+        if (socket != null) {
+            return socket.send(ByteBuffer.wrap(buffer, 0, length), null, socketNonblocking(fileDescriptor));
+        }
+
+        @Nullable UnixStreamSocket unixSocket = unixStreamSocket(fileDescriptor);
+        if (unixSocket != null) {
+            return unixSocket.send(ByteBuffer.wrap(buffer, 0, length), socketNonblocking(fileDescriptor));
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile != null && openFile.append()) {
+            return EINVAL;
+        }
+        return writeSpliceOutput(fileDescriptor, 0, 0, buffer, length);
+    }
+
     /// Computes readiness for guest network sockets or falls back to generic descriptor readiness.
     @Override
     protected int readyEventsFor(int fileDescriptor) {
@@ -5811,6 +5911,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `pwritev`.
     private static final int SYS_PWRITEV = 70;
 
+    /// The Linux RISC-V syscall number for `sendfile`.
+    private static final int SYS_SENDFILE = 71;
+
     /// The Linux RISC-V syscall number for `pselect6`.
     private static final int SYS_PSELECT6 = 72;
 
@@ -6192,6 +6295,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `mlock2`.
     private static final int SYS_MLOCK2 = 284;
 
+    /// The Linux RISC-V syscall number for `copy_file_range`.
+    private static final int SYS_COPY_FILE_RANGE = 285;
+
     /// The Linux RISC-V syscall number for `preadv2`.
     private static final int SYS_PREADV2 = 286;
 
@@ -6354,6 +6460,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_PWRITEV -> state.setRegister(10, pwritev(
                     (int) state.register(10),
                     state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_SENDFILE -> state.setRegister(10, sendfile(
+                    (int) state.register(10),
+                    (int) state.register(11),
                     state.register(12),
                     state.register(13)));
             case SYS_PSELECT6 -> state.setRegister(10, pselect6(
@@ -6716,6 +6827,13 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_GETRANDOM -> state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
             case SYS_MEMBARRIER -> state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
             case SYS_MLOCK2 -> state.setRegister(10, mlock2(state.register(10), state.register(11), state.register(12)));
+            case SYS_COPY_FILE_RANGE -> state.setRegister(10, copyFileRange(
+                    (int) state.register(10),
+                    state.register(11),
+                    (int) state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
             case SYS_PREADV2 -> state.setRegister(10, preadv2(
                     (int) state.register(10),
                     state.register(11),
