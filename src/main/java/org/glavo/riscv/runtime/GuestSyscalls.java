@@ -1085,6 +1085,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The Linux `S_ISGID` special mode bit.
     protected static final int STAT_MODE_SET_GROUP_ID = 02000;
 
+    /// The Linux `S_ISUID` special mode bit.
+    protected static final int STAT_MODE_SET_USER_ID = 04000;
+
     /// The Linux `S_ISVTX` sticky directory special mode bit.
     protected static final int STAT_MODE_STICKY = 01000;
 
@@ -1185,7 +1188,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     private @Nullable Runnable framebufferRefreshHookRemoval;
 
     /// The Linux user and group identity exposed to this guest process.
-    protected final GuestCredentials credentials;
+    protected GuestCredentials credentials;
 
     /// The Linux file creation mask applied to `openat(O_CREAT)` and `mkdirat`.
     protected volatile int fileCreationMask;
@@ -6726,10 +6729,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         LinuxProgramLoader.LoadedProgram program;
+        GuestCredentials execCredentials;
         try {
             byte[] executableBytes = fileSystem.readFile(executablePath);
             LinuxProgramLoader.ResolvedExecutable resolvedExecutable =
                     LinuxProgramLoader.resolveExecutable(executableBytes, executablePath, fileSystem, arguments);
+            execCredentials = credentialsForExec(resolvedExecutable.executablePath());
             program = LinuxProgramLoader.load(
                     resolvedExecutable.executableBytes(),
                     resolvedExecutable.executablePath(),
@@ -6743,7 +6748,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return ENOMEM;
         }
 
-        replaceCurrentProcessImage(state, program, arguments, environment);
+        replaceCurrentProcessImage(state, program, arguments, environment, execCredentials);
         throw new ProcessImageReplacedException();
     }
 
@@ -6779,17 +6784,65 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return true;
     }
 
+    /// Returns credentials after applying setuid and setgid bits for an executable path.
+    protected GuestCredentials credentialsForExec(@Nullable String executablePath) {
+        long effectiveUserId = credentials.effectiveUserId();
+        long effectiveGroupId = credentials.effectiveGroupId();
+        if (executablePath != null) {
+            @Nullable GuestFileMetadata metadata = executableMetadata(executablePath);
+            if (metadata != null) {
+                if ((metadata.mode() & STAT_MODE_SET_USER_ID) != 0) {
+                    effectiveUserId = metadata.userId();
+                }
+                if ((metadata.mode() & STAT_MODE_SET_GROUP_ID) != 0) {
+                    effectiveGroupId = metadata.groupId();
+                }
+            }
+        }
+        return credentials.withExecEffectiveIds(effectiveUserId, effectiveGroupId);
+    }
+
+    /// Returns guest-visible metadata for a regular executable path.
+    protected @Nullable GuestFileMetadata executableMetadata(String absoluteGuestPath) {
+        @Nullable Mount mount = fileSystem.mountForGuestPath(absoluteGuestPath);
+        if (mount instanceof TarMount) {
+            @Nullable TarPath tarPath = fileSystem.resolveTarPath(absoluteGuestPath, true);
+            @Nullable TarNode node = tarPath == null ? null : tarPath.node();
+            if (node == null || !node.isFile()) {
+                return null;
+            }
+            return new GuestFileMetadata(node.userId(), node.groupId(), node.permissions());
+        }
+        if (mount instanceof HostMount hostMount) {
+            @Nullable Path hostFile = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
+            if (hostFile == null) {
+                return null;
+            }
+            try {
+                if (!Files.isRegularFile(hostFile)) {
+                    return null;
+                }
+                return hostFileMetadata(hostFile, false);
+            } catch (IOException | SecurityException exception) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     /// Installs an already loaded executable into the current process state.
     protected void replaceCurrentProcessImage(
             RiscVThreadState state,
             LinuxProgramLoader.LoadedProgram program,
             String @Unmodifiable [] arguments,
-            String @Unmodifiable [] environment) {
+            String @Unmodifiable [] environment,
+            GuestCredentials execCredentials) {
         syncSharedDeviceMappings();
         closeFramebufferRefreshHook();
         memory.resetAddressSpace();
+        credentials = execCredentials;
         LinuxProgramLoader.LoadedProcess loadedProcess =
-                LinuxProgramLoader.initialize(memory, program, arguments, environment, credentials, pageSize);
+                LinuxProgramLoader.initialize(memory, program, arguments, environment, execCredentials, pageSize);
         resetForExec(state, loadedProcess.initialProgramBreak(), program.executablePath());
         recordInitialAuxiliaryVector(loadedProcess.stackPointer());
         state.resetForExec(

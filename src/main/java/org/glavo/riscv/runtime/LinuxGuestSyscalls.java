@@ -1807,22 +1807,73 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     }
 
 
-    /// Accepts no-op real, effective, and saved user or group id updates.
+    /// The maximum supplementary group count accepted by Linux.
+    protected static final long MAX_SUPPLEMENTARY_GROUP_COUNT = 65536;
+
+    /// Updates real, effective, and saved user ids.
+    protected long setresuid(long requestedRealId, long requestedEffectiveId, long requestedSavedId) {
+        long currentRealId = credentials.realUserId();
+        long currentEffectiveId = credentials.effectiveUserId();
+        long currentSavedId = credentials.savedUserId();
+        long result = setresid(
+                requestedRealId,
+                requestedEffectiveId,
+                requestedSavedId,
+                currentRealId,
+                currentEffectiveId,
+                currentSavedId,
+                currentEffectiveId == 0);
+        if (result != 0) {
+            return result;
+        }
+        credentials = credentials.withUserIds(
+                setresidValue(requestedRealId, currentRealId),
+                setresidValue(requestedEffectiveId, currentEffectiveId),
+                setresidValue(requestedSavedId, currentSavedId));
+        return 0;
+    }
+
+    /// Updates real, effective, and saved group ids.
+    protected long setresgid(long requestedRealId, long requestedEffectiveId, long requestedSavedId) {
+        long currentRealId = credentials.realGroupId();
+        long currentEffectiveId = credentials.effectiveGroupId();
+        long currentSavedId = credentials.savedGroupId();
+        long result = setresid(
+                requestedRealId,
+                requestedEffectiveId,
+                requestedSavedId,
+                currentRealId,
+                currentEffectiveId,
+                currentSavedId,
+                credentials.effectiveUserId() == 0);
+        if (result != 0) {
+            return result;
+        }
+        credentials = credentials.withGroupIds(
+                setresidValue(requestedRealId, currentRealId),
+                setresidValue(requestedEffectiveId, currentEffectiveId),
+                setresidValue(requestedSavedId, currentSavedId));
+        return 0;
+    }
+
+    /// Validates real, effective, and saved user or group id updates.
     protected static long setresid(
             long requestedRealId,
             long requestedEffectiveId,
             long requestedSavedId,
             long currentRealId,
             long currentEffectiveId,
-            long currentSavedId) {
+            long currentSavedId,
+            boolean privileged) {
         if (!isValidSetresidArgument(requestedRealId)
                 || !isValidSetresidArgument(requestedEffectiveId)
                 || !isValidSetresidArgument(requestedSavedId)) {
             return EINVAL;
         }
-        if (!isUnchangedOrCurrentId(requestedRealId, currentRealId)
-                || !isUnchangedOrCurrentId(requestedEffectiveId, currentEffectiveId)
-                || !isUnchangedOrCurrentId(requestedSavedId, currentSavedId)) {
+        if (!privileged
+                && (!isUnchangedOrCurrentId(requestedRealId, currentRealId, currentEffectiveId, currentSavedId)
+                || !isUnchangedOrCurrentId(requestedEffectiveId, currentRealId, currentEffectiveId, currentSavedId)
+                || !isUnchangedOrCurrentId(requestedSavedId, currentRealId, currentEffectiveId, currentSavedId))) {
             return EPERM;
         }
         return 0;
@@ -1838,9 +1889,21 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return requestedId == -1L || requestedId == GuestCredentials.MAX_ID;
     }
 
-    /// Returns true when a requested id is the no-change sentinel or the current id.
-    protected static boolean isUnchangedOrCurrentId(long requestedId, long currentId) {
-        return isSetresidUnchanged(requestedId) || requestedId == currentId;
+    /// Returns true when a requested id is the no-change sentinel or one current id.
+    protected static boolean isUnchangedOrCurrentId(
+            long requestedId,
+            long currentRealId,
+            long currentEffectiveId,
+            long currentSavedId) {
+        return isSetresidUnchanged(requestedId)
+                || requestedId == currentRealId
+                || requestedId == currentEffectiveId
+                || requestedId == currentSavedId;
+    }
+
+    /// Returns the updated id value after applying the no-change sentinel.
+    protected static long setresidValue(long requestedId, long currentId) {
+        return isSetresidUnchanged(requestedId) ? currentId : requestedId;
     }
 
     /// Returns the unchanged filesystem user or group id.
@@ -1874,6 +1937,33 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     GuestCredentials.idToInt(credentials.supplementaryGroupAt(index)));
         }
         return groupCount;
+    }
+
+    /// Updates the process supplementary group list.
+    protected long setgroups(long size, long listAddress) {
+        if (size < 0 || size > MAX_SUPPLEMENTARY_GROUP_COUNT) {
+            return EINVAL;
+        }
+        if (credentials.effectiveUserId() != 0) {
+            return EPERM;
+        }
+
+        long bytes = size * Integer.BYTES;
+        if (size != 0 && !memory.isBacked(listAddress, bytes)) {
+            return EFAULT;
+        }
+
+        long[] groups = new long[(int) size];
+        try {
+            for (int index = 0; index < groups.length; index++) {
+                groups[index] = memory.readUnsignedInt(listAddress + (long) index * Integer.BYTES);
+                GuestCredentials.validateId("group", groups[index]);
+            }
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+        credentials = credentials.withSupplementaryGroups(groups);
+        return 0;
     }
 
     /// Linux address family number for netlink sockets.
@@ -5509,6 +5599,18 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `rt_sigreturn`.
     private static final int SYS_RT_SIGRETURN = 139;
 
+    /// The Linux RISC-V syscall number for `setregid`.
+    private static final int SYS_SETREGID = 143;
+
+    /// The Linux RISC-V syscall number for `setgid`.
+    private static final int SYS_SETGID = 144;
+
+    /// The Linux RISC-V syscall number for `setreuid`.
+    private static final int SYS_SETREUID = 145;
+
+    /// The Linux RISC-V syscall number for `setuid`.
+    private static final int SYS_SETUID = 146;
+
     /// The Linux RISC-V syscall number for `setresuid`.
     private static final int SYS_SETRESUID = 147;
 
@@ -5541,6 +5643,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `getgroups`.
     private static final int SYS_GETGROUPS = 158;
+
+    /// The Linux RISC-V syscall number for `setgroups`.
+    private static final int SYS_SETGROUPS = 159;
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final int SYS_UNAME = 160;
@@ -5905,6 +6010,22 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(12),
                     state.register(13)));
             case SYS_RT_SIGRETURN -> rtSigreturn(state);
+            case SYS_SETREGID -> state.setRegister(10, setresgid(
+                    state.register(10),
+                    state.register(11),
+                    -1));
+            case SYS_SETGID -> state.setRegister(10, setresgid(
+                    state.register(10),
+                    state.register(10),
+                    state.register(10)));
+            case SYS_SETREUID -> state.setRegister(10, setresuid(
+                    state.register(10),
+                    state.register(11),
+                    -1));
+            case SYS_SETUID -> state.setRegister(10, setresuid(
+                    state.register(10),
+                    state.register(10),
+                    state.register(10)));
             case SYS_GETRESUID -> state.setRegister(10, getresid(
                     state.register(10),
                     state.register(11),
@@ -5912,13 +6033,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     credentials.realUserId(),
                     credentials.effectiveUserId(),
                     credentials.savedUserId()));
-            case SYS_SETRESUID -> state.setRegister(10, setresid(
+            case SYS_SETRESUID -> state.setRegister(10, setresuid(
                     state.register(10),
                     state.register(11),
-                    state.register(12),
-                    credentials.realUserId(),
-                    credentials.effectiveUserId(),
-                    credentials.savedUserId()));
+                    state.register(12)));
             case SYS_GETRESGID -> state.setRegister(10, getresid(
                     state.register(10),
                     state.register(11),
@@ -5926,13 +6044,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     credentials.realGroupId(),
                     credentials.effectiveGroupId(),
                     credentials.savedGroupId()));
-            case SYS_SETRESGID -> state.setRegister(10, setresid(
+            case SYS_SETRESGID -> state.setRegister(10, setresgid(
                     state.register(10),
                     state.register(11),
-                    state.register(12),
-                    credentials.realGroupId(),
-                    credentials.effectiveGroupId(),
-                    credentials.savedGroupId()));
+                    state.register(12)));
             case SYS_SETFSUID -> state.setRegister(10, setfsid(
                     state.register(10),
                     credentials.effectiveUserId()));
@@ -5944,6 +6059,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_GETPGID -> state.setRegister(10, getpgid(state.register(10)));
             case SYS_SETSID -> state.setRegister(10, setsid());
             case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
+            case SYS_SETGROUPS -> state.setRegister(10, setgroups(state.register(10), state.register(11)));
             case SYS_UNAME -> state.setRegister(10, uname(state.register(10)));
             case SYS_GETRUSAGE -> state.setRegister(10, getrusage(state.register(10), state.register(11)));
             case SYS_UMASK -> state.setRegister(10, umask(state.register(10)));

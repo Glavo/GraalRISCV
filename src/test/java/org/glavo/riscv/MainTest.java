@@ -141,6 +141,9 @@ public final class MainTest {
     /// The Linux RISC-V syscall number for `getuid`.
     private static final int SYS_GETUID = 174;
 
+    /// The Linux RISC-V syscall number for `geteuid`.
+    private static final int SYS_GETEUID = 175;
+
     /// The Linux RISC-V syscall number for `getgid`.
     private static final int SYS_GETGID = 176;
 
@@ -588,6 +591,29 @@ public final class MainTest {
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
 
+    /// Verifies that `--guest-program` applies setuid-root metadata from tar executables.
+    @Test
+    public void guestProgramOptionHonorsSetuidTarExecutable() throws Exception {
+        Path archive = tempDirectory.resolve("guest-program-setuid.tar");
+        writeTarEntry(archive, "bin/check", ElfTestImages.executable(checkSetuidRootCode()), 04755, 0, 0);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "1000",
+                        "--mount", "type=tar,src=" + archive + ",dst=/",
+                        "--guest-program", "/bin/check"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
     /// Verifies that `--guest-program` applies Linux `#!` script interpreter rewriting.
     @Test
     public void guestProgramOptionLoadsShebangScriptFromGuestMount() throws Exception {
@@ -631,6 +657,29 @@ public final class MainTest {
                 err);
 
         assertEquals(7, exitCode);
+        assertEquals("", out.toString(StandardCharsets.UTF_8));
+        assertEquals("", err.toString(StandardCharsets.UTF_8));
+    }
+
+    /// Verifies that `execve` applies setuid-root metadata from tar executables.
+    @Test
+    public void execveHonorsSetuidTarExecutable() throws Exception {
+        Path archive = tempDirectory.resolve("execve-setuid.tar");
+        writeTarExecveSetuidFixture(archive);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int exitCode = Main.run(
+                new String[]{
+                        "--max-instructions", "2000",
+                        "--mount", "type=tar,src=" + archive + ",dst=/",
+                        "--guest-program", "/parent.elf"
+                },
+                new ByteArrayInputStream(new byte[0]),
+                out,
+                err);
+
+        assertEquals(0, exitCode);
         assertEquals("", out.toString(StandardCharsets.UTF_8));
         assertEquals("", err.toString(StandardCharsets.UTF_8));
     }
@@ -1752,6 +1801,21 @@ public final class MainTest {
         }
     }
 
+    /// Writes one regular-file entry with explicit Linux metadata to a tar archive.
+    private static void writeTarEntry(
+            Path archive,
+            String name,
+            byte[] data,
+            int mode,
+            long userId,
+            long groupId) throws Exception {
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, name, data, mode, userId, groupId);
+            tarOutput.finish();
+        }
+    }
+
     /// Writes one regular-file entry to a gzip-compressed tar archive.
     private static void writeGzipTarEntry(Path archive, String name, byte[] data) throws Exception {
         ByteArrayOutputStream tarBytes = new ByteArrayOutputStream();
@@ -1826,9 +1890,37 @@ public final class MainTest {
         }
     }
 
+    /// Writes a tar archive where a normal parent execs a setuid-root child.
+    private static void writeTarExecveSetuidFixture(Path archive) throws Exception {
+        try (OutputStream output = Files.newOutputStream(archive);
+             TarArchiveOutputStream tarOutput = new TarArchiveOutputStream(output)) {
+            writeTarFile(tarOutput, "parent.elf", ElfTestImages.executable(execveChildProgramCode()), 0755, 1000, 1000);
+            writeTarFile(tarOutput, "child.elf", ElfTestImages.executable(checkSetuidRootCode()), 04755, 0, 0);
+            tarOutput.finish();
+        }
+    }
+
     /// Writes one regular file entry to an open tar output stream.
     private static void writeTarFile(TarArchiveOutputStream tarOutput, String name, byte[] data) throws Exception {
         TarArchiveEntry entry = new TarArchiveEntry(name);
+        entry.setSize(data.length);
+        tarOutput.putArchiveEntry(entry);
+        tarOutput.write(data, 0, data.length);
+        tarOutput.closeArchiveEntry();
+    }
+
+    /// Writes one regular file entry with explicit Linux metadata to an open tar output stream.
+    private static void writeTarFile(
+            TarArchiveOutputStream tarOutput,
+            String name,
+            byte[] data,
+            int mode,
+            long userId,
+            long groupId) throws Exception {
+        TarArchiveEntry entry = new TarArchiveEntry(name);
+        entry.setMode(mode);
+        entry.setUserId(userId);
+        entry.setGroupId(groupId);
         entry.setSize(data.length);
         tarOutput.putArchiveEntry(entry);
         tarOutput.write(data, 0, data.length);
@@ -2067,6 +2159,33 @@ public final class MainTest {
         ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
         ElfTestImages.putInt(code, ElfTestImages.ecall());
         patchInstruction(code, mismatchBranchPosition, bne(10, 5, failurePosition - mismatchBranchPosition));
+        return Arrays.copyOf(code.array(), code.position());
+    }
+
+    /// Builds a program that exits successfully only when real uid stays default and effective uid is root.
+    private static byte[] checkSetuidRootCode() {
+        ByteBuffer code = ByteBuffer.allocate(96).order(ByteOrder.LITTLE_ENDIAN);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_GETUID));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        putLoadImmediate(code, 5, 1000);
+        int uidMismatchBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_GETEUID));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+        int euidMismatchBranchPosition = reserveInstruction(code);
+
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 0));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        int failurePosition = code.position();
+        ElfTestImages.putInt(code, ElfTestImages.addi(10, 0, 1));
+        ElfTestImages.putInt(code, ElfTestImages.addi(17, 0, SYS_EXIT));
+        ElfTestImages.putInt(code, ElfTestImages.ecall());
+
+        patchInstruction(code, uidMismatchBranchPosition, bne(10, 5, failurePosition - uidMismatchBranchPosition));
+        patchInstruction(code, euidMismatchBranchPosition, bne(10, 0, failurePosition - euidMismatchBranchPosition));
         return Arrays.copyOf(code.array(), code.position());
     }
 

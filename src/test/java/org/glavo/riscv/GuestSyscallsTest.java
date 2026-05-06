@@ -342,6 +342,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `rt_sigreturn`.
     private static final long SYS_RT_SIGRETURN = 139;
 
+    /// The Linux RISC-V syscall number for `setgid`.
+    private static final long SYS_SETGID = 144;
+
+    /// The Linux RISC-V syscall number for `setuid`.
+    private static final long SYS_SETUID = 146;
+
     /// The Linux RISC-V syscall number for `setresuid`.
     private static final long SYS_SETRESUID = 147;
 
@@ -374,6 +380,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `getgroups`.
     private static final long SYS_GETGROUPS = 158;
+
+    /// The Linux RISC-V syscall number for `setgroups`.
+    private static final long SYS_SETGROUPS = 159;
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
@@ -5135,6 +5144,10 @@ public final class GuestSyscallsTest {
             assertEquals(1, state.register(10));
             assertEquals(1000, memory.readInt(groupsAddress));
 
+            setSyscall(state, SYS_SETGROUPS, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
             setSyscall(state, SYS_GETGROUPS, 1, memory.endAddress(), 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EFAULT, state.register(10));
@@ -5162,6 +5175,113 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETPEERNAME, 0, memory.baseAddress() + 96, memory.baseAddress() + 112);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ENOTSOCK, state.register(10));
+        }
+    }
+
+    /// Verifies setuid-root credentials can drop and regain the saved root user id.
+    @Test
+    public void setuidRootCredentialsCanDropAndRegainEffectiveRoot() {
+        GuestCredentials credentials = new GuestCredentials(
+                "alice",
+                1000,
+                0,
+                0,
+                1000,
+                1000,
+                1000,
+                new long[]{1000},
+                "/home/alice",
+                "/bin/sh");
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.empty(),
+                    credentials);
+            long realIdAddress = memory.baseAddress() + 64;
+            long effectiveIdAddress = memory.baseAddress() + 68;
+            long savedIdAddress = memory.baseAddress() + 72;
+
+            setSyscall(state, SYS_SETRESUID, -1, 1000, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETRESUID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1000, memory.readInt(realIdAddress));
+            assertEquals(1000, memory.readInt(effectiveIdAddress));
+            assertEquals(0, memory.readInt(savedIdAddress));
+
+            setSyscall(state, SYS_SETRESUID, -1, 0, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETRESUID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1000, memory.readInt(realIdAddress));
+            assertEquals(0, memory.readInt(effectiveIdAddress));
+            assertEquals(0, memory.readInt(savedIdAddress));
+        }
+    }
+
+    /// Verifies root credentials can update ids and supplementary groups.
+    @Test
+    public void rootIdentitySyscallsUpdateProcessCredentials() {
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.empty(),
+                    root);
+            long realIdAddress = memory.baseAddress() + 64;
+            long effectiveIdAddress = memory.baseAddress() + 68;
+            long savedIdAddress = memory.baseAddress() + 72;
+            long groupsAddress = memory.baseAddress() + 96;
+
+            memory.writeInt(groupsAddress, 0);
+            memory.writeInt(groupsAddress + Integer.BYTES, 42);
+            setSyscall(state, SYS_SETGROUPS, 2, groupsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETGROUPS, 2, groupsAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertEquals(0, memory.readInt(groupsAddress));
+            assertEquals(42, memory.readInt(groupsAddress + Integer.BYTES));
+
+            setSyscall(state, SYS_SETGID, 2345, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETRESGID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(2345, memory.readInt(realIdAddress));
+            assertEquals(2345, memory.readInt(effectiveIdAddress));
+            assertEquals(2345, memory.readInt(savedIdAddress));
+
+            setSyscall(state, SYS_SETUID, 1234, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETRESUID, realIdAddress, effectiveIdAddress, savedIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1234, memory.readInt(realIdAddress));
+            assertEquals(1234, memory.readInt(effectiveIdAddress));
+            assertEquals(1234, memory.readInt(savedIdAddress));
         }
     }
 

@@ -21,12 +21,15 @@ import org.glavo.riscv.parser.RiscVDecoder;
 import org.glavo.riscv.parser.RiscVOperation;
 import org.glavo.riscv.runtime.FreeBsdGuestSyscalls;
 import org.glavo.riscv.runtime.GuestAbi;
+import org.glavo.riscv.runtime.GuestCredentials;
 import org.glavo.riscv.runtime.GuestSyscalls;
 import org.glavo.riscv.runtime.LinuxInitialStack;
 import org.glavo.riscv.runtime.LinuxGuestSyscalls;
 import org.glavo.riscv.runtime.LinuxProgramLoader;
 import org.glavo.riscv.runtime.RiscVThreadState;
 import org.glavo.riscv.runtime.fs.GuestFileSystem;
+import org.glavo.riscv.runtime.fs.GuestFileSystem.TarNode;
+import org.glavo.riscv.runtime.fs.GuestFileSystem.TarPath;
 import org.jetbrains.annotations.NotNullByDefault;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.Unmodifiable;
@@ -44,6 +47,12 @@ public final class RiscVInterpreter {
 
     /// The alignment used when assigning load bias values to `ET_DYN` images.
     private static final long DYNAMIC_LOAD_ALIGNMENT = 0x0020_0000L;
+
+    /// The Linux `S_ISUID` special mode bit.
+    private static final int STAT_MODE_SET_USER_ID = 04000;
+
+    /// The Linux `S_ISGID` special mode bit.
+    private static final int STAT_MODE_SET_GROUP_ID = 02000;
 
     /// The host-supplied source bytes, or an empty array when the executable is read from guest mounts.
     private final byte @Unmodifiable [] sourceBytes;
@@ -191,6 +200,10 @@ public final class RiscVInterpreter {
         ElfImage executable = ElfLoader.load(resolvedExecutable.executableBytes());
         GuestAbi abi = GuestAbi.fromElfOperatingSystem(executable.operatingSystem());
         LoadedImage loadedExecutable = loadImage(executable, DYNAMIC_EXECUTABLE_BASE, context.pageSize());
+        GuestCredentials credentials = credentialsForInitialExec(
+                context.guestCredentials(),
+                fileSystem,
+                resolvedExecutable.executablePath());
         @Nullable LoadedImage loadedInterpreter = null;
         @Nullable String interpreterPath = executable.interpreterPath();
         if (interpreterPath != null) {
@@ -213,8 +226,35 @@ public final class RiscVInterpreter {
                 loadedExecutable,
                 loadedInterpreter,
                 resolvedExecutable.executablePath(),
+                credentials,
                 abi,
                 resolvedExecutable.arguments());
+    }
+
+    /// Returns initial process credentials after applying tar setuid and setgid executable metadata.
+    private static GuestCredentials credentialsForInitialExec(
+            GuestCredentials credentials,
+            GuestFileSystem fileSystem,
+            @Nullable String executablePath) {
+        if (executablePath == null) {
+            return credentials.withExecEffectiveIds(credentials.effectiveUserId(), credentials.effectiveGroupId());
+        }
+
+        @Nullable TarPath tarPath = fileSystem.resolveTarPath(executablePath, true);
+        @Nullable TarNode node = tarPath == null ? null : tarPath.node();
+        if (node == null || !node.isFile()) {
+            return credentials.withExecEffectiveIds(credentials.effectiveUserId(), credentials.effectiveGroupId());
+        }
+
+        long effectiveUserId = credentials.effectiveUserId();
+        long effectiveGroupId = credentials.effectiveGroupId();
+        if ((node.permissions() & STAT_MODE_SET_USER_ID) != 0) {
+            effectiveUserId = node.userId();
+        }
+        if ((node.permissions() & STAT_MODE_SET_GROUP_ID) != 0) {
+            effectiveGroupId = node.groupId();
+        }
+        return credentials.withExecEffectiveIds(effectiveUserId, effectiveGroupId);
     }
 
     /// Reads executable bytes from the source or from the configured guest filesystem mounts.
@@ -293,7 +333,7 @@ public final class RiscVInterpreter {
             }
         }
 
-        GuestSyscalls syscalls = createSyscalls(context, memory, initialProgramBreak, program.abi());
+        GuestSyscalls syscalls = createSyscalls(context, memory, initialProgramBreak, program.credentials(), program.abi());
         long stackPointer = initializeLinuxStack(memory, context, program);
         syscalls.recordInitialAuxiliaryVector(stackPointer);
         RiscVThreadState state = new RiscVThreadState(
@@ -318,6 +358,7 @@ public final class RiscVInterpreter {
             RiscVContext context,
             Memory memory,
             long initialProgramBreak,
+            GuestCredentials credentials,
             GuestAbi abi) {
         return switch (abi) {
             case LINUX -> new LinuxGuestSyscalls(
@@ -329,7 +370,7 @@ public final class RiscVInterpreter {
                     context.filesystemMounts(),
                     context.timeSource(),
                     context.useHostTty(),
-                    context.guestCredentials(),
+                    credentials,
                     this::runGuestThread,
                     context.framebufferDevice(),
                     context.networkBackend());
@@ -342,7 +383,7 @@ public final class RiscVInterpreter {
                     context.filesystemMounts(),
                     context.timeSource(),
                     context.useHostTty(),
-                    context.guestCredentials(),
+                    credentials,
                     this::runGuestThread,
                     context.framebufferDevice());
         };
@@ -459,7 +500,7 @@ public final class RiscVInterpreter {
                     program.interpreterBase(),
                     program.executablePath(),
                     context.initialEnvironment(),
-                    context.guestCredentials(),
+                    program.credentials(),
                     context.pageSize());
         }
 
@@ -484,7 +525,7 @@ public final class RiscVInterpreter {
                 program.interpreterBase(),
                 program.executablePath(),
                 context.initialEnvironment(),
-                context.guestCredentials(),
+                program.credentials(),
                 context.pageSize());
     }
 
@@ -628,6 +669,7 @@ public final class RiscVInterpreter {
     /// @param executable the main executable image
     /// @param interpreter the optional dynamic interpreter image
     /// @param executablePath the guest executable path used for `AT_EXECFN`, or null for host-loaded programs
+    /// @param credentials the Linux credentials exposed to the initial process image
     /// @param abi the guest syscall ABI selected from the main executable
     /// @param arguments the argument vector exposed to the loaded image
     @NotNullByDefault
@@ -635,6 +677,7 @@ public final class RiscVInterpreter {
             LoadedImage executable,
             @Nullable LoadedImage interpreter,
             @Nullable String executablePath,
+            GuestCredentials credentials,
             GuestAbi abi,
             String @Unmodifiable [] arguments) {
         /// Creates a loaded program snapshot.

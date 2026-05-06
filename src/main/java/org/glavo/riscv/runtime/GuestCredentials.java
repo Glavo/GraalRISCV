@@ -122,6 +122,66 @@ public record GuestCredentials(
         return supplementaryGroups[index];
     }
 
+    /// Returns credentials with updated real, effective, and saved user ids.
+    public GuestCredentials withUserIds(long realUserId, long effectiveUserId, long savedUserId) {
+        return new GuestCredentials(
+                userName,
+                realUserId,
+                effectiveUserId,
+                savedUserId,
+                realGroupId,
+                effectiveGroupId,
+                savedGroupId,
+                supplementaryGroups,
+                homeDirectory,
+                shell);
+    }
+
+    /// Returns credentials with updated real, effective, and saved group ids.
+    public GuestCredentials withGroupIds(long realGroupId, long effectiveGroupId, long savedGroupId) {
+        return new GuestCredentials(
+                userName,
+                realUserId,
+                effectiveUserId,
+                savedUserId,
+                realGroupId,
+                effectiveGroupId,
+                savedGroupId,
+                supplementaryGroups,
+                homeDirectory,
+                shell);
+    }
+
+    /// Returns credentials with updated supplementary groups.
+    public GuestCredentials withSupplementaryGroups(long @Unmodifiable [] supplementaryGroups) {
+        return new GuestCredentials(
+                userName,
+                realUserId,
+                effectiveUserId,
+                savedUserId,
+                realGroupId,
+                effectiveGroupId,
+                savedGroupId,
+                supplementaryGroups,
+                homeDirectory,
+                shell);
+    }
+
+    /// Returns credentials after Linux `execve` updates effective ids and copies them into saved ids.
+    public GuestCredentials withExecEffectiveIds(long effectiveUserId, long effectiveGroupId) {
+        return new GuestCredentials(
+                userName,
+                realUserId,
+                effectiveUserId,
+                effectiveUserId,
+                realGroupId,
+                effectiveGroupId,
+                effectiveGroupId,
+                supplementaryGroups,
+                homeDirectory,
+                shell);
+    }
+
     /// Returns the default environment exposed to an initial guest process.
     public String @Unmodifiable [] initialEnvironment() {
         ArrayList<String> environment = new ArrayList<>();
