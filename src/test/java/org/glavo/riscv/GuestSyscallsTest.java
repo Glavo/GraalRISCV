@@ -4126,6 +4126,51 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `pselect6` waits for guest-internal descriptor readiness changes.
+    @Test
+    public void pselect6WaitsForPipeReadiness() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState pollState = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    state.syscalls());
+            long pipeAddress = memory.baseAddress() + 64;
+            long readFileDescriptorsAddress = memory.baseAddress() + 128;
+            long dataAddress = memory.baseAddress() + 512;
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
+
+            Future<Long> pollResult = executor.submit(() -> {
+                setFdSetBit(memory, readFileDescriptorsAddress, readFileDescriptor);
+                setSyscall(pollState, SYS_PSELECT6, readFileDescriptor + 1L, readFileDescriptorsAddress, 0, 0, 0, 0);
+                pollState.syscalls().handle(pollState, TEST_PC);
+                return pollState.register(10);
+            });
+
+            Thread.sleep(50);
+            assertTrue(!pollResult.isDone());
+
+            memory.writeByte(dataAddress, (byte) 'A');
+            setSyscall(state, SYS_WRITE, writeFileDescriptor, dataAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            assertEquals(1, pollResult.get(5, TimeUnit.SECONDS));
+            assertTrue(isFdSetBitSet(memory, readFileDescriptorsAddress, readFileDescriptor));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     /// Verifies deterministic `ppoll` readiness for standard, invalid, and ignored descriptors.
     @Test
     public void ppollReportsDescriptorReadiness() {
@@ -4162,6 +4207,51 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_PPOLL, 0, 1, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EFAULT, state.register(10));
+        }
+    }
+
+    /// Verifies `ppoll` waits for guest-internal descriptor readiness changes.
+    @Test
+    public void ppollWaitsForPipeReadiness() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState pollState = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    state.syscalls());
+            long pipeAddress = memory.baseAddress() + 64;
+            long pollFileDescriptorsAddress = memory.baseAddress() + 128;
+            long dataAddress = memory.baseAddress() + 512;
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+            int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
+
+            Future<Long> pollResult = executor.submit(() -> {
+                writePollFileDescriptor(memory, pollFileDescriptorsAddress, 0, readFileDescriptor, POLLIN);
+                setSyscall(pollState, SYS_PPOLL, pollFileDescriptorsAddress, 1, 0, 0, 0);
+                pollState.syscalls().handle(pollState, TEST_PC);
+                return pollState.register(10);
+            });
+
+            Thread.sleep(50);
+            assertTrue(!pollResult.isDone());
+
+            memory.writeByte(dataAddress, (byte) 'A');
+            setSyscall(state, SYS_WRITE, writeFileDescriptor, dataAddress, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            assertEquals(1, pollResult.get(5, TimeUnit.SECONDS));
+            assertEquals(POLLIN, pollRevents(memory, pollFileDescriptorsAddress, 0));
+        } finally {
+            executor.shutdownNow();
         }
     }
 

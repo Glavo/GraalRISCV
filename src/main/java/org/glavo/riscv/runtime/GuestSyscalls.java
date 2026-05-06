@@ -1284,6 +1284,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Guards child process exit and reaping state.
     protected final Object childProcessLock = new Object();
 
+    /// Wakes host threads blocked in descriptor-readiness polling syscalls.
+    protected final Object pollLock = new Object();
+
+    /// Increments whenever guest-visible descriptor readiness may have changed.
+    protected volatile long pollGeneration;
+
     /// Host threads currently executing cloned guest threads.
     protected final ArrayList<Thread> guestThreads = new ArrayList<>();
 
@@ -2005,7 +2011,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         EventCounter counter = new EventCounter(
                 counterValue,
                 (flags & EFD_SEMAPHORE) != 0,
-                (flags & O_NONBLOCK) != 0);
+                (flags & O_NONBLOCK) != 0,
+                this::notifyPollWaiters);
         return addOpenFile(OpenFile.eventFile(counter), (flags & O_CLOEXEC) != 0);
     }
 
@@ -2103,7 +2110,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
-    /// Reports descriptor readiness through Linux `pselect6` without blocking the host thread.
+    /// Reports descriptor readiness through Linux `pselect6`, waiting for readiness or timeout when needed.
     protected long pselect6(
             RiscVThreadState state,
             long fileDescriptorLimit,
@@ -2170,38 +2177,46 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (signalMaskAddress != 0) {
             thread.setSignalMask(memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK);
         }
+        long deadlineNanoseconds = pollDeadlineNanoseconds(timeoutNanoseconds);
         try {
-            clearFdSet(readFileDescriptorsAddress, fileDescriptorSetSize);
-            clearFdSet(writeFileDescriptorsAddress, fileDescriptorSetSize);
-            clearFdSet(exceptionFileDescriptorsAddress, fileDescriptorSetSize);
+            while (true) {
+                long observedPollGeneration = pollGeneration;
+                clearFdSet(readFileDescriptorsAddress, fileDescriptorSetSize);
+                clearFdSet(writeFileDescriptorsAddress, fileDescriptorSetSize);
+                clearFdSet(exceptionFileDescriptorsAddress, fileDescriptorSetSize);
 
-            int readyCount = 0;
-            for (int fileDescriptor = 0; fileDescriptor < descriptorLimit; fileDescriptor++) {
-                int readyEvents = readyEventsFor(fileDescriptor, immediateTimeout);
-                boolean descriptorReady = false;
-                if (requestedReadFileDescriptors[fileDescriptor]
-                        && (readyEvents & (EPOLLIN | EPOLLERR | EPOLLHUP)) != 0) {
-                    setFdSetBit(readFileDescriptorsAddress, fileDescriptor);
-                    descriptorReady = true;
+                int readyCount = 0;
+                for (int fileDescriptor = 0; fileDescriptor < descriptorLimit; fileDescriptor++) {
+                    int readyEvents = readyEventsFor(fileDescriptor, immediateTimeout);
+                    boolean descriptorReady = false;
+                    if (requestedReadFileDescriptors[fileDescriptor]
+                            && (readyEvents & (EPOLLIN | EPOLLERR | EPOLLHUP)) != 0) {
+                        setFdSetBit(readFileDescriptorsAddress, fileDescriptor);
+                        descriptorReady = true;
+                    }
+                    if (requestedWriteFileDescriptors[fileDescriptor] && (readyEvents & (EPOLLOUT | EPOLLERR)) != 0) {
+                        setFdSetBit(writeFileDescriptorsAddress, fileDescriptor);
+                        descriptorReady = true;
+                    }
+                    if (descriptorReady) {
+                        readyCount++;
+                    }
                 }
-                if (requestedWriteFileDescriptors[fileDescriptor] && (readyEvents & (EPOLLOUT | EPOLLERR)) != 0) {
-                    setFdSetBit(writeFileDescriptorsAddress, fileDescriptor);
-                    descriptorReady = true;
+                if (readyCount != 0 || immediateTimeout) {
+                    return readyCount;
                 }
-                if (descriptorReady) {
-                    readyCount++;
-                }
-            }
-            if (readyCount == 0 && !immediateTimeout) {
                 if (hasExitedChildProcess()) {
                     return EINTR;
                 }
-                long waitResult = waitForEmptyPoll(timeoutNanoseconds);
+                long remainingNanoseconds = remainingPollNanoseconds(deadlineNanoseconds);
+                if (remainingNanoseconds == 0) {
+                    return 0;
+                }
+                long waitResult = waitForPollChange(observedPollGeneration, remainingNanoseconds);
                 if (waitResult != 0) {
                     return waitResult;
                 }
             }
-            return readyCount;
         } finally {
             if (signalMaskAddress != 0) {
                 thread.setSignalMask(savedSignalMask);
@@ -2262,7 +2277,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 1L << (fileDescriptor % FD_SET_BITS_PER_WORD);
     }
 
-    /// Reports descriptor readiness through Linux `ppoll` without blocking the host thread.
+    /// Reports descriptor readiness through Linux `ppoll`, waiting for readiness or timeout when needed.
     protected long ppoll(
             RiscVThreadState state,
             long fileDescriptorsAddress,
@@ -2304,40 +2319,48 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (signalMaskAddress != 0) {
             thread.setSignalMask(memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK);
         }
+        long deadlineNanoseconds = pollDeadlineNanoseconds(timeoutNanoseconds);
         try {
-            int readyCount = 0;
-            for (long index = 0; index < fileDescriptorCount; index++) {
-                long pollFileDescriptorAddress = fileDescriptorsAddress + index * POLL_FD_SIZE;
-                int fileDescriptor = memory.readInt(pollFileDescriptorAddress + POLL_FD_FILE_DESCRIPTOR_OFFSET);
-                int requestedEvents = memory.readUnsignedShort(pollFileDescriptorAddress + POLL_FD_EVENTS_OFFSET);
+            while (true) {
+                long observedPollGeneration = pollGeneration;
+                int readyCount = 0;
+                for (long index = 0; index < fileDescriptorCount; index++) {
+                    long pollFileDescriptorAddress = fileDescriptorsAddress + index * POLL_FD_SIZE;
+                    int fileDescriptor = memory.readInt(pollFileDescriptorAddress + POLL_FD_FILE_DESCRIPTOR_OFFSET);
+                    int requestedEvents = memory.readUnsignedShort(pollFileDescriptorAddress + POLL_FD_EVENTS_OFFSET);
 
-                int reportedEvents;
-                if (fileDescriptor < 0) {
-                    reportedEvents = 0;
-                } else if (!isOpenFileDescriptor(fileDescriptor)) {
-                    reportedEvents = POLLNVAL;
-                } else {
-                    int readyEvents = readyEventsFor(fileDescriptor, immediateTimeout);
-                    reportedEvents = (readyEvents & requestedEvents) | (readyEvents & (POLLERR | POLLHUP));
-                }
+                    int reportedEvents;
+                    if (fileDescriptor < 0) {
+                        reportedEvents = 0;
+                    } else if (!isOpenFileDescriptor(fileDescriptor)) {
+                        reportedEvents = POLLNVAL;
+                    } else {
+                        int readyEvents = readyEventsFor(fileDescriptor, immediateTimeout);
+                        reportedEvents = (readyEvents & requestedEvents) | (readyEvents & (POLLERR | POLLHUP));
+                    }
 
-                memory.writeShort(
-                        pollFileDescriptorAddress + POLL_FD_REVENTS_OFFSET,
-                        (short) reportedEvents);
-                if (reportedEvents != 0) {
-                    readyCount++;
+                    memory.writeShort(
+                            pollFileDescriptorAddress + POLL_FD_REVENTS_OFFSET,
+                            (short) reportedEvents);
+                    if (reportedEvents != 0) {
+                        readyCount++;
+                    }
                 }
-            }
-            if (readyCount == 0 && !immediateTimeout) {
+                if (readyCount != 0 || immediateTimeout) {
+                    return readyCount;
+                }
                 if (hasExitedChildProcess()) {
                     return EINTR;
                 }
-                long waitResult = waitForEmptyPoll(timeoutNanoseconds);
+                long remainingNanoseconds = remainingPollNanoseconds(deadlineNanoseconds);
+                if (remainingNanoseconds == 0) {
+                    return 0;
+                }
+                long waitResult = waitForPollChange(observedPollGeneration, remainingNanoseconds);
                 if (waitResult != 0) {
                     return waitResult;
                 }
             }
-            return readyCount;
         } finally {
             if (signalMaskAddress != 0) {
                 thread.setSignalMask(savedSignalMask);
@@ -2357,22 +2380,52 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
-    /// Briefly yields for a blocking poll that found no ready descriptors.
-    protected static long waitForEmptyPoll(long timeoutNanoseconds) {
+    /// Returns the host `System.nanoTime()` deadline for a poll timeout, or `-1` for no timeout.
+    protected static long pollDeadlineNanoseconds(long timeoutNanoseconds) {
+        if (timeoutNanoseconds < 0) {
+            return -1;
+        }
+        return System.nanoTime() + timeoutNanoseconds;
+    }
+
+    /// Returns the remaining poll timeout in nanoseconds, or `-1` for no timeout.
+    protected static long remainingPollNanoseconds(long deadlineNanoseconds) {
+        if (deadlineNanoseconds < 0) {
+            return -1;
+        }
+        long remainingNanoseconds = deadlineNanoseconds - System.nanoTime();
+        return remainingNanoseconds <= 0 ? 0 : remainingNanoseconds;
+    }
+
+    /// Wakes guest threads blocked in descriptor-readiness polling syscalls.
+    protected void notifyPollWaiters() {
+        synchronized (pollLock) {
+            pollGeneration++;
+            pollLock.notifyAll();
+        }
+    }
+
+    /// Waits for descriptor readiness to change or for a bounded host-socket polling slice to pass.
+    protected long waitForPollChange(long observedPollGeneration, long timeoutNanoseconds) {
         long waitNanoseconds = timeoutNanoseconds < 0
                 ? NANOSECONDS_PER_MILLISECOND
                 : Math.min(timeoutNanoseconds, NANOSECONDS_PER_MILLISECOND);
         if (waitNanoseconds <= 0) {
             return 0;
         }
-        try {
-            Thread.sleep(
-                    waitNanoseconds / NANOSECONDS_PER_MILLISECOND,
-                    (int) (waitNanoseconds % NANOSECONDS_PER_MILLISECOND));
-            return 0;
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            return EINTR;
+        synchronized (pollLock) {
+            if (pollGeneration != observedPollGeneration) {
+                return 0;
+            }
+            try {
+                pollLock.wait(
+                        waitNanoseconds / NANOSECONDS_PER_MILLISECOND,
+                        (int) (waitNanoseconds % NANOSECONDS_PER_MILLISECOND));
+                return 0;
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return EINTR;
+            }
         }
     }
 
@@ -2384,7 +2437,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         boolean nonblocking = (flags & O_NONBLOCK) != 0;
         boolean closeOnExec = (flags & O_CLOEXEC) != 0;
-        PipeBuffer pipe = new PipeBuffer();
+        PipeBuffer pipe = new PipeBuffer(this::notifyPollWaiters);
         long readFileDescriptor = addOpenFile(OpenFile.pipeReader(pipe, nonblocking), closeOnExec);
         long writeFileDescriptor = addOpenFile(OpenFile.pipeWriter(pipe, nonblocking), closeOnExec);
         memory.writeInt(pipeAddress, (int) readFileDescriptor);
@@ -4364,7 +4417,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             long flags,
             boolean readable,
             boolean writable) {
-        PtyDevice ptyDevice = new PtyDevice(0);
+        PtyDevice ptyDevice = new PtyDevice(0, this::notifyPollWaiters);
         currentPtyDevice = ptyDevice;
         return addOpenFile(OpenFile.ptyEndpoint(
                 node,
@@ -4386,7 +4439,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             boolean writable) {
         @Nullable PtyDevice ptyDevice = currentPtyDevice;
         if (ptyDevice == null) {
-            ptyDevice = new PtyDevice(0);
+            ptyDevice = new PtyDevice(0, this::notifyPollWaiters);
             currentPtyDevice = ptyDevice;
         }
         return addOpenFile(OpenFile.ptyEndpoint(
@@ -5236,6 +5289,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     standardFiles[fileDescriptor] = null;
                     standardFileCloseOnExec[fileDescriptor] = false;
                     releaseOpenFile(openFile);
+                    notifyPollWaiters();
                 } catch (IOException exception) {
                     throw new RiscVException("Guest close syscall failed", exception);
                 }
@@ -5257,6 +5311,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             openFiles.set(index, null);
             setOpenFileCloseOnExec(index, false);
             releaseOpenFile(openFile);
+            notifyPollWaiters();
             return 0;
         } catch (IOException exception) {
             throw new RiscVException("Guest close syscall failed", exception);
@@ -5272,6 +5327,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         boolean closeOnExec = (flags & CLOSE_RANGE_CLOEXEC) != 0;
+        boolean closedAny = false;
         try {
             for (int fileDescriptor = 0; fileDescriptor < standardFiles.length; fileDescriptor++) {
                 if (fileDescriptor < first || fileDescriptor > last) {
@@ -5289,6 +5345,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 standardFiles[fileDescriptor] = null;
                 standardFileCloseOnExec[fileDescriptor] = false;
                 releaseOpenFile(openFile);
+                closedAny = true;
             }
 
             for (int index = 0; index < openFiles.size(); index++) {
@@ -5308,6 +5365,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 openFiles.set(index, null);
                 setOpenFileCloseOnExec(index, false);
                 releaseOpenFile(openFile);
+                closedAny = true;
+            }
+            if (closedAny) {
+                notifyPollWaiters();
             }
             return 0;
         } catch (IOException exception) {
@@ -6747,6 +6808,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 if (child.processId() == processId) {
                     child.recordExit(exitCode);
                     childProcessLock.notifyAll();
+                    notifyPollWaiters();
                     return;
                 }
             }
@@ -9373,6 +9435,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
         setOpenFile(fileDescriptor, openFile);
         setFileDescriptorCloseOnExec(fileDescriptor, closeOnExec);
+        notifyPollWaiters();
     }
 
     /// Stores an open file description at an explicit descriptor.
@@ -10352,20 +10415,24 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Whether the open-file status flags include `O_NONBLOCK`.
         private final boolean nonblocking;
 
+        /// Notifies blocking poll syscalls that readiness may have changed.
+        private final @Nullable Runnable changeNotifier;
+
         /// Creates an event counter with the supplied initial value and flags.
-        EventCounter(long value, boolean semaphore, boolean nonblocking) {
+        EventCounter(long value, boolean semaphore, boolean nonblocking, @Nullable Runnable changeNotifier) {
             this.value = value;
             this.semaphore = semaphore;
             this.nonblocking = nonblocking;
+            this.changeNotifier = changeNotifier;
         }
 
         /// Returns true when a read can complete without blocking.
-        boolean isReadable() {
+        synchronized boolean isReadable() {
             return value != 0;
         }
 
         /// Returns true when a write can increment the counter without overflowing.
-        boolean isWritable() {
+        synchronized boolean isWritable() {
             return value != -2L;
         }
 
@@ -10375,19 +10442,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Reads the current counter value and applies Linux `eventfd` decrement rules.
-        long readValue() {
+        synchronized long readValue() {
             if (semaphore) {
                 value--;
+                notifyReadyChange();
                 return 1;
             }
 
             long result = value;
             value = 0;
+            notifyReadyChange();
             return result;
         }
 
         /// Adds an unsigned increment to the counter or returns a raw negative Linux error.
-        long write(long increment) {
+        synchronized long write(long increment) {
             if (increment == -1L) {
                 return EINVAL;
             }
@@ -10398,7 +10467,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
 
             value = sum;
+            notifyReadyChange();
             return 0;
+        }
+
+        /// Notifies poll waiters when a counter transition can affect readiness.
+        private void notifyReadyChange() {
+            if (changeNotifier != null) {
+                changeNotifier.run();
+            }
         }
     }
 
@@ -10491,6 +10568,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Whether at least one write endpoint is still open.
         private boolean writerOpen = true;
 
+        /// Notifies blocking poll syscalls that readiness may have changed.
+        private final @Nullable Runnable changeNotifier;
+
+        /// Creates a pipe buffer without an external readiness notifier.
+        PipeBuffer() {
+            this(null);
+        }
+
+        /// Creates a pipe buffer with an optional readiness notifier.
+        PipeBuffer(@Nullable Runnable changeNotifier) {
+            this.changeNotifier = changeNotifier;
+        }
+
         /// Reads up to the requested byte count into the supplied destination.
         synchronized int read(byte[] destination, int maximumLength, boolean nonblocking) throws InterruptedException {
             if (length == 0) {
@@ -10537,6 +10627,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             length += source.length;
             notifyAll();
+            notifyReadyChange();
             return source.length;
         }
 
@@ -10544,12 +10635,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         synchronized void closeReader() {
             readerOpen = false;
             notifyAll();
+            notifyReadyChange();
         }
 
         /// Marks the write endpoint as closed.
         synchronized void closeWriter() {
             writerOpen = false;
             notifyAll();
+            notifyReadyChange();
         }
 
         /// Returns true when a read endpoint would observe data or end-of-file immediately.
@@ -10589,6 +10682,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             buffer = newBuffer;
             start = 0;
         }
+
+        /// Notifies poll waiters when a buffer transition can affect readiness.
+        private void notifyReadyChange() {
+            if (changeNotifier != null) {
+                changeNotifier.run();
+            }
+        }
     }
 
     /// Stores the two byte streams that make up one pseudoterminal pair.
@@ -10597,17 +10697,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         private final int number;
 
         /// Bytes written by the slave endpoint and read by the master endpoint.
-        private final PipeBuffer masterInput = new PipeBuffer();
+        private final PipeBuffer masterInput;
 
         /// Bytes written by the master endpoint and read by the slave endpoint.
-        private final PipeBuffer slaveInput = new PipeBuffer();
+        private final PipeBuffer slaveInput;
 
         /// Whether the slave endpoint is currently locked against path-based opens.
         private boolean locked = true;
 
         /// Creates a pseudoterminal pair with the supplied slave number.
-        PtyDevice(int number) {
+        PtyDevice(int number, @Nullable Runnable changeNotifier) {
             this.number = number;
+            this.masterInput = new PipeBuffer(changeNotifier);
+            this.slaveInput = new PipeBuffer(changeNotifier);
         }
 
         /// Returns the slave number exposed through `TIOCGPTN`.

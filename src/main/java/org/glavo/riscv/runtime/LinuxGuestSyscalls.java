@@ -2570,8 +2570,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             return EFAULT;
         }
 
-        PipeBuffer firstToSecond = new PipeBuffer();
-        PipeBuffer secondToFirst = new PipeBuffer();
+        PipeBuffer firstToSecond = new PipeBuffer(this::notifyPollWaiters);
+        PipeBuffer secondToFirst = new PipeBuffer(this::notifyPollWaiters);
         boolean nonblocking = (typeFlags & O_NONBLOCK) != 0;
         boolean closeOnExec = (typeFlags & O_CLOEXEC) != 0;
         long firstFileDescriptor = addOpenFile(OpenFile.socket(

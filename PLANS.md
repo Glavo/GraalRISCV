@@ -16,7 +16,7 @@
 ### Runtime Surface
 
 - Syscall handling is split by guest ABI: `GuestSyscalls` owns shared runtime state and helpers, while `LinuxGuestSyscalls` and `FreeBsdGuestSyscalls` own ABI-specific dispatch and compatibility behavior.
-- Linux runtime support includes process/thread state, mutable guest credentials, setuid/setgid exec credential transitions, child-exit `SIGCHLD` delivery, deterministic time, `clone`/`wait4`, descriptor close-on-exec and `close_range` handling, Linux `#!` binary-format rewriting, terminal raw-mode behavior, and CLI environment overrides.
+- Linux runtime support includes process/thread state, mutable guest credentials, setuid/setgid exec credential transitions, child-exit `SIGCHLD` delivery, deterministic time, `clone`/`wait4`, descriptor close-on-exec and `close_range` handling, event-aware `pselect6`/`ppoll` waits for guest-internal descriptors, Linux `#!` binary-format rewriting, terminal raw-mode behavior, and CLI environment overrides.
 - LTP syscall work includes a coverage report and an ABI-table driven static smoke ELF for core identity, process/resource, time, random, and filesystem behavior.
 
 ### Filesystems And Devices
