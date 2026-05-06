@@ -1088,6 +1088,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// Reports a deterministic single-CPU affinity mask for static libc queries.
     protected long schedGetaffinity(long processId, long cpuSetSize, long cpuSetAddress) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
         if (cpuSetSize < MINIMUM_CPU_AFFINITY_MASK_SIZE) {
             return EINVAL;
         }
@@ -1095,6 +1098,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         memory.clear(cpuSetAddress, cpuSetSize);
         memory.writeLong(cpuSetAddress, 1);
         return MINIMUM_CPU_AFFINITY_MASK_SIZE;
+    }
+
+    /// Accepts CPU affinity masks that keep the simulated CPU selected.
+    protected long schedSetaffinity(long processId, long cpuSetSize, long cpuSetAddress) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
+        if (cpuSetSize < MINIMUM_CPU_AFFINITY_MASK_SIZE) {
+            return EINVAL;
+        }
+        return cpuSetContainsGuestCpu(cpuSetAddress) ? 0 : EINVAL;
     }
 
 
@@ -5496,6 +5510,16 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return 0;
     }
 
+    /// Gets Linux resource limits for the current guest process.
+    protected long getrlimit(long resource, long limitAddress) {
+        return prlimit64(0, resource, 0, limitAddress);
+    }
+
+    /// Lowers Linux resource limits for the current guest process.
+    protected long setrlimit(long resource, long limitAddress) {
+        return prlimit64(0, resource, limitAddress, 0);
+    }
+
 
     /// Fills a guest buffer with deterministic bytes for the Linux `getrandom` syscall.
     protected long getrandom(long address, long length, long flags) {
@@ -5730,6 +5754,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `pwrite64`.
     private static final int SYS_PWRITE64 = 68;
 
+    /// The Linux RISC-V syscall number for `preadv`.
+    private static final int SYS_PREADV = 69;
+
+    /// The Linux RISC-V syscall number for `pwritev`.
+    private static final int SYS_PWRITEV = 70;
+
     /// The Linux RISC-V syscall number for `pselect6`.
     private static final int SYS_PSELECT6 = 72;
 
@@ -5805,11 +5835,35 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `clock_nanosleep`.
     private static final int SYS_CLOCK_NANOSLEEP = 115;
 
+    /// The Linux RISC-V syscall number for `sched_setparam`.
+    private static final int SYS_SCHED_SETPARAM = 118;
+
+    /// The Linux RISC-V syscall number for `sched_setscheduler`.
+    private static final int SYS_SCHED_SETSCHEDULER = 119;
+
+    /// The Linux RISC-V syscall number for `sched_getscheduler`.
+    private static final int SYS_SCHED_GETSCHEDULER = 120;
+
+    /// The Linux RISC-V syscall number for `sched_getparam`.
+    private static final int SYS_SCHED_GETPARAM = 121;
+
+    /// The Linux RISC-V syscall number for `sched_setaffinity`.
+    private static final int SYS_SCHED_SETAFFINITY = 122;
+
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final int SYS_SCHED_GETAFFINITY = 123;
 
     /// The Linux RISC-V syscall number for `sched_yield`.
     private static final int SYS_SCHED_YIELD = 124;
+
+    /// The Linux RISC-V syscall number for `sched_get_priority_max`.
+    private static final int SYS_SCHED_GET_PRIORITY_MAX = 125;
+
+    /// The Linux RISC-V syscall number for `sched_get_priority_min`.
+    private static final int SYS_SCHED_GET_PRIORITY_MIN = 126;
+
+    /// The Linux RISC-V syscall number for `sched_rr_get_interval`.
+    private static final int SYS_SCHED_RR_GET_INTERVAL = 127;
 
     /// The Linux RISC-V syscall number for `kill`.
     private static final int SYS_KILL = 129;
@@ -5891,6 +5945,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final int SYS_UNAME = 160;
+
+    /// The Linux RISC-V syscall number for `getrlimit`.
+    private static final int SYS_GETRLIMIT = 163;
+
+    /// The Linux RISC-V syscall number for `setrlimit`.
+    private static final int SYS_SETRLIMIT = 164;
 
     /// The Linux RISC-V syscall number for `getrusage`.
     private static final int SYS_GETRUSAGE = 165;
@@ -6054,6 +6114,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `membarrier`.
     private static final int SYS_MEMBARRIER = 283;
 
+    /// The Linux RISC-V syscall number for `preadv2`.
+    private static final int SYS_PREADV2 = 286;
+
+    /// The Linux RISC-V syscall number for `pwritev2`.
+    private static final int SYS_PWRITEV2 = 287;
+
     /// The Linux RISC-V syscall number for `statx`.
     private static final int SYS_STATX = 291;
 
@@ -6184,6 +6250,16 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_PREADV -> state.setRegister(10, preadv(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_PWRITEV -> state.setRegister(10, pwritev(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_PSELECT6 -> state.setRegister(10, pselect6(
                     state,
                     state.register(10),
@@ -6263,8 +6339,22 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_SCHED_SETPARAM -> state.setRegister(10, schedSetparam(state.register(10), state.register(11)));
+            case SYS_SCHED_SETSCHEDULER -> state.setRegister(10, schedSetscheduler(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_SCHED_GETSCHEDULER -> state.setRegister(10, schedGetscheduler(state.register(10)));
+            case SYS_SCHED_GETPARAM -> state.setRegister(10, schedGetparam(state.register(10), state.register(11)));
+            case SYS_SCHED_SETAFFINITY -> state.setRegister(10, schedSetaffinity(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_SCHED_GETAFFINITY -> state.setRegister(10, schedGetaffinity(state.register(10), state.register(11), state.register(12)));
             case SYS_SCHED_YIELD -> state.setRegister(10, schedYield());
+            case SYS_SCHED_GET_PRIORITY_MAX -> state.setRegister(10, schedGetPriorityMax(state.register(10)));
+            case SYS_SCHED_GET_PRIORITY_MIN -> state.setRegister(10, schedGetPriorityMin(state.register(10)));
+            case SYS_SCHED_RR_GET_INTERVAL -> state.setRegister(10, schedRrGetInterval(state.register(10), state.register(11)));
             case SYS_KILL -> state.setRegister(10, kill(state.register(10), state.register(11)));
             case SYS_TKILL -> state.setRegister(10, tkill(state.register(10), state.register(11)));
             case SYS_TGKILL -> state.setRegister(10, tgkill(state.register(10), state.register(11), state.register(12)));
@@ -6338,6 +6428,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
             case SYS_SETGROUPS -> state.setRegister(10, setgroups(state.register(10), state.register(11)));
             case SYS_UNAME -> state.setRegister(10, uname(state.register(10)));
+            case SYS_GETRLIMIT -> state.setRegister(10, getrlimit(state.register(10), state.register(11)));
+            case SYS_SETRLIMIT -> state.setRegister(10, setrlimit(state.register(10), state.register(11)));
             case SYS_GETRUSAGE -> state.setRegister(10, getrusage(state.register(10), state.register(11)));
             case SYS_UMASK -> state.setRegister(10, umask(state.register(10)));
             case SYS_PRCTL -> state.setRegister(10, prctl(
@@ -6511,6 +6603,18 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(14)));
             case SYS_GETRANDOM -> state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
             case SYS_MEMBARRIER -> state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
+            case SYS_PREADV2 -> state.setRegister(10, preadv2(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
+            case SYS_PWRITEV2 -> state.setRegister(10, pwritev2(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_STATX -> state.setRegister(10, statx(
                     state.register(10),
                     state.register(11),

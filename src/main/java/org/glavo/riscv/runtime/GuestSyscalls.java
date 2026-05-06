@@ -904,6 +904,36 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The byte size of the minimal CPU affinity mask exposed to the guest.
     protected static final long MINIMUM_CPU_AFFINITY_MASK_SIZE = Long.BYTES;
 
+    /// Linux `SCHED_OTHER`.
+    protected static final int SCHED_OTHER = 0;
+
+    /// Linux `SCHED_FIFO`.
+    protected static final int SCHED_FIFO = 1;
+
+    /// Linux `SCHED_RR`.
+    protected static final int SCHED_RR = 2;
+
+    /// Linux `SCHED_BATCH`.
+    protected static final int SCHED_BATCH = 3;
+
+    /// Linux `SCHED_IDLE`.
+    protected static final int SCHED_IDLE = 5;
+
+    /// Linux `SCHED_RESET_ON_FORK`.
+    protected static final int SCHED_RESET_ON_FORK = 0x40000000;
+
+    /// The byte offset of `sched_priority` inside Linux RISC-V 64-bit `struct sched_param`.
+    protected static final int SCHED_PARAM_PRIORITY_OFFSET = 0;
+
+    /// The Linux real-time scheduling minimum priority.
+    protected static final int SCHED_REALTIME_PRIORITY_MINIMUM = 1;
+
+    /// The Linux real-time scheduling maximum priority.
+    protected static final int SCHED_REALTIME_PRIORITY_MAXIMUM = 99;
+
+    /// The deterministic round-robin interval reported for the simulated scheduler.
+    protected static final long SCHED_RR_INTERVAL_NANOSECONDS = 100_000_000L;
+
     /// Linux `CLOCK_REALTIME`.
     protected static final long CLOCK_REALTIME = 0;
 
@@ -1348,6 +1378,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The timer slack value reported by `PR_GET_TIMERSLACK`.
     protected long timerSlackNanoseconds = DEFAULT_TIMER_SLACK_NANOSECONDS;
 
+    /// The guest-visible scheduling policy for this process.
+    protected int schedulerPolicy = SCHED_OTHER;
+
+    /// The guest-visible scheduling priority for this process.
+    protected int schedulerPriority;
+
     /// Whether this single-process guest is marked as a child subreaper.
     protected boolean childSubreaper;
 
@@ -1782,6 +1818,8 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.dumpable = parent.dumpable;
         System.arraycopy(parent.processName, 0, processName, 0, processName.length);
         this.timerSlackNanoseconds = parent.timerSlackNanoseconds;
+        this.schedulerPolicy = parent.schedulerPolicy;
+        this.schedulerPriority = parent.schedulerPriority;
         this.childSubreaper = parent.childSubreaper;
         this.noNewPrivileges = parent.noNewPrivileges;
         this.transparentHugePagesDisabled = parent.transparentHugePagesDisabled;
@@ -4983,6 +5021,156 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Reads guest `struct iovec` buffers from a seekable file at a fixed offset.
+    protected long preadv(int fileDescriptor, long iovecAddress, long iovecCount, long offset) {
+        if (offset < 0) {
+            return EINVAL;
+        }
+        return preadv2(fileDescriptor, iovecAddress, iovecCount, offset, 0);
+    }
+
+    /// Writes guest `struct iovec` buffers to a seekable file at a fixed offset.
+    protected long pwritev(int fileDescriptor, long iovecAddress, long iovecCount, long offset) {
+        if (offset < 0) {
+            return EINVAL;
+        }
+        return pwritev2(fileDescriptor, iovecAddress, iovecCount, offset, 0);
+    }
+
+    /// Reads guest `struct iovec` buffers using Linux `preadv2` semantics.
+    protected long preadv2(int fileDescriptor, long iovecAddress, long iovecCount, long offset, long flags) {
+        if (flags != 0) {
+            return ENOTSUP;
+        }
+        if (offset < -1) {
+            return EINVAL;
+        }
+        if (iovecCount < 0 || iovecCount > IOV_MAX) {
+            return EINVAL;
+        }
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
+            return ESPIPE;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.readable()) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (!openFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        try {
+            long currentOffset = offset;
+            long total = 0;
+            for (long index = 0; index < iovecCount; index++) {
+                long entryAddress = iovecAddress + index * IOVEC_SIZE;
+                long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+                long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+                if (length < 0) {
+                    return EINVAL;
+                }
+                if (length > Integer.MAX_VALUE) {
+                    throw new RiscVException("Guest preadv2 iovec is too large: " + length);
+                }
+                if (length == 0) {
+                    continue;
+                }
+                if (!memory.isBacked(baseAddress, length)) {
+                    return EFAULT;
+                }
+
+                byte[] buffer = new byte[(int) length];
+                ByteBuffer byteBuffer = ByteBuffer.wrap(buffer);
+                int count = currentOffset == -1
+                        ? openFile.channel().read(byteBuffer)
+                        : readHostFileAt(openFile.channel(), currentOffset, byteBuffer);
+                if (count < 0) {
+                    return total;
+                }
+
+                memory.writeBytes(baseAddress, buffer, 0, count);
+                total += count;
+                if (currentOffset != -1) {
+                    currentOffset += count;
+                }
+                if (count < length) {
+                    return total;
+                }
+            }
+            return total;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest preadv2 syscall failed", exception);
+        }
+    }
+
+    /// Writes guest `struct iovec` buffers using Linux `pwritev2` semantics.
+    protected long pwritev2(int fileDescriptor, long iovecAddress, long iovecCount, long offset, long flags) {
+        if (flags != 0) {
+            return ENOTSUP;
+        }
+        if (offset < -1) {
+            return EINVAL;
+        }
+        if (iovecCount < 0 || iovecCount > IOV_MAX) {
+            return EINVAL;
+        }
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
+            return fileDescriptor == 0 ? EBADF : ESPIPE;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.writable()) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (!openFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        try {
+            long currentOffset = offset;
+            long total = 0;
+            for (long index = 0; index < iovecCount; index++) {
+                long entryAddress = iovecAddress + index * IOVEC_SIZE;
+                long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+                long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+                if (length < 0) {
+                    return EINVAL;
+                }
+                if (length > Integer.MAX_VALUE) {
+                    throw new RiscVException("Guest pwritev2 iovec is too large: " + length);
+                }
+                if (length == 0) {
+                    continue;
+                }
+                if (!memory.isBacked(baseAddress, length)) {
+                    return EFAULT;
+                }
+
+                byte[] bytes = memory.readBytes(baseAddress, length);
+                long count = currentOffset == -1
+                        ? writeOpenFile(openFile, bytes)
+                        : writeHostFileAt(openFile, bytes, currentOffset);
+                total += count;
+                if (currentOffset != -1) {
+                    currentOffset += count;
+                }
+                if (count < length) {
+                    return total;
+                }
+            }
+            return total;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest pwritev2 syscall failed", exception);
+        }
+    }
+
     /// Copies bytes between two descriptors for Linux `splice`.
     protected long splice(
             int inputFileDescriptor,
@@ -7683,6 +7871,109 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     protected static long schedYield() {
         Thread.yield();
         return 0;
+    }
+
+    /// Returns the current guest process scheduling policy.
+    protected long schedGetscheduler(long processId) {
+        return isKnownSchedulerTarget(processId) ? schedulerPolicy : ESRCH;
+    }
+
+    /// Updates the current guest process scheduling policy and priority.
+    protected long schedSetscheduler(long processId, long policy, long parameterAddress) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
+
+        long basePolicy = policy & ~SCHED_RESET_ON_FORK;
+        if (!isSupportedSchedulerPolicy(basePolicy)) {
+            return EINVAL;
+        }
+
+        int priority = memory.readInt(parameterAddress + SCHED_PARAM_PRIORITY_OFFSET);
+        if (!isValidSchedulerPriority(basePolicy, priority)) {
+            return EINVAL;
+        }
+
+        schedulerPolicy = (int) basePolicy;
+        schedulerPriority = priority;
+        return 0;
+    }
+
+    /// Reports the current guest process scheduling priority.
+    protected long schedGetparam(long processId, long parameterAddress) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
+
+        memory.writeInt(parameterAddress + SCHED_PARAM_PRIORITY_OFFSET, schedulerPriority);
+        return 0;
+    }
+
+    /// Updates the current guest process scheduling priority.
+    protected long schedSetparam(long processId, long parameterAddress) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
+
+        int priority = memory.readInt(parameterAddress + SCHED_PARAM_PRIORITY_OFFSET);
+        if (!isValidSchedulerPriority(schedulerPolicy, priority)) {
+            return EINVAL;
+        }
+
+        schedulerPriority = priority;
+        return 0;
+    }
+
+    /// Reports the maximum priority for a Linux scheduling policy.
+    protected static long schedGetPriorityMax(long policy) {
+        return switch ((int) policy) {
+            case SCHED_OTHER, SCHED_BATCH, SCHED_IDLE -> 0;
+            case SCHED_FIFO, SCHED_RR -> SCHED_REALTIME_PRIORITY_MAXIMUM;
+            default -> EINVAL;
+        };
+    }
+
+    /// Reports the minimum priority for a Linux scheduling policy.
+    protected static long schedGetPriorityMin(long policy) {
+        return switch ((int) policy) {
+            case SCHED_OTHER, SCHED_BATCH, SCHED_IDLE -> 0;
+            case SCHED_FIFO, SCHED_RR -> SCHED_REALTIME_PRIORITY_MINIMUM;
+            default -> EINVAL;
+        };
+    }
+
+    /// Reports a deterministic round-robin interval for the simulated scheduler.
+    protected long schedRrGetInterval(long processId, long intervalAddress) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
+
+        writeTimespecFromNanoseconds(intervalAddress, SCHED_RR_INTERVAL_NANOSECONDS);
+        return 0;
+    }
+
+    /// Returns true when a scheduling syscall target names this process or one of its guest threads.
+    protected boolean isKnownSchedulerTarget(long processId) {
+        return processId == 0 || processId == process.id() || isKnownGuestThreadId(processId);
+    }
+
+    /// Returns true when this simulator accepts the supplied Linux scheduling policy.
+    protected static boolean isSupportedSchedulerPolicy(long policy) {
+        return policy == SCHED_OTHER
+                || policy == SCHED_FIFO
+                || policy == SCHED_RR
+                || policy == SCHED_BATCH
+                || policy == SCHED_IDLE;
+    }
+
+    /// Returns true when the priority is in range for the supplied scheduling policy.
+    protected static boolean isValidSchedulerPriority(long policy, int priority) {
+        return switch ((int) policy) {
+            case SCHED_OTHER, SCHED_BATCH, SCHED_IDLE -> priority == 0;
+            case SCHED_FIFO, SCHED_RR -> priority >= SCHED_REALTIME_PRIORITY_MINIMUM
+                    && priority <= SCHED_REALTIME_PRIORITY_MAXIMUM;
+            default -> false;
+        };
     }
 
     /// Accepts signal sends that target known guest processes.

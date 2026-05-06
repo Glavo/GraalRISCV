@@ -265,6 +265,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `pwrite64`.
     private static final long SYS_PWRITE64 = 68;
 
+    /// The Linux RISC-V syscall number for `preadv`.
+    private static final long SYS_PREADV = 69;
+
+    /// The Linux RISC-V syscall number for `pwritev`.
+    private static final long SYS_PWRITEV = 70;
+
     /// The Linux RISC-V syscall number for `pselect6`.
     private static final long SYS_PSELECT6 = 72;
 
@@ -331,11 +337,35 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `clock_nanosleep`.
     private static final long SYS_CLOCK_NANOSLEEP = 115;
 
+    /// The Linux RISC-V syscall number for `sched_setparam`.
+    private static final long SYS_SCHED_SETPARAM = 118;
+
+    /// The Linux RISC-V syscall number for `sched_setscheduler`.
+    private static final long SYS_SCHED_SETSCHEDULER = 119;
+
+    /// The Linux RISC-V syscall number for `sched_getscheduler`.
+    private static final long SYS_SCHED_GETSCHEDULER = 120;
+
+    /// The Linux RISC-V syscall number for `sched_getparam`.
+    private static final long SYS_SCHED_GETPARAM = 121;
+
+    /// The Linux RISC-V syscall number for `sched_setaffinity`.
+    private static final long SYS_SCHED_SETAFFINITY = 122;
+
     /// The Linux RISC-V syscall number for `sched_getaffinity`.
     private static final long SYS_SCHED_GETAFFINITY = 123;
 
     /// The Linux RISC-V syscall number for `sched_yield`.
     private static final long SYS_SCHED_YIELD = 124;
+
+    /// The Linux RISC-V syscall number for `sched_get_priority_max`.
+    private static final long SYS_SCHED_GET_PRIORITY_MAX = 125;
+
+    /// The Linux RISC-V syscall number for `sched_get_priority_min`.
+    private static final long SYS_SCHED_GET_PRIORITY_MIN = 126;
+
+    /// The Linux RISC-V syscall number for `sched_rr_get_interval`.
+    private static final long SYS_SCHED_RR_GET_INTERVAL = 127;
 
     /// The Linux RISC-V syscall number for `kill`.
     private static final long SYS_KILL = 129;
@@ -411,6 +441,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
+
+    /// The Linux RISC-V syscall number for `getrlimit`.
+    private static final long SYS_GETRLIMIT = 163;
+
+    /// The Linux RISC-V syscall number for `setrlimit`.
+    private static final long SYS_SETRLIMIT = 164;
 
     /// The Linux RISC-V syscall number for `getrusage`.
     private static final long SYS_GETRUSAGE = 165;
@@ -561,6 +597,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `membarrier`.
     private static final long SYS_MEMBARRIER = 283;
+
+    /// The Linux RISC-V syscall number for `preadv2`.
+    private static final long SYS_PREADV2 = 286;
+
+    /// The Linux RISC-V syscall number for `pwritev2`.
+    private static final long SYS_PWRITEV2 = 287;
 
     /// The Linux RISC-V syscall number for `statx`.
     private static final long SYS_STATX = 291;
@@ -1531,6 +1573,21 @@ public final class GuestSyscallsTest {
 
     /// Linux `MADV_HUGEPAGE`.
     private static final long MADV_HUGEPAGE = 14;
+
+    /// Linux `SCHED_OTHER`.
+    private static final long SCHED_OTHER = 0;
+
+    /// Linux `SCHED_FIFO`.
+    private static final long SCHED_FIFO = 1;
+
+    /// Linux `SCHED_RR`.
+    private static final long SCHED_RR = 2;
+
+    /// Linux `SCHED_BATCH`.
+    private static final long SCHED_BATCH = 3;
+
+    /// Linux `SCHED_RESET_ON_FORK`.
+    private static final long SCHED_RESET_ON_FORK = 0x40000000;
 
     /// Linux `CLOCK_REALTIME`.
     private static final long CLOCK_REALTIME = 0;
@@ -4782,6 +4839,9 @@ public final class GuestSyscallsTest {
             long pathAddress = memory.baseAddress();
             long bufferAddress = memory.baseAddress() + 128;
             long pipeAddress = memory.baseAddress() + 512;
+            long iovecAddress = memory.baseAddress() + 768;
+            long firstIovecBuffer = memory.baseAddress() + 832;
+            long secondIovecBuffer = memory.baseAddress() + 848;
             writeGuestString(memory, pathAddress, "positioned.txt");
 
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
@@ -4811,6 +4871,64 @@ public final class GuestSyscallsTest {
             state.syscalls().handle(state, TEST_PC);
             assertEquals(2, state.register(10));
 
+            memory.writeLong(iovecAddress + IOVEC_BASE_OFFSET, firstIovecBuffer);
+            memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_BASE_OFFSET, secondIovecBuffer);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, 2);
+            setSyscall(state, SYS_PREADV, fileDescriptor, iovecAddress, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertArrayEquals("01".getBytes(StandardCharsets.UTF_8), memory.readBytes(firstIovecBuffer, 2));
+            assertArrayEquals("23".getBytes(StandardCharsets.UTF_8), memory.readBytes(secondIovecBuffer, 2));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            memory.writeBytes(firstIovecBuffer, "XY".getBytes(StandardCharsets.UTF_8), 0, 2);
+            memory.writeBytes(secondIovecBuffer, "Z".getBytes(StandardCharsets.UTF_8), 0, 1);
+            memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, 1);
+            setSyscall(state, SYS_PWRITEV, fileDescriptor, iovecAddress, 2, 6);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_PREADV2, fileDescriptor, iovecAddress, 1, 0, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
+
+            memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, 2);
+            setSyscall(state, SYS_PREADV2, fileDescriptor, iovecAddress, 2, -1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertArrayEquals("23".getBytes(StandardCharsets.UTF_8), memory.readBytes(firstIovecBuffer, 2));
+            assertArrayEquals("AB".getBytes(StandardCharsets.UTF_8), memory.readBytes(secondIovecBuffer, 2));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+
+            memory.writeBytes(firstIovecBuffer, "cd".getBytes(StandardCharsets.UTF_8), 0, 2);
+            memory.writeBytes(secondIovecBuffer, "e".getBytes(StandardCharsets.UTF_8), 0, 1);
+            memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, 1);
+            setSyscall(state, SYS_PWRITEV2, fileDescriptor, iovecAddress, 2, -1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(9, state.register(10));
+
+            setSyscall(state, SYS_PWRITEV2, fileDescriptor, iovecAddress, 1, 0, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
+
             setSyscall(state, SYS_FDATASYNC, fileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
@@ -4830,7 +4948,7 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_CLOSE, fileDescriptor, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
-            assertEquals("0123AB6789", Files.readString(tempDirectory.resolve("positioned.txt"), StandardCharsets.UTF_8));
+            assertEquals("0123ABcde9", Files.readString(tempDirectory.resolve("positioned.txt"), StandardCharsets.UTF_8));
 
             writeGuestString(memory, pathAddress, "positioned.txt");
             setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
@@ -6537,6 +6655,21 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SCHED_GETAFFINITY, 0, Long.BYTES - 1, maskAddress);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(maskAddress, 1);
+            setSyscall(state, SYS_SCHED_SETAFFINITY, 0, Long.BYTES, maskAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeLong(maskAddress, 0);
+            setSyscall(state, SYS_SCHED_SETAFFINITY, 0, Long.BYTES, maskAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(maskAddress, 1);
+            setSyscall(state, SYS_SCHED_SETAFFINITY, 9999, Long.BYTES, maskAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
         }
     }
 
@@ -6547,10 +6680,82 @@ public final class GuestSyscallsTest {
             RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
             long cpuAddress = memory.baseAddress() + 64;
             long nodeAddress = memory.baseAddress() + 72;
+            long parameterAddress = memory.baseAddress() + 80;
+            long intervalAddress = memory.baseAddress() + 96;
 
             setSyscall(state, SYS_SCHED_YIELD, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GETSCHEDULER, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(SCHED_OTHER, state.register(10));
+
+            memory.writeInt(parameterAddress, -1);
+            setSyscall(state, SYS_SCHED_GETPARAM, 0, parameterAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readInt(parameterAddress));
+
+            setSyscall(state, SYS_SCHED_GET_PRIORITY_MAX, SCHED_FIFO, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(99, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GET_PRIORITY_MIN, SCHED_RR, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(1, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GET_PRIORITY_MAX, SCHED_BATCH, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GET_PRIORITY_MIN, 999, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeInt(parameterAddress, 7);
+            setSyscall(state, SYS_SCHED_SETSCHEDULER, 0, SCHED_RR, parameterAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GETSCHEDULER, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(SCHED_RR, state.register(10));
+
+            memory.writeInt(parameterAddress, -1);
+            setSyscall(state, SYS_SCHED_GETPARAM, 0, parameterAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(7, memory.readInt(parameterAddress));
+
+            memory.writeInt(parameterAddress, 8);
+            setSyscall(state, SYS_SCHED_SETPARAM, 0, parameterAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeInt(parameterAddress, 0);
+            setSyscall(state, SYS_SCHED_SETSCHEDULER, 0, SCHED_BATCH | SCHED_RESET_ON_FORK, parameterAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GETSCHEDULER, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(SCHED_BATCH, state.register(10));
+
+            memory.writeInt(parameterAddress, 1);
+            setSyscall(state, SYS_SCHED_SETPARAM, 0, parameterAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SCHED_RR_GET_INTERVAL, 0, intervalAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(intervalAddress));
+            assertEquals(100_000_000L, memory.readLong(intervalAddress + Long.BYTES));
+
+            setSyscall(state, SYS_SCHED_GETPARAM, 9999, parameterAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
 
             memory.writeInt(cpuAddress, -1);
             memory.writeInt(nodeAddress, -1);
@@ -7023,6 +7228,44 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_PRLIMIT64, 99, RLIMIT_NOFILE, 0, oldLimitAddress);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ESRCH, state.register(10));
+        }
+    }
+
+    /// Verifies `getrlimit` and `setrlimit` share the tracked `prlimit64` resource limits.
+    @Test
+    public void getrlimitAndSetrlimitShareResourceLimits() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long limitAddress = memory.baseAddress() + 64;
+            long oldLimitAddress = memory.baseAddress() + 96;
+
+            setSyscall(state, SYS_GETRLIMIT, RLIMIT_STACK, limitAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(DEFAULT_STACK_LIMIT, memory.readLong(limitAddress + RLIMIT_CURRENT_OFFSET));
+            assertEquals(RLIM_INFINITY, memory.readLong(limitAddress + RLIMIT_MAXIMUM_OFFSET));
+
+            memory.writeLong(limitAddress + RLIMIT_CURRENT_OFFSET, 256);
+            memory.writeLong(limitAddress + RLIMIT_MAXIMUM_OFFSET, 512);
+            setSyscall(state, SYS_SETRLIMIT, RLIMIT_NOFILE, limitAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_PRLIMIT64, 0, RLIMIT_NOFILE, 0, oldLimitAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(256, memory.readLong(oldLimitAddress + RLIMIT_CURRENT_OFFSET));
+            assertEquals(512, memory.readLong(oldLimitAddress + RLIMIT_MAXIMUM_OFFSET));
+
+            memory.writeLong(limitAddress + RLIMIT_CURRENT_OFFSET, 1024);
+            memory.writeLong(limitAddress + RLIMIT_MAXIMUM_OFFSET, 1024);
+            setSyscall(state, SYS_SETRLIMIT, RLIMIT_NOFILE, limitAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            setSyscall(state, SYS_GETRLIMIT, 99, limitAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 
