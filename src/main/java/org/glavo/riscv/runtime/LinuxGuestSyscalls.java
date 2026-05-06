@@ -5851,6 +5851,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `ftruncate`.
     private static final int SYS_FTRUNCATE = 46;
 
+    /// The Linux RISC-V syscall number for `fallocate`.
+    private static final int SYS_FALLOCATE = 47;
+
     /// The Linux RISC-V syscall number for `faccessat`.
     private static final int SYS_FACCESSAT = 48;
 
@@ -5940,6 +5943,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `fdatasync`.
     private static final int SYS_FDATASYNC = 83;
+
+    /// The Linux RISC-V syscall number for `sync_file_range`.
+    private static final int SYS_SYNC_FILE_RANGE = 84;
 
     /// The Linux RISC-V syscall number for `timerfd_create`.
     private static final int SYS_TIMERFD_CREATE = 85;
@@ -6199,6 +6205,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `recvmsg`.
     private static final int SYS_RECVMSG = 212;
 
+    /// The Linux RISC-V syscall number for `readahead`.
+    private static final int SYS_READAHEAD = 213;
+
     /// The Linux RISC-V syscall number for `brk`.
     private static final int SYS_BRK = 214;
 
@@ -6410,6 +6419,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_FSTATFS -> state.setRegister(10, fstatfs((int) state.register(10), state.register(11)));
             case SYS_TRUNCATE -> state.setRegister(10, truncate(state.register(10), state.register(11)));
             case SYS_FTRUNCATE -> state.setRegister(10, ftruncate((int) state.register(10), state.register(11)));
+            case SYS_FALLOCATE -> state.setRegister(10, fallocate(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_FACCESSAT -> state.setRegister(10, faccessat(state.register(10), state.register(11), state.register(12), 0));
             case SYS_CHDIR -> state.setRegister(10, chdir(state.register(10)));
             case SYS_FCHDIR -> state.setRegister(10, fchdir((int) state.register(10)));
@@ -6503,6 +6517,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_SYNC -> state.setRegister(10, sync());
             case SYS_FSYNC -> state.setRegister(10, fsync((int) state.register(10)));
             case SYS_FDATASYNC -> state.setRegister(10, fdatasync((int) state.register(10)));
+            case SYS_SYNC_FILE_RANGE -> state.setRegister(10, syncFileRange(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_TIMERFD_CREATE -> state.setRegister(10, timerfdCreate(state.register(10), state.register(11)));
             case SYS_TIMERFD_SETTIME -> state.setRegister(10, timerfdSettime(
                     (int) state.register(10),
@@ -6745,6 +6764,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_READAHEAD -> state.setRegister(10, readahead(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_CLONE -> state.setRegister(10, clone(
                     state,
                     pc,

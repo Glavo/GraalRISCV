@@ -118,6 +118,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENOTTY` as a raw negative syscall result.
     private static final long ENOTTY = -25;
 
+    /// Linux `EFBIG` as a raw negative syscall result.
+    private static final long EFBIG = -27;
+
     /// Linux `ERANGE` as a raw negative syscall result.
     private static final long ERANGE = -34;
 
@@ -211,6 +214,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `ftruncate`.
     private static final long SYS_FTRUNCATE = 46;
 
+    /// The Linux RISC-V syscall number for `fallocate`.
+    private static final long SYS_FALLOCATE = 47;
+
     /// The Linux RISC-V syscall number for `faccessat`.
     private static final long SYS_FACCESSAT = 48;
 
@@ -297,6 +303,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `fdatasync`.
     private static final long SYS_FDATASYNC = 83;
+
+    /// The Linux RISC-V syscall number for `sync_file_range`.
+    private static final long SYS_SYNC_FILE_RANGE = 84;
 
     /// The Linux RISC-V syscall number for `timerfd_create`.
     private static final long SYS_TIMERFD_CREATE = 85;
@@ -543,6 +552,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `recvmsg`.
     private static final long SYS_RECVMSG = 212;
+
+    /// The Linux RISC-V syscall number for `readahead`.
+    private static final long SYS_READAHEAD = 213;
 
     /// The Linux RISC-V syscall number for `brk`.
     private static final long SYS_BRK = 214;
@@ -1107,6 +1119,21 @@ public final class GuestSyscallsTest {
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
+
+    /// Linux `FALLOC_FL_KEEP_SIZE`.
+    private static final long FALLOC_FL_KEEP_SIZE = 0x01;
+
+    /// Linux `FALLOC_FL_PUNCH_HOLE`.
+    private static final long FALLOC_FL_PUNCH_HOLE = 0x02;
+
+    /// Linux `sync_file_range` wait-before flag.
+    private static final long SYNC_FILE_RANGE_WAIT_BEFORE = 0x01;
+
+    /// Linux `sync_file_range` write flag.
+    private static final long SYNC_FILE_RANGE_WRITE = 0x02;
+
+    /// Linux `sync_file_range` wait-after flag.
+    private static final long SYNC_FILE_RANGE_WAIT_AFTER = 0x04;
 
     /// Linux address family number for netlink sockets.
     private static final long AF_NETLINK = 16;
@@ -5146,6 +5173,205 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_SYNCFS, 99, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies `fallocate` grows regular files and validates unsupported allocation modes.
+    @Test
+    public void fallocateExtendsRegularFilesAndValidatesArguments() throws Exception {
+        Files.writeString(tempDirectory.resolve("fallocate.txt"), "abc", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long pipeAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "fallocate.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_FALLOCATE, fileDescriptor, 0, 8, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(12, Files.size(tempDirectory.resolve("fallocate.txt")));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_FALLOCATE, fileDescriptor, FALLOC_FL_KEEP_SIZE, 20, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(12, Files.size(tempDirectory.resolve("fallocate.txt")));
+
+            setSyscall(state, SYS_FALLOCATE, fileDescriptor, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
+
+            setSyscall(state, SYS_FALLOCATE, fileDescriptor, 0, -1, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FALLOCATE, fileDescriptor, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_FALLOCATE, fileDescriptor, 0, Long.MAX_VALUE - 1, 2);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFBIG, state.register(10));
+
+            setSyscall(state, SYS_FALLOCATE, 99, 0, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int readOnlyFileDescriptor = (int) state.register(10);
+            assertEquals(4, readOnlyFileDescriptor);
+
+            setSyscall(state, SYS_FALLOCATE, readOnlyFileDescriptor, 0, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int writeFileDescriptor = memory.readInt(pipeAddress + Integer.BYTES);
+
+            setSyscall(state, SYS_FALLOCATE, writeFileDescriptor, 0, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies range-sync and readahead syscalls validate descriptors and preserve file offsets.
+    @Test
+    public void fileRangeSyncAndReadaheadValidateArguments() throws Exception {
+        Files.writeString(tempDirectory.resolve("range-sync.txt"), "0123456789", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long devicePathAddress = memory.baseAddress() + 128;
+            long directoryPathAddress = memory.baseAddress() + 256;
+            long pipeAddress = memory.baseAddress() + 384;
+
+            writeGuestString(memory, pathAddress, "range-sync.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int readWriteFileDescriptor = (int) state.register(10);
+            assertEquals(3, readWriteFileDescriptor);
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int readOnlyFileDescriptor = (int) state.register(10);
+            assertEquals(4, readOnlyFileDescriptor);
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_WRONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int writeOnlyFileDescriptor = (int) state.register(10);
+            assertEquals(5, writeOnlyFileDescriptor);
+
+            setSyscall(state, SYS_LSEEK, readOnlyFileDescriptor, 2, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(state, SYS_READAHEAD, readOnlyFileDescriptor, 1, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, readOnlyFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+
+            setSyscall(
+                    state,
+                    SYS_SYNC_FILE_RANGE,
+                    readWriteFileDescriptor,
+                    0,
+                    8,
+                    SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READAHEAD, 99, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_READAHEAD, writeOnlyFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_READAHEAD, readOnlyFileDescriptor, -1, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_READAHEAD, readOnlyFileDescriptor, 0, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SYNC_FILE_RANGE, 99, 0, 1, SYNC_FILE_RANGE_WRITE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_SYNC_FILE_RANGE, readWriteFileDescriptor, -1, 1, SYNC_FILE_RANGE_WRITE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SYNC_FILE_RANGE, readWriteFileDescriptor, 0, -1, SYNC_FILE_RANGE_WRITE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SYNC_FILE_RANGE, readWriteFileDescriptor, 0, 1, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PIPE2, pipeAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int readFileDescriptor = memory.readInt(pipeAddress);
+
+            setSyscall(state, SYS_READAHEAD, readFileDescriptor, 0, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESPIPE, state.register(10));
+
+            writeGuestString(memory, devicePathAddress, "/dev/null");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, devicePathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int nullFileDescriptor = (int) state.register(10);
+            assertEquals(8, nullFileDescriptor);
+
+            setSyscall(state, SYS_SYNC_FILE_RANGE, nullFileDescriptor, 0, 1, SYNC_FILE_RANGE_WAIT_AFTER);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESPIPE, state.register(10));
+
+            writeGuestString(memory, directoryPathAddress, ".");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, directoryPathAddress, O_RDONLY | O_DIRECTORY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int directoryFileDescriptor = (int) state.register(10);
+            assertEquals(9, directoryFileDescriptor);
+
+            setSyscall(state, SYS_SYNC_FILE_RANGE, directoryFileDescriptor, 0, 1, SYNC_FILE_RANGE_WRITE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 

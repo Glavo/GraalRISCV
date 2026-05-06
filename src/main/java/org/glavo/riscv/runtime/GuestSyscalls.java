@@ -124,6 +124,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `ENOTTY` as a raw negative syscall result.
     protected static final long ENOTTY = -25;
 
+    /// Linux `EFBIG` as a raw negative syscall result.
+    protected static final long EFBIG = -27;
+
     /// Linux `ERANGE` as a raw negative syscall result.
     protected static final long ERANGE = -34;
 
@@ -368,6 +371,37 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Linux `O_CLOEXEC`.
     protected static final long O_CLOEXEC = 02000000L;
+
+    /// Linux `FALLOC_FL_KEEP_SIZE`.
+    protected static final long FALLOC_FL_KEEP_SIZE = 0x01;
+
+    /// Linux `FALLOC_FL_PUNCH_HOLE`.
+    protected static final long FALLOC_FL_PUNCH_HOLE = 0x02;
+
+    /// Linux `FALLOC_FL_COLLAPSE_RANGE`.
+    protected static final long FALLOC_FL_COLLAPSE_RANGE = 0x08;
+
+    /// Linux `FALLOC_FL_ZERO_RANGE`.
+    protected static final long FALLOC_FL_ZERO_RANGE = 0x10;
+
+    /// Linux `FALLOC_FL_INSERT_RANGE`.
+    protected static final long FALLOC_FL_INSERT_RANGE = 0x20;
+
+    /// Linux `fallocate` flags accepted by this simulator.
+    protected static final long SUPPORTED_FALLOCATE_FLAGS = FALLOC_FL_KEEP_SIZE;
+
+    /// Linux `sync_file_range` wait-before flag.
+    protected static final long SYNC_FILE_RANGE_WAIT_BEFORE = 0x01;
+
+    /// Linux `sync_file_range` write flag.
+    protected static final long SYNC_FILE_RANGE_WRITE = 0x02;
+
+    /// Linux `sync_file_range` wait-after flag.
+    protected static final long SYNC_FILE_RANGE_WAIT_AFTER = 0x04;
+
+    /// Linux `sync_file_range` flags accepted by this simulator.
+    protected static final long SUPPORTED_SYNC_FILE_RANGE_FLAGS =
+            SYNC_FILE_RANGE_WAIT_BEFORE | SYNC_FILE_RANGE_WRITE | SYNC_FILE_RANGE_WAIT_AFTER;
 
     /// Linux flags accepted by `TIOCGPTPEER`.
     protected static final long SUPPORTED_TIOCGPTPEER_FLAGS =
@@ -3627,6 +3661,68 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Preallocates or reserves space for an open regular file using Linux `fallocate`.
+    protected long fallocate(int fileDescriptor, long mode, long offset, long length) {
+        if (offset < 0 || length <= 0) {
+            return EINVAL;
+        }
+        if (mode < 0 || (mode & ~SUPPORTED_FALLOCATE_FLAGS) != 0) {
+            return ENOTSUP;
+        }
+        if (offset > Long.MAX_VALUE - length) {
+            return EFBIG;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.writable()) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EISDIR;
+        }
+        if (!openFile.isHostFile()) {
+            return EINVAL;
+        }
+
+        long end = offset + length;
+        try {
+            if ((mode & FALLOC_FL_KEEP_SIZE) == 0 && end > openFile.channel().size()) {
+                resizeHostChannel(openFile.channel(), end);
+            }
+            return 0;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Starts best-effort readahead for a seekable file descriptor.
+    protected long readahead(int fileDescriptor, long offset, long count) {
+        if (offset < 0 || count < 0) {
+            return EINVAL;
+        }
+        if (count == 0) {
+            return 0;
+        }
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
+            return ESPIPE;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.readable()) {
+            return EBADF;
+        }
+        if (!openFile.isHostFile()) {
+            return ESPIPE;
+        }
+        if (openFile.isDirectory()) {
+            return EINVAL;
+        }
+        return 0;
+    }
+
     /// Changes the guest-visible current working directory to a sandboxed host directory.
     protected long chdir(long pathAddress) {
         @Nullable String guestPath = readGuestPath(pathAddress);
@@ -6422,6 +6518,37 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         @Nullable OpenFile openFile = openFile(fileDescriptor);
         return openFile == null ? EBADF : 0;
+    }
+
+    /// Flushes a file byte range using Linux `sync_file_range` semantics.
+    protected long syncFileRange(int fileDescriptor, long offset, long byteCount, long flags) {
+        if (offset < 0 || byteCount < 0 || (flags & ~SUPPORTED_SYNC_FILE_RANGE_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (standardFileDescriptorFor(fileDescriptor) >= 0) {
+            return ESPIPE;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (openFile.isDirectory()) {
+            return EINVAL;
+        }
+        if (!openFile.isHostFile()) {
+            return ESPIPE;
+        }
+
+        try {
+            SeekableByteChannel channel = openFile.channel();
+            if (channel instanceof FileChannel fileChannel) {
+                fileChannel.force(false);
+            }
+            return 0;
+        } catch (IOException exception) {
+            throw new RiscVException("Guest sync_file_range syscall failed", exception);
+        }
     }
 
     /// Flushes a regular host file channel when the backing implementation supports it.
