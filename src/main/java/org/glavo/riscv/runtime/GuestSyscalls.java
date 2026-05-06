@@ -4614,7 +4614,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 return EBADF;
             }
             if (openFile.isEventFile()) {
-                return readEventFile(openFile.eventCounter(), address, length);
+                return readEventFile(openFile.eventCounter(), address, length, openFile.nonblocking());
             }
             if (openFile.isEpollFile()) {
                 return EINVAL;
@@ -4702,7 +4702,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     return EBADF;
                 }
                 if (openFile.isEventFile()) {
-                    return writeEventFile(openFile.eventCounter(), address, length);
+                    return writeEventFile(openFile.eventCounter(), address, length, openFile.nonblocking());
                 }
                 if (openFile.isEpollFile()) {
                     return EINVAL;
@@ -5246,26 +5246,37 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     }
 
     /// Reads one little-endian counter value from an `eventfd` descriptor.
-    protected long readEventFile(EventCounter counter, long address, long length) {
+    protected long readEventFile(EventCounter counter, long address, long length, boolean nonblocking) {
         if (length < Long.BYTES) {
             return EINVAL;
         }
-        if (!counter.isReadable()) {
-            return EAGAIN;
-        }
 
-        writeLongUnaligned(address, counter.readValue());
-        return Long.BYTES;
+        try {
+            EventReadResult result = counter.read(nonblocking);
+            if (result.error() != 0) {
+                return result.error();
+            }
+            writeLongUnaligned(address, result.value());
+            return Long.BYTES;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
+        }
     }
 
     /// Writes one little-endian counter increment to an `eventfd` descriptor.
-    protected long writeEventFile(EventCounter counter, long address, long length) {
+    protected long writeEventFile(EventCounter counter, long address, long length, boolean nonblocking) {
         if (length != Long.BYTES) {
             return EINVAL;
         }
 
-        long result = counter.write(readLongUnaligned(address));
-        return result < 0 ? result : Long.BYTES;
+        try {
+            long result = counter.write(readLongUnaligned(address), nonblocking);
+            return result < 0 ? result : Long.BYTES;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
+        }
     }
 
     /// Computes the currently ready low-level `epoll` event bits for one guest descriptor.
@@ -10509,6 +10520,22 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Stores the result of one Linux `eventfd` read operation.
+    ///
+    /// @param value the unsigned counter value to copy to guest memory
+    /// @param error the raw negative Linux error, or zero when `value` is valid
+    protected record EventReadResult(long value, long error) {
+        /// Creates a successful `eventfd` read result.
+        static EventReadResult value(long value) {
+            return new EventReadResult(value, 0);
+        }
+
+        /// Creates a failed `eventfd` read result.
+        static EventReadResult error(long error) {
+            return new EventReadResult(0, error);
+        }
+    }
+
     /// Stores the shared counter state for one Linux `eventfd` open-file description.
     protected static final class EventCounter {
         /// The current unsigned 64-bit counter value.
@@ -10538,7 +10565,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         /// Returns true when a write can increment the counter without overflowing.
         synchronized boolean isWritable() {
-            return value != -2L;
+            return canWrite(1);
         }
 
         /// Returns true when the open-file status flags include `O_NONBLOCK`.
@@ -10547,37 +10574,53 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         /// Reads the current counter value and applies Linux `eventfd` decrement rules.
-        synchronized long readValue() {
+        synchronized EventReadResult read(boolean nonblocking) throws InterruptedException {
+            while (value == 0) {
+                if (nonblocking) {
+                    return EventReadResult.error(EAGAIN);
+                }
+                wait();
+            }
+
             if (semaphore) {
                 value--;
                 notifyReadyChange();
-                return 1;
+                return EventReadResult.value(1);
             }
 
             long result = value;
             value = 0;
             notifyReadyChange();
-            return result;
+            return EventReadResult.value(result);
         }
 
         /// Adds an unsigned increment to the counter or returns a raw negative Linux error.
-        synchronized long write(long increment) {
+        synchronized long write(long increment, boolean nonblocking) throws InterruptedException {
             if (increment == -1L) {
                 return EINVAL;
             }
 
-            long sum = value + increment;
-            if (Long.compareUnsigned(sum, value) < 0 || sum == -1L) {
-                return EAGAIN;
+            while (!canWrite(increment)) {
+                if (nonblocking) {
+                    return EAGAIN;
+                }
+                wait();
             }
 
-            value = sum;
+            value += increment;
             notifyReadyChange();
             return 0;
         }
 
+        /// Returns true when the supplied increment can be added without exceeding the Linux counter limit.
+        private boolean canWrite(long increment) {
+            long sum = value + increment;
+            return Long.compareUnsigned(sum, value) >= 0 && sum != -1L;
+        }
+
         /// Notifies poll waiters when a counter transition can affect readiness.
         private void notifyReadyChange() {
+            notifyAll();
             if (changeNotifier != null) {
                 changeNotifier.run();
             }

@@ -4067,6 +4067,81 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies blocking `eventfd2` reads and writes wait for counter transitions.
+    @Test
+    public void eventfd2SupportsBlockingReadAndWrite() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            RiscVThreadState readState = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    state.syscalls());
+            RiscVThreadState writeState = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    state.syscalls());
+            long incrementAddress = memory.baseAddress();
+            long readValueAddress = memory.baseAddress() + 64;
+            long blockedIncrementAddress = memory.baseAddress() + 128;
+
+            setSyscall(state, SYS_EVENTFD2, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int eventFileDescriptor = (int) state.register(10);
+            assertEquals(3, eventFileDescriptor);
+
+            Future<Long> readResult = executor.submit(() -> {
+                setSyscall(readState, SYS_READ, eventFileDescriptor, readValueAddress, Long.BYTES);
+                readState.syscalls().handle(readState, TEST_PC);
+                return readState.register(10);
+            });
+
+            Thread.sleep(50);
+            assertTrue(!readResult.isDone());
+
+            memory.writeLong(incrementAddress, 12);
+            setSyscall(state, SYS_WRITE, eventFileDescriptor, incrementAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertEquals(Long.BYTES, readResult.get(5, TimeUnit.SECONDS));
+            assertEquals(12, memory.readLong(readValueAddress));
+
+            memory.writeLong(incrementAddress, -2L);
+            setSyscall(state, SYS_WRITE, eventFileDescriptor, incrementAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+
+            memory.writeLong(blockedIncrementAddress, 1);
+            Future<Long> writeResult = executor.submit(() -> {
+                setSyscall(writeState, SYS_WRITE, eventFileDescriptor, blockedIncrementAddress, Long.BYTES);
+                writeState.syscalls().handle(writeState, TEST_PC);
+                return writeState.register(10);
+            });
+
+            Thread.sleep(50);
+            assertTrue(!writeResult.isDone());
+
+            setSyscall(state, SYS_READ, eventFileDescriptor, readValueAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertEquals(-2L, memory.readLong(readValueAddress));
+            assertEquals(Long.BYTES, writeResult.get(5, TimeUnit.SECONDS));
+
+            setSyscall(state, SYS_READ, eventFileDescriptor, readValueAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertEquals(1, memory.readLong(readValueAddress));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     /// Verifies `epoll_pwait` waits for guest-internal descriptor readiness changes.
     @Test
     public void epollPwaitWaitsForEventfdReadiness() throws Exception {
