@@ -57,6 +57,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.LongUnaryOperator;
 
 /// Provides shared state and helpers for guest syscall ABI implementations.
 @SuppressWarnings("OctalInteger")
@@ -930,6 +931,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `TIMER_ABSTIME`.
     protected static final long TIMER_ABSTIME = 1;
 
+    /// Linux `TFD_TIMER_ABSTIME`.
+    protected static final long TFD_TIMER_ABSTIME = 1;
+
+    /// Linux flags accepted by `timerfd_create`.
+    protected static final long SUPPORTED_TIMERFD_CREATE_FLAGS = O_NONBLOCK | O_CLOEXEC;
+
+    /// Linux flags accepted by `timerfd_settime`.
+    protected static final long SUPPORTED_TIMERFD_SETTIME_FLAGS = TFD_TIMER_ABSTIME;
+
     /// Linux flags accepted by `clock_nanosleep`.
     protected static final long SUPPORTED_CLOCK_NANOSLEEP_FLAGS = TIMER_ABSTIME;
 
@@ -941,6 +951,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// The byte size of Linux RISC-V 64-bit `struct timespec`.
     protected static final int TIMESPEC_SIZE = Long.BYTES * 2;
+
+    /// The byte offset of `it_interval` inside Linux RISC-V 64-bit `struct itimerspec`.
+    protected static final int ITIMERSPEC_INTERVAL_OFFSET = 0;
+
+    /// The byte offset of `it_value` inside Linux RISC-V 64-bit `struct itimerspec`.
+    protected static final int ITIMERSPEC_VALUE_OFFSET = TIMESPEC_SIZE;
+
+    /// The byte size of Linux RISC-V 64-bit `struct itimerspec`.
+    protected static final int ITIMERSPEC_SIZE = TIMESPEC_SIZE * 2;
 
     /// The number of nanoseconds in one second.
     protected static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
@@ -2014,6 +2033,87 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 (flags & O_NONBLOCK) != 0,
                 this::notifyPollWaiters);
         return addOpenFile(OpenFile.eventFile(counter), (flags & O_CLOEXEC) != 0);
+    }
+
+    /// Creates an in-memory Linux `timerfd` timer.
+    protected long timerfdCreate(long clockId, long flags) {
+        if (!isSupportedTimerfdClock(clockId) || (flags & ~SUPPORTED_TIMERFD_CREATE_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        TimerFile timerFile = new TimerFile(
+                clockId,
+                (flags & O_NONBLOCK) != 0,
+                this::timerfdClockNanoseconds,
+                this::notifyPollWaiters);
+        return addOpenFile(OpenFile.timerFile(timerFile), (flags & O_CLOEXEC) != 0);
+    }
+
+    /// Arms, rearms, or disarms a Linux `timerfd` timer.
+    protected long timerfdSettime(int fileDescriptor, long flags, long newValueAddress, long oldValueAddress) {
+        if ((flags & ~SUPPORTED_TIMERFD_SETTIME_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isTimerFile()) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(newValueAddress, ITIMERSPEC_SIZE)
+                || (oldValueAddress != 0 && !memory.isBacked(oldValueAddress, ITIMERSPEC_SIZE))) {
+            return EFAULT;
+        }
+
+        long intervalSeconds = memory.readLong(newValueAddress + ITIMERSPEC_INTERVAL_OFFSET + TIMESPEC_SECONDS_OFFSET);
+        long intervalNanoseconds =
+                memory.readLong(newValueAddress + ITIMERSPEC_INTERVAL_OFFSET + TIMESPEC_NANOSECONDS_OFFSET);
+        long valueSeconds = memory.readLong(newValueAddress + ITIMERSPEC_VALUE_OFFSET + TIMESPEC_SECONDS_OFFSET);
+        long valueNanoseconds =
+                memory.readLong(newValueAddress + ITIMERSPEC_VALUE_OFFSET + TIMESPEC_NANOSECONDS_OFFSET);
+        if (!isValidTimespec(intervalSeconds, intervalNanoseconds)
+                || !isValidTimespec(valueSeconds, valueNanoseconds)) {
+            return EINVAL;
+        }
+
+        TimerFile timerFile = openFile.timerFile();
+        TimerFileSpec oldSpec = timerFile.setTime(
+                (flags & TFD_TIMER_ABSTIME) != 0,
+                timespecToSaturatedNanoseconds(intervalSeconds, intervalNanoseconds),
+                timespecToSaturatedNanoseconds(valueSeconds, valueNanoseconds));
+        if (oldValueAddress != 0) {
+            writeItimerspec(oldValueAddress, oldSpec);
+        }
+        return 0;
+    }
+
+    /// Writes the current Linux `timerfd` timer configuration.
+    protected long timerfdGettime(int fileDescriptor, long currentValueAddress) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isTimerFile()) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(currentValueAddress, ITIMERSPEC_SIZE)) {
+            return EFAULT;
+        }
+
+        writeItimerspec(currentValueAddress, openFile.timerFile().currentSpec());
+        return 0;
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct itimerspec` from nanosecond timer fields.
+    protected void writeItimerspec(long itimerspecAddress, TimerFileSpec spec) {
+        writeTimespecFromNanoseconds(
+                itimerspecAddress + ITIMERSPEC_INTERVAL_OFFSET,
+                spec.intervalNanoseconds());
+        writeTimespecFromNanoseconds(
+                itimerspecAddress + ITIMERSPEC_VALUE_OFFSET,
+                spec.valueNanoseconds());
     }
 
     /// Creates an in-memory Linux `epoll` descriptor.
@@ -4616,6 +4716,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             if (openFile.isEventFile()) {
                 return readEventFile(openFile.eventCounter(), address, length, openFile.nonblocking());
             }
+            if (openFile.isTimerFile()) {
+                return readTimerFile(openFile.timerFile(), address, length, openFile.nonblocking());
+            }
             if (openFile.isEpollFile()) {
                 return EINVAL;
             }
@@ -4703,6 +4806,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 }
                 if (openFile.isEventFile()) {
                     return writeEventFile(openFile.eventCounter(), address, length, openFile.nonblocking());
+                }
+                if (openFile.isTimerFile()) {
+                    return EINVAL;
                 }
                 if (openFile.isEpollFile()) {
                     return EINVAL;
@@ -5279,6 +5385,25 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Reads one little-endian expiration counter from a `timerfd` descriptor.
+    protected long readTimerFile(TimerFile timerFile, long address, long length, boolean nonblocking) {
+        if (length < Long.BYTES) {
+            return EINVAL;
+        }
+
+        try {
+            long result = timerFile.read(nonblocking);
+            if (result < 0) {
+                return result;
+            }
+            writeLongUnaligned(address, result);
+            return Long.BYTES;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
+        }
+    }
+
     /// Computes the currently ready low-level `epoll` event bits for one guest descriptor.
     protected int readyEventsFor(int fileDescriptor) {
         return readyEventsFor(fileDescriptor, false);
@@ -5311,6 +5436,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 events |= EPOLLOUT;
             }
             return events;
+        }
+        if (openFile.isTimerFile()) {
+            return openFile.timerFile().isReadable() ? EPOLLIN : 0;
         }
         if (openFile.isPtyEndpoint()) {
             PtyEndpoint endpoint = openFile.ptyEndpoint();
@@ -7189,6 +7317,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return timespecToSaturatedNanoseconds(seconds, nanoseconds);
     }
 
+    /// Returns the current nanosecond value for a clock accepted by `timerfd_create`.
+    protected long timerfdClockNanoseconds(long clockId) {
+        if (clockId == CLOCK_REALTIME) {
+            return instantToSaturatedNanoseconds(timeSource.realtimeInstant());
+        }
+        return durationToSaturatedNanoseconds(elapsedDuration());
+    }
+
     /// Returns true when clone-created guest threads can be started.
     protected boolean guestThreadingEnabled() {
         return guestThreadRunner != null;
@@ -7845,6 +7981,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return seconds * NANOSECONDS_PER_SECOND + nanoseconds;
     }
 
+    /// Converts a non-negative duration to nanoseconds, saturating very large values.
+    protected static long durationToSaturatedNanoseconds(Duration duration) {
+        if (duration.isNegative()) {
+            return 0;
+        }
+        return timespecToSaturatedNanoseconds(duration.getSeconds(), duration.getNano());
+    }
+
     /// Converts a non-negative duration to Linux clock ticks, saturating very large values.
     protected static long durationToClockTicks(Duration duration) {
         long seconds = duration.getSeconds();
@@ -7869,9 +8013,27 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 || clockId == CLOCK_BOOTTIME;
     }
 
+    /// Returns true when `timerfd_create` accepts the supplied Linux clock id.
+    protected static boolean isSupportedTimerfdClock(long clockId) {
+        return clockId == CLOCK_REALTIME || clockId == CLOCK_MONOTONIC || clockId == CLOCK_BOOTTIME;
+    }
+
     /// Returns true when the Linux clock id represents a wall-clock source.
     protected static boolean isRealtimeClock(long clockId) {
         return clockId == CLOCK_REALTIME || clockId == CLOCK_REALTIME_COARSE;
+    }
+
+    /// Adds two non-negative nanosecond values, saturating on overflow.
+    protected static long saturatingAddNanoseconds(long left, long right) {
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+    }
+
+    /// Multiplies two non-negative nanosecond values, saturating on overflow.
+    protected static long saturatingMultiplyNanoseconds(long left, long right) {
+        if (left == 0 || right == 0) {
+            return 0;
+        }
+        return left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
     }
 
     /// Implements `mmap` allocations and private regular-file mappings in the guest address space.
@@ -10536,6 +10698,152 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Stores the user-visible configuration of one Linux `timerfd` timer.
+    ///
+    /// @param intervalNanoseconds the periodic interval, or zero for a one-shot timer
+    /// @param valueNanoseconds the remaining time before the next expiration, or zero when disarmed
+    protected record TimerFileSpec(long intervalNanoseconds, long valueNanoseconds) {
+    }
+
+    /// Stores the timer state for one Linux `timerfd` open-file description.
+    protected static final class TimerFile {
+        /// The Linux clock id used by this timer.
+        private final long clockId;
+
+        /// Whether the initial open-file status flags include `O_NONBLOCK`.
+        private final boolean nonblocking;
+
+        /// Supplies the current nanosecond value for `clockId`.
+        private final LongUnaryOperator clockReader;
+
+        /// Notifies blocking poll syscalls that readiness may have changed.
+        private final @Nullable Runnable changeNotifier;
+
+        /// The periodic interval in nanoseconds, or zero for a one-shot timer.
+        private long intervalNanoseconds;
+
+        /// The absolute next expiration in the timer clock domain, or `-1` when disarmed.
+        private long nextExpirationNanoseconds = -1;
+
+        /// Expirations not yet consumed by `read`.
+        private long expirations;
+
+        /// Creates a disarmed timer for the supplied Linux clock.
+        TimerFile(
+                long clockId,
+                boolean nonblocking,
+                LongUnaryOperator clockReader,
+                @Nullable Runnable changeNotifier) {
+            this.clockId = clockId;
+            this.nonblocking = nonblocking;
+            this.clockReader = clockReader;
+            this.changeNotifier = changeNotifier;
+        }
+
+        /// Returns true when a read can complete without blocking.
+        synchronized boolean isReadable() {
+            refresh(clockNanoseconds());
+            return expirations != 0;
+        }
+
+        /// Returns true when the initial open-file status flags include `O_NONBLOCK`.
+        boolean nonblocking() {
+            return nonblocking;
+        }
+
+        /// Returns the current `itimerspec` values visible through `timerfd_gettime`.
+        synchronized TimerFileSpec currentSpec() {
+            long nowNanoseconds = clockNanoseconds();
+            refresh(nowNanoseconds);
+            return currentSpec(nowNanoseconds);
+        }
+
+        /// Arms, rearms, or disarms the timer and returns the previous `itimerspec`.
+        synchronized TimerFileSpec setTime(boolean absolute, long intervalNanoseconds, long valueNanoseconds) {
+            long nowNanoseconds = clockNanoseconds();
+            refresh(nowNanoseconds);
+            TimerFileSpec oldSpec = currentSpec(nowNanoseconds);
+
+            this.intervalNanoseconds = intervalNanoseconds;
+            expirations = 0;
+            nextExpirationNanoseconds = valueNanoseconds == 0
+                    ? -1
+                    : absolute ? valueNanoseconds : saturatingAddNanoseconds(nowNanoseconds, valueNanoseconds);
+            notifyReadyChange();
+            return oldSpec;
+        }
+
+        /// Reads and clears the accumulated expiration count or returns a raw negative Linux error.
+        synchronized long read(boolean nonblocking) throws InterruptedException {
+            while (true) {
+                long nowNanoseconds = clockNanoseconds();
+                refresh(nowNanoseconds);
+                if (expirations != 0) {
+                    long result = expirations;
+                    expirations = 0;
+                    notifyReadyChange();
+                    return result;
+                }
+                if (nonblocking) {
+                    return EAGAIN;
+                }
+                if (nextExpirationNanoseconds < 0) {
+                    wait();
+                } else {
+                    waitNanoseconds(Math.max(1, nextExpirationNanoseconds - nowNanoseconds));
+                }
+            }
+        }
+
+        /// Returns the current timer clock value in nanoseconds.
+        private long clockNanoseconds() {
+            return clockReader.applyAsLong(clockId);
+        }
+
+        /// Returns the current timer specification after pending expirations have been refreshed.
+        private TimerFileSpec currentSpec(long nowNanoseconds) {
+            long valueNanoseconds = nextExpirationNanoseconds < 0
+                    ? 0
+                    : Math.max(0, nextExpirationNanoseconds - nowNanoseconds);
+            return new TimerFileSpec(intervalNanoseconds, valueNanoseconds);
+        }
+
+        /// Moves elapsed timer expirations into the unread expiration counter.
+        private void refresh(long nowNanoseconds) {
+            if (nextExpirationNanoseconds < 0 || nowNanoseconds < nextExpirationNanoseconds) {
+                return;
+            }
+
+            if (intervalNanoseconds == 0) {
+                expirations = saturatingAddNanoseconds(expirations, 1);
+                nextExpirationNanoseconds = -1;
+                return;
+            }
+
+            long elapsedNanoseconds = nowNanoseconds - nextExpirationNanoseconds;
+            long elapsedIntervals = elapsedNanoseconds / intervalNanoseconds;
+            long expirationsToAdd = elapsedIntervals == Long.MAX_VALUE ? Long.MAX_VALUE : elapsedIntervals + 1;
+            expirations = saturatingAddNanoseconds(expirations, expirationsToAdd);
+            long advanceNanoseconds = saturatingMultiplyNanoseconds(intervalNanoseconds, expirationsToAdd);
+            nextExpirationNanoseconds = saturatingAddNanoseconds(nextExpirationNanoseconds, advanceNanoseconds);
+        }
+
+        /// Waits on this timer monitor for at most the supplied nanosecond count.
+        private void waitNanoseconds(long nanoseconds) throws InterruptedException {
+            wait(
+                    nanoseconds / NANOSECONDS_PER_MILLISECOND,
+                    (int) (nanoseconds % NANOSECONDS_PER_MILLISECOND));
+        }
+
+        /// Notifies readers and poll waiters when a timer state transition can affect readiness.
+        private void notifyReadyChange() {
+            notifyAll();
+            if (changeNotifier != null) {
+                changeNotifier.run();
+            }
+        }
+    }
+
     /// Stores the shared counter state for one Linux `eventfd` open-file description.
     protected static final class EventCounter {
         /// The current unsigned 64-bit counter value.
@@ -10973,6 +11281,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// The counter backing an eventfd descriptor.
         private final @Nullable EventCounter eventCounter;
 
+        /// The timer backing a timerfd descriptor.
+        private final @Nullable TimerFile timerFile;
+
         /// The interest set backing an epoll descriptor.
         private final @Nullable EpollSet epollSet;
 
@@ -11052,6 +11363,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     channel,
                     pipe,
                     eventCounter,
+                    null,
                     epollSet,
                     null,
                     terminalDevice,
@@ -11077,6 +11389,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 @Nullable SeekableByteChannel channel,
                 @Nullable PipeBuffer pipe,
                 @Nullable EventCounter eventCounter,
+                @Nullable TimerFile timerFile,
                 @Nullable EpollSet epollSet,
                 @Nullable GuestSocket socket,
                 @Nullable TerminalDevice terminalDevice,
@@ -11098,6 +11411,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             this.channel = channel;
             this.pipe = pipe;
             this.eventCounter = eventCounter;
+            this.timerFile = timerFile;
             this.epollSet = epollSet;
             this.socket = socket;
             this.terminalDevice = terminalDevice;
@@ -11325,6 +11639,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     null,
                     null,
                     null,
+                    null,
                     ptyEndpoint,
                     false,
                     false,
@@ -11495,6 +11810,33 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     eventCounter.nonblocking());
         }
 
+        /// Creates an entry backed by a timerfd timer.
+        static OpenFile timerFile(TimerFile timerFile) {
+            return new OpenFile(
+                    -1,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    timerFile,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    true,
+                    false,
+                    timerFile.nonblocking());
+        }
+
         /// Creates an entry backed by an epoll interest set.
         static OpenFile epollFile(EpollSet epollSet) {
             return new OpenFile(
@@ -11523,6 +11865,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         static OpenFile socket(GuestSocket socket, boolean nonblocking) {
             return new OpenFile(
                     -1,
+                    null,
                     null,
                     null,
                     null,
@@ -11568,6 +11911,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when this entry is backed by an eventfd counter.
         boolean isEventFile() {
             return eventCounter != null;
+        }
+
+        /// Returns true when this entry is backed by a timerfd timer.
+        boolean isTimerFile() {
+            return timerFile != null;
         }
 
         /// Returns true when this entry is backed by an epoll interest set.
@@ -11626,6 +11974,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         EventCounter eventCounter() {
             assert eventCounter != null;
             return eventCounter;
+        }
+
+        /// Returns the timerfd timer backing this descriptor.
+        TimerFile timerFile() {
+            assert timerFile != null;
+            return timerFile;
         }
 
         /// Returns the epoll interest set backing this descriptor.

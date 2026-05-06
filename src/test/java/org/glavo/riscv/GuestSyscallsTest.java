@@ -289,6 +289,15 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `fdatasync`.
     private static final long SYS_FDATASYNC = 83;
 
+    /// The Linux RISC-V syscall number for `timerfd_create`.
+    private static final long SYS_TIMERFD_CREATE = 85;
+
+    /// The Linux RISC-V syscall number for `timerfd_settime`.
+    private static final long SYS_TIMERFD_SETTIME = 86;
+
+    /// The Linux RISC-V syscall number for `timerfd_gettime`.
+    private static final long SYS_TIMERFD_GETTIME = 87;
+
     /// The Linux RISC-V syscall number for `utimensat`.
     private static final long SYS_UTIMENSAT = 88;
 
@@ -1567,6 +1576,18 @@ public final class GuestSyscallsTest {
 
     /// Linux `TIMER_ABSTIME`.
     private static final long TIMER_ABSTIME = 1;
+
+    /// Linux `TFD_TIMER_ABSTIME`.
+    private static final long TFD_TIMER_ABSTIME = 1;
+
+    /// The byte offset of `it_interval` inside Linux RISC-V 64-bit `struct itimerspec`.
+    private static final long ITIMERSPEC_INTERVAL_OFFSET = 0;
+
+    /// The byte offset of `it_value` inside Linux RISC-V 64-bit `struct itimerspec`.
+    private static final long ITIMERSPEC_VALUE_OFFSET = 2L * Long.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `struct itimerspec`.
+    private static final long ITIMERSPEC_SIZE = 4L * Long.BYTES;
 
     /// Linux `PR_SET_PDEATHSIG`.
     private static final long PR_SET_PDEATHSIG = 1;
@@ -4064,6 +4085,152 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, 99, eventAddress);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies `timerfd` creation, arming, querying, reading, and validation behavior.
+    @Test
+    public void timerfdCreateSettimeGettimeAndRead() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long timerAddress = memory.baseAddress();
+            long currentAddress = memory.baseAddress() + 128;
+            long oldAddress = memory.baseAddress() + 256;
+            long bufferAddress = memory.baseAddress() + 384;
+
+            setSyscall(state, SYS_TIMERFD_CREATE, CLOCK_MONOTONIC, O_NONBLOCK | O_CLOEXEC, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int timerFileDescriptor = (int) state.register(10);
+            assertEquals(3, timerFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, timerFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, timerFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDWR | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_READ, timerFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_TIMERFD_CREATE, CLOCK_THREAD_CPUTIME_ID, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TIMERFD_CREATE, CLOCK_MONOTONIC, O_APPEND, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeItimerspec(memory, timerAddress, 0, 0, 1, 0);
+            setSyscall(state, SYS_TIMERFD_SETTIME, timerFileDescriptor, 0, timerAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_TIMERFD_GETTIME, timerFileDescriptor, currentAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(currentAddress + ITIMERSPEC_INTERVAL_OFFSET));
+            assertEquals(0, memory.readLong(currentAddress + ITIMERSPEC_INTERVAL_OFFSET + Long.BYTES));
+            long currentValueSeconds = memory.readLong(currentAddress + ITIMERSPEC_VALUE_OFFSET);
+            long currentValueNanoseconds = memory.readLong(currentAddress + ITIMERSPEC_VALUE_OFFSET + Long.BYTES);
+            assertTrue(currentValueSeconds >= 0 && currentValueSeconds <= 1);
+            assertTrue(currentValueSeconds > 0 || currentValueNanoseconds > 0);
+
+            writeItimerspec(memory, timerAddress, 0, 0, 0, 20_000_000);
+            setSyscall(state, SYS_TIMERFD_SETTIME, timerFileDescriptor, 0, timerAddress, oldAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            long oldValueSeconds = memory.readLong(oldAddress + ITIMERSPEC_VALUE_OFFSET);
+            long oldValueNanoseconds = memory.readLong(oldAddress + ITIMERSPEC_VALUE_OFFSET + Long.BYTES);
+            assertTrue(oldValueSeconds >= 0 && oldValueSeconds <= 1);
+            assertTrue(oldValueSeconds > 0 || oldValueNanoseconds > 0);
+
+            writeItimerspec(memory, timerAddress, 0, 1_000_000_000L, 0, 1);
+            setSyscall(state, SYS_TIMERFD_SETTIME, timerFileDescriptor, 0, timerAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            for (int attempt = 0; attempt < 100; attempt++) {
+                setSyscall(state, SYS_READ, timerFileDescriptor, bufferAddress, Long.BYTES);
+                state.syscalls().handle(state, TEST_PC);
+                if (state.register(10) == Long.BYTES) {
+                    break;
+                }
+                assertEquals(EAGAIN, state.register(10));
+                Thread.sleep(10);
+            }
+            assertEquals(Long.BYTES, state.register(10));
+            assertTrue(memory.readLong(bufferAddress) >= 1);
+
+            setSyscall(state, SYS_READ, timerFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            memory.writeLong(bufferAddress, 1);
+            setSyscall(state, SYS_WRITE, timerFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies periodic `timerfd` expirations and `epoll` readiness.
+    @Test
+    public void timerfdPeriodicTimersAccumulateExpirationsAndEpollReady() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long timerAddress = memory.baseAddress();
+            long eventAddress = memory.baseAddress() + 128;
+            long eventsAddress = memory.baseAddress() + 256;
+            long currentAddress = memory.baseAddress() + 384;
+            long bufferAddress = memory.baseAddress() + 512;
+            long fileDescriptorSetAddress = memory.baseAddress() + 640;
+
+            setSyscall(state, SYS_TIMERFD_CREATE, CLOCK_MONOTONIC, O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int timerFileDescriptor = (int) state.register(10);
+            assertEquals(3, timerFileDescriptor);
+
+            setSyscall(state, SYS_EPOLL_CREATE1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int epollFileDescriptor = (int) state.register(10);
+            assertEquals(4, epollFileDescriptor);
+
+            writeEpollEvent(memory, eventAddress, EPOLLIN, 0x88);
+            setSyscall(state, SYS_EPOLL_CTL, epollFileDescriptor, EPOLL_CTL_ADD, timerFileDescriptor, eventAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_EPOLL_PWAIT, epollFileDescriptor, eventsAddress, 1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeItimerspec(memory, timerAddress, 0, 5_000_000, 0, 5_000_000);
+            setSyscall(state, SYS_TIMERFD_SETTIME, timerFileDescriptor, 0, timerAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            waitForEpollReady(state, epollFileDescriptor, eventsAddress);
+            assertEquals(EPOLLIN, memory.readInt(eventsAddress + EPOLL_EVENT_EVENTS_OFFSET));
+            assertEquals(0x88, readEpollEventData(memory, eventsAddress));
+            waitForPselectReadReady(state, memory, fileDescriptorSetAddress, timerFileDescriptor);
+
+            Thread.sleep(50);
+            setSyscall(state, SYS_READ, timerFileDescriptor, bufferAddress, Long.BYTES);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(Long.BYTES, state.register(10));
+            assertTrue(memory.readLong(bufferAddress) >= 2);
+
+            setSyscall(state, SYS_TIMERFD_GETTIME, timerFileDescriptor, currentAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(currentAddress + ITIMERSPEC_INTERVAL_OFFSET));
+            assertEquals(5_000_000, memory.readLong(currentAddress + ITIMERSPEC_INTERVAL_OFFSET + Long.BYTES));
+            long remainingSeconds = memory.readLong(currentAddress + ITIMERSPEC_VALUE_OFFSET);
+            long remainingNanoseconds = memory.readLong(currentAddress + ITIMERSPEC_VALUE_OFFSET + Long.BYTES);
+            assertEquals(0, remainingSeconds);
+            assertTrue(remainingNanoseconds >= 0 && remainingNanoseconds <= 5_000_000);
         }
     }
 
@@ -9961,6 +10128,18 @@ public final class GuestSyscallsTest {
     private static void writeTimespec(Memory memory, long address, long seconds, long nanoseconds) {
         memory.writeLong(address, seconds);
         memory.writeLong(address + Long.BYTES, nanoseconds);
+    }
+
+    /// Writes one Linux RISC-V 64-bit `struct itimerspec` into guest memory.
+    private static void writeItimerspec(
+            Memory memory,
+            long address,
+            long intervalSeconds,
+            long intervalNanoseconds,
+            long valueSeconds,
+            long valueNanoseconds) {
+        writeTimespec(memory, address + ITIMERSPEC_INTERVAL_OFFSET, intervalSeconds, intervalNanoseconds);
+        writeTimespec(memory, address + ITIMERSPEC_VALUE_OFFSET, valueSeconds, valueNanoseconds);
     }
 
     /// Writes one regular tar entry with explicit Linux metadata to an open archive.

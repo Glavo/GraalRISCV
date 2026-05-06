@@ -5757,6 +5757,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `fdatasync`.
     private static final int SYS_FDATASYNC = 83;
 
+    /// The Linux RISC-V syscall number for `timerfd_create`.
+    private static final int SYS_TIMERFD_CREATE = 85;
+
+    /// The Linux RISC-V syscall number for `timerfd_settime`.
+    private static final int SYS_TIMERFD_SETTIME = 86;
+
+    /// The Linux RISC-V syscall number for `timerfd_gettime`.
+    private static final int SYS_TIMERFD_GETTIME = 87;
+
     /// The Linux RISC-V syscall number for `utimensat`.
     private static final int SYS_UTIMENSAT = 88;
 
@@ -6211,6 +6220,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_SYNC -> state.setRegister(10, sync());
             case SYS_FSYNC -> state.setRegister(10, fsync((int) state.register(10)));
             case SYS_FDATASYNC -> state.setRegister(10, fdatasync((int) state.register(10)));
+            case SYS_TIMERFD_CREATE -> state.setRegister(10, timerfdCreate(state.register(10), state.register(11)));
+            case SYS_TIMERFD_SETTIME -> state.setRegister(10, timerfdSettime(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_TIMERFD_GETTIME -> state.setRegister(10, timerfdGettime(
+                    (int) state.register(10),
+                    state.register(11)));
             case SYS_UTIMENSAT -> state.setRegister(10, utimensat(
                     state.register(10),
                     state.register(11),
