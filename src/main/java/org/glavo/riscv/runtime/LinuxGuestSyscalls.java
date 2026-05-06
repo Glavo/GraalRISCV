@@ -5826,6 +5826,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `nanosleep`.
     private static final int SYS_NANOSLEEP = 101;
 
+    /// The Linux RISC-V syscall number for `getitimer`.
+    private static final int SYS_GETITIMER = 102;
+
+    /// The Linux RISC-V syscall number for `setitimer`.
+    private static final int SYS_SETITIMER = 103;
+
     /// The Linux RISC-V syscall number for `clock_gettime`.
     private static final int SYS_CLOCK_GETTIME = 113;
 
@@ -6063,6 +6069,21 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `mprotect`.
     private static final int SYS_MPROTECT = 226;
 
+    /// The Linux RISC-V syscall number for `msync`.
+    private static final int SYS_MSYNC = 227;
+
+    /// The Linux RISC-V syscall number for `mlock`.
+    private static final int SYS_MLOCK = 228;
+
+    /// The Linux RISC-V syscall number for `munlock`.
+    private static final int SYS_MUNLOCK = 229;
+
+    /// The Linux RISC-V syscall number for `mlockall`.
+    private static final int SYS_MLOCKALL = 230;
+
+    /// The Linux RISC-V syscall number for `munlockall`.
+    private static final int SYS_MUNLOCKALL = 231;
+
     /// The Linux RISC-V syscall number for `mincore`.
     private static final int SYS_MINCORE = 232;
 
@@ -6113,6 +6134,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `membarrier`.
     private static final int SYS_MEMBARRIER = 283;
+
+    /// The Linux RISC-V syscall number for `mlock2`.
+    private static final int SYS_MLOCK2 = 284;
 
     /// The Linux RISC-V syscall number for `preadv2`.
     private static final int SYS_PREADV2 = 286;
@@ -6332,6 +6356,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12)));
             case SYS_NANOSLEEP -> state.setRegister(10, nanosleep(state.register(10), state.register(11)));
+            case SYS_GETITIMER -> state.setRegister(10, getitimer(state.register(10), state.register(11)));
+            case SYS_SETITIMER -> state.setRegister(10, setitimer(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
             case SYS_CLOCK_GETTIME -> state.setRegister(10, clockGettime(state.register(10), state.register(11)));
             case SYS_CLOCK_GETRES -> state.setRegister(10, clockGetres(state.register(10), state.register(11)));
             case SYS_CLOCK_NANOSLEEP -> state.setRegister(10, clockNanosleep(
@@ -6561,6 +6590,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(14),
                     state.register(15)));
             case SYS_MPROTECT -> state.setRegister(10, mprotect(state.register(10), state.register(11), state.register(12)));
+            case SYS_MSYNC -> state.setRegister(10, msync(state.register(10), state.register(11), state.register(12)));
+            case SYS_MLOCK -> state.setRegister(10, mlock(state.register(10), state.register(11)));
+            case SYS_MUNLOCK -> state.setRegister(10, munlock(state.register(10), state.register(11)));
+            case SYS_MLOCKALL -> state.setRegister(10, mlockall(state.register(10)));
+            case SYS_MUNLOCKALL -> state.setRegister(10, munlockall());
             case SYS_MINCORE -> state.setRegister(10, mincore(state.register(10), state.register(11), state.register(12)));
             case SYS_MADVISE -> state.setRegister(10, madvise(state.register(10), state.register(11), state.register(12)));
             case SYS_ACCEPT4 -> state.setRegister(10, accept(
@@ -6603,6 +6637,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(14)));
             case SYS_GETRANDOM -> state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
             case SYS_MEMBARRIER -> state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
+            case SYS_MLOCK2 -> state.setRegister(10, mlock2(state.register(10), state.register(11), state.register(12)));
             case SYS_PREADV2 -> state.setRegister(10, preadv2(
                     (int) state.register(10),
                     state.register(11),

@@ -616,6 +616,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The byte offset of `tv_usec` inside Linux RISC-V 64-bit `struct timeval`.
     protected static final int TIMEVAL_MICROSECONDS_OFFSET = Long.BYTES;
 
+    /// The byte size of Linux RISC-V 64-bit `struct timeval`.
+    protected static final int TIMEVAL_SIZE = 2 * Long.BYTES;
+
+    /// The byte offset of `it_interval` inside Linux RISC-V 64-bit `struct itimerval`.
+    protected static final int ITIMERVAL_INTERVAL_OFFSET = 0;
+
+    /// The byte offset of `it_value` inside Linux RISC-V 64-bit `struct itimerval`.
+    protected static final int ITIMERVAL_VALUE_OFFSET = TIMEVAL_SIZE;
+
+    /// The byte size of Linux RISC-V 64-bit `struct itimerval`.
+    protected static final int ITIMERVAL_SIZE = 2 * TIMEVAL_SIZE;
+
     /// The byte offset of `tz_minuteswest` inside Linux `struct timezone`.
     protected static final int TIMEZONE_MINUTESWEST_OFFSET = 0;
 
@@ -820,6 +832,27 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `MADV_COLLAPSE`.
     protected static final long MADV_COLLAPSE = 25;
 
+    /// Linux `MS_ASYNC`.
+    protected static final long MS_ASYNC = 1;
+
+    /// Linux `MS_INVALIDATE`.
+    protected static final long MS_INVALIDATE = 2;
+
+    /// Linux `MS_SYNC`.
+    protected static final long MS_SYNC = 4;
+
+    /// Linux `MCL_CURRENT`.
+    protected static final long MCL_CURRENT = 1;
+
+    /// Linux `MCL_FUTURE`.
+    protected static final long MCL_FUTURE = 2;
+
+    /// Linux `MCL_ONFAULT`.
+    protected static final long MCL_ONFAULT = 4;
+
+    /// Linux `MLOCK_ONFAULT`.
+    protected static final long MLOCK_ONFAULT = 1;
+
     /// Linux `MREMAP_MAYMOVE`.
     protected static final long MREMAP_MAYMOVE = 1;
 
@@ -972,6 +1005,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Linux flags accepted by `clock_nanosleep`.
     protected static final long SUPPORTED_CLOCK_NANOSLEEP_FLAGS = TIMER_ABSTIME;
+
+    /// Linux `ITIMER_REAL`.
+    protected static final int ITIMER_REAL = 0;
+
+    /// Linux `ITIMER_VIRTUAL`.
+    protected static final int ITIMER_VIRTUAL = 1;
+
+    /// Linux `ITIMER_PROF`.
+    protected static final int ITIMER_PROF = 2;
+
+    /// The number of Linux interval timers tracked by this simulator.
+    protected static final int ITIMER_COUNT = 3;
 
     /// The `tv_sec` byte offset inside Linux RISC-V 64-bit `struct timespec`.
     protected static final int TIMESPEC_SECONDS_OFFSET = 0;
@@ -1404,6 +1449,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// The time source exposed to guest time syscalls.
     protected final TimeSource timeSource;
+
+    /// Interval timer repeat values in microseconds.
+    protected final long[] intervalTimerIntervalMicroseconds = new long[ITIMER_COUNT];
+
+    /// Interval timer initial values in microseconds.
+    protected final long[] intervalTimerValueMicroseconds = new long[ITIMER_COUNT];
+
+    /// Elapsed guest time when each interval timer was last armed.
+    protected final long[] intervalTimerStartMicroseconds = new long[ITIMER_COUNT];
 
     /// Creates the default process name used by `PR_GET_NAME`.
     protected static byte[] initialProcessName() {
@@ -8193,6 +8247,119 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 0;
     }
 
+    /// Reports the current value of a Linux interval timer.
+    protected long getitimer(long which, long currentValueAddress) {
+        int index = intervalTimerIndex(which);
+        if (index < 0) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(currentValueAddress, ITIMERVAL_SIZE)) {
+            return EFAULT;
+        }
+
+        writeIntervalTimerValue(index, currentValueAddress);
+        return 0;
+    }
+
+    /// Sets a Linux interval timer and optionally reports its previous value.
+    protected long setitimer(long which, long newValueAddress, long oldValueAddress) {
+        int index = intervalTimerIndex(which);
+        if (index < 0) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(newValueAddress, ITIMERVAL_SIZE)
+                || (oldValueAddress != 0 && !memory.isBacked(oldValueAddress, ITIMERVAL_SIZE))) {
+            return EFAULT;
+        }
+
+        long intervalMicroseconds = readTimevalMicroseconds(newValueAddress + ITIMERVAL_INTERVAL_OFFSET);
+        long valueMicroseconds = readTimevalMicroseconds(newValueAddress + ITIMERVAL_VALUE_OFFSET);
+        if (intervalMicroseconds < 0 || valueMicroseconds < 0) {
+            return EINVAL;
+        }
+
+        if (oldValueAddress != 0) {
+            writeIntervalTimerValue(index, oldValueAddress);
+        }
+        intervalTimerIntervalMicroseconds[index] = intervalMicroseconds;
+        intervalTimerValueMicroseconds[index] = valueMicroseconds;
+        intervalTimerStartMicroseconds[index] = elapsedMicroseconds();
+        return 0;
+    }
+
+    /// Returns the tracked interval timer index for a Linux timer selector.
+    protected static int intervalTimerIndex(long which) {
+        return which >= ITIMER_REAL && which <= ITIMER_PROF ? (int) which : -1;
+    }
+
+    /// Writes the current tracked value for one Linux interval timer.
+    protected void writeIntervalTimerValue(int index, long address) {
+        writeItimerval(
+                address,
+                intervalTimerIntervalMicroseconds[index],
+                currentIntervalTimerValueMicroseconds(index));
+    }
+
+    /// Returns the current remaining value for one Linux interval timer.
+    protected long currentIntervalTimerValueMicroseconds(int index) {
+        long valueMicroseconds = intervalTimerValueMicroseconds[index];
+        if (valueMicroseconds == 0) {
+            return 0;
+        }
+
+        long elapsedMicroseconds = elapsedMicroseconds() - intervalTimerStartMicroseconds[index];
+        if (elapsedMicroseconds <= 0) {
+            return valueMicroseconds;
+        }
+        if (elapsedMicroseconds < valueMicroseconds) {
+            return valueMicroseconds - elapsedMicroseconds;
+        }
+
+        long intervalMicroseconds = intervalTimerIntervalMicroseconds[index];
+        if (intervalMicroseconds == 0) {
+            return 0;
+        }
+
+        long elapsedAfterFirstExpiry = elapsedMicroseconds - valueMicroseconds;
+        long elapsedInsideInterval = elapsedAfterFirstExpiry % intervalMicroseconds;
+        return elapsedInsideInterval == 0 ? intervalMicroseconds : intervalMicroseconds - elapsedInsideInterval;
+    }
+
+    /// Reads one Linux `struct timeval` as a non-negative microsecond duration.
+    protected long readTimevalMicroseconds(long timevalAddress) {
+        long seconds = memory.readLong(timevalAddress + TIMEVAL_SECONDS_OFFSET);
+        long microseconds = memory.readLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET);
+        if (seconds < 0 || microseconds < 0 || microseconds >= 1_000_000L) {
+            return -1;
+        }
+        if (seconds > (Long.MAX_VALUE - microseconds) / 1_000_000L) {
+            return -1;
+        }
+        return seconds * 1_000_000L + microseconds;
+    }
+
+    /// Writes one Linux `struct itimerval` from microsecond durations.
+    protected void writeItimerval(long itimervalAddress, long intervalMicroseconds, long valueMicroseconds) {
+        writeTimevalFromMicroseconds(itimervalAddress + ITIMERVAL_INTERVAL_OFFSET, intervalMicroseconds);
+        writeTimevalFromMicroseconds(itimervalAddress + ITIMERVAL_VALUE_OFFSET, valueMicroseconds);
+    }
+
+    /// Writes one Linux `struct timeval` from a non-negative microsecond duration.
+    protected void writeTimevalFromMicroseconds(long timevalAddress, long microseconds) {
+        memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, microseconds / 1_000_000L);
+        memory.writeLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET, microseconds % 1_000_000L);
+    }
+
+    /// Returns elapsed guest time in microseconds, saturating on overflow.
+    protected long elapsedMicroseconds() {
+        Duration duration = elapsedDuration();
+        long seconds = duration.getSeconds();
+        long micros = duration.getNano() / 1000L;
+        return seconds > (Long.MAX_VALUE - micros) / 1_000_000L
+                ? Long.MAX_VALUE
+                : seconds * 1_000_000L + micros;
+    }
+
     /// Returns the non-negative elapsed duration since the syscall handler was created.
     protected Duration elapsedDuration() {
         return timeSource.elapsedDuration();
@@ -8598,6 +8765,86 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             memory.adviseHugePagePreference(address, alignedLength, advice == MADV_HUGEPAGE);
         }
         return 0;
+    }
+
+    /// Accepts `msync` for mapped guest pages without host file-sync side effects.
+    protected long msync(long address, long length, long flags) {
+        if (!isPageAligned(address) || length < 0 || !isSupportedMemorySyncFlags(flags)) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        long alignedLength = alignUp(length, pageSize);
+        if (alignedLength <= 0 || !isValidGuestRange(address, alignedLength)) {
+            return ENOMEM;
+        }
+        return isMappedRange(address, alignedLength) ? 0 : ENOMEM;
+    }
+
+    /// Returns true when Linux `msync` flags are supported and not contradictory.
+    protected static boolean isSupportedMemorySyncFlags(long flags) {
+        if ((flags & ~(MS_ASYNC | MS_INVALIDATE | MS_SYNC)) != 0) {
+            return false;
+        }
+        return (flags & (MS_ASYNC | MS_SYNC)) != (MS_ASYNC | MS_SYNC);
+    }
+
+    /// Accepts `mlock` for mapped guest pages without host page-locking side effects.
+    protected long mlock(long address, long length) {
+        return validateMemoryLockRange(address, length);
+    }
+
+    /// Accepts `mlock2` for mapped guest pages without host page-locking side effects.
+    protected long mlock2(long address, long length, long flags) {
+        if ((flags & ~MLOCK_ONFAULT) != 0) {
+            return EINVAL;
+        }
+        return validateMemoryLockRange(address, length);
+    }
+
+    /// Accepts `munlock` for mapped guest pages without host page-locking side effects.
+    protected long munlock(long address, long length) {
+        return validateMemoryLockRange(address, length);
+    }
+
+    /// Accepts Linux process-wide memory-lock requests as deterministic no-ops.
+    protected static long mlockall(long flags) {
+        long lockSelectionFlags = flags & (MCL_CURRENT | MCL_FUTURE);
+        if ((flags & ~(MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT)) != 0
+                || lockSelectionFlags == 0) {
+            return EINVAL;
+        }
+        return 0;
+    }
+
+    /// Accepts Linux process-wide memory unlock requests as deterministic no-ops.
+    protected static long munlockall() {
+        return 0;
+    }
+
+    /// Validates a Linux memory lock range after applying page-boundary rounding.
+    protected long validateMemoryLockRange(long address, long length) {
+        if (length < 0) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+        if (!isValidGuestRange(address, length)) {
+            return ENOMEM;
+        }
+
+        long alignedAddress = alignDown(address, pageSize);
+        long endAddress = address + length;
+        long alignedEndAddress = alignUp(endAddress, pageSize);
+        if (alignedEndAddress <= 0 || alignedEndAddress < alignedAddress) {
+            return ENOMEM;
+        }
+
+        long alignedLength = alignedEndAddress - alignedAddress;
+        return isMappedRange(alignedAddress, alignedLength) ? 0 : ENOMEM;
     }
 
     /// Writes a Linux RISC-V 64-bit `struct rlimit64`.

@@ -328,6 +328,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `nanosleep`.
     private static final long SYS_NANOSLEEP = 101;
 
+    /// The Linux RISC-V syscall number for `getitimer`.
+    private static final long SYS_GETITIMER = 102;
+
+    /// The Linux RISC-V syscall number for `setitimer`.
+    private static final long SYS_SETITIMER = 103;
+
     /// The Linux RISC-V syscall number for `clock_gettime`.
     private static final long SYS_CLOCK_GETTIME = 113;
 
@@ -559,6 +565,21 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `mprotect`.
     private static final long SYS_MPROTECT = 226;
 
+    /// The Linux RISC-V syscall number for `msync`.
+    private static final long SYS_MSYNC = 227;
+
+    /// The Linux RISC-V syscall number for `mlock`.
+    private static final long SYS_MLOCK = 228;
+
+    /// The Linux RISC-V syscall number for `munlock`.
+    private static final long SYS_MUNLOCK = 229;
+
+    /// The Linux RISC-V syscall number for `mlockall`.
+    private static final long SYS_MLOCKALL = 230;
+
+    /// The Linux RISC-V syscall number for `munlockall`.
+    private static final long SYS_MUNLOCKALL = 231;
+
     /// The Linux RISC-V syscall number for `accept4`.
     private static final long SYS_ACCEPT4 = 242;
 
@@ -597,6 +618,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `membarrier`.
     private static final long SYS_MEMBARRIER = 283;
+
+    /// The Linux RISC-V syscall number for `mlock2`.
+    private static final long SYS_MLOCK2 = 284;
 
     /// The Linux RISC-V syscall number for `preadv2`.
     private static final long SYS_PREADV2 = 286;
@@ -894,6 +918,18 @@ public final class GuestSyscallsTest {
 
     /// The byte offset of `tv_usec` inside Linux RISC-V 64-bit `struct timeval`.
     private static final int TIMEVAL_MICROSECONDS_OFFSET = Long.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `struct timeval`.
+    private static final int TIMEVAL_SIZE = 2 * Long.BYTES;
+
+    /// The byte offset of `it_interval` inside Linux RISC-V 64-bit `struct itimerval`.
+    private static final int ITIMERVAL_INTERVAL_OFFSET = 0;
+
+    /// The byte offset of `it_value` inside Linux RISC-V 64-bit `struct itimerval`.
+    private static final int ITIMERVAL_VALUE_OFFSET = TIMEVAL_SIZE;
+
+    /// The byte size of Linux RISC-V 64-bit `struct itimerval`.
+    private static final int ITIMERVAL_SIZE = 2 * TIMEVAL_SIZE;
 
     /// The byte offset of `tz_minuteswest` inside Linux `struct timezone`.
     private static final int TIMEZONE_MINUTESWEST_OFFSET = 0;
@@ -1574,6 +1610,27 @@ public final class GuestSyscallsTest {
     /// Linux `MADV_HUGEPAGE`.
     private static final long MADV_HUGEPAGE = 14;
 
+    /// Linux `MS_ASYNC`.
+    private static final long MS_ASYNC = 1;
+
+    /// Linux `MS_INVALIDATE`.
+    private static final long MS_INVALIDATE = 2;
+
+    /// Linux `MS_SYNC`.
+    private static final long MS_SYNC = 4;
+
+    /// Linux `MCL_CURRENT`.
+    private static final long MCL_CURRENT = 1;
+
+    /// Linux `MCL_FUTURE`.
+    private static final long MCL_FUTURE = 2;
+
+    /// Linux `MCL_ONFAULT`.
+    private static final long MCL_ONFAULT = 4;
+
+    /// Linux `MLOCK_ONFAULT`.
+    private static final long MLOCK_ONFAULT = 1;
+
     /// Linux `SCHED_OTHER`.
     private static final long SCHED_OTHER = 0;
 
@@ -1603,6 +1660,15 @@ public final class GuestSyscallsTest {
 
     /// Linux `CLOCK_BOOTTIME`.
     private static final long CLOCK_BOOTTIME = 7;
+
+    /// Linux `ITIMER_REAL`.
+    private static final long ITIMER_REAL = 0;
+
+    /// Linux `ITIMER_VIRTUAL`.
+    private static final long ITIMER_VIRTUAL = 1;
+
+    /// Linux `ITIMER_PROF`.
+    private static final long ITIMER_PROF = 2;
 
     /// Linux `MEMBARRIER_CMD_QUERY`.
     private static final long MEMBARRIER_CMD_QUERY = 0;
@@ -7053,6 +7119,95 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that `getitimer` and `setitimer` report tracked interval timer state.
+    @Test
+    public void intervalTimersReportAndUpdateState() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            long currentValueAddress = memory.baseAddress() + 64;
+            long newValueAddress = memory.baseAddress() + 128;
+            long oldValueAddress = memory.baseAddress() + 192;
+
+            setSyscall(state, SYS_GETITIMER, ITIMER_REAL, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerval(memory, currentValueAddress, 0, 0, 0, 0);
+
+            writeItimerval(memory, newValueAddress, 2, 30, 5, 40);
+            writeItimerval(memory, oldValueAddress, -1, -1, -1, -1);
+            setSyscall(state, SYS_SETITIMER, ITIMER_REAL, newValueAddress, oldValueAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerval(memory, oldValueAddress, 0, 0, 0, 0);
+
+            writeItimerval(memory, currentValueAddress, -1, -1, -1, -1);
+            setSyscall(state, SYS_GETITIMER, ITIMER_REAL, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerval(memory, currentValueAddress, 2, 30, 5, 40);
+
+            writeItimerval(memory, newValueAddress, 1, 2, 3, 4);
+            setSyscall(state, SYS_SETITIMER, ITIMER_VIRTUAL, newValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETITIMER, ITIMER_VIRTUAL, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerval(memory, currentValueAddress, 1, 2, 3, 4);
+        }
+    }
+
+    /// Verifies that `getitimer` and `setitimer` validate timer selectors, pointers, and time values.
+    @Test
+    public void intervalTimersValidateArguments() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long currentValueAddress = memory.baseAddress() + 64;
+            long newValueAddress = memory.baseAddress() + 128;
+            long oldValueAddress = memory.baseAddress() + 192;
+            long invalidAddress = memory.endAddress();
+
+            writeItimerval(memory, newValueAddress, 0, 0, 1, 0);
+
+            setSyscall(state, SYS_GETITIMER, ITIMER_PROF + 1, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_GETITIMER, ITIMER_REAL, invalidAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_SETITIMER, ITIMER_PROF + 1, newValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SETITIMER, ITIMER_REAL, invalidAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_SETITIMER, ITIMER_REAL, newValueAddress, invalidAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            writeItimerval(memory, newValueAddress, 0, 1_000_000L, 1, 0);
+            setSyscall(state, SYS_SETITIMER, ITIMER_REAL, newValueAddress, oldValueAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeItimerval(memory, newValueAddress, -1, 0, 1, 0);
+            setSyscall(state, SYS_SETITIMER, ITIMER_REAL, newValueAddress, oldValueAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeItimerval(memory, newValueAddress, 0, 0, Long.MAX_VALUE, 0);
+            setSyscall(state, SYS_SETITIMER, ITIMER_REAL, newValueAddress, oldValueAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies deterministic `sysinfo` memory, load, and process metadata.
     @Test
     public void sysinfoReportsSyntheticSystemMetadata() {
@@ -9970,6 +10125,150 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `msync` validates mapped ranges and accepted flags without host sync side effects.
+    @Test
+    public void msyncValidatesMappedRangesAndFlags() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+
+            setSyscall(state, SYS_MSYNC, mappedAddress, PAGE_SIZE, MS_SYNC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress, PAGE_SIZE, MS_ASYNC | MS_INVALIDATE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress + 1, PAGE_SIZE, MS_SYNC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress, -1, MS_SYNC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress, PAGE_SIZE, MS_ASYNC | MS_SYNC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress, PAGE_SIZE, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress, PAGE_SIZE + 1, MS_SYNC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+
+            setSyscall(state, SYS_MSYNC, mappedAddress + 2 * PAGE_SIZE, PAGE_SIZE, MS_SYNC);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+        }
+    }
+
+    /// Verifies memory-locking syscalls validate mapped ranges and accepted flags.
+    @Test
+    public void memoryLockingSyscallsValidateMappedRanges() {
+        try (Memory memory = Memory.sparse(Memory.DEFAULT_BASE_ADDRESS, 4 * PAGE_SIZE)) {
+            long initialBreak = memory.baseAddress() + PAGE_SIZE;
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    initialBreak);
+
+            setSyscall(
+                    state,
+                    SYS_MMAP,
+                    0,
+                    PAGE_SIZE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1,
+                    0);
+            state.syscalls().handle(state, TEST_PC);
+            long mappedAddress = state.register(10);
+
+            setSyscall(state, SYS_MLOCK, mappedAddress + 1, PAGE_SIZE - 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MLOCK, mappedAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MLOCK2, mappedAddress, PAGE_SIZE, MLOCK_ONFAULT);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MLOCK2, mappedAddress, PAGE_SIZE, MLOCK_ONFAULT << 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MUNLOCK, mappedAddress, PAGE_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MLOCK, mappedAddress, -1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MLOCK, mappedAddress, PAGE_SIZE + 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+
+            setSyscall(state, SYS_MLOCK, mappedAddress + 2 * PAGE_SIZE, PAGE_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOMEM, state.register(10));
+
+            setSyscall(state, SYS_MLOCKALL, MCL_CURRENT | MCL_ONFAULT, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MLOCKALL, MCL_FUTURE, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_MLOCKALL, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MLOCKALL, MCL_ONFAULT, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MLOCKALL, 8, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_MUNLOCKALL, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+        }
+    }
+
     /// Verifies that `mincore` reports mapped pages as resident.
     @Test
     public void mincoreReportsMappedPagesResident() {
@@ -10371,6 +10670,36 @@ public final class GuestSyscallsTest {
     private static void writeTimespec(Memory memory, long address, long seconds, long nanoseconds) {
         memory.writeLong(address, seconds);
         memory.writeLong(address + Long.BYTES, nanoseconds);
+    }
+
+    /// Writes one Linux RISC-V 64-bit `struct itimerval` into guest memory.
+    private static void writeItimerval(
+            Memory memory,
+            long address,
+            long intervalSeconds,
+            long intervalMicroseconds,
+            long valueSeconds,
+            long valueMicroseconds) {
+        memory.writeLong(address + ITIMERVAL_INTERVAL_OFFSET + TIMEVAL_SECONDS_OFFSET, intervalSeconds);
+        memory.writeLong(address + ITIMERVAL_INTERVAL_OFFSET + TIMEVAL_MICROSECONDS_OFFSET, intervalMicroseconds);
+        memory.writeLong(address + ITIMERVAL_VALUE_OFFSET + TIMEVAL_SECONDS_OFFSET, valueSeconds);
+        memory.writeLong(address + ITIMERVAL_VALUE_OFFSET + TIMEVAL_MICROSECONDS_OFFSET, valueMicroseconds);
+    }
+
+    /// Asserts one Linux RISC-V 64-bit `struct itimerval` in guest memory.
+    private static void assertItimerval(
+            Memory memory,
+            long address,
+            long intervalSeconds,
+            long intervalMicroseconds,
+            long valueSeconds,
+            long valueMicroseconds) {
+        assertEquals(intervalSeconds, memory.readLong(address + ITIMERVAL_INTERVAL_OFFSET + TIMEVAL_SECONDS_OFFSET));
+        assertEquals(
+                intervalMicroseconds,
+                memory.readLong(address + ITIMERVAL_INTERVAL_OFFSET + TIMEVAL_MICROSECONDS_OFFSET));
+        assertEquals(valueSeconds, memory.readLong(address + ITIMERVAL_VALUE_OFFSET + TIMEVAL_SECONDS_OFFSET));
+        assertEquals(valueMicroseconds, memory.readLong(address + ITIMERVAL_VALUE_OFFSET + TIMEVAL_MICROSECONDS_OFFSET));
     }
 
     /// Writes one Linux RISC-V 64-bit `struct itimerspec` into guest memory.
