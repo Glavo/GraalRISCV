@@ -2075,6 +2075,61 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             int timeoutMilliseconds,
             long signalMaskAddress,
             long signalSetSize) {
+        return epollPwaitWithTimeout(
+                state,
+                epollFileDescriptor,
+                eventsAddress,
+                maximumEvents,
+                epollTimeoutNanoseconds(timeoutMilliseconds),
+                timeoutMilliseconds == 0,
+                signalMaskAddress,
+                signalSetSize);
+    }
+
+    /// Reports events from an in-memory `epoll` descriptor with a nanosecond `timespec` timeout.
+    protected long epollPwait2(
+            RiscVThreadState state,
+            int epollFileDescriptor,
+            long eventsAddress,
+            int maximumEvents,
+            long timeoutAddress,
+            long signalMaskAddress,
+            long signalSetSize) {
+        long timeoutNanoseconds = -1;
+        boolean immediateTimeout = false;
+        if (timeoutAddress != 0) {
+            if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
+                return EFAULT;
+            }
+            long seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
+            long nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            if (!isValidTimespec(seconds, nanoseconds)) {
+                return EINVAL;
+            }
+            timeoutNanoseconds = timespecToSaturatedNanoseconds(seconds, nanoseconds);
+            immediateTimeout = timeoutNanoseconds == 0;
+        }
+        return epollPwaitWithTimeout(
+                state,
+                epollFileDescriptor,
+                eventsAddress,
+                maximumEvents,
+                timeoutNanoseconds,
+                immediateTimeout,
+                signalMaskAddress,
+                signalSetSize);
+    }
+
+    /// Reports events from an in-memory `epoll` descriptor with a precomputed timeout.
+    protected long epollPwaitWithTimeout(
+            RiscVThreadState state,
+            int epollFileDescriptor,
+            long eventsAddress,
+            int maximumEvents,
+            long timeoutNanoseconds,
+            boolean immediateTimeout,
+            long signalMaskAddress,
+            long signalSetSize) {
         if (maximumEvents <= 0) {
             return EINVAL;
         }
@@ -2102,8 +2157,6 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (signalMaskAddress != 0) {
             thread.setSignalMask(memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK);
         }
-        long timeoutNanoseconds = epollTimeoutNanoseconds(timeoutMilliseconds);
-        boolean immediateTimeout = timeoutMilliseconds == 0;
         long deadlineNanoseconds = pollDeadlineNanoseconds(timeoutNanoseconds);
         try {
             EpollSet epollSet = epollFile.epollSet();

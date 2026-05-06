@@ -6054,6 +6054,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final int SYS_FACCESSAT2 = 439;
 
+    /// The Linux RISC-V syscall number for `epoll_pwait2`.
+    private static final int SYS_EPOLL_PWAIT2 = 441;
+
     /// The Linux RISC-V syscall number for `fchmodat2`.
     private static final int SYS_FCHMODAT2 = 452;
 
@@ -6507,6 +6510,14 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_EPOLL_PWAIT2 -> state.setRegister(10, epollPwait2(
+                    state,
+                    (int) state.register(10),
+                    state.register(11),
+                    (int) state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
             case SYS_FCHMODAT2 -> state.setRegister(10, fchmodat(
                     state.register(10),
                     state.register(11),
