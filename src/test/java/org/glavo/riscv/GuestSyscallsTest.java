@@ -193,6 +193,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
 
+    /// The Linux RISC-V syscall number for `flock`.
+    private static final long SYS_FLOCK = 32;
+
     /// The Linux RISC-V syscall number for `mknodat`.
     private static final long SYS_MKNODAT = 33;
 
@@ -1140,6 +1143,18 @@ public final class GuestSyscallsTest {
 
     /// Linux `F_DUPFD_CLOEXEC`.
     private static final long F_DUPFD_CLOEXEC = 1030;
+
+    /// Linux `LOCK_SH`.
+    private static final long LOCK_SH = 1;
+
+    /// Linux `LOCK_EX`.
+    private static final long LOCK_EX = 2;
+
+    /// Linux `LOCK_NB`.
+    private static final long LOCK_NB = 4;
+
+    /// Linux `LOCK_UN`.
+    private static final long LOCK_UN = 8;
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
@@ -2100,6 +2115,88 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FCNTL, 0, F_GETFL, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(O_RDONLY | O_NONBLOCK, state.register(10));
+        }
+    }
+
+    /// Verifies `flock` tracks locks per open file description and rejects conflicts.
+    @Test
+    public void flockTracksOpenFileDescriptionLocks() throws Exception {
+        Files.writeString(tempDirectory.resolve("lock.txt"), "lock", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            writeGuestString(memory, pathAddress, "lock.txt");
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int firstFileDescriptor = (int) state.register(10);
+            assertEquals(3, firstFileDescriptor);
+
+            setSyscall(state, SYS_DUP, firstFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int duplicateFileDescriptor = (int) state.register(10);
+            assertEquals(4, duplicateFileDescriptor);
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int secondFileDescriptor = (int) state.register(10);
+            assertEquals(5, secondFileDescriptor);
+
+            setSyscall(state, SYS_FLOCK, firstFileDescriptor, LOCK_SH, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, secondFileDescriptor, LOCK_SH | LOCK_NB, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, secondFileDescriptor, LOCK_EX | LOCK_NB, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, duplicateFileDescriptor, LOCK_UN, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, secondFileDescriptor, LOCK_EX | LOCK_NB, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDWR, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int thirdFileDescriptor = (int) state.register(10);
+            assertEquals(6, thirdFileDescriptor);
+
+            setSyscall(state, SYS_FLOCK, thirdFileDescriptor, LOCK_EX | LOCK_NB, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, secondFileDescriptor, LOCK_SH | LOCK_EX, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, secondFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, thirdFileDescriptor, LOCK_EX | LOCK_NB, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, thirdFileDescriptor, LOCK_UN, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FLOCK, 99, LOCK_EX, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
         }
     }
 

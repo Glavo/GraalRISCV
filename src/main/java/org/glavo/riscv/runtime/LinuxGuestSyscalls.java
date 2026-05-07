@@ -5830,6 +5830,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final int SYS_IOCTL = 29;
 
+    /// The Linux RISC-V syscall number for `flock`.
+    private static final int SYS_FLOCK = 32;
+
     /// The Linux RISC-V syscall number for `mknodat`.
     private static final int SYS_MKNODAT = 33;
 
@@ -6417,6 +6420,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_DUP3 -> state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
             case SYS_FCNTL -> state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
             case SYS_IOCTL -> state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_FLOCK -> state.setRegister(10, flock((int) state.register(10), state.register(11)));
             case SYS_MKNODAT -> state.setRegister(10, mknodat(
                     state.register(10),
                     state.register(11),

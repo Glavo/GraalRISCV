@@ -539,6 +539,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The byte offset of `l_type` inside Linux RISC-V 64-bit `struct flock`.
     protected static final int FLOCK_TYPE_OFFSET = 0;
 
+    /// Linux `LOCK_SH`.
+    protected static final long LOCK_SH = 1;
+
+    /// Linux `LOCK_EX`.
+    protected static final long LOCK_EX = 2;
+
+    /// Linux `LOCK_NB`.
+    protected static final long LOCK_NB = 4;
+
+    /// Linux `LOCK_UN`.
+    protected static final long LOCK_UN = 8;
+
+    /// Linux flock operation bits accepted by this simulator.
+    protected static final long SUPPORTED_FLOCK_OPERATIONS = LOCK_SH | LOCK_EX | LOCK_NB | LOCK_UN;
+
     /// The maximum guest path length accepted by `openat`, including the terminator.
     protected static final int PATH_MAX = 4096;
 
@@ -1484,6 +1499,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Descriptor flags for guest-opened file descriptors.
     protected final ArrayList<Boolean> openFileCloseOnExecFlags = new ArrayList<>();
 
+    /// Process-family advisory file locks keyed by simulated open-file resources.
+    protected final FlockTable flockTable;
+
     /// The most recently allocated pseudoterminal pair exposed through `/dev/pts/0`.
     protected @Nullable PtyDevice currentPtyDevice;
 
@@ -1965,6 +1983,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.processRegistry = new GuestProcessRegistry();
         this.process = GuestProcess.initial();
         this.parentProcess = null;
+        this.flockTable = new FlockTable();
     }
 
     /// Creates a child-process syscall handler by copying fork-inherited parent state.
@@ -1995,6 +2014,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.processRegistry = parent.processRegistry;
         this.process = process;
         this.parentProcess = parent;
+        this.flockTable = parent.flockTable;
         this.parentDeathSignal = 0;
         this.dumpable = parent.dumpable;
         System.arraycopy(parent.processName, 0, processName, 0, processName.length);
@@ -7847,6 +7867,51 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return EINVAL;
     }
 
+    /// Applies or releases a whole-file advisory lock on an open file description.
+    protected long flock(int fileDescriptor, long operation) {
+        if ((operation & ~SUPPORTED_FLOCK_OPERATIONS) != 0) {
+            return EINVAL;
+        }
+
+        long lockMode = operation & ~LOCK_NB;
+        if (lockMode != LOCK_SH && lockMode != LOCK_EX && lockMode != LOCK_UN) {
+            return EINVAL;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return isStandardFileDescriptor(fileDescriptor) ? 0 : EBADF;
+        }
+
+        @Nullable Object resource = flockResource(openFile);
+        if (resource == null) {
+            return EINVAL;
+        }
+        if (lockMode == LOCK_UN) {
+            flockTable.unlock(openFile);
+            return 0;
+        }
+
+        return flockTable.lock(resource, openFile, (int) lockMode);
+    }
+
+    /// Returns the simulated resource key locked by `flock`, or null for descriptors that cannot be locked.
+    protected @Nullable Object flockResource(OpenFile openFile) {
+        @Nullable Path path = openFile.path();
+        if (path != null) {
+            return path.toAbsolutePath().normalize().toString();
+        }
+        @Nullable TarNode tarNode = openFile.tarNode();
+        if (tarNode != null) {
+            return tarNode;
+        }
+        @Nullable VirtualNode virtualNode = openFile.virtualNode();
+        if (virtualNode != null) {
+            return virtualNode;
+        }
+        return openFile.isStandardFileDescriptor() ? openFile : null;
+    }
+
     /// Throws when another guest thread has failed or process termination has been requested.
     public void checkProcessStatus() {
         if (!processStatusPollingRequired) {
@@ -12142,6 +12207,56 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Stores process-family BSD-style advisory whole-file locks.
+    protected static final class FlockTable {
+        /// Active whole-file locks.
+        private final ArrayList<FlockLock> locks = new ArrayList<>();
+
+        /// Applies a shared or exclusive lock for an open file description.
+        synchronized long lock(Object resource, OpenFile owner, int lockType) {
+            purgeReleasedLocks();
+            for (FlockLock lock : locks) {
+                if (lock.owner() != owner && lock.resource().equals(resource)
+                        && locksConflict(lock.lockType(), lockType)) {
+                    return EAGAIN;
+                }
+            }
+
+            removeOwnerLock(owner);
+            locks.add(new FlockLock(resource, owner, lockType));
+            return 0;
+        }
+
+        /// Releases any lock held by an open file description.
+        synchronized void unlock(OpenFile owner) {
+            purgeReleasedLocks();
+            removeOwnerLock(owner);
+        }
+
+        /// Drops locks whose open file descriptions have been closed.
+        private void purgeReleasedLocks() {
+            locks.removeIf(lock -> !lock.owner().isReferenced());
+        }
+
+        /// Drops any lock held by one open file description.
+        private void removeOwnerLock(OpenFile owner) {
+            locks.removeIf(lock -> lock.owner() == owner);
+        }
+
+        /// Returns true when two flock modes cannot coexist.
+        private static boolean locksConflict(int existingLockType, int requestedLockType) {
+            return existingLockType == LOCK_EX || requestedLockType == LOCK_EX;
+        }
+    }
+
+    /// Describes one active BSD-style advisory whole-file lock.
+    ///
+    /// @param resource the resource key shared by conflicting open file descriptions
+    /// @param owner the open file description that owns this lock
+    /// @param lockType either `LOCK_SH` or `LOCK_EX`
+    private record FlockLock(Object resource, OpenFile owner, int lockType) {
+    }
+
     /// Stores Linux metadata that the guest sees for one host filesystem entry.
     ///
     /// @param userId the Linux uid exposed as owner
@@ -13783,6 +13898,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Adds one guest descriptor reference to this entry.
         synchronized void retain() {
             references++;
+        }
+
+        /// Returns true while at least one guest descriptor references this entry.
+        synchronized boolean isReferenced() {
+            return references > 0;
         }
 
         /// Removes one guest descriptor reference and returns true when this entry is no longer referenced.
