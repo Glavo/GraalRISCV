@@ -6089,6 +6089,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `capset`.
     private static final int SYS_CAPSET = 91;
 
+    /// The Linux RISC-V syscall number for `personality`.
+    private static final int SYS_PERSONALITY = 92;
+
     /// The Linux RISC-V syscall number for `exit`.
     private static final int SYS_EXIT = 93;
 
@@ -6416,6 +6419,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `sendmmsg`.
     private static final int SYS_SENDMMSG = 269;
 
+    /// The Linux RISC-V syscall number for `sched_setattr`.
+    private static final int SYS_SCHED_SETATTR = 274;
+
+    /// The Linux RISC-V syscall number for `sched_getattr`.
+    private static final int SYS_SCHED_GETATTR = 275;
+
     /// The Linux RISC-V syscall number for `renameat2`.
     private static final int SYS_RENAMEAT2 = 276;
 
@@ -6714,6 +6723,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(13)));
             case SYS_CAPGET -> state.setRegister(10, capget(state.register(10), state.register(11)));
             case SYS_CAPSET -> state.setRegister(10, capset(state.register(10), state.register(11)));
+            case SYS_PERSONALITY -> state.setRegister(10, personality(state.register(10)));
             case SYS_EXIT_GROUP -> {
                 requestProcessExit(state.register(10));
                 throw new ProgramExitException(state.register(10));
@@ -7008,6 +7018,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(12),
                     state.register(13)));
             case SYS_PRLIMIT64 -> state.setRegister(10, prlimit64(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_SCHED_SETATTR -> state.setRegister(10, schedSetattr(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_SCHED_GETATTR -> state.setRegister(10, schedGetattr(
                     state.register(10),
                     state.register(11),
                     state.register(12),

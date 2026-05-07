@@ -1091,11 +1091,41 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `SCHED_IDLE`.
     protected static final int SCHED_IDLE = 5;
 
+    /// Linux `SCHED_DEADLINE`.
+    protected static final int SCHED_DEADLINE = 6;
+
     /// Linux `SCHED_RESET_ON_FORK`.
     protected static final int SCHED_RESET_ON_FORK = 0x40000000;
 
     /// The byte offset of `sched_priority` inside Linux RISC-V 64-bit `struct sched_param`.
     protected static final int SCHED_PARAM_PRIORITY_OFFSET = 0;
+
+    /// The byte size of Linux `struct sched_attr` version zero.
+    protected static final long SCHED_ATTR_SIZE_VER0 = 48;
+
+    /// The byte offset of `size` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_SIZE_OFFSET = 0;
+
+    /// The byte offset of `sched_policy` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_POLICY_OFFSET = 4;
+
+    /// The byte offset of `sched_flags` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_FLAGS_OFFSET = 8;
+
+    /// The byte offset of `sched_nice` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_NICE_OFFSET = 16;
+
+    /// The byte offset of `sched_priority` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_PRIORITY_OFFSET = 20;
+
+    /// The byte offset of `sched_runtime` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_RUNTIME_OFFSET = 24;
+
+    /// The byte offset of `sched_deadline` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_DEADLINE_OFFSET = 32;
+
+    /// The byte offset of `sched_period` inside Linux RISC-V 64-bit `struct sched_attr`.
+    protected static final long SCHED_ATTR_PERIOD_OFFSET = 40;
 
     /// The Linux real-time scheduling minimum priority.
     protected static final int SCHED_REALTIME_PRIORITY_MINIMUM = 1;
@@ -1105,6 +1135,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// The deterministic round-robin interval reported for the simulated scheduler.
     protected static final long SCHED_RR_INTERVAL_NANOSECONDS = 100_000_000L;
+
+    /// Linux `PER_LINUX`.
+    protected static final long PER_LINUX = 0;
+
+    /// Linux `personality(2)` query value.
+    protected static final long PERSONALITY_QUERY = 0xffff_ffffL;
 
     /// Linux `CLOCK_REALTIME`.
     protected static final long CLOCK_REALTIME = 0;
@@ -1583,6 +1619,24 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The guest-visible scheduling priority for this process.
     protected int schedulerPriority;
 
+    /// The guest-visible nice value stored by Linux `sched_attr`.
+    protected int schedulerNice;
+
+    /// The guest-visible scheduling flags stored by Linux `sched_attr`.
+    protected long schedulerFlags;
+
+    /// The guest-visible deadline runtime in nanoseconds.
+    protected long schedulerRuntimeNanoseconds;
+
+    /// The guest-visible deadline absolute deadline in nanoseconds.
+    protected long schedulerDeadlineNanoseconds;
+
+    /// The guest-visible deadline period in nanoseconds.
+    protected long schedulerPeriodNanoseconds;
+
+    /// The Linux execution domain and personality flags for this process.
+    protected long processPersonality = PER_LINUX;
+
     /// Whether this single-process guest is marked as a child subreaper.
     protected boolean childSubreaper;
 
@@ -2030,6 +2084,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         this.timerSlackNanoseconds = parent.timerSlackNanoseconds;
         this.schedulerPolicy = parent.schedulerPolicy;
         this.schedulerPriority = parent.schedulerPriority;
+        this.schedulerNice = parent.schedulerNice;
+        this.schedulerFlags = parent.schedulerFlags;
+        this.schedulerRuntimeNanoseconds = parent.schedulerRuntimeNanoseconds;
+        this.schedulerDeadlineNanoseconds = parent.schedulerDeadlineNanoseconds;
+        this.schedulerPeriodNanoseconds = parent.schedulerPeriodNanoseconds;
+        this.processPersonality = parent.processPersonality;
         this.childSubreaper = parent.childSubreaper;
         this.noNewPrivileges = parent.noNewPrivileges;
         this.transparentHugePagesDisabled = parent.transparentHugePagesDisabled;
@@ -9020,6 +9080,86 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return 0;
     }
 
+    /// Updates the current guest process scheduling attributes.
+    protected long schedSetattr(long processId, long attributeAddress, long flags) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
+        if (attributeAddress == 0 || flags != 0) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(attributeAddress, Integer.BYTES)) {
+            return EFAULT;
+        }
+
+        long size = Integer.toUnsignedLong(memory.readInt(attributeAddress + SCHED_ATTR_SIZE_OFFSET));
+        if (size < SCHED_ATTR_SIZE_VER0) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(attributeAddress, SCHED_ATTR_SIZE_VER0)) {
+            return EFAULT;
+        }
+
+        long policy = Integer.toUnsignedLong(memory.readInt(attributeAddress + SCHED_ATTR_POLICY_OFFSET));
+        long schedulerFlags = memory.readLong(attributeAddress + SCHED_ATTR_FLAGS_OFFSET);
+        int nice = memory.readInt(attributeAddress + SCHED_ATTR_NICE_OFFSET);
+        int priority = memory.readInt(attributeAddress + SCHED_ATTR_PRIORITY_OFFSET);
+        long runtime = memory.readLong(attributeAddress + SCHED_ATTR_RUNTIME_OFFSET);
+        long deadline = memory.readLong(attributeAddress + SCHED_ATTR_DEADLINE_OFFSET);
+        long period = memory.readLong(attributeAddress + SCHED_ATTR_PERIOD_OFFSET);
+        if (schedulerFlags != 0 || !isSupportedSchedulerAttributePolicy(policy)) {
+            return EINVAL;
+        }
+        if (policy == SCHED_DEADLINE) {
+            if (priority != 0 || nice != 0 || !isValidDeadlineSchedule(runtime, deadline, period)) {
+                return EINVAL;
+            }
+        } else if (!isValidSchedulerPriority(policy, priority)) {
+            return EINVAL;
+        }
+
+        schedulerPolicy = (int) policy;
+        schedulerPriority = priority;
+        schedulerNice = nice;
+        this.schedulerFlags = schedulerFlags;
+        schedulerRuntimeNanoseconds = policy == SCHED_DEADLINE ? runtime : 0;
+        schedulerDeadlineNanoseconds = policy == SCHED_DEADLINE ? deadline : 0;
+        schedulerPeriodNanoseconds = policy == SCHED_DEADLINE ? period : 0;
+        return 0;
+    }
+
+    /// Reports the current guest process scheduling attributes.
+    protected long schedGetattr(long processId, long attributeAddress, long size, long flags) {
+        if (!isKnownSchedulerTarget(processId)) {
+            return ESRCH;
+        }
+        if (attributeAddress == 0 || size < SCHED_ATTR_SIZE_VER0 || flags != 0) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(attributeAddress, SCHED_ATTR_SIZE_VER0)) {
+            return EFAULT;
+        }
+
+        memory.writeInt(attributeAddress + SCHED_ATTR_SIZE_OFFSET, (int) SCHED_ATTR_SIZE_VER0);
+        memory.writeInt(attributeAddress + SCHED_ATTR_POLICY_OFFSET, schedulerPolicy);
+        memory.writeLong(attributeAddress + SCHED_ATTR_FLAGS_OFFSET, schedulerFlags);
+        memory.writeInt(attributeAddress + SCHED_ATTR_NICE_OFFSET, schedulerNice);
+        memory.writeInt(attributeAddress + SCHED_ATTR_PRIORITY_OFFSET, schedulerPriority);
+        memory.writeLong(attributeAddress + SCHED_ATTR_RUNTIME_OFFSET, schedulerRuntimeNanoseconds);
+        memory.writeLong(attributeAddress + SCHED_ATTR_DEADLINE_OFFSET, schedulerDeadlineNanoseconds);
+        memory.writeLong(attributeAddress + SCHED_ATTR_PERIOD_OFFSET, schedulerPeriodNanoseconds);
+        return 0;
+    }
+
+    /// Queries or updates the Linux process personality.
+    protected long personality(long persona) {
+        long previous = processPersonality;
+        if (persona != PERSONALITY_QUERY) {
+            processPersonality = persona & 0xffff_ffffL;
+        }
+        return previous;
+    }
+
     /// Returns true when a scheduling syscall target names this process or one of its guest threads.
     protected boolean isKnownSchedulerTarget(long processId) {
         return processId == 0 || processId == process.id() || isKnownGuestThreadId(processId);
@@ -9034,6 +9174,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 || policy == SCHED_IDLE;
     }
 
+    /// Returns true when the supplied Linux scheduling policy is accepted by `sched_setattr`.
+    protected static boolean isSupportedSchedulerAttributePolicy(long policy) {
+        return isSupportedSchedulerPolicy(policy) || policy == SCHED_DEADLINE;
+    }
+
     /// Returns true when the priority is in range for the supplied scheduling policy.
     protected static boolean isValidSchedulerPriority(long policy, int priority) {
         return switch ((int) policy) {
@@ -9042,6 +9187,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     && priority <= SCHED_REALTIME_PRIORITY_MAXIMUM;
             default -> false;
         };
+    }
+
+    /// Returns true when the supplied deadline scheduling tuple is internally consistent.
+    protected static boolean isValidDeadlineSchedule(long runtime, long deadline, long period) {
+        return runtime > 0 && deadline > 0 && period > 0 && runtime <= deadline && deadline <= period;
     }
 
     /// Accepts signal sends that target known guest processes.

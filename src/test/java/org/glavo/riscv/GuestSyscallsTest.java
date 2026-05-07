@@ -361,6 +361,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `capset`.
     private static final long SYS_CAPSET = 91;
 
+    /// The Linux RISC-V syscall number for `personality`.
+    private static final long SYS_PERSONALITY = 92;
+
     /// The Linux RISC-V syscall number for `waitid`.
     private static final long SYS_WAITID = 95;
 
@@ -663,6 +666,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `sendmmsg`.
     private static final long SYS_SENDMMSG = 269;
+
+    /// The Linux RISC-V syscall number for `sched_setattr`.
+    private static final long SYS_SCHED_SETATTR = 274;
+
+    /// The Linux RISC-V syscall number for `sched_getattr`.
+    private static final long SYS_SCHED_GETATTR = 275;
 
     /// The Linux RISC-V syscall number for `renameat2`.
     private static final long SYS_RENAMEAT2 = 276;
@@ -1835,8 +1844,50 @@ public final class GuestSyscallsTest {
     /// Linux `SCHED_BATCH`.
     private static final long SCHED_BATCH = 3;
 
+    /// Linux `SCHED_DEADLINE`.
+    private static final long SCHED_DEADLINE = 6;
+
     /// Linux `SCHED_RESET_ON_FORK`.
     private static final long SCHED_RESET_ON_FORK = 0x40000000;
+
+    /// The byte size of Linux `struct sched_attr` version zero.
+    private static final long SCHED_ATTR_SIZE_VER0 = 48;
+
+    /// The byte offset of `size` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_SIZE_OFFSET = 0;
+
+    /// The byte offset of `sched_policy` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_POLICY_OFFSET = 4;
+
+    /// The byte offset of `sched_flags` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_FLAGS_OFFSET = 8;
+
+    /// The byte offset of `sched_nice` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_NICE_OFFSET = 16;
+
+    /// The byte offset of `sched_priority` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_PRIORITY_OFFSET = 20;
+
+    /// The byte offset of `sched_runtime` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_RUNTIME_OFFSET = 24;
+
+    /// The byte offset of `sched_deadline` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_DEADLINE_OFFSET = 32;
+
+    /// The byte offset of `sched_period` inside Linux RISC-V 64-bit `struct sched_attr`.
+    private static final long SCHED_ATTR_PERIOD_OFFSET = 40;
+
+    /// Linux `PER_LINUX`.
+    private static final long PER_LINUX = 0;
+
+    /// Linux `ADDR_NO_RANDOMIZE`.
+    private static final long ADDR_NO_RANDOMIZE = 0x0040000;
+
+    /// Linux `STICKY_TIMEOUTS`.
+    private static final long STICKY_TIMEOUTS = 0x4000000;
+
+    /// Linux `personality(2)` query value.
+    private static final long PERSONALITY_QUERY = 0xffff_ffffL;
 
     /// Linux `CLOCK_REALTIME`.
     private static final long CLOCK_REALTIME = 0;
@@ -8778,6 +8829,110 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies Linux `sched_setattr` and `sched_getattr` preserve deadline attributes.
+    @Test
+    public void schedAttrHelpersStoreDeadlineAttributes() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long attributeAddress = memory.baseAddress() + 128;
+
+            writeSchedAttr(memory, attributeAddress, SCHED_DEADLINE, 0, 0, 0, 10_000_000L, 30_000_000L, 30_000_000L);
+            setSyscall(state, SYS_SCHED_SETATTR, 0, attributeAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.clear(attributeAddress, SCHED_ATTR_SIZE_VER0);
+            setSyscall(state, SYS_SCHED_GETATTR, 0, attributeAddress, SCHED_ATTR_SIZE_VER0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(SCHED_ATTR_SIZE_VER0, Integer.toUnsignedLong(memory.readInt(attributeAddress + SCHED_ATTR_SIZE_OFFSET)));
+            assertEquals(SCHED_DEADLINE, Integer.toUnsignedLong(memory.readInt(attributeAddress + SCHED_ATTR_POLICY_OFFSET)));
+            assertEquals(0, memory.readLong(attributeAddress + SCHED_ATTR_FLAGS_OFFSET));
+            assertEquals(0, memory.readInt(attributeAddress + SCHED_ATTR_NICE_OFFSET));
+            assertEquals(0, memory.readInt(attributeAddress + SCHED_ATTR_PRIORITY_OFFSET));
+            assertEquals(10_000_000L, memory.readLong(attributeAddress + SCHED_ATTR_RUNTIME_OFFSET));
+            assertEquals(30_000_000L, memory.readLong(attributeAddress + SCHED_ATTR_DEADLINE_OFFSET));
+            assertEquals(30_000_000L, memory.readLong(attributeAddress + SCHED_ATTR_PERIOD_OFFSET));
+
+            setSyscall(state, SYS_SCHED_GETATTR, 9999, attributeAddress, SCHED_ATTR_SIZE_VER0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GETATTR, 0, 0, SCHED_ATTR_SIZE_VER0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GETATTR, 0, attributeAddress, SCHED_ATTR_SIZE_VER0 - 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GETATTR, 0, attributeAddress, SCHED_ATTR_SIZE_VER0, 1000);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SCHED_GETATTR, 0, memory.endAddress(), SCHED_ATTR_SIZE_VER0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            writeSchedAttr(memory, attributeAddress, SCHED_DEADLINE, 0, 0, 0, 30_000_000L, 10_000_000L, 30_000_000L);
+            setSyscall(state, SYS_SCHED_SETATTR, 0, attributeAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeInt(attributeAddress + SCHED_ATTR_SIZE_OFFSET, (int) (SCHED_ATTR_SIZE_VER0 - 1));
+            setSyscall(state, SYS_SCHED_SETATTR, 0, attributeAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SCHED_SETATTR, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SCHED_SETATTR, 0, memory.endAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            writeSchedAttr(memory, attributeAddress, SCHED_DEADLINE, 0, 0, 0, 10_000_000L, 30_000_000L, 30_000_000L);
+            setSyscall(state, SYS_SCHED_SETATTR, 0, attributeAddress, 1000);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SCHED_SETATTR, 9999, attributeAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+        }
+    }
+
+    /// Verifies Linux `personality` stores and returns process execution-domain flags.
+    @Test
+    public void personalityStoresProcessFlags() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_PERSONALITY, PERSONALITY_QUERY, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(PER_LINUX, state.register(10));
+
+            long firstPersonality = PER_LINUX | ADDR_NO_RANDOMIZE;
+            setSyscall(state, SYS_PERSONALITY, firstPersonality, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(PER_LINUX, state.register(10));
+
+            setSyscall(state, SYS_PERSONALITY, PERSONALITY_QUERY, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(firstPersonality, state.register(10));
+
+            long secondPersonality = PER_LINUX | STICKY_TIMEOUTS;
+            setSyscall(state, SYS_PERSONALITY, secondPersonality, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(firstPersonality, state.register(10));
+
+            setSyscall(state, SYS_PERSONALITY, PERSONALITY_QUERY, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(secondPersonality, state.register(10));
+        }
+    }
+
     /// Verifies deterministic Linux I/O priority helper syscalls.
     @Test
     public void ioPriorityHelpersValidateTargetsAndPriorities() {
@@ -13192,6 +13347,27 @@ public final class GuestSyscallsTest {
             bytes[index] = (byte) (value >>> (index * Byte.SIZE));
         }
         memory.writeBytes(address, bytes, 0, bytes.length);
+    }
+
+    /// Writes a Linux RISC-V 64-bit `struct sched_attr`.
+    private static void writeSchedAttr(
+            Memory memory,
+            long address,
+            long policy,
+            long flags,
+            int nice,
+            int priority,
+            long runtime,
+            long deadline,
+            long period) {
+        memory.writeInt(address + SCHED_ATTR_SIZE_OFFSET, (int) SCHED_ATTR_SIZE_VER0);
+        memory.writeInt(address + SCHED_ATTR_POLICY_OFFSET, (int) policy);
+        memory.writeLong(address + SCHED_ATTR_FLAGS_OFFSET, flags);
+        memory.writeInt(address + SCHED_ATTR_NICE_OFFSET, nice);
+        memory.writeInt(address + SCHED_ATTR_PRIORITY_OFFSET, priority);
+        memory.writeLong(address + SCHED_ATTR_RUNTIME_OFFSET, runtime);
+        memory.writeLong(address + SCHED_ATTR_DEADLINE_OFFSET, deadline);
+        memory.writeLong(address + SCHED_ATTR_PERIOD_OFFSET, period);
     }
 
     /// Populates the syscall number and the first three argument registers.
