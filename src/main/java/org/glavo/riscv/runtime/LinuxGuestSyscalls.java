@@ -6122,6 +6122,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `setitimer`.
     private static final int SYS_SETITIMER = 103;
 
+    /// The Linux RISC-V syscall number for `clock_settime`.
+    private static final int SYS_CLOCK_SETTIME = 112;
+
     /// The Linux RISC-V syscall number for `clock_gettime`.
     private static final int SYS_CLOCK_GETTIME = 113;
 
@@ -6262,6 +6265,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `gettimeofday`.
     private static final int SYS_GETTIMEOFDAY = 169;
+
+    /// The Linux RISC-V syscall number for `settimeofday`.
+    private static final int SYS_SETTIMEOFDAY = 170;
+
+    /// The Linux RISC-V syscall number for `adjtimex`.
+    private static final int SYS_ADJTIMEX = 171;
 
     /// The Linux RISC-V syscall number for `getpid`.
     private static final int SYS_GETPID = 172;
@@ -6412,6 +6421,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `open_by_handle_at`.
     private static final int SYS_OPEN_BY_HANDLE_AT = 265;
+
+    /// The Linux RISC-V syscall number for `clock_adjtime`.
+    private static final int SYS_CLOCK_ADJTIME = 266;
 
     /// The Linux RISC-V syscall number for `syncfs`.
     private static final int SYS_SYNCFS = 267;
@@ -6755,6 +6767,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(10),
                     state.register(11),
                     state.register(12)));
+            case SYS_CLOCK_SETTIME -> state.setRegister(10, clockSettime(state.register(10), state.register(11)));
             case SYS_CLOCK_GETTIME -> state.setRegister(10, clockGettime(state.register(10), state.register(11)));
             case SYS_CLOCK_GETRES -> state.setRegister(10, clockGetres(state.register(10), state.register(11)));
             case SYS_CLOCK_NANOSLEEP -> state.setRegister(10, clockNanosleep(
@@ -6864,6 +6877,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(14)));
             case SYS_GETCPU -> state.setRegister(10, getcpu(state.register(10), state.register(11)));
             case SYS_GETTIMEOFDAY -> state.setRegister(10, gettimeofday(state.register(10), state.register(11)));
+            case SYS_SETTIMEOFDAY -> state.setRegister(10, settimeofday(state.register(10), state.register(11)));
+            case SYS_ADJTIMEX -> state.setRegister(10, adjtimex(state.register(10)));
             case SYS_GETPID -> state.setRegister(10, process.id());
             case SYS_GETTID -> state.setRegister(10, state.threadId());
             case SYS_GETPPID -> state.setRegister(10, process.parentId());
@@ -7035,6 +7050,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                  SYS_FANOTIFY_MARK,
                  SYS_NAME_TO_HANDLE_AT,
                  SYS_OPEN_BY_HANDLE_AT -> state.setRegister(10, ENOSYS);
+            case SYS_CLOCK_ADJTIME -> state.setRegister(10, clockAdjtime(state.register(10), state.register(11)));
             case SYS_SYNCFS -> state.setRegister(10, syncfs((int) state.register(10)));
             case SYS_RENAMEAT2 -> state.setRegister(10, renameat2(
                     state.register(10),

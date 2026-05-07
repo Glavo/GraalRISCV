@@ -716,6 +716,151 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The byte offset of `tz_dsttime` inside Linux `struct timezone`.
     protected static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
 
+    /// The byte size of Linux `struct timezone`.
+    protected static final int TIMEZONE_SIZE = 2 * Integer.BYTES;
+
+    /// The byte offset of `modes` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_MODES_OFFSET = 0;
+
+    /// The byte offset of `offset` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_OFFSET_OFFSET = Long.BYTES;
+
+    /// The byte offset of `freq` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_FREQUENCY_OFFSET = 2 * Long.BYTES;
+
+    /// The byte offset of `maxerror` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_MAXIMUM_ERROR_OFFSET = 3 * Long.BYTES;
+
+    /// The byte offset of `esterror` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_ESTIMATED_ERROR_OFFSET = 4 * Long.BYTES;
+
+    /// The byte offset of `status` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_STATUS_OFFSET = 5 * Long.BYTES;
+
+    /// The byte offset of `constant` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_CONSTANT_OFFSET = 6 * Long.BYTES;
+
+    /// The byte offset of `precision` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_PRECISION_OFFSET = 7 * Long.BYTES;
+
+    /// The byte offset of `tolerance` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_TOLERANCE_OFFSET = 8 * Long.BYTES;
+
+    /// The byte offset of `time.tv_sec` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_TIME_SECONDS_OFFSET = 9 * Long.BYTES;
+
+    /// The byte offset of `time.tv_usec` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_TIME_MICROSECONDS_OFFSET = 10 * Long.BYTES;
+
+    /// The byte offset of `tick` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_TICK_OFFSET = 11 * Long.BYTES;
+
+    /// The byte offset of `tai` inside Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_TAI_OFFSET = 20 * Long.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `struct timex`.
+    protected static final int TIMEX_SIZE = 26 * Long.BYTES;
+
+    /// Linux `ADJ_OFFSET`.
+    protected static final long ADJ_OFFSET = 0x0001;
+
+    /// Linux `ADJ_FREQUENCY`.
+    protected static final long ADJ_FREQUENCY = 0x0002;
+
+    /// Linux `ADJ_MAXERROR`.
+    protected static final long ADJ_MAXERROR = 0x0004;
+
+    /// Linux `ADJ_ESTERROR`.
+    protected static final long ADJ_ESTERROR = 0x0008;
+
+    /// Linux `ADJ_STATUS`.
+    protected static final long ADJ_STATUS = 0x0010;
+
+    /// Linux `ADJ_TIMECONST`.
+    protected static final long ADJ_TIMECONST = 0x0020;
+
+    /// Linux `ADJ_TAI`.
+    protected static final long ADJ_TAI = 0x0080;
+
+    /// Linux `ADJ_SETOFFSET`.
+    protected static final long ADJ_SETOFFSET = 0x0100;
+
+    /// Linux `ADJ_MICRO`.
+    protected static final long ADJ_MICRO = 0x1000;
+
+    /// Linux `ADJ_NANO`.
+    protected static final long ADJ_NANO = 0x2000;
+
+    /// Linux `ADJ_TICK`.
+    protected static final long ADJ_TICK = 0x4000;
+
+    /// Linux `ADJ_OFFSET_SINGLESHOT`.
+    protected static final long ADJ_OFFSET_SINGLESHOT = 0x8001;
+
+    /// Linux `ADJ_OFFSET_SS_READ`.
+    protected static final long ADJ_OFFSET_SS_READ = 0xa001;
+
+    /// Linux `STA_INS`.
+    protected static final int STA_INS = 0x0010;
+
+    /// Linux `STA_DEL`.
+    protected static final int STA_DEL = 0x0020;
+
+    /// Linux `STA_UNSYNC`.
+    protected static final int STA_UNSYNC = 0x0040;
+
+    /// Linux `STA_CLOCKERR`.
+    protected static final int STA_CLOCKERR = 0x1000;
+
+    /// Linux `STA_NANO`.
+    protected static final int STA_NANO = 0x2000;
+
+    /// Linux `TIME_OK`.
+    protected static final long TIME_OK = 0;
+
+    /// Linux `TIME_INS`.
+    protected static final long TIME_INS = 1;
+
+    /// Linux `TIME_DEL`.
+    protected static final long TIME_DEL = 2;
+
+    /// Linux `TIME_ERROR`.
+    protected static final long TIME_ERROR = 5;
+
+    /// The supported Linux `adjtimex` mode bits that do not use the legacy high bit.
+    protected static final long SUPPORTED_TIMEX_MODES = ADJ_OFFSET
+            | ADJ_FREQUENCY
+            | ADJ_MAXERROR
+            | ADJ_ESTERROR
+            | ADJ_STATUS
+            | ADJ_TIMECONST
+            | ADJ_TAI
+            | ADJ_SETOFFSET
+            | ADJ_MICRO
+            | ADJ_NANO
+            | ADJ_TICK;
+
+    /// The default Linux `timex.tick` value for a 100 Hz clock.
+    protected static final long DEFAULT_TIMEX_TICK = 10_000;
+
+    /// The minimum accepted Linux `timex.tick` value for a 100 Hz clock.
+    protected static final long MINIMUM_TIMEX_TICK = 9_000;
+
+    /// The maximum accepted Linux `timex.tick` value for a 100 Hz clock.
+    protected static final long MAXIMUM_TIMEX_TICK = 11_000;
+
+    /// The deterministic Linux `timex.precision` value in microseconds.
+    protected static final long TIMEX_PRECISION_MICROSECONDS = 1;
+
+    /// The deterministic Linux `timex.tolerance` value in scaled ppm.
+    protected static final long TIMEX_TOLERANCE = 32_768_000;
+
+    /// The maximum absolute Linux `timex.offset` value accepted for PLL updates.
+    protected static final long MAXIMUM_TIMEX_OFFSET = 512_000;
+
+    /// The maximum absolute Linux `timex.freq` value accepted for PLL updates.
+    protected static final long MAXIMUM_TIMEX_FREQUENCY = 32_768_000;
+
     /// The byte size of Linux RISC-V 64-bit `struct tms`.
     protected static final int TMS_SIZE = 4 * Long.BYTES;
 
@@ -1658,6 +1803,33 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The time source exposed to guest time syscalls.
     protected final TimeSource timeSource;
 
+    /// The guest-visible realtime clock offset in nanoseconds.
+    protected long realtimeOffsetNanoseconds;
+
+    /// The guest-visible Linux `timex.offset` value.
+    protected long timexOffset;
+
+    /// The guest-visible Linux `timex.freq` value.
+    protected long timexFrequency;
+
+    /// The guest-visible Linux `timex.maxerror` value.
+    protected long timexMaximumError;
+
+    /// The guest-visible Linux `timex.esterror` value.
+    protected long timexEstimatedError;
+
+    /// The guest-visible Linux `timex.status` value.
+    protected int timexStatus;
+
+    /// The guest-visible Linux `timex.constant` value.
+    protected long timexConstant;
+
+    /// The guest-visible Linux `timex.tick` value.
+    protected long timexTick = DEFAULT_TIMEX_TICK;
+
+    /// The guest-visible Linux `timex.tai` value.
+    protected int timexTai;
+
     /// Interval timer repeat values in microseconds.
     protected final long[] intervalTimerIntervalMicroseconds = new long[ITIMER_COUNT];
 
@@ -2097,6 +2269,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         System.arraycopy(parent.resourceLimitMaximum, 0, resourceLimitMaximum, 0, resourceLimitMaximum.length);
         this.randomState = parent.randomState;
         this.timeSource = parent.timeSource;
+        this.realtimeOffsetNanoseconds = parent.realtimeOffsetNanoseconds;
+        this.timexOffset = parent.timexOffset;
+        this.timexFrequency = parent.timexFrequency;
+        this.timexMaximumError = parent.timexMaximumError;
+        this.timexEstimatedError = parent.timexEstimatedError;
+        this.timexStatus = parent.timexStatus;
+        this.timexConstant = parent.timexConstant;
+        this.timexTick = parent.timexTick;
+        this.timexTai = parent.timexTai;
         this.currentPtyDevice = parent.currentPtyDevice;
         copyStandardFilesFrom(parent);
         copyOpenFilesFrom(parent);
@@ -4902,7 +5083,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Reads the two `timespec` updates supplied to `utimensat`.
     private TimestampUpdate @Nullable [] timestampUpdates(long timesAddress) {
         if (timesAddress == 0) {
-            Instant now = timeSource.realtimeInstant();
+            Instant now = adjustedRealtimeInstant();
             return new TimestampUpdate[]{
                     TimestampUpdate.set(FileTime.from(now)),
                     TimestampUpdate.set(FileTime.from(now))
@@ -4912,7 +5093,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return null;
         }
 
-        Instant now = timeSource.realtimeInstant();
+        Instant now = adjustedRealtimeInstant();
         @Nullable TimestampUpdate accessTime = timestampUpdate(timesAddress, now);
         @Nullable TimestampUpdate modificationTime = timestampUpdate(timesAddress + TIMESPEC_SIZE, now);
         if (accessTime == null || modificationTime == null) {
@@ -8618,7 +8799,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         long nowNanos = realtimeTimeout
-                ? instantToSaturatedNanoseconds(timeSource.realtimeInstant())
+                ? instantToSaturatedNanoseconds(adjustedRealtimeInstant())
                 : timeSource.monotonicNanoseconds();
         return targetNanos <= nowNanos ? 0 : targetNanos - nowNanos;
     }
@@ -8636,7 +8817,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns the current nanosecond value for a clock accepted by `timerfd_create`.
     protected long timerfdClockNanoseconds(long clockId) {
         if (clockId == CLOCK_REALTIME) {
-            return instantToSaturatedNanoseconds(timeSource.realtimeInstant());
+            return instantToSaturatedNanoseconds(adjustedRealtimeInstant());
         }
         return durationToSaturatedNanoseconds(elapsedDuration());
     }
@@ -8967,7 +9148,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns the relative wait needed to reach an absolute clock time.
     protected long absoluteClockSleepNanoseconds(long clockId, long targetSeconds, long targetNanoseconds) {
         if (isRealtimeClock(clockId)) {
-            Instant instant = timeSource.realtimeInstant();
+            Instant instant = adjustedRealtimeInstant();
             return relativeNanosecondsUntil(targetSeconds, targetNanoseconds, instant.getEpochSecond(), instant.getNano());
         }
 
@@ -9561,16 +9742,310 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Writes Linux `struct timeval` and optional `struct timezone` values.
     protected long gettimeofday(long timevalAddress, long timezoneAddress) {
-        if (timevalAddress != 0) {
-            Instant instant = timeSource.realtimeInstant();
-            memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, instant.getEpochSecond());
-            memory.writeLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET, instant.getNano() / 1000L);
+        try {
+            if (timevalAddress != 0) {
+                if (!memory.isBacked(timevalAddress, TIMEVAL_SIZE)) {
+                    return EFAULT;
+                }
+                Instant instant = adjustedRealtimeInstant();
+                memory.writeLong(timevalAddress + TIMEVAL_SECONDS_OFFSET, instant.getEpochSecond());
+                memory.writeLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET, instant.getNano() / 1000L);
+            }
+            if (timezoneAddress != 0) {
+                if (!memory.isBacked(timezoneAddress, TIMEZONE_SIZE)) {
+                    return EFAULT;
+                }
+                memory.writeInt(timezoneAddress + TIMEZONE_MINUTESWEST_OFFSET, 0);
+                memory.writeInt(timezoneAddress + TIMEZONE_DSTTIME_OFFSET, 0);
+            }
+            return 0;
+        } catch (RiscVException exception) {
+            return EFAULT;
         }
-        if (timezoneAddress != 0) {
-            memory.writeInt(timezoneAddress + TIMEZONE_MINUTESWEST_OFFSET, 0);
-            memory.writeInt(timezoneAddress + TIMEZONE_DSTTIME_OFFSET, 0);
+    }
+
+    /// Sets the guest-visible realtime clock and accepts legacy timezone updates.
+    protected long settimeofday(long timevalAddress, long timezoneAddress) {
+        if (timevalAddress == 0 && timezoneAddress == 0) {
+            return 0;
         }
-        return 0;
+
+        try {
+            long targetNanoseconds = 0;
+            if (timevalAddress != 0) {
+                if (!memory.isBacked(timevalAddress, TIMEVAL_SIZE)) {
+                    return EFAULT;
+                }
+                long seconds = memory.readLong(timevalAddress + TIMEVAL_SECONDS_OFFSET);
+                long microseconds = memory.readLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET);
+                if (!isValidTimeval(seconds, microseconds)) {
+                    return EINVAL;
+                }
+                targetNanoseconds = timevalToSaturatedNanoseconds(seconds, microseconds);
+            }
+            if (timezoneAddress != 0 && !memory.isBacked(timezoneAddress, TIMEZONE_SIZE)) {
+                return EFAULT;
+            }
+            if (!canSetSystemTime()) {
+                return EPERM;
+            }
+            if (timevalAddress != 0) {
+                setRealtimeOffsetFromNanoseconds(targetNanoseconds);
+            }
+            return 0;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+    }
+
+    /// Returns true when the supplied timeval fields represent a valid non-negative timestamp.
+    protected static boolean isValidTimeval(long seconds, long microseconds) {
+        return seconds >= 0 && microseconds >= 0 && microseconds < 1_000_000L;
+    }
+
+    /// Converts a valid timeval to nanoseconds, saturating very large values.
+    protected static long timevalToSaturatedNanoseconds(long seconds, long microseconds) {
+        long nanoseconds = microseconds * 1000L;
+        return seconds > (Long.MAX_VALUE - nanoseconds) / NANOSECONDS_PER_SECOND
+                ? Long.MAX_VALUE
+                : seconds * NANOSECONDS_PER_SECOND + nanoseconds;
+    }
+
+    /// Returns true when the current guest credentials can adjust system time.
+    protected boolean canSetSystemTime() {
+        return credentials.effectiveUserId() == 0;
+    }
+
+    /// Returns the realtime instant after applying guest clock adjustments.
+    protected Instant adjustedRealtimeInstant() {
+        Instant instant = timeSource.realtimeInstant();
+        if (realtimeOffsetNanoseconds == 0) {
+            return instant;
+        }
+        try {
+            return instant.plusNanos(realtimeOffsetNanoseconds);
+        } catch (ArithmeticException | DateTimeException exception) {
+            return realtimeOffsetNanoseconds > 0 ? Instant.MAX : Instant.EPOCH;
+        }
+    }
+
+    /// Updates the guest realtime offset so the current realtime clock reaches the target nanosecond value.
+    protected void setRealtimeOffsetFromNanoseconds(long targetNanoseconds) {
+        long currentNanoseconds = instantToSaturatedNanoseconds(timeSource.realtimeInstant());
+        realtimeOffsetNanoseconds = subtractSaturated(targetNanoseconds, currentNanoseconds);
+    }
+
+    /// Returns a saturated subtraction result.
+    protected static long subtractSaturated(long left, long right) {
+        try {
+            return Math.subtractExact(left, right);
+        } catch (ArithmeticException exception) {
+            return left < right ? Long.MIN_VALUE : Long.MAX_VALUE;
+        }
+    }
+
+    /// Returns a saturated addition result.
+    protected static long addSaturated(long left, long right) {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException exception) {
+            return left < 0 ? Long.MIN_VALUE : Long.MAX_VALUE;
+        }
+    }
+
+    /// Returns true when a signed value is within an absolute inclusive limit.
+    protected static boolean isWithinAbsoluteLimit(long value, long limit) {
+        return value >= -limit && value <= limit;
+    }
+
+    /// Sets the guest-visible realtime clock from a Linux RISC-V 64-bit `struct timespec`.
+    protected long clockSettime(long clockId, long timespecAddress) {
+        if (clockId != CLOCK_REALTIME) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(timespecAddress, TIMESPEC_SIZE)) {
+            return EFAULT;
+        }
+
+        try {
+            long seconds = memory.readLong(timespecAddress + TIMESPEC_SECONDS_OFFSET);
+            long nanoseconds = memory.readLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            if (!isValidTimespec(seconds, nanoseconds)) {
+                return EINVAL;
+            }
+            if (!canSetSystemTime()) {
+                return EPERM;
+            }
+            setRealtimeOffsetFromNanoseconds(timespecToSaturatedNanoseconds(seconds, nanoseconds));
+            return 0;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+    }
+
+    /// Reads or updates Linux `struct timex` clock adjustment state.
+    protected long adjtimex(long timexAddress) {
+        return updateTimex(timexAddress);
+    }
+
+    /// Reads or updates Linux `struct timex` state for `CLOCK_REALTIME`.
+    protected long clockAdjtime(long clockId, long timexAddress) {
+        if (clockId != CLOCK_REALTIME) {
+            return EINVAL;
+        }
+        return updateTimex(timexAddress);
+    }
+
+    /// Applies a Linux `adjtimex` or `clock_adjtime` request.
+    protected long updateTimex(long timexAddress) {
+        if (!memory.isBacked(timexAddress, TIMEX_SIZE)) {
+            return EFAULT;
+        }
+
+        try {
+            long modes = Integer.toUnsignedLong(memory.readInt(timexAddress + TIMEX_MODES_OFFSET));
+            if (!isSupportedTimexModes(modes)) {
+                return EINVAL;
+            }
+            long updateModes = modes == ADJ_OFFSET_SS_READ ? 0 : modes;
+            long tick = memory.readLong(timexAddress + TIMEX_TICK_OFFSET);
+            if ((updateModes & ADJ_TICK) != 0 && (tick < MINIMUM_TIMEX_TICK || tick > MAXIMUM_TIMEX_TICK)) {
+                return EINVAL;
+            }
+            long offset = memory.readLong(timexAddress + TIMEX_OFFSET_OFFSET);
+            if ((updateModes & (ADJ_OFFSET | ADJ_OFFSET_SINGLESHOT)) != 0
+                    && !isWithinAbsoluteLimit(offset, MAXIMUM_TIMEX_OFFSET)) {
+                return EINVAL;
+            }
+            long frequency = memory.readLong(timexAddress + TIMEX_FREQUENCY_OFFSET);
+            if ((updateModes & ADJ_FREQUENCY) != 0 && !isWithinAbsoluteLimit(frequency, MAXIMUM_TIMEX_FREQUENCY)) {
+                return EINVAL;
+            }
+            long setOffsetNanoseconds = 0;
+            if ((updateModes & ADJ_SETOFFSET) != 0) {
+                long seconds = memory.readLong(timexAddress + TIMEX_TIME_SECONDS_OFFSET);
+                long fractional = memory.readLong(timexAddress + TIMEX_TIME_MICROSECONDS_OFFSET);
+                setOffsetNanoseconds = readTimexOffsetNanoseconds(seconds, fractional, (updateModes & ADJ_NANO) != 0);
+                if (setOffsetNanoseconds == Long.MIN_VALUE) {
+                    return EINVAL;
+                }
+            }
+            if (requiresSystemTimePrivilege(modes) && !canSetSystemTime()) {
+                return EPERM;
+            }
+
+            applyTimexUpdates(timexAddress, updateModes, offset, frequency, tick, setOffsetNanoseconds);
+            writeTimex(timexAddress);
+            return timexClockState();
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+    }
+
+    /// Returns true when a Linux `timex.modes` value is supported.
+    protected static boolean isSupportedTimexModes(long modes) {
+        return modes == ADJ_OFFSET_SINGLESHOT
+                || modes == ADJ_OFFSET_SS_READ
+                || (modes & ~SUPPORTED_TIMEX_MODES) == 0;
+    }
+
+    /// Returns true when a Linux `timex.modes` value changes privileged clock state.
+    protected static boolean requiresSystemTimePrivilege(long modes) {
+        return modes != 0 && modes != ADJ_OFFSET_SS_READ;
+    }
+
+    /// Reads a signed `ADJ_SETOFFSET` delta in nanoseconds, or `Long.MIN_VALUE` when invalid.
+    protected static long readTimexOffsetNanoseconds(long seconds, long fractional, boolean nanosecondMode) {
+        long maximumFractional = nanosecondMode ? NANOSECONDS_PER_SECOND : 1_000_000L;
+        if (fractional <= -maximumFractional || fractional >= maximumFractional) {
+            return Long.MIN_VALUE;
+        }
+        long fractionalNanoseconds = nanosecondMode ? fractional : fractional * 1000L;
+        try {
+            return Math.addExact(Math.multiplyExact(seconds, NANOSECONDS_PER_SECOND), fractionalNanoseconds);
+        } catch (ArithmeticException exception) {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    /// Applies validated Linux `timex` update fields.
+    protected void applyTimexUpdates(
+            long timexAddress,
+            long modes,
+            long offset,
+            long frequency,
+            long tick,
+            long setOffsetNanoseconds) {
+        if ((modes & ADJ_OFFSET) != 0 || modes == ADJ_OFFSET_SINGLESHOT) {
+            timexOffset = offset;
+        }
+        if ((modes & ADJ_FREQUENCY) != 0) {
+            timexFrequency = frequency;
+        }
+        if ((modes & ADJ_MAXERROR) != 0) {
+            timexMaximumError = memory.readLong(timexAddress + TIMEX_MAXIMUM_ERROR_OFFSET);
+        }
+        if ((modes & ADJ_ESTERROR) != 0) {
+            timexEstimatedError = memory.readLong(timexAddress + TIMEX_ESTIMATED_ERROR_OFFSET);
+        }
+        if ((modes & ADJ_STATUS) != 0) {
+            timexStatus = memory.readInt(timexAddress + TIMEX_STATUS_OFFSET);
+        }
+        if ((modes & ADJ_TIMECONST) != 0) {
+            timexConstant = memory.readLong(timexAddress + TIMEX_CONSTANT_OFFSET);
+        }
+        if ((modes & ADJ_TICK) != 0) {
+            timexTick = tick;
+        }
+        if ((modes & ADJ_TAI) != 0) {
+            timexTai = memory.readInt(timexAddress + TIMEX_TAI_OFFSET);
+        }
+        if ((modes & ADJ_NANO) != 0) {
+            timexStatus |= STA_NANO;
+        }
+        if ((modes & ADJ_MICRO) != 0) {
+            timexStatus &= ~STA_NANO;
+        }
+        if ((modes & ADJ_SETOFFSET) != 0) {
+            setRealtimeOffsetFromNanoseconds(addSaturated(
+                    instantToSaturatedNanoseconds(adjustedRealtimeInstant()),
+                    setOffsetNanoseconds));
+        }
+    }
+
+    /// Writes the guest-visible Linux `struct timex` state.
+    protected void writeTimex(long timexAddress) {
+        for (int offset = 0; offset < TIMEX_SIZE; offset += Long.BYTES) {
+            memory.writeLong(timexAddress + offset, 0);
+        }
+
+        Instant instant = adjustedRealtimeInstant();
+        memory.writeLong(timexAddress + TIMEX_OFFSET_OFFSET, timexOffset);
+        memory.writeLong(timexAddress + TIMEX_FREQUENCY_OFFSET, timexFrequency);
+        memory.writeLong(timexAddress + TIMEX_MAXIMUM_ERROR_OFFSET, timexMaximumError);
+        memory.writeLong(timexAddress + TIMEX_ESTIMATED_ERROR_OFFSET, timexEstimatedError);
+        memory.writeInt(timexAddress + TIMEX_STATUS_OFFSET, timexStatus);
+        memory.writeLong(timexAddress + TIMEX_CONSTANT_OFFSET, timexConstant);
+        memory.writeLong(timexAddress + TIMEX_PRECISION_OFFSET, TIMEX_PRECISION_MICROSECONDS);
+        memory.writeLong(timexAddress + TIMEX_TOLERANCE_OFFSET, TIMEX_TOLERANCE);
+        memory.writeLong(timexAddress + TIMEX_TIME_SECONDS_OFFSET, instant.getEpochSecond());
+        memory.writeLong(timexAddress + TIMEX_TIME_MICROSECONDS_OFFSET, instant.getNano() / 1000L);
+        memory.writeLong(timexAddress + TIMEX_TICK_OFFSET, timexTick);
+        memory.writeInt(timexAddress + TIMEX_TAI_OFFSET, timexTai);
+    }
+
+    /// Returns the Linux `adjtimex` clock state derived from the current status bits.
+    protected long timexClockState() {
+        if ((timexStatus & (STA_UNSYNC | STA_CLOCKERR)) != 0) {
+            return TIME_ERROR;
+        }
+        if ((timexStatus & STA_INS) != 0) {
+            return TIME_INS;
+        }
+        if ((timexStatus & STA_DEL) != 0) {
+            return TIME_DEL;
+        }
+        return TIME_OK;
     }
 
     /// Reports the current value of a Linux interval timer.
@@ -9701,13 +10176,20 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (!isSupportedClock(clockId)) {
             return EINVAL;
         }
-
-        if (isRealtimeClock(clockId)) {
-            writeTimespecFromInstant(timespecAddress, timeSource.realtimeInstant());
-        } else {
-            writeTimespecFromDuration(timespecAddress, elapsedDuration());
+        if (!memory.isBacked(timespecAddress, TIMESPEC_SIZE)) {
+            return EFAULT;
         }
-        return 0;
+
+        try {
+            if (isRealtimeClock(clockId)) {
+                writeTimespecFromInstant(timespecAddress, adjustedRealtimeInstant());
+            } else {
+                writeTimespecFromDuration(timespecAddress, elapsedDuration());
+            }
+            return 0;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
     }
 
     /// Writes the resolution for a supported Linux clock.
@@ -9715,11 +10197,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (!isSupportedClock(clockId)) {
             return EINVAL;
         }
-        if (timespecAddress != 0) {
-            memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, 0);
-            memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, 1);
+        try {
+            if (timespecAddress != 0) {
+                if (!memory.isBacked(timespecAddress, TIMESPEC_SIZE)) {
+                    return EFAULT;
+                }
+                memory.writeLong(timespecAddress + TIMESPEC_SECONDS_OFFSET, 0);
+                memory.writeLong(timespecAddress + TIMESPEC_NANOSECONDS_OFFSET, 1);
+            }
+            return 0;
+        } catch (RiscVException exception) {
+            return EFAULT;
         }
-        return 0;
     }
 
     /// Writes a Linux RISC-V 64-bit `struct timeval` from a non-negative elapsed duration.

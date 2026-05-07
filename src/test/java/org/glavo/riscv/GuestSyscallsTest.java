@@ -388,6 +388,9 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `setitimer`.
     private static final long SYS_SETITIMER = 103;
 
+    /// The Linux RISC-V syscall number for `clock_settime`.
+    private static final long SYS_CLOCK_SETTIME = 112;
+
     /// The Linux RISC-V syscall number for `clock_gettime`.
     private static final long SYS_CLOCK_GETTIME = 113;
 
@@ -522,6 +525,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `gettimeofday`.
     private static final long SYS_GETTIMEOFDAY = 169;
+
+    /// The Linux RISC-V syscall number for `settimeofday`.
+    private static final long SYS_SETTIMEOFDAY = 170;
+
+    /// The Linux RISC-V syscall number for `adjtimex`.
+    private static final long SYS_ADJTIMEX = 171;
 
     /// The Linux RISC-V syscall number for `getpid`.
     private static final long SYS_GETPID = 172;
@@ -660,6 +669,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `prlimit64`.
     private static final long SYS_PRLIMIT64 = 261;
+
+    /// The Linux RISC-V syscall number for `clock_adjtime`.
+    private static final long SYS_CLOCK_ADJTIME = 266;
 
     /// The Linux RISC-V syscall number for `syncfs`.
     private static final long SYS_SYNCFS = 267;
@@ -1035,6 +1047,84 @@ public final class GuestSyscallsTest {
 
     /// The byte offset of `tz_dsttime` inside Linux `struct timezone`.
     private static final int TIMEZONE_DSTTIME_OFFSET = Integer.BYTES;
+
+    /// The byte size of Linux `struct timezone`.
+    private static final int TIMEZONE_SIZE = 2 * Integer.BYTES;
+
+    /// The byte offset of `modes` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_MODES_OFFSET = 0;
+
+    /// The byte offset of `offset` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_OFFSET_OFFSET = Long.BYTES;
+
+    /// The byte offset of `freq` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_FREQUENCY_OFFSET = 2 * Long.BYTES;
+
+    /// The byte offset of `maxerror` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_MAXIMUM_ERROR_OFFSET = 3 * Long.BYTES;
+
+    /// The byte offset of `esterror` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_ESTIMATED_ERROR_OFFSET = 4 * Long.BYTES;
+
+    /// The byte offset of `status` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_STATUS_OFFSET = 5 * Long.BYTES;
+
+    /// The byte offset of `constant` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_CONSTANT_OFFSET = 6 * Long.BYTES;
+
+    /// The byte offset of `precision` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_PRECISION_OFFSET = 7 * Long.BYTES;
+
+    /// The byte offset of `tolerance` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_TOLERANCE_OFFSET = 8 * Long.BYTES;
+
+    /// The byte offset of `time.tv_sec` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_TIME_SECONDS_OFFSET = 9 * Long.BYTES;
+
+    /// The byte offset of `time.tv_usec` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_TIME_MICROSECONDS_OFFSET = 10 * Long.BYTES;
+
+    /// The byte offset of `tick` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_TICK_OFFSET = 11 * Long.BYTES;
+
+    /// The byte offset of `tai` inside Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_TAI_OFFSET = 20 * Long.BYTES;
+
+    /// The byte size of Linux RISC-V 64-bit `struct timex`.
+    private static final int TIMEX_SIZE = 26 * Long.BYTES;
+
+    /// Linux `ADJ_OFFSET`.
+    private static final int ADJ_OFFSET = 0x0001;
+
+    /// Linux `ADJ_FREQUENCY`.
+    private static final int ADJ_FREQUENCY = 0x0002;
+
+    /// Linux `ADJ_MAXERROR`.
+    private static final int ADJ_MAXERROR = 0x0004;
+
+    /// Linux `ADJ_ESTERROR`.
+    private static final int ADJ_ESTERROR = 0x0008;
+
+    /// Linux `ADJ_STATUS`.
+    private static final int ADJ_STATUS = 0x0010;
+
+    /// Linux `ADJ_TIMECONST`.
+    private static final int ADJ_TIMECONST = 0x0020;
+
+    /// Linux `ADJ_NANO`.
+    private static final int ADJ_NANO = 0x2000;
+
+    /// Linux `ADJ_TICK`.
+    private static final int ADJ_TICK = 0x4000;
+
+    /// Linux `ADJ_OFFSET_SINGLESHOT`.
+    private static final int ADJ_OFFSET_SINGLESHOT = 0x8001;
+
+    /// Linux `ADJ_OFFSET_SS_READ`.
+    private static final int ADJ_OFFSET_SS_READ = 0xa001;
+
+    /// Linux `STA_NANO`.
+    private static final int STA_NANO = 0x2000;
 
     /// The byte offset of `tms_utime` inside Linux RISC-V 64-bit `struct tms`.
     private static final int TMS_USER_TIME_OFFSET = 0;
@@ -9258,6 +9348,226 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies that realtime clock setters update the guest-visible wall clock.
+    @Test
+    public void realtimeClockSettersAdjustGuestVisibleWallClock() {
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048)) {
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 111_222_333L));
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.empty(),
+                    fixedTimeSource,
+                    root);
+            long timespecAddress = memory.baseAddress() + 64;
+            long timevalAddress = memory.baseAddress() + 96;
+            long timezoneAddress = memory.baseAddress() + 112;
+
+            writeTimespec(memory, timespecAddress, 1_700_000_123L, 456_789_123L);
+            setSyscall(state, SYS_CLOCK_SETTIME, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1_700_000_123L, memory.readLong(timespecAddress));
+            assertEquals(456_789_123L, memory.readLong(timespecAddress + Long.BYTES));
+
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_MONOTONIC, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(0, memory.readLong(timespecAddress));
+            assertEquals(0, memory.readLong(timespecAddress + Long.BYTES));
+
+            writeTimeval(memory, timevalAddress, 1_700_000_456L, 654_321L);
+            memory.writeInt(timezoneAddress + TIMEZONE_MINUTESWEST_OFFSET, 60);
+            memory.writeInt(timezoneAddress + TIMEZONE_DSTTIME_OFFSET, 1);
+            setSyscall(state, SYS_SETTIMEOFDAY, timevalAddress, timezoneAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_GETTIMEOFDAY, timevalAddress, timezoneAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1_700_000_456L, memory.readLong(timevalAddress + TIMEVAL_SECONDS_OFFSET));
+            assertEquals(654_321L, memory.readLong(timevalAddress + TIMEVAL_MICROSECONDS_OFFSET));
+            assertEquals(0, memory.readInt(timezoneAddress + TIMEZONE_MINUTESWEST_OFFSET));
+            assertEquals(0, memory.readInt(timezoneAddress + TIMEZONE_DSTTIME_OFFSET));
+
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(1_700_000_456L, memory.readLong(timespecAddress));
+            assertEquals(654_321_000L, memory.readLong(timespecAddress + Long.BYTES));
+
+            setSyscall(state, SYS_CLOCK_SETTIME, CLOCK_MONOTONIC, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeTimespec(memory, timespecAddress, 1_700_000_000L, 1_000_000_000L);
+            setSyscall(state, SYS_CLOCK_SETTIME, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_SETTIME, CLOCK_REALTIME, memory.endAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            writeTimeval(memory, timevalAddress, 1_700_000_000L, 1_000_000L);
+            setSyscall(state, SYS_SETTIMEOFDAY, timevalAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SETTIMEOFDAY, 0, memory.endAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_GETTIME, CLOCK_REALTIME, memory.endAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_GETRES, CLOCK_REALTIME, memory.endAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_GETTIMEOFDAY, memory.endAddress(), 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            long timespecAddress = memory.baseAddress() + 64;
+            long timevalAddress = memory.baseAddress() + 96;
+
+            writeTimespec(memory, timespecAddress, 1_700_000_123L, 0);
+            setSyscall(state, SYS_CLOCK_SETTIME, CLOCK_REALTIME, timespecAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            writeTimeval(memory, timevalAddress, 1_700_000_123L, 0);
+            setSyscall(state, SYS_SETTIMEOFDAY, timevalAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+        }
+    }
+
+    /// Verifies Linux `adjtimex` and `clock_adjtime` expose tracked adjustment state.
+    @Test
+    public void timexSyscallsExposeTrackedClockAdjustmentState() {
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 2048)) {
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L, 123_456_789L));
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.empty(),
+                    fixedTimeSource,
+                    root);
+            long timexAddress = memory.baseAddress() + 64;
+
+            memory.clear(timexAddress, TIMEX_SIZE);
+            setSyscall(state, SYS_ADJTIMEX, timexAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(10_000L, memory.readLong(timexAddress + TIMEX_TICK_OFFSET));
+            assertEquals(1L, memory.readLong(timexAddress + TIMEX_PRECISION_OFFSET));
+            assertEquals(32_768_000L, memory.readLong(timexAddress + TIMEX_TOLERANCE_OFFSET));
+            assertEquals(1_700_000_000L, memory.readLong(timexAddress + TIMEX_TIME_SECONDS_OFFSET));
+            assertEquals(123_456L, memory.readLong(timexAddress + TIMEX_TIME_MICROSECONDS_OFFSET));
+
+            memory.clear(timexAddress, TIMEX_SIZE);
+            memory.writeInt(timexAddress + TIMEX_MODES_OFFSET, ADJ_OFFSET
+                    | ADJ_FREQUENCY
+                    | ADJ_MAXERROR
+                    | ADJ_ESTERROR
+                    | ADJ_STATUS
+                    | ADJ_TIMECONST
+                    | ADJ_TICK
+                    | ADJ_NANO);
+            memory.writeLong(timexAddress + TIMEX_OFFSET_OFFSET, 12_345L);
+            memory.writeLong(timexAddress + TIMEX_FREQUENCY_OFFSET, 67_890L);
+            memory.writeLong(timexAddress + TIMEX_MAXIMUM_ERROR_OFFSET, 111L);
+            memory.writeLong(timexAddress + TIMEX_ESTIMATED_ERROR_OFFSET, 222L);
+            memory.writeInt(timexAddress + TIMEX_STATUS_OFFSET, 0);
+            memory.writeLong(timexAddress + TIMEX_CONSTANT_OFFSET, 4L);
+            memory.writeLong(timexAddress + TIMEX_TICK_OFFSET, 10_001L);
+            setSyscall(state, SYS_CLOCK_ADJTIME, CLOCK_REALTIME, timexAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.clear(timexAddress, TIMEX_SIZE);
+            setSyscall(state, SYS_ADJTIMEX, timexAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(12_345L, memory.readLong(timexAddress + TIMEX_OFFSET_OFFSET));
+            assertEquals(67_890L, memory.readLong(timexAddress + TIMEX_FREQUENCY_OFFSET));
+            assertEquals(111L, memory.readLong(timexAddress + TIMEX_MAXIMUM_ERROR_OFFSET));
+            assertEquals(222L, memory.readLong(timexAddress + TIMEX_ESTIMATED_ERROR_OFFSET));
+            assertEquals(STA_NANO, memory.readInt(timexAddress + TIMEX_STATUS_OFFSET));
+            assertEquals(4L, memory.readLong(timexAddress + TIMEX_CONSTANT_OFFSET));
+            assertEquals(10_001L, memory.readLong(timexAddress + TIMEX_TICK_OFFSET));
+
+            memory.clear(timexAddress, TIMEX_SIZE);
+            memory.writeInt(timexAddress + TIMEX_MODES_OFFSET, ADJ_OFFSET_SS_READ);
+            setSyscall(state, SYS_ADJTIMEX, timexAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(12_345L, memory.readLong(timexAddress + TIMEX_OFFSET_OFFSET));
+
+            setSyscall(state, SYS_CLOCK_ADJTIME, CLOCK_MONOTONIC, timexAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_CLOCK_ADJTIME, CLOCK_REALTIME, memory.endAddress(), 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            memory.clear(timexAddress, TIMEX_SIZE);
+            memory.writeInt(timexAddress + TIMEX_MODES_OFFSET, 0x8000);
+            memory.writeInt(timexAddress + TIMEX_TAI_OFFSET, 1234);
+            setSyscall(state, SYS_ADJTIMEX, timexAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+            assertEquals(1234, memory.readInt(timexAddress + TIMEX_TAI_OFFSET));
+
+            memory.clear(timexAddress, TIMEX_SIZE);
+            memory.writeInt(timexAddress + TIMEX_MODES_OFFSET, ADJ_TICK);
+            memory.writeLong(timexAddress + TIMEX_TICK_OFFSET, 8_999L);
+            setSyscall(state, SYS_ADJTIMEX, timexAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            long timexAddress = memory.baseAddress() + 64;
+
+            memory.clear(timexAddress, TIMEX_SIZE);
+            setSyscall(state, SYS_ADJTIMEX, timexAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeInt(timexAddress + TIMEX_MODES_OFFSET, ADJ_OFFSET);
+            memory.writeLong(timexAddress + TIMEX_OFFSET_OFFSET, 1);
+            setSyscall(state, SYS_ADJTIMEX, timexAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+        }
+    }
+
     /// Verifies that `getitimer` and `setitimer` report tracked interval timer state.
     @Test
     public void intervalTimersReportAndUpdateState() {
@@ -12589,6 +12899,19 @@ public final class GuestSyscallsTest {
             long initialProgramBreak,
             GuestFileSystem fileSystem,
             GuestCredentials credentials) {
+        return state(memory, in, out, err, initialProgramBreak, fileSystem, TimeSource.system(), credentials);
+    }
+
+    /// Creates test machine state with a syscall handler, custom filesystem namespace, guest time source, and credentials.
+    private static RiscVThreadState state(
+            Memory memory,
+            InputStream in,
+            OutputStream out,
+            OutputStream err,
+            long initialProgramBreak,
+            GuestFileSystem fileSystem,
+            TimeSource timeSource,
+            GuestCredentials credentials) {
         GuestSyscalls syscalls = new LinuxGuestSyscalls(
                 memory,
                 in,
@@ -12596,7 +12919,7 @@ public final class GuestSyscallsTest {
                 err,
                 initialProgramBreak,
                 fileSystem,
-                TimeSource.system(),
+                timeSource,
                 credentials);
         return new RiscVThreadState(
                 memory,
@@ -12809,6 +13132,12 @@ public final class GuestSyscallsTest {
     private static void writeTimespec(Memory memory, long address, long seconds, long nanoseconds) {
         memory.writeLong(address, seconds);
         memory.writeLong(address + Long.BYTES, nanoseconds);
+    }
+
+    /// Writes one Linux RISC-V 64-bit `struct timeval` into guest memory.
+    private static void writeTimeval(Memory memory, long address, long seconds, long microseconds) {
+        memory.writeLong(address + TIMEVAL_SECONDS_OFFSET, seconds);
+        memory.writeLong(address + TIMEVAL_MICROSECONDS_OFFSET, microseconds);
     }
 
     /// Writes one Linux `struct futex_waitv` entry into guest memory.
