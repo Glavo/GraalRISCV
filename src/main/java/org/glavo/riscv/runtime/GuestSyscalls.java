@@ -299,6 +299,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `AT_REMOVEDIR`.
     protected static final long AT_REMOVEDIR = 0x200;
 
+    /// Linux `AT_SYMLINK_FOLLOW`.
+    protected static final long AT_SYMLINK_FOLLOW = 0x400;
+
     /// Linux `AT_NO_AUTOMOUNT`.
     protected static final long AT_NO_AUTOMOUNT = 0x800;
 
@@ -1303,6 +1306,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// The Linux `S_IFIFO` file type bit used for pipe endpoints.
     protected static final int STAT_MODE_FIFO = 0010000;
+
+    /// Linux `S_IFMT` file type bits.
+    protected static final int STAT_MODE_FILE_TYPE = 0170000;
+
+    /// The Linux `S_IFSOCK` file type bit used for sockets.
+    protected static final int STAT_MODE_SOCKET = 0140000;
+
+    /// The Linux `S_IFBLK` file type bit used for block devices.
+    protected static final int STAT_MODE_BLOCK_DEVICE = 0060000;
 
     /// The Linux `S_IFDIR` file type bit used for directories.
     protected static final int STAT_MODE_DIRECTORY = 0040000;
@@ -3233,6 +3245,373 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 credentials.effectiveUserId(),
                 createdEntryGroupId(parent));
         return directory == null ? ENOENT : 0;
+    }
+
+    /// Creates a regular filesystem node below a configured filesystem mount.
+    protected long mknodat(long directoryFileDescriptor, long pathAddress, long mode, long device) {
+        int fileType = (int) mode & STAT_MODE_FILE_TYPE;
+        if (fileType != 0 && fileType != STAT_MODE_REGULAR_FILE) {
+            return unsupportedMknodFileType(fileType);
+        }
+
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        if (!canResolvePathFrom(directoryFileDescriptor, guestPath)) {
+            return EBADF;
+        }
+
+        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, guestPath, false);
+        if (tarPath != null) {
+            return mknodTarPath(tarPath, mode);
+        }
+        if (resolveVirtualPath(directoryFileDescriptor, guestPath, false) != null) {
+            return EROFS;
+        }
+
+        @Nullable Path hostFile = resolveHostFile(directoryFileDescriptor, guestPath);
+        if (hostFile == null) {
+            return EACCES;
+        }
+
+        long parentError = validateSandboxedParent(hostFile);
+        if (parentError != 0) {
+            return parentError;
+        }
+        @Nullable Path parent = hostFile.getParent();
+        if (parent == null) {
+            return EACCES;
+        }
+        long parentAccess = accessHostFile(parent, W_OK | X_OK);
+        if (parentAccess != 0) {
+            return parentAccess;
+        }
+        if (hostFileOnReadOnlyMount(hostFile)) {
+            return EROFS;
+        }
+
+        try {
+            if (pathEntryExists(hostFile)) {
+                return EEXIST;
+            }
+            GuestFileMetadata parentMetadata = hostFileMetadata(parent, true);
+            Files.createFile(hostFile);
+            fileMetadataStore.put(
+                    hostFile,
+                    new GuestFileMetadata(
+                            credentials.effectiveUserId(),
+                            createdEntryGroupId(parentMetadata),
+                            createdFileMode(mode)));
+            return 0;
+        } catch (FileAlreadyExistsException exception) {
+            return EEXIST;
+        } catch (IOException | UnsupportedOperationException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Reports the result for a `mknodat` file type this simulator cannot create.
+    protected static long unsupportedMknodFileType(int fileType) {
+        return switch (fileType) {
+            case STAT_MODE_DIRECTORY -> EPERM;
+            case STAT_MODE_FIFO,
+                 STAT_MODE_CHARACTER_DEVICE,
+                 STAT_MODE_BLOCK_DEVICE,
+                 STAT_MODE_SOCKET,
+                 STAT_MODE_SYMBOLIC_LINK -> ENOTSUP;
+            default -> EINVAL;
+        };
+    }
+
+    /// Creates a regular file node in a writable memory tar mount.
+    protected long mknodTarPath(TarPath tarPath, long mode) {
+        TarMount mount = tarPath.mount();
+        if (mount.readOnly()) {
+            return EROFS;
+        }
+        if (tarPath.node() != null) {
+            return EEXIST;
+        }
+        @Nullable TarNode parent = tarParentDirectory(mount, tarPath.guestPath());
+        if (parent == null) {
+            return ENOENT;
+        }
+        if (!canAccessTarDirectory(parent, W_OK | X_OK)) {
+            return EACCES;
+        }
+
+        String relativePath = GuestFileSystem.relativeGuestPath(tarPath.guestPath(), mount.guestPath());
+        @Nullable TarNode file = mount.fileSystem().createFile(
+                relativePath,
+                createdFileMode(mode),
+                credentials.effectiveUserId(),
+                createdEntryGroupId(parent));
+        return file == null ? ENOENT : 0;
+    }
+
+    /// Creates a symbolic link below a configured filesystem mount.
+    protected long symlinkat(long targetAddress, long directoryFileDescriptor, long linkPathAddress) {
+        @Nullable String target = readGuestPath(targetAddress);
+        if (target == null) {
+            return ENAMETOOLONG;
+        }
+        if (target.isEmpty()) {
+            return ENOENT;
+        }
+
+        @Nullable String linkPath = readGuestPath(linkPathAddress);
+        if (linkPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (linkPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        if (!canResolvePathFrom(directoryFileDescriptor, linkPath)) {
+            return EBADF;
+        }
+
+        @Nullable TarPath tarPath = resolveTarPath(directoryFileDescriptor, linkPath, false);
+        if (tarPath != null) {
+            return symlinkTarPath(target, tarPath);
+        }
+        if (resolveVirtualPath(directoryFileDescriptor, linkPath, false) != null) {
+            return EROFS;
+        }
+
+        @Nullable Path hostLink = resolveHostFile(directoryFileDescriptor, linkPath);
+        if (hostLink == null) {
+            return EACCES;
+        }
+
+        long parentError = validateSandboxedParent(hostLink);
+        if (parentError != 0) {
+            return parentError;
+        }
+        @Nullable Path parent = hostLink.getParent();
+        if (parent == null) {
+            return EACCES;
+        }
+        long parentAccess = accessHostFile(parent, W_OK | X_OK);
+        if (parentAccess != 0) {
+            return parentAccess;
+        }
+        if (hostFileOnReadOnlyMount(hostLink)) {
+            return EROFS;
+        }
+
+        try {
+            if (pathEntryExists(hostLink)) {
+                return EEXIST;
+            }
+            Files.createSymbolicLink(hostLink, Path.of(target));
+            return 0;
+        } catch (FileAlreadyExistsException exception) {
+            return EEXIST;
+        } catch (UnsupportedOperationException exception) {
+            return ENOTSUP;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Creates a symbolic link in a writable memory tar mount.
+    protected long symlinkTarPath(String target, TarPath tarPath) {
+        TarMount mount = tarPath.mount();
+        if (mount.readOnly()) {
+            return EROFS;
+        }
+        if (tarPath.node() != null) {
+            return EEXIST;
+        }
+        @Nullable TarNode parent = tarParentDirectory(mount, tarPath.guestPath());
+        if (parent == null) {
+            return ENOENT;
+        }
+        if (!canAccessTarDirectory(parent, W_OK | X_OK)) {
+            return EACCES;
+        }
+
+        String relativePath = GuestFileSystem.relativeGuestPath(tarPath.guestPath(), mount.guestPath());
+        @Nullable TarNode link = mount.fileSystem().createSymbolicLink(
+                relativePath,
+                target,
+                STAT_MODE_ALL,
+                credentials.effectiveUserId(),
+                createdEntryGroupId(parent));
+        return link == null ? ENOENT : 0;
+    }
+
+    /// Creates a hard link below configured filesystem mounts.
+    protected long linkat(
+            long oldDirectoryFileDescriptor,
+            long oldPathAddress,
+            long newDirectoryFileDescriptor,
+            long newPathAddress,
+            long flags) {
+        if ((flags & ~AT_SYMLINK_FOLLOW) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable String oldGuestPath = readGuestPath(oldPathAddress);
+        if (oldGuestPath == null) {
+            return ENAMETOOLONG;
+        }
+        @Nullable String newGuestPath = readGuestPath(newPathAddress);
+        if (newGuestPath == null) {
+            return ENAMETOOLONG;
+        }
+        if (oldGuestPath.isEmpty() || newGuestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        if (!canResolvePathFrom(oldDirectoryFileDescriptor, oldGuestPath)
+                || !canResolvePathFrom(newDirectoryFileDescriptor, newGuestPath)) {
+            return EBADF;
+        }
+
+        @Nullable String oldAbsoluteGuestPath = absoluteGuestPath(oldDirectoryFileDescriptor, oldGuestPath);
+        @Nullable String newAbsoluteGuestPath = absoluteGuestPath(newDirectoryFileDescriptor, newGuestPath);
+        if (oldAbsoluteGuestPath == null || newAbsoluteGuestPath == null) {
+            return EACCES;
+        }
+
+        boolean followOldSymbolicLink = (flags & AT_SYMLINK_FOLLOW) != 0;
+        @Nullable TarPath oldTarPath = fileSystem.resolveTarPath(oldAbsoluteGuestPath, followOldSymbolicLink);
+        @Nullable TarPath newTarPath = fileSystem.resolveTarPath(newAbsoluteGuestPath, false);
+        if (oldTarPath != null || newTarPath != null) {
+            if (oldTarPath == null || newTarPath == null) {
+                return EXDEV;
+            }
+            return linkTarPath(oldTarPath, newTarPath);
+        }
+        if (fileSystem.resolveVirtualPath(oldAbsoluteGuestPath, followOldSymbolicLink) != null
+                || fileSystem.resolveVirtualPath(newAbsoluteGuestPath, false) != null) {
+            return EROFS;
+        }
+
+        @Nullable Path oldHostFile = resolveHostFile(oldDirectoryFileDescriptor, oldGuestPath);
+        @Nullable Path newHostFile = resolveHostFile(newDirectoryFileDescriptor, newGuestPath);
+        if (oldHostFile == null || newHostFile == null) {
+            return EACCES;
+        }
+
+        long newParentError = validateSandboxedParent(newHostFile);
+        if (newParentError != 0) {
+            return newParentError;
+        }
+        @Nullable Path newParent = newHostFile.getParent();
+        if (newParent == null) {
+            return EACCES;
+        }
+        long oldParentAccess;
+        try {
+            oldParentAccess = accessHostParent(oldHostFile);
+        } catch (IOException exception) {
+            return EACCES;
+        }
+        if (oldParentAccess != 0) {
+            return oldParentAccess;
+        }
+        long newParentAccess = accessHostFile(newParent, W_OK | X_OK);
+        if (newParentAccess != 0) {
+            return newParentAccess;
+        }
+        if (hostFileOnReadOnlyMount(newHostFile)) {
+            return EROFS;
+        }
+
+        try {
+            if (!pathEntryExists(oldHostFile)) {
+                return ENOENT;
+            }
+            if (pathEntryExists(newHostFile)) {
+                return EEXIST;
+            }
+
+            Path linkSource = oldHostFile;
+            boolean oldSymbolicLink = Files.isSymbolicLink(oldHostFile);
+            if (followOldSymbolicLink) {
+                linkSource = oldHostFile.toRealPath();
+                if (!canonicalFileStaysBelowMount(linkSource)) {
+                    return EACCES;
+                }
+            } else if (!oldSymbolicLink && !canonicalFileStaysBelowMount(oldHostFile)) {
+                return EACCES;
+            }
+
+            @Nullable HostMount oldMount = mountForHostFile(linkSource);
+            @Nullable HostMount newMount = mountForHostFile(newHostFile);
+            if (oldMount == null || newMount == null) {
+                return EACCES;
+            }
+            if (oldMount != newMount) {
+                return EXDEV;
+            }
+
+            if (Files.isDirectory(linkSource, LinkOption.NOFOLLOW_LINKS)) {
+                return EPERM;
+            }
+            if (!(oldSymbolicLink && !followOldSymbolicLink)
+                    && !Files.isRegularFile(linkSource, LinkOption.NOFOLLOW_LINKS)) {
+                return ENOTSUP;
+            }
+
+            Files.createLink(newHostFile, linkSource);
+            fileMetadataStore.put(newHostFile, hostFileMetadata(linkSource, false));
+            return 0;
+        } catch (FileAlreadyExistsException exception) {
+            return EEXIST;
+        } catch (NoSuchFileException exception) {
+            return ENOENT;
+        } catch (UnsupportedOperationException exception) {
+            return ENOTSUP;
+        } catch (IOException | SecurityException exception) {
+            return EACCES;
+        }
+    }
+
+    /// Creates a hard link in a writable memory tar mount.
+    protected long linkTarPath(TarPath oldTarPath, TarPath newTarPath) {
+        TarMount mount = oldTarPath.mount();
+        if (mount != newTarPath.mount()) {
+            return EXDEV;
+        }
+        if (mount.readOnly()) {
+            return EROFS;
+        }
+
+        @Nullable TarNode oldNode = oldTarPath.node();
+        if (oldNode == null) {
+            return ENOENT;
+        }
+        if (oldNode.isDirectory()) {
+            return EPERM;
+        }
+        if (!oldNode.isFile()) {
+            return ENOTSUP;
+        }
+        if (!canSearchTarAncestors(oldNode)) {
+            return EACCES;
+        }
+        if (newTarPath.node() != null) {
+            return EEXIST;
+        }
+        @Nullable TarNode newParent = tarParentDirectory(mount, newTarPath.guestPath());
+        if (newParent == null) {
+            return ENOENT;
+        }
+        if (!canAccessTarDirectory(newParent, W_OK | X_OK)) {
+            return EACCES;
+        }
+
+        String relativePath = GuestFileSystem.relativeGuestPath(newTarPath.guestPath(), mount.guestPath());
+        return mount.fileSystem().createHardLink(relativePath, oldNode) == null ? ENOENT : 0;
     }
 
     /// Removes a file or empty directory below a configured filesystem mount.

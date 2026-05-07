@@ -22,7 +22,7 @@
 ### Filesystems And Devices
 
 - The filesystem layer supports Docker-like bind/tar/tmpfs mounts, gzip-compressed memory tar mounts with fork-inherited writable state, virtual `/proc`, minimal virtual `/sys`, Linux-like `/dev` with a basic `/dev/ptmx` and `/dev/pts/0` pseudoterminal pair, and resolver-file fallback for rootfs images with broken `/etc/resolv.conf` symlinks.
-- Filesystem metadata includes guest-visible uid, gid, chmod mode bits, process `umask`, Linux-style DAC, setgid directory inheritance, sticky-directory mutation checks, and ancestor-directory search checks.
+- Filesystem metadata and mutation include guest-visible uid, gid, chmod mode bits, process `umask`, Linux-style DAC, setgid directory inheritance, sticky-directory mutation checks, ancestor-directory search checks, regular node creation, and symbolic/hard link creation on writable host and tmpfs-style mounts.
 - Filesystem namespace and mount-spec parsing live under `org.glavo.riscv.runtime.fs`; host paths use `java.nio.file.Path` directly.
 
 ### Networking

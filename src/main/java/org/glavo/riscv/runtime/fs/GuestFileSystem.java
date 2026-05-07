@@ -1079,6 +1079,38 @@ public final class GuestFileSystem {
             return node;
         }
 
+        /// Creates a symbolic link below an existing directory.
+        public @Nullable TarNode createSymbolicLink(String path, String target, int mode, long userId, long groupId) {
+            @Nullable TarNode parent = existingParentDirectory(path);
+            if (parent == null) {
+                return null;
+            }
+            TarNode node = TarNode.symbolicLink(leafName(path), path, parent, target, mode, userId, groupId);
+            parent.children.put(leafName(path), node);
+            return node;
+        }
+
+        /// Creates a regular-file hard link below an existing directory.
+        public @Nullable TarNode createHardLink(String path, TarNode target) {
+            if (!target.isFile()) {
+                return null;
+            }
+            @Nullable TarNode parent = existingParentDirectory(path);
+            if (parent == null) {
+                return null;
+            }
+            TarNode node = TarNode.file(
+                    leafName(path),
+                    path,
+                    parent,
+                    target.fileData(),
+                    target.permissions(),
+                    target.userId(),
+                    target.groupId());
+            parent.children.put(leafName(path), node);
+            return node;
+        }
+
         /// Removes a node from its parent directory.
         public boolean removeNode(TarNode node) {
             @Nullable TarNode parent = node.parent();

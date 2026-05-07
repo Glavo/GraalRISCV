@@ -193,11 +193,20 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
 
+    /// The Linux RISC-V syscall number for `mknodat`.
+    private static final long SYS_MKNODAT = 33;
+
     /// The Linux RISC-V syscall number for `mkdirat`.
     private static final long SYS_MKDIRAT = 34;
 
     /// The Linux RISC-V syscall number for `unlinkat`.
     private static final long SYS_UNLINKAT = 35;
+
+    /// The Linux RISC-V syscall number for `symlinkat`.
+    private static final long SYS_SYMLINKAT = 36;
+
+    /// The Linux RISC-V syscall number for `linkat`.
+    private static final long SYS_LINKAT = 37;
 
     /// The Linux RISC-V syscall number for `renameat`.
     private static final long SYS_RENAMEAT = 38;
@@ -760,6 +769,18 @@ public final class GuestSyscallsTest {
     /// The expected `st_mode` value for pipe endpoints.
     private static final int PIPE_STAT_MODE = 0010000 | 0444;
 
+    /// The Linux `S_IFMT` file type bits.
+    private static final int STAT_MODE_FILE_TYPE = 0170000;
+
+    /// The Linux `S_IFIFO` file type bit.
+    private static final int STAT_MODE_FIFO = 0010000;
+
+    /// The Linux `S_IFDIR` file type bit.
+    private static final int STAT_MODE_DIRECTORY = 0040000;
+
+    /// The Linux `S_IFREG` file type bit.
+    private static final int STAT_MODE_REGULAR_FILE = 0100000;
+
     /// The expected `st_mode` value for guest-created regular host files with mode 0644.
     private static final int CREATED_REGULAR_FILE_STAT_MODE = 0100000 | 0644;
 
@@ -903,6 +924,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `AT_EACCESS`.
     private static final long AT_EACCESS = 0x200;
+
+    /// Linux `AT_SYMLINK_FOLLOW`.
+    private static final long AT_SYMLINK_FOLLOW = 0x400;
 
     /// Linux `AT_REMOVEDIR`.
     private static final long AT_REMOVEDIR = 0x200;
@@ -3287,6 +3311,81 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies tmpfs mounts support node creation, symbolic links, and hard links.
+    @Test
+    public void tmpfsMountSupportsMknodAndLinkCreation() throws Exception {
+        GuestFileSystem fileSystem = GuestFileSystem.forMountSpecs(new String[]{
+                "type=tmpfs,dst=/tmp"
+        });
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    fileSystem);
+            long sourcePathAddress = memory.baseAddress();
+            long hardPathAddress = memory.baseAddress() + 128;
+            long targetAddress = memory.baseAddress() + 256;
+            long linkPathAddress = memory.baseAddress() + 384;
+            long dataAddress = memory.baseAddress() + 512;
+            long statAddress = memory.baseAddress() + 768;
+            byte[] data = "linked-data".getBytes(StandardCharsets.UTF_8);
+
+            writeGuestString(memory, sourcePathAddress, "/tmp/source.txt");
+            setSyscall(state, SYS_MKNODAT, AT_FDCWD, sourcePathAddress, STAT_MODE_REGULAR_FILE | 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, sourcePathAddress, O_WRONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int writeFileDescriptor = (int) state.register(10);
+            assertEquals(3, writeFileDescriptor);
+
+            memory.writeBytes(dataAddress, data, 0, data.length);
+            setSyscall(state, SYS_WRITE, writeFileDescriptor, dataAddress, data.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(data.length, state.register(10));
+
+            setSyscall(state, SYS_CLOSE, writeFileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, hardPathAddress, "/tmp/hard.txt");
+            setSyscall(state, SYS_LINKAT, AT_FDCWD, sourcePathAddress, AT_FDCWD, hardPathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeGuestString(memory, targetAddress, "source.txt");
+            writeGuestString(memory, linkPathAddress, "/tmp/link.txt");
+            setSyscall(state, SYS_SYMLINKAT, targetAddress, AT_FDCWD, linkPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, linkPathAddress, dataAddress, 32);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("source.txt".length(), state.register(10));
+            assertArrayEquals("source.txt".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(dataAddress, "source.txt".length()));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, linkPathAddress, statAddress, AT_SYMLINK_NOFOLLOW);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(SYMBOLIC_LINK_STAT_MODE, memory.readInt(statAddress + STAT_MODE_OFFSET));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, hardPathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int readFileDescriptor = (int) state.register(10);
+            assertEquals(3, readFileDescriptor);
+
+            setSyscall(state, SYS_READ, readFileDescriptor, dataAddress, data.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(data.length, state.register(10));
+            assertEquals("linked-data", readGuestString(memory, dataAddress, data.length));
+        }
+    }
+
     /// Verifies that `umask` masks host file and directory creation modes.
     @Test
     public void umaskMasksHostCreatedEntryModes() throws Exception {
@@ -3609,6 +3708,168 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_READLINKAT, AT_FDCWD, pathAddress, bufferAddress, 64);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies that `mknodat` creates regular files and rejects unsupported node types.
+    @Test
+    public void mknodatCreatesRegularFilesAndValidatesNodeTypes() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "node.txt");
+            setSyscall(state, SYS_MKNODAT, AT_FDCWD, pathAddress, STAT_MODE_REGULAR_FILE | 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.isRegularFile(tempDirectory.resolve("node.txt")));
+            assertEquals(0, Files.size(tempDirectory.resolve("node.txt")));
+
+            setSyscall(state, SYS_NEWFSTATAT, AT_FDCWD, pathAddress, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int createdMode = memory.readInt(statAddress + STAT_MODE_OFFSET);
+            assertEquals(STAT_MODE_REGULAR_FILE, createdMode & STAT_MODE_FILE_TYPE);
+            assertEquals(CREATED_REGULAR_FILE_STAT_MODE, createdMode);
+
+            setSyscall(state, SYS_MKNODAT, AT_FDCWD, pathAddress, STAT_MODE_REGULAR_FILE | 0600, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EEXIST, state.register(10));
+
+            writeGuestString(memory, pathAddress, "pipe");
+            setSyscall(state, SYS_MKNODAT, AT_FDCWD, pathAddress, STAT_MODE_FIFO | 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
+
+            writeGuestString(memory, pathAddress, "directory");
+            setSyscall(state, SYS_MKNODAT, AT_FDCWD, pathAddress, STAT_MODE_DIRECTORY | 0755, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            writeGuestString(memory, pathAddress, "missing/node.txt");
+            setSyscall(state, SYS_MKNODAT, AT_FDCWD, pathAddress, STAT_MODE_REGULAR_FILE | 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "node.txt");
+            setSyscall(state, SYS_MKNODAT, 99, pathAddress, STAT_MODE_REGULAR_FILE | 0644, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `symlinkat` creates sandboxed symbolic links when the host supports them.
+    @Test
+    public void symlinkatCreatesSandboxedSymlinkTargets() throws Exception {
+        Files.writeString(tempDirectory.resolve("target.txt"), "target", StandardCharsets.UTF_8);
+        Path probeLink = tempDirectory.resolve("probe-link.txt");
+        try {
+            Files.createSymbolicLink(probeLink, Path.of("target.txt"));
+            Files.deleteIfExists(probeLink);
+        } catch (IOException | SecurityException | UnsupportedOperationException exception) {
+            assumeTrue(false, "Host filesystem does not allow symbolic link creation");
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long targetAddress = memory.baseAddress();
+            long linkPathAddress = memory.baseAddress() + 128;
+            long bufferAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, targetAddress, "target.txt");
+            writeGuestString(memory, linkPathAddress, "link.txt");
+            setSyscall(state, SYS_SYMLINKAT, targetAddress, AT_FDCWD, linkPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertTrue(Files.isSymbolicLink(tempDirectory.resolve("link.txt")));
+            assertEquals(Path.of("target.txt"), Files.readSymbolicLink(tempDirectory.resolve("link.txt")));
+
+            setSyscall(state, SYS_READLINKAT, AT_FDCWD, linkPathAddress, bufferAddress, 64);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("target.txt".length(), state.register(10));
+            assertArrayEquals("target.txt".getBytes(StandardCharsets.UTF_8),
+                    memory.readBytes(bufferAddress, "target.txt".length()));
+
+            setSyscall(state, SYS_SYMLINKAT, targetAddress, AT_FDCWD, linkPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EEXIST, state.register(10));
+
+            writeGuestString(memory, linkPathAddress, "missing/link.txt");
+            setSyscall(state, SYS_SYMLINKAT, targetAddress, AT_FDCWD, linkPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, linkPathAddress, "bad.txt");
+            setSyscall(state, SYS_SYMLINKAT, targetAddress, 99, linkPathAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `linkat` creates sandboxed hard links when the host supports them.
+    @Test
+    public void linkatCreatesSandboxedHardLinks() throws Exception {
+        Files.writeString(tempDirectory.resolve("target.txt"), "target", StandardCharsets.UTF_8);
+        Path probeLink = tempDirectory.resolve("probe-hard.txt");
+        try {
+            Files.createLink(probeLink, tempDirectory.resolve("target.txt"));
+            Files.deleteIfExists(probeLink);
+        } catch (IOException | SecurityException | UnsupportedOperationException exception) {
+            assumeTrue(false, "Host filesystem does not allow hard link creation");
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long oldPathAddress = memory.baseAddress();
+            long newPathAddress = memory.baseAddress() + 128;
+
+            writeGuestString(memory, oldPathAddress, "target.txt");
+            writeGuestString(memory, newPathAddress, "hard.txt");
+            setSyscall(state, SYS_LINKAT, AT_FDCWD, oldPathAddress, AT_FDCWD, newPathAddress, AT_SYMLINK_FOLLOW);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals("target", Files.readString(tempDirectory.resolve("hard.txt"), StandardCharsets.UTF_8));
+
+            Files.writeString(tempDirectory.resolve("hard.txt"), "changed", StandardCharsets.UTF_8);
+            assertEquals("changed", Files.readString(tempDirectory.resolve("target.txt"), StandardCharsets.UTF_8));
+
+            setSyscall(state, SYS_LINKAT, AT_FDCWD, oldPathAddress, AT_FDCWD, newPathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EEXIST, state.register(10));
+
+            writeGuestString(memory, oldPathAddress, "missing.txt");
+            writeGuestString(memory, newPathAddress, "missing-hard.txt");
+            setSyscall(state, SYS_LINKAT, AT_FDCWD, oldPathAddress, AT_FDCWD, newPathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, oldPathAddress, "target.txt");
+            setSyscall(state, SYS_LINKAT, AT_FDCWD, oldPathAddress, AT_FDCWD, newPathAddress, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_LINKAT, 99, oldPathAddress, AT_FDCWD, newPathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
         }
     }
 

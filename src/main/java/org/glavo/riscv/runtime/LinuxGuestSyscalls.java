@@ -5830,11 +5830,20 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final int SYS_IOCTL = 29;
 
+    /// The Linux RISC-V syscall number for `mknodat`.
+    private static final int SYS_MKNODAT = 33;
+
     /// The Linux RISC-V syscall number for `mkdirat`.
     private static final int SYS_MKDIRAT = 34;
 
     /// The Linux RISC-V syscall number for `unlinkat`.
     private static final int SYS_UNLINKAT = 35;
+
+    /// The Linux RISC-V syscall number for `symlinkat`.
+    private static final int SYS_SYMLINKAT = 36;
+
+    /// The Linux RISC-V syscall number for `linkat`.
+    private static final int SYS_LINKAT = 37;
 
     /// The Linux RISC-V syscall number for `renameat`.
     private static final int SYS_RENAMEAT = 38;
@@ -6408,8 +6417,23 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_DUP3 -> state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
             case SYS_FCNTL -> state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
             case SYS_IOCTL -> state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_MKNODAT -> state.setRegister(10, mknodat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_MKDIRAT -> state.setRegister(10, mkdirat(state.register(10), state.register(11), state.register(12)));
             case SYS_UNLINKAT -> state.setRegister(10, unlinkat(state.register(10), state.register(11), state.register(12)));
+            case SYS_SYMLINKAT -> state.setRegister(10, symlinkat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_LINKAT -> state.setRegister(10, linkat(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_RENAMEAT -> state.setRegister(10, renameat(
                     state.register(10),
                     state.register(11),
