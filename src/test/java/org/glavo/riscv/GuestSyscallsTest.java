@@ -157,6 +157,15 @@ public final class GuestSyscallsTest {
     /// Linux `ETIMEDOUT` as a raw negative syscall result.
     private static final long ETIMEDOUT = -110;
 
+    /// The Linux RISC-V syscall number for `setxattr`.
+    private static final long SYS_SETXATTR = 5;
+
+    /// The Linux RISC-V syscall number for `lsetxattr`.
+    private static final long SYS_LSETXATTR = 6;
+
+    /// The Linux RISC-V syscall number for `fsetxattr`.
+    private static final long SYS_FSETXATTR = 7;
+
     /// The Linux RISC-V syscall number for `getxattr`.
     private static final long SYS_GETXATTR = 8;
 
@@ -165,6 +174,15 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `flistxattr`.
     private static final long SYS_FLISTXATTR = 13;
+
+    /// The Linux RISC-V syscall number for `removexattr`.
+    private static final long SYS_REMOVEXATTR = 14;
+
+    /// The Linux RISC-V syscall number for `lremovexattr`.
+    private static final long SYS_LREMOVEXATTR = 15;
+
+    /// The Linux RISC-V syscall number for `fremovexattr`.
+    private static final long SYS_FREMOVEXATTR = 16;
 
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final long SYS_GETCWD = 17;
@@ -192,6 +210,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `ioprio_set`.
+    private static final long SYS_IOPRIO_SET = 30;
+
+    /// The Linux RISC-V syscall number for `ioprio_get`.
+    private static final long SYS_IOPRIO_GET = 31;
 
     /// The Linux RISC-V syscall number for `flock`.
     private static final long SYS_FLOCK = 32;
@@ -1143,6 +1167,30 @@ public final class GuestSyscallsTest {
 
     /// Linux `F_DUPFD_CLOEXEC`.
     private static final long F_DUPFD_CLOEXEC = 1030;
+
+    /// Linux `XATTR_CREATE`.
+    private static final long XATTR_CREATE = 0x1;
+
+    /// Linux `XATTR_REPLACE`.
+    private static final long XATTR_REPLACE = 0x2;
+
+    /// Linux `IOPRIO_WHO_PROCESS`.
+    private static final long IOPRIO_WHO_PROCESS = 1;
+
+    /// Linux `IOPRIO_WHO_PGRP`.
+    private static final long IOPRIO_WHO_PROCESS_GROUP = 2;
+
+    /// Linux `IOPRIO_WHO_USER`.
+    private static final long IOPRIO_WHO_USER = 3;
+
+    /// Linux `IOPRIO_CLASS_BE`.
+    private static final long IOPRIO_CLASS_BEST_EFFORT = 2;
+
+    /// Linux `IOPRIO_CLASS_IDLE`.
+    private static final long IOPRIO_CLASS_IDLE = 3;
+
+    /// Linux ioprio class bit shift.
+    private static final int IOPRIO_CLASS_SHIFT = 13;
 
     /// Linux `LOCK_SH`.
     private static final long LOCK_SH = 1;
@@ -2781,6 +2829,89 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_LISTXATTR, pathAddress, bufferAddress, 16);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(ENOENT, state.register(10));
+        }
+    }
+
+    /// Verifies extended-attribute mutation syscalls report deterministic unsupported or missing results.
+    @Test
+    public void xattrMutationsValidateRequestsAndReportUnsupportedAttributes() throws Exception {
+        Files.writeString(tempDirectory.resolve("readable.txt"), "data", StandardCharsets.UTF_8);
+        try {
+            Files.createSymbolicLink(tempDirectory.resolve("link.txt"), Path.of("readable.txt"));
+        } catch (IOException | SecurityException | UnsupportedOperationException exception) {
+            assumeTrue(false, "Host filesystem does not allow symbolic link creation");
+        }
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long nameAddress = memory.baseAddress() + 128;
+            long valueAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "readable.txt");
+            writeGuestString(memory, nameAddress, "user.test");
+            memory.writeBytes(valueAddress, new byte[]{1, 2, 3, 4}, 0, 4);
+
+            setSyscall(state, SYS_SETXATTR, pathAddress, nameAddress, valueAddress, 4, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
+
+            writeGuestString(memory, pathAddress, "link.txt");
+            setSyscall(state, SYS_LSETXATTR, pathAddress, nameAddress, valueAddress, 4, XATTR_CREATE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
+
+            writeGuestString(memory, pathAddress, "readable.txt");
+            setSyscall(state, SYS_SETXATTR, pathAddress, nameAddress, valueAddress, 4, XATTR_CREATE | XATTR_REPLACE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SETXATTR, pathAddress, nameAddress, memory.endAddress(), 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FSETXATTR, fileDescriptor, nameAddress, valueAddress, 4, XATTR_REPLACE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTSUP, state.register(10));
+
+            setSyscall(state, SYS_FSETXATTR, -1, nameAddress, valueAddress, 4, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_REMOVEXATTR, pathAddress, nameAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENODATA, state.register(10));
+
+            writeGuestString(memory, pathAddress, "link.txt");
+            setSyscall(state, SYS_LREMOVEXATTR, pathAddress, nameAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENODATA, state.register(10));
+
+            setSyscall(state, SYS_FREMOVEXATTR, fileDescriptor, nameAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENODATA, state.register(10));
+
+            writeGuestString(memory, pathAddress, "missing.txt");
+            setSyscall(state, SYS_REMOVEXATTR, pathAddress, nameAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, nameAddress, "");
+            writeGuestString(memory, pathAddress, "readable.txt");
+            setSyscall(state, SYS_REMOVEXATTR, pathAddress, nameAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENODATA, state.register(10));
         }
     }
 
@@ -8644,6 +8775,49 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_GETCPU, 0, 0, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(0, state.register(10));
+        }
+    }
+
+    /// Verifies deterministic Linux I/O priority helper syscalls.
+    @Test
+    public void ioPriorityHelpersValidateTargetsAndPriorities() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long bestEffortPriority = (IOPRIO_CLASS_BEST_EFFORT << IOPRIO_CLASS_SHIFT) | 4;
+            long idlePriority = IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT;
+
+            setSyscall(state, SYS_IOPRIO_GET, IOPRIO_WHO_PROCESS, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_IOPRIO_SET, IOPRIO_WHO_PROCESS, 0, bestEffortPriority);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_IOPRIO_SET, IOPRIO_WHO_PROCESS_GROUP, 0, bestEffortPriority);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_IOPRIO_SET, IOPRIO_WHO_USER, 0, idlePriority);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_IOPRIO_GET, IOPRIO_WHO_PROCESS, 9999, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_IOPRIO_GET, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_IOPRIO_SET, IOPRIO_WHO_PROCESS, 0, 4L << IOPRIO_CLASS_SHIFT);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_IOPRIO_SET, IOPRIO_WHO_PROCESS, 0,
+                    (IOPRIO_CLASS_BEST_EFFORT << IOPRIO_CLASS_SHIFT) | 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
         }
     }
 

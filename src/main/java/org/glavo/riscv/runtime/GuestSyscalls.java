@@ -533,6 +533,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `F_DUPFD_CLOEXEC`.
     protected static final long F_DUPFD_CLOEXEC = 1030;
 
+    /// Linux `XATTR_CREATE`.
+    protected static final long XATTR_CREATE = 0x1;
+
+    /// Linux `XATTR_REPLACE`.
+    protected static final long XATTR_REPLACE = 0x2;
+
+    /// Linux extended-attribute mutation flags accepted by this simulator.
+    protected static final long SUPPORTED_XATTR_FLAGS = XATTR_CREATE | XATTR_REPLACE;
+
     /// Linux `F_UNLCK`.
     protected static final short F_UNLCK = 2;
 
@@ -6728,6 +6737,52 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return emptyXattrList(listAddress, size);
     }
 
+    /// Reports unsupported extended-attribute mutation for a mounted guest path.
+    protected long setxattr(
+            long pathAddress,
+            long nameAddress,
+            long valueAddress,
+            long size,
+            long flags,
+            boolean followFinalSymlink) {
+        long requestResult = validateSetxattrRequest(nameAddress, valueAddress, size, flags);
+        if (requestResult != 0) {
+            return requestResult;
+        }
+
+        long pathResult = validateXattrPath(pathAddress, followFinalSymlink);
+        return pathResult == 0 ? ENOTSUP : pathResult;
+    }
+
+    /// Reports unsupported extended-attribute mutation for an open guest file descriptor.
+    protected long fsetxattr(int fileDescriptor, long nameAddress, long valueAddress, long size, long flags) {
+        long requestResult = validateSetxattrRequest(nameAddress, valueAddress, size, flags);
+        if (requestResult != 0) {
+            return requestResult;
+        }
+        return isOpenFileDescriptor(fileDescriptor) ? ENOTSUP : EBADF;
+    }
+
+    /// Reports that an extended attribute does not exist on a mounted guest path.
+    protected long removexattr(long pathAddress, long nameAddress, boolean followFinalSymlink) {
+        long nameResult = validateXattrName(nameAddress);
+        if (nameResult != 0) {
+            return nameResult;
+        }
+
+        long pathResult = validateXattrPath(pathAddress, followFinalSymlink);
+        return pathResult == 0 ? ENODATA : pathResult;
+    }
+
+    /// Reports that an extended attribute does not exist on an open guest file descriptor.
+    protected long fremovexattr(int fileDescriptor, long nameAddress) {
+        long nameResult = validateXattrName(nameAddress);
+        if (nameResult != 0) {
+            return nameResult;
+        }
+        return isOpenFileDescriptor(fileDescriptor) ? ENODATA : EBADF;
+    }
+
     /// Validates a path argument for extended-attribute queries.
     protected long validateXattrPath(long pathAddress, boolean followFinalSymlink) {
         String guestPath;
@@ -6759,18 +6814,43 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return hostFile == null ? EACCES : accessHostFile(hostFile, F_OK);
     }
 
-    /// Reports that the requested extended attribute does not exist.
-    protected long getMissingXattr(long nameAddress, long valueAddress, long size) {
-        if (size < 0) {
+    /// Validates the name, value buffer, and flags supplied to `setxattr`.
+    protected long validateSetxattrRequest(long nameAddress, long valueAddress, long size, long flags) {
+        if (size < 0 || (flags & ~SUPPORTED_XATTR_FLAGS) != 0 || flags == SUPPORTED_XATTR_FLAGS) {
             return EINVAL;
         }
+
+        long nameResult = validateXattrName(nameAddress);
+        if (nameResult != 0) {
+            return nameResult;
+        }
+        if (size > 0 && !memory.isBacked(valueAddress, size)) {
+            return EFAULT;
+        }
+        return 0;
+    }
+
+    /// Validates an extended-attribute name pointer.
+    protected long validateXattrName(long nameAddress) {
         try {
             @Nullable String name = readGuestPath(nameAddress);
             if (name == null) {
                 return ENAMETOOLONG;
             }
+            return name.isEmpty() ? ENODATA : 0;
         } catch (RiscVException exception) {
             return EFAULT;
+        }
+    }
+
+    /// Reports that the requested extended attribute does not exist.
+    protected long getMissingXattr(long nameAddress, long valueAddress, long size) {
+        if (size < 0) {
+            return EINVAL;
+        }
+        long nameResult = validateXattrName(nameAddress);
+        if (nameResult != 0) {
+            return nameResult;
         }
         return ENODATA;
     }

@@ -350,6 +350,36 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The raw Linux syscall value for nice level zero.
     private static final long DEFAULT_RAW_PRIORITY = 20;
 
+    /// Linux `IOPRIO_WHO_PROCESS`.
+    private static final long IOPRIO_WHO_PROCESS = 1;
+
+    /// Linux `IOPRIO_WHO_PGRP`.
+    private static final long IOPRIO_WHO_PROCESS_GROUP = 2;
+
+    /// Linux `IOPRIO_WHO_USER`.
+    private static final long IOPRIO_WHO_USER = 3;
+
+    /// Linux `IOPRIO_CLASS_NONE`.
+    private static final long IOPRIO_CLASS_NONE = 0;
+
+    /// Linux `IOPRIO_CLASS_RT`.
+    private static final long IOPRIO_CLASS_REALTIME = 1;
+
+    /// Linux `IOPRIO_CLASS_BE`.
+    private static final long IOPRIO_CLASS_BEST_EFFORT = 2;
+
+    /// Linux `IOPRIO_CLASS_IDLE`.
+    private static final long IOPRIO_CLASS_IDLE = 3;
+
+    /// Linux ioprio class bit shift.
+    private static final int IOPRIO_CLASS_SHIFT = 13;
+
+    /// Linux ioprio low data bits.
+    private static final long IOPRIO_DATA_MASK = (1L << IOPRIO_CLASS_SHIFT) - 1;
+
+    /// The deterministic default ioprio value exposed by this simulator.
+    private static final long DEFAULT_IOPRIO = 0;
+
     /// The byte offset of `version` inside `struct __user_cap_header_struct`.
     private static final long CAPABILITY_HEADER_VERSION_OFFSET = 0;
 
@@ -1434,6 +1464,64 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Returns the deterministic raw Linux priority for an existing target.
     protected long getpriority(long which, long who) {
         return priorityTargetExists(which, who) ? DEFAULT_RAW_PRIORITY : priorityTargetError(which);
+    }
+
+    /// Accepts Linux I/O priority updates for known deterministic targets.
+    protected long ioprioSet(long which, long who, long priority) {
+        long priorityError = validateIoprio(priority);
+        if (priorityError != 0) {
+            return priorityError;
+        }
+        return ioprioTargetExists(which, who) ? 0 : ioprioTargetError(which);
+    }
+
+    /// Returns the deterministic Linux I/O priority for known targets.
+    protected long ioprioGet(long which, long who) {
+        return ioprioTargetExists(which, who) ? DEFAULT_IOPRIO : ioprioTargetError(which);
+    }
+
+    /// Validates one Linux I/O priority value.
+    protected static long validateIoprio(long priority) {
+        if (priority < 0 || priority > 0xffff) {
+            return EINVAL;
+        }
+
+        long priorityClass = priority >>> IOPRIO_CLASS_SHIFT;
+        long priorityData = priority & IOPRIO_DATA_MASK;
+        if (priorityClass != IOPRIO_CLASS_NONE
+                && priorityClass != IOPRIO_CLASS_REALTIME
+                && priorityClass != IOPRIO_CLASS_BEST_EFFORT
+                && priorityClass != IOPRIO_CLASS_IDLE) {
+            return EINVAL;
+        }
+        if (priorityClass == IOPRIO_CLASS_NONE) {
+            return priorityData == 0 ? 0 : EINVAL;
+        }
+        if (priorityClass == IOPRIO_CLASS_IDLE) {
+            return priorityData == 0 ? 0 : EINVAL;
+        }
+        return priorityData <= 7 ? 0 : EINVAL;
+    }
+
+    /// Returns true when an I/O priority syscall target exists in this runtime.
+    protected boolean ioprioTargetExists(long which, long who) {
+        if (which == IOPRIO_WHO_PROCESS) {
+            return priorityTargetExists(PRIO_PROCESS, who);
+        }
+        if (which == IOPRIO_WHO_PROCESS_GROUP) {
+            return priorityTargetExists(PRIO_PROCESS_GROUP, who);
+        }
+        if (which == IOPRIO_WHO_USER) {
+            return priorityTargetExists(PRIO_USER, who);
+        }
+        return false;
+    }
+
+    /// Returns the raw Linux error for an I/O priority target lookup.
+    protected static long ioprioTargetError(long which) {
+        return which == IOPRIO_WHO_PROCESS
+                || which == IOPRIO_WHO_PROCESS_GROUP
+                || which == IOPRIO_WHO_USER ? ESRCH : EINVAL;
     }
 
     /// Returns true when a priority syscall target exists in this runtime.
@@ -5785,6 +5873,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         signalTrampolineAddress = parent.signalTrampolineAddress;
     }
 
+    /// The Linux RISC-V syscall number for `setxattr`.
+    private static final int SYS_SETXATTR = 5;
+
+    /// The Linux RISC-V syscall number for `lsetxattr`.
+    private static final int SYS_LSETXATTR = 6;
+
+    /// The Linux RISC-V syscall number for `fsetxattr`.
+    private static final int SYS_FSETXATTR = 7;
+
     /// The Linux RISC-V syscall number for `getxattr`.
     private static final int SYS_GETXATTR = 8;
 
@@ -5802,6 +5899,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `flistxattr`.
     private static final int SYS_FLISTXATTR = 13;
+
+    /// The Linux RISC-V syscall number for `removexattr`.
+    private static final int SYS_REMOVEXATTR = 14;
+
+    /// The Linux RISC-V syscall number for `lremovexattr`.
+    private static final int SYS_LREMOVEXATTR = 15;
+
+    /// The Linux RISC-V syscall number for `fremovexattr`.
+    private static final int SYS_FREMOVEXATTR = 16;
 
     /// The Linux RISC-V syscall number for `getcwd`.
     private static final int SYS_GETCWD = 17;
@@ -5829,6 +5935,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final int SYS_IOCTL = 29;
+
+    /// The Linux RISC-V syscall number for `ioprio_set`.
+    private static final int SYS_IOPRIO_SET = 30;
+
+    /// The Linux RISC-V syscall number for `ioprio_get`.
+    private static final int SYS_IOPRIO_GET = 31;
 
     /// The Linux RISC-V syscall number for `flock`.
     private static final int SYS_FLOCK = 32;
@@ -6369,6 +6481,26 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         long previousMask = state.enterSyscallPointerMask();
         try {
             switch ((int) callNumber) {
+                case SYS_SETXATTR -> state.setRegister(10, setxattr(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13),
+                        state.register(14),
+                        true));
+                case SYS_LSETXATTR -> state.setRegister(10, setxattr(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13),
+                        state.register(14),
+                        false));
+                case SYS_FSETXATTR -> state.setRegister(10, fsetxattr(
+                        (int) state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13),
+                        state.register(14)));
                 case SYS_GETXATTR -> state.setRegister(10, getxattr(
                         state.register(10),
                         state.register(11),
@@ -6400,6 +6532,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                         (int) state.register(10),
                         state.register(11),
                         state.register(12)));
+                case SYS_REMOVEXATTR -> state.setRegister(10, removexattr(
+                        state.register(10),
+                        state.register(11),
+                        true));
+                case SYS_LREMOVEXATTR -> state.setRegister(10, removexattr(
+                        state.register(10),
+                        state.register(11),
+                        false));
+                case SYS_FREMOVEXATTR -> state.setRegister(10, fremovexattr(
+                        (int) state.register(10),
+                        state.register(11)));
                 case SYS_GETCWD -> state.setRegister(10, getcwd(state.register(10), state.register(11)));
             case SYS_EVENTFD2 -> state.setRegister(10, eventfd2(state.register(10), state.register(11)));
             case SYS_EPOLL_CREATE1 -> state.setRegister(10, epollCreate1(state.register(10)));
@@ -6420,6 +6563,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_DUP3 -> state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
             case SYS_FCNTL -> state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
             case SYS_IOCTL -> state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_IOPRIO_SET -> state.setRegister(10, ioprioSet(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_IOPRIO_GET -> state.setRegister(10, ioprioGet(state.register(10), state.register(11)));
             case SYS_FLOCK -> state.setRegister(10, flock((int) state.register(10), state.register(11)));
             case SYS_MKNODAT -> state.setRegister(10, mknodat(
                     state.register(10),
