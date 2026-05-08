@@ -65,6 +65,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The backend used for guest Internet sockets.
     private GuestNetworkBackend networkBackend = GuestNetworkMode.NONE.backend();
 
+    /// The Linux UTS nodename reported by `uname`.
+    private String hostName = "localhost";
+
+    /// The Linux NIS domain name reported by `uname`.
+    private String domainName = "localdomain";
+
     /// Creates a Linux syscall handler backed by the supplied host streams and heap boundary.
     public LinuxGuestSyscalls(
             Memory memory,
@@ -1589,12 +1595,56 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     protected long uname(long utsnameAddress) {
         memory.clear(utsnameAddress, UTSNAME_SIZE);
         writeNullTerminatedAscii(utsnameAddress + UTSNAME_SYSNAME_OFFSET, "Linux", UTSNAME_FIELD_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_NODENAME_OFFSET, "localhost", UTSNAME_FIELD_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_NODENAME_OFFSET, hostName, UTSNAME_FIELD_SIZE);
         writeNullTerminatedAscii(utsnameAddress + UTSNAME_RELEASE_OFFSET, "6.12.0", UTSNAME_FIELD_SIZE);
         writeNullTerminatedAscii(utsnameAddress + UTSNAME_VERSION_OFFSET, "#1 SMP", UTSNAME_FIELD_SIZE);
         writeNullTerminatedAscii(utsnameAddress + UTSNAME_MACHINE_OFFSET, "riscv64", UTSNAME_FIELD_SIZE);
-        writeNullTerminatedAscii(utsnameAddress + UTSNAME_DOMAINNAME_OFFSET, "localdomain", UTSNAME_FIELD_SIZE);
+        writeNullTerminatedAscii(utsnameAddress + UTSNAME_DOMAINNAME_OFFSET, domainName, UTSNAME_FIELD_SIZE);
         return 0;
+    }
+
+    /// Updates the Linux UTS nodename for this guest process namespace.
+    protected long sethostname(long nameAddress, long length) {
+        long result = setUtsName(nameAddress, length);
+        if (result < 0) {
+            return result;
+        }
+        hostName = readUtsName(nameAddress, length);
+        return 0;
+    }
+
+    /// Updates the Linux NIS domain name for this guest process namespace.
+    protected long setdomainname(long nameAddress, long length) {
+        long result = setUtsName(nameAddress, length);
+        if (result < 0) {
+            return result;
+        }
+        domainName = readUtsName(nameAddress, length);
+        return 0;
+    }
+
+    /// Validates a Linux UTS name update request.
+    protected long setUtsName(long nameAddress, long length) {
+        if (length < 0 || length >= UTSNAME_FIELD_SIZE) {
+            return EINVAL;
+        }
+        if (length > 0 && !memory.isBacked(nameAddress, length)) {
+            return EFAULT;
+        }
+        return canSetUtsName() ? 0 : EPERM;
+    }
+
+    /// Reads a Linux UTS name byte sequence from guest memory.
+    protected String readUtsName(long nameAddress, long length) {
+        if (length == 0) {
+            return "";
+        }
+        return new String(memory.readBytes(nameAddress, length), StandardCharsets.US_ASCII);
+    }
+
+    /// Returns true when the guest credentials can update UTS namespace names.
+    protected boolean canSetUtsName() {
+        return credentials.effectiveUserId() == 0;
     }
 
     /// Writes deterministic Linux `struct sysinfo` values for libc and coreutils memory queries.
@@ -5905,6 +5955,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     private LinuxGuestSyscalls(LinuxGuestSyscalls parent, Memory memory, GuestProcess process) {
         super(parent, memory, process);
         networkBackend = parent.networkBackend;
+        hostName = parent.hostName;
+        domainName = parent.domainName;
         System.arraycopy(parent.signalActions, 0, signalActions, 0, signalActions.length);
         signalTrampolineAddress = parent.signalTrampolineAddress;
     }
@@ -6095,8 +6147,14 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `signalfd4`.
     private static final int SYS_SIGNALFD4 = 74;
 
+    /// The Linux RISC-V syscall number for `vmsplice`.
+    private static final int SYS_VMSPLICE = 75;
+
     /// The Linux RISC-V syscall number for `splice`.
     private static final int SYS_SPLICE = 76;
+
+    /// The Linux RISC-V syscall number for `tee`.
+    private static final int SYS_TEE = 77;
 
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final int SYS_READLINKAT = 78;
@@ -6292,6 +6350,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final int SYS_UNAME = 160;
+
+    /// The Linux RISC-V syscall number for `sethostname`.
+    private static final int SYS_SETHOSTNAME = 161;
+
+    /// The Linux RISC-V syscall number for `setdomainname`.
+    private static final int SYS_SETDOMAINNAME = 162;
 
     /// The Linux RISC-V syscall number for `getrlimit`.
     private static final int SYS_GETRLIMIT = 163;
@@ -6768,6 +6832,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_VMSPLICE -> state.setRegister(10, vmsplice(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_SPLICE -> state.setRegister(10, splice(
                     (int) state.register(10),
                     state.register(11),
@@ -6775,6 +6844,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(13),
                     state.register(14),
                     state.register(15)));
+            case SYS_TEE -> state.setRegister(10, tee(
+                    (int) state.register(10),
+                    (int) state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_READLINKAT -> state.setRegister(10, readlinkat(
                     state.register(10),
                     state.register(11),
@@ -6939,6 +7013,8 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_GETGROUPS -> state.setRegister(10, getgroups(state.register(10), state.register(11)));
             case SYS_SETGROUPS -> state.setRegister(10, setgroups(state.register(10), state.register(11)));
             case SYS_UNAME -> state.setRegister(10, uname(state.register(10)));
+            case SYS_SETHOSTNAME -> state.setRegister(10, sethostname(state.register(10), state.register(11)));
+            case SYS_SETDOMAINNAME -> state.setRegister(10, setdomainname(state.register(10), state.register(11)));
             case SYS_GETRLIMIT -> state.setRegister(10, getrlimit(state.register(10), state.register(11)));
             case SYS_SETRLIMIT -> state.setRegister(10, setrlimit(state.register(10), state.register(11)));
             case SYS_GETRUSAGE -> state.setRegister(10, getrusage(state.register(10), state.register(11)));

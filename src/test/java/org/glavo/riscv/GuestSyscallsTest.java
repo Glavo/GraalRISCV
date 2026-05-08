@@ -344,6 +344,15 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `signalfd4`.
     private static final long SYS_SIGNALFD4 = 74;
 
+    /// The Linux RISC-V syscall number for `vmsplice`.
+    private static final long SYS_VMSPLICE = 75;
+
+    /// The Linux RISC-V syscall number for `splice`.
+    private static final long SYS_SPLICE = 76;
+
+    /// The Linux RISC-V syscall number for `tee`.
+    private static final long SYS_TEE = 77;
+
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final long SYS_READLINKAT = 78;
 
@@ -526,6 +535,12 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `uname`.
     private static final long SYS_UNAME = 160;
+
+    /// The Linux RISC-V syscall number for `sethostname`.
+    private static final long SYS_SETHOSTNAME = 161;
+
+    /// The Linux RISC-V syscall number for `setdomainname`.
+    private static final long SYS_SETDOMAINNAME = 162;
 
     /// The Linux RISC-V syscall number for `getrlimit`.
     private static final long SYS_GETRLIMIT = 163;
@@ -1049,11 +1064,17 @@ public final class GuestSyscallsTest {
     /// The byte offset of `sysname` inside Linux `struct utsname`.
     private static final int UTSNAME_SYSNAME_OFFSET = 0;
 
+    /// The byte offset of `nodename` inside Linux `struct utsname`.
+    private static final int UTSNAME_NODENAME_OFFSET = UTSNAME_FIELD_SIZE;
+
     /// The byte offset of `release` inside Linux `struct utsname`.
     private static final int UTSNAME_RELEASE_OFFSET = 2 * UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `machine` inside Linux `struct utsname`.
     private static final int UTSNAME_MACHINE_OFFSET = 4 * UTSNAME_FIELD_SIZE;
+
+    /// The byte offset of `domainname` inside Linux `struct utsname`.
+    private static final int UTSNAME_DOMAINNAME_OFFSET = 5 * UTSNAME_FIELD_SIZE;
 
     /// The byte offset of `tv_sec` inside Linux RISC-V 64-bit `struct timeval`.
     private static final int TIMEVAL_SECONDS_OFFSET = 0;
@@ -1337,6 +1358,9 @@ public final class GuestSyscallsTest {
     /// Linux `LOCK_UN`.
     private static final long LOCK_UN = 8;
 
+    /// Linux `SPLICE_F_NONBLOCK`.
+    private static final long SPLICE_F_NONBLOCK = 2;
+
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
 
@@ -1345,6 +1369,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `IN_MODIFY`.
     private static final long IN_MODIFY = 0x00000002;
+
+    /// The maximum Linux `struct iovec` count accepted by vector syscalls.
+    private static final long IOV_MAX = 1024;
 
     /// The byte size of Linux `struct open_how` currently used by the tests.
     private static final long OPEN_HOW_SIZE = 24;
@@ -5207,6 +5234,100 @@ public final class GuestSyscallsTest {
             assertEquals(EBADF, state.register(10));
 
             setSyscall(state, SYS_PIPE2, pipeAddress, O_APPEND, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `vmsplice` writes guest buffers to pipes and `tee` duplicates pipe data without consuming it.
+    @Test
+    public void vmspliceAndTeeTransferPipeData() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long firstPipeAddress = memory.baseAddress();
+            long secondPipeAddress = memory.baseAddress() + 16;
+            long iovecAddress = memory.baseAddress() + 64;
+            long firstSourceAddress = memory.baseAddress() + 128;
+            long secondSourceAddress = memory.baseAddress() + 160;
+            long bufferAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_PIPE2, firstPipeAddress, O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int firstReadFileDescriptor = memory.readInt(firstPipeAddress);
+            int firstWriteFileDescriptor = memory.readInt(firstPipeAddress + Integer.BYTES);
+            assertEquals(3, firstReadFileDescriptor);
+            assertEquals(4, firstWriteFileDescriptor);
+
+            setSyscall(state, SYS_PIPE2, secondPipeAddress, O_NONBLOCK, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int secondReadFileDescriptor = memory.readInt(secondPipeAddress);
+            int secondWriteFileDescriptor = memory.readInt(secondPipeAddress + Integer.BYTES);
+            assertEquals(5, secondReadFileDescriptor);
+            assertEquals(6, secondWriteFileDescriptor);
+
+            byte[] firstPart = "abc".getBytes(StandardCharsets.UTF_8);
+            byte[] secondPart = "def".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(firstSourceAddress, firstPart, 0, firstPart.length);
+            memory.writeBytes(secondSourceAddress, secondPart, 0, secondPart.length);
+            memory.writeLong(iovecAddress + IOVEC_BASE_OFFSET, firstSourceAddress);
+            memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, firstPart.length);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_BASE_OFFSET, secondSourceAddress);
+            memory.writeLong(iovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, secondPart.length);
+
+            setSyscall(state, SYS_VMSPLICE, firstWriteFileDescriptor, iovecAddress, 2, SPLICE_F_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+
+            setSyscall(state, SYS_TEE, firstReadFileDescriptor, secondWriteFileDescriptor, 4, SPLICE_F_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+
+            setSyscall(state, SYS_READ, firstReadFileDescriptor, bufferAddress, 6);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+            assertArrayEquals("abcdef".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 6));
+
+            setSyscall(state, SYS_READ, secondReadFileDescriptor, bufferAddress, 4);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+            assertArrayEquals("abcd".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 4));
+
+            setSyscall(state, SYS_TEE, firstReadFileDescriptor, secondWriteFileDescriptor, 1, SPLICE_F_NONBLOCK);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_VMSPLICE, firstReadFileDescriptor, iovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_TEE, firstWriteFileDescriptor, secondWriteFileDescriptor, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_TEE, firstReadFileDescriptor, secondReadFileDescriptor, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_VMSPLICE, firstWriteFileDescriptor, iovecAddress, 1, O_APPEND);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TEE, firstReadFileDescriptor, secondWriteFileDescriptor, 1, O_APPEND);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_VMSPLICE, firstWriteFileDescriptor, iovecAddress, IOV_MAX + 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_VMSPLICE, firstWriteFileDescriptor, memory.baseAddress() + 4092, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            memory.writeLong(iovecAddress + IOVEC_LENGTH_OFFSET, -1);
+            setSyscall(state, SYS_VMSPLICE, firstWriteFileDescriptor, iovecAddress, 1, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EINVAL, state.register(10));
         }
@@ -9762,8 +9883,64 @@ public final class GuestSyscallsTest {
 
             assertEquals(0, state.register(10));
             assertEquals("Linux", readGuestCString(memory, utsnameAddress + UTSNAME_SYSNAME_OFFSET, UTSNAME_FIELD_SIZE));
+            assertEquals("localhost", readGuestCString(memory, utsnameAddress + UTSNAME_NODENAME_OFFSET, UTSNAME_FIELD_SIZE));
             assertEquals("6.12.0", readGuestCString(memory, utsnameAddress + UTSNAME_RELEASE_OFFSET, UTSNAME_FIELD_SIZE));
             assertEquals("riscv64", readGuestCString(memory, utsnameAddress + UTSNAME_MACHINE_OFFSET, UTSNAME_FIELD_SIZE));
+            assertEquals(
+                    "localdomain",
+                    readGuestCString(memory, utsnameAddress + UTSNAME_DOMAINNAME_OFFSET, UTSNAME_FIELD_SIZE));
+        }
+    }
+
+    /// Verifies root-only Linux UTS name updates are reflected by `uname`.
+    @Test
+    public void sethostnameAndSetdomainnameUpdateUname() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState userState = state(memory, new ByteArrayInputStream(new byte[0]));
+            long nameAddress = memory.baseAddress() + 64;
+            memory.writeBytes(nameAddress, "denied".getBytes(StandardCharsets.US_ASCII), 0, 6);
+
+            setSyscall(userState, SYS_SETHOSTNAME, nameAddress, 6, 0);
+            userState.syscalls().handle(userState, TEST_PC);
+            assertEquals(EPERM, userState.register(10));
+        }
+
+        GuestCredentials root = GuestCredentials.of("root", 0, 0, "", "/root", "/bin/sh");
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    GuestFileSystem.empty(),
+                    root);
+            long nameAddress = memory.baseAddress() + 64;
+            long domainAddress = memory.baseAddress() + 128;
+            long utsnameAddress = memory.baseAddress() + 256;
+
+            memory.writeBytes(nameAddress, "rv-box".getBytes(StandardCharsets.US_ASCII), 0, 6);
+            setSyscall(state, SYS_SETHOSTNAME, nameAddress, 6, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.writeBytes(domainAddress, "lab".getBytes(StandardCharsets.US_ASCII), 0, 3);
+            setSyscall(state, SYS_SETDOMAINNAME, domainAddress, 3, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_UNAME, utsnameAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals("rv-box", readGuestCString(memory, utsnameAddress + UTSNAME_NODENAME_OFFSET, UTSNAME_FIELD_SIZE));
+            assertEquals("lab", readGuestCString(memory, utsnameAddress + UTSNAME_DOMAINNAME_OFFSET, UTSNAME_FIELD_SIZE));
+
+            setSyscall(state, SYS_SETHOSTNAME, nameAddress, UTSNAME_FIELD_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SETDOMAINNAME, memory.baseAddress() + 1020, 8, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
         }
     }
 

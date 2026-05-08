@@ -272,6 +272,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     protected static final long SUPPORTED_SPLICE_FLAGS =
             SPLICE_F_MOVE | SPLICE_F_NONBLOCK | SPLICE_F_MORE | SPLICE_F_GIFT;
 
+    /// Linux flags accepted by `tee`.
+    protected static final long SUPPORTED_TEE_FLAGS = SUPPORTED_SPLICE_FLAGS;
+
+    /// Linux flags accepted by `vmsplice`.
+    protected static final long SUPPORTED_VMSPLICE_FLAGS = SUPPORTED_SPLICE_FLAGS;
+
     /// Linux `F_OK` access mode.
     protected static final long F_OK = 0;
 
@@ -6615,6 +6621,117 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EINTR;
         } catch (IOException exception) {
             throw new RiscVException("Guest splice syscall failed", exception);
+        }
+    }
+
+    /// Copies guest `struct iovec` buffers into a pipe for Linux `vmsplice`.
+    protected long vmsplice(int fileDescriptor, long iovecAddress, long iovecCount, long flags) {
+        if (iovecCount < 0 || iovecCount > IOV_MAX || (flags & ~SUPPORTED_VMSPLICE_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (iovecCount > 0 && !memory.isBacked(iovecAddress, iovecCount * IOVEC_SIZE)) {
+            return EFAULT;
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null || !openFile.writable()) {
+            return EBADF;
+        }
+        if (!openFile.isPipeWriter()) {
+            return EINVAL;
+        }
+
+        long total = 0;
+        for (long index = 0; index < iovecCount; index++) {
+            long entryAddress = iovecAddress + index * IOVEC_SIZE;
+            long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+            long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+            if (length < 0) {
+                return EINVAL;
+            }
+
+            long offset = 0;
+            while (offset < length) {
+                int chunkLength = (int) Math.min(length - offset, SPLICE_BUFFER_SIZE);
+                long chunkAddress = baseAddress + offset;
+                if (!memory.isBacked(chunkAddress, chunkLength)) {
+                    return total == 0 ? EFAULT : total;
+                }
+
+                long count = openFile.pipe().write(memory.readBytes(chunkAddress, chunkLength));
+                if (count < 0) {
+                    return total == 0 ? count : total;
+                }
+                if (count == 0) {
+                    return total;
+                }
+
+                total += count;
+                offset += count;
+                if (count < chunkLength) {
+                    return total;
+                }
+            }
+        }
+        return total;
+    }
+
+    /// Duplicates buffered bytes from one pipe to another for Linux `tee` without consuming the input.
+    protected long tee(int inputFileDescriptor, int outputFileDescriptor, long length, long flags) {
+        if (length < 0 || (flags & ~SUPPORTED_TEE_FLAGS) != 0) {
+            return EINVAL;
+        }
+        if (length == 0) {
+            return 0;
+        }
+
+        @Nullable OpenFile inputFile = openFile(inputFileDescriptor);
+        if (inputFile == null || !inputFile.readable()) {
+            return EBADF;
+        }
+        if (!inputFile.isPipeReader()) {
+            return EINVAL;
+        }
+
+        @Nullable OpenFile outputFile = openFile(outputFileDescriptor);
+        if (outputFile == null || !outputFile.writable()) {
+            return EBADF;
+        }
+        if (!outputFile.isPipeWriter()) {
+            return EINVAL;
+        }
+
+        boolean nonblocking = (flags & SPLICE_F_NONBLOCK) != 0;
+        byte[] buffer = new byte[(int) Math.min(length, SPLICE_BUFFER_SIZE)];
+        long total = 0;
+        try {
+            while (total < length) {
+                int requested = (int) Math.min(buffer.length, length - total);
+                long readCount = inputFile.pipe().peek(buffer, requested, inputFile.nonblocking() || nonblocking);
+                if (readCount < 0) {
+                    return total == 0 ? readCount : total;
+                }
+                if (readCount == 0) {
+                    return total;
+                }
+
+                long writeCount = outputFile.pipe().write(copyBufferPrefix(buffer, (int) readCount));
+                if (writeCount < 0) {
+                    return total == 0 ? writeCount : total;
+                }
+                if (writeCount == 0) {
+                    return total;
+                }
+
+                total += writeCount;
+                if (writeCount < readCount || readCount < requested) {
+                    return total;
+                }
+            }
+            return total;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
         }
     }
 
@@ -14274,6 +14391,30 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             length -= count;
             if (length == 0) {
                 start = 0;
+            }
+            return count;
+        }
+
+        /// Copies buffered bytes into the supplied destination without consuming them.
+        synchronized int peek(byte[] destination, int maximumLength, boolean nonblocking) throws InterruptedException {
+            if (length == 0) {
+                if (nonblocking) {
+                    return writerOpen ? (int) EAGAIN : 0;
+                }
+                while (length == 0 && writerOpen) {
+                    wait();
+                }
+                if (length == 0) {
+                    return 0;
+                }
+            }
+
+            int count = Math.min(maximumLength, length);
+            int firstCount = Math.min(count, buffer.length - start);
+            System.arraycopy(buffer, start, destination, 0, firstCount);
+            int secondCount = count - firstCount;
+            if (secondCount > 0) {
+                System.arraycopy(buffer, 0, destination, firstCount, secondCount);
             }
             return count;
         }
