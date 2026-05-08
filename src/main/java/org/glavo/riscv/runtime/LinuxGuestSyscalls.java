@@ -5964,6 +5964,21 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `setxattr`.
     private static final int SYS_SETXATTR = 5;
 
+    /// The Linux RISC-V syscall number for `io_setup`.
+    private static final int SYS_IO_SETUP = 0;
+
+    /// The Linux RISC-V syscall number for `io_destroy`.
+    private static final int SYS_IO_DESTROY = 1;
+
+    /// The Linux RISC-V syscall number for `io_submit`.
+    private static final int SYS_IO_SUBMIT = 2;
+
+    /// The Linux RISC-V syscall number for `io_cancel`.
+    private static final int SYS_IO_CANCEL = 3;
+
+    /// The Linux RISC-V syscall number for `io_getevents`.
+    private static final int SYS_IO_GETEVENTS = 4;
+
     /// The Linux RISC-V syscall number for `lsetxattr`.
     private static final int SYS_LSETXATTR = 6;
 
@@ -6060,6 +6075,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `renameat`.
     private static final int SYS_RENAMEAT = 38;
 
+    /// The Linux RISC-V syscall number for `umount2`.
+    private static final int SYS_UMOUNT2 = 39;
+
+    /// The Linux RISC-V syscall number for `mount`.
+    private static final int SYS_MOUNT = 40;
+
+    /// The Linux RISC-V syscall number for `pivot_root`.
+    private static final int SYS_PIVOT_ROOT = 41;
+
     /// The Linux RISC-V syscall number for `statfs`.
     private static final int SYS_STATFS = 43;
 
@@ -6084,6 +6108,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `fchdir`.
     private static final int SYS_FCHDIR = 50;
 
+    /// The Linux RISC-V syscall number for `chroot`.
+    private static final int SYS_CHROOT = 51;
+
     /// The Linux RISC-V syscall number for `fchmod`.
     private static final int SYS_FCHMOD = 52;
 
@@ -6102,8 +6129,14 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `close`.
     private static final int SYS_CLOSE = 57;
 
+    /// The Linux RISC-V syscall number for `vhangup`.
+    private static final int SYS_VHANGUP = 58;
+
     /// The Linux RISC-V syscall number for `pipe2`.
     private static final int SYS_PIPE2 = 59;
+
+    /// The Linux RISC-V syscall number for `quotactl`.
+    private static final int SYS_QUOTACTL = 60;
 
     /// The Linux RISC-V syscall number for `getdents64`.
     private static final int SYS_GETDENTS64 = 61;
@@ -6189,6 +6222,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `utimensat`.
     private static final int SYS_UTIMENSAT = 88;
 
+    /// The Linux RISC-V syscall number for `acct`.
+    private static final int SYS_ACCT = 89;
+
     /// The Linux RISC-V syscall number for `capget`.
     private static final int SYS_CAPGET = 90;
 
@@ -6210,6 +6246,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `set_tid_address`.
     private static final int SYS_SET_TID_ADDRESS = 96;
 
+    /// The Linux RISC-V syscall number for `unshare`.
+    private static final int SYS_UNSHARE = 97;
+
     /// The Linux RISC-V syscall number for `futex`.
     private static final int SYS_FUTEX = 98;
 
@@ -6228,6 +6267,30 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `setitimer`.
     private static final int SYS_SETITIMER = 103;
 
+    /// The Linux RISC-V syscall number for `kexec_load`.
+    private static final int SYS_KEXEC_LOAD = 104;
+
+    /// The Linux RISC-V syscall number for `init_module`.
+    private static final int SYS_INIT_MODULE = 105;
+
+    /// The Linux RISC-V syscall number for `delete_module`.
+    private static final int SYS_DELETE_MODULE = 106;
+
+    /// The Linux RISC-V syscall number for `timer_create`.
+    private static final int SYS_TIMER_CREATE = 107;
+
+    /// The Linux RISC-V syscall number for `timer_gettime`.
+    private static final int SYS_TIMER_GETTIME = 108;
+
+    /// The Linux RISC-V syscall number for `timer_getoverrun`.
+    private static final int SYS_TIMER_GETOVERRUN = 109;
+
+    /// The Linux RISC-V syscall number for `timer_settime`.
+    private static final int SYS_TIMER_SETTIME = 110;
+
+    /// The Linux RISC-V syscall number for `timer_delete`.
+    private static final int SYS_TIMER_DELETE = 111;
+
     /// The Linux RISC-V syscall number for `clock_settime`.
     private static final int SYS_CLOCK_SETTIME = 112;
 
@@ -6239,6 +6302,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `clock_nanosleep`.
     private static final int SYS_CLOCK_NANOSLEEP = 115;
+
+    /// The Linux RISC-V syscall number for `syslog`.
+    private static final int SYS_SYSLOG = 116;
+
+    /// The Linux RISC-V syscall number for `ptrace`.
+    private static final int SYS_PTRACE = 117;
 
     /// The Linux RISC-V syscall number for `sched_setparam`.
     private static final int SYS_SCHED_SETPARAM = 118;
@@ -6282,11 +6351,20 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `sigaltstack`.
     private static final int SYS_SIGALTSTACK = 132;
 
+    /// The Linux RISC-V syscall number for `rt_sigsuspend`.
+    private static final int SYS_RT_SIGSUSPEND = 133;
+
     /// The Linux RISC-V syscall number for `rt_sigaction`.
     private static final int SYS_RT_SIGACTION = 134;
 
     /// The Linux RISC-V syscall number for `rt_sigprocmask`.
     private static final int SYS_RT_SIGPROCMASK = 135;
+
+    /// The Linux RISC-V syscall number for `rt_sigtimedwait`.
+    private static final int SYS_RT_SIGTIMEDWAIT = 137;
+
+    /// The Linux RISC-V syscall number for `rt_sigqueueinfo`.
+    private static final int SYS_RT_SIGQUEUEINFO = 138;
 
     /// The Linux RISC-V syscall number for `rt_sigreturn`.
     private static final int SYS_RT_SIGRETURN = 139;
@@ -6296,6 +6374,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `getpriority`.
     private static final int SYS_GETPRIORITY = 141;
+
+    /// The Linux RISC-V syscall number for `reboot`.
+    private static final int SYS_REBOOT = 142;
 
     /// The Linux RISC-V syscall number for `setregid`.
     private static final int SYS_SETREGID = 143;
@@ -6408,6 +6489,54 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `sysinfo`.
     private static final int SYS_SYSINFO = 179;
 
+    /// The Linux RISC-V syscall number for `mq_open`.
+    private static final int SYS_MQ_OPEN = 180;
+
+    /// The Linux RISC-V syscall number for `mq_unlink`.
+    private static final int SYS_MQ_UNLINK = 181;
+
+    /// The Linux RISC-V syscall number for `mq_timedsend`.
+    private static final int SYS_MQ_TIMEDSEND = 182;
+
+    /// The Linux RISC-V syscall number for `mq_timedreceive`.
+    private static final int SYS_MQ_TIMEDRECEIVE = 183;
+
+    /// The Linux RISC-V syscall number for `mq_notify`.
+    private static final int SYS_MQ_NOTIFY = 184;
+
+    /// The Linux RISC-V syscall number for `msgget`.
+    private static final int SYS_MSGGET = 186;
+
+    /// The Linux RISC-V syscall number for `msgctl`.
+    private static final int SYS_MSGCTL = 187;
+
+    /// The Linux RISC-V syscall number for `msgrcv`.
+    private static final int SYS_MSGRCV = 188;
+
+    /// The Linux RISC-V syscall number for `msgsnd`.
+    private static final int SYS_MSGSND = 189;
+
+    /// The Linux RISC-V syscall number for `semget`.
+    private static final int SYS_SEMGET = 190;
+
+    /// The Linux RISC-V syscall number for `semctl`.
+    private static final int SYS_SEMCTL = 191;
+
+    /// The Linux RISC-V syscall number for `semop`.
+    private static final int SYS_SEMOP = 193;
+
+    /// The Linux RISC-V syscall number for `shmget`.
+    private static final int SYS_SHMGET = 194;
+
+    /// The Linux RISC-V syscall number for `shmctl`.
+    private static final int SYS_SHMCTL = 195;
+
+    /// The Linux RISC-V syscall number for `shmat`.
+    private static final int SYS_SHMAT = 196;
+
+    /// The Linux RISC-V syscall number for `shmdt`.
+    private static final int SYS_SHMDT = 197;
+
     /// The Linux RISC-V syscall number for `socket`.
     private static final int SYS_SOCKET = 198;
 
@@ -6465,6 +6594,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `mremap`.
     private static final int SYS_MREMAP = 216;
 
+    /// The Linux RISC-V syscall number for `add_key`.
+    private static final int SYS_ADD_KEY = 217;
+
+    /// The Linux RISC-V syscall number for `request_key`.
+    private static final int SYS_REQUEST_KEY = 218;
+
+    /// The Linux RISC-V syscall number for `keyctl`.
+    private static final int SYS_KEYCTL = 219;
+
     /// The Linux RISC-V syscall number for `clone`.
     private static final int SYS_CLONE = 220;
 
@@ -6485,6 +6623,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `mmap`.
     private static final int SYS_MMAP = 222;
+
+    /// The Linux RISC-V syscall number for `swapon`.
+    private static final int SYS_SWAPON = 224;
+
+    /// The Linux RISC-V syscall number for `swapoff`.
+    private static final int SYS_SWAPOFF = 225;
 
     /// The Linux RISC-V syscall number for `mprotect`.
     private static final int SYS_MPROTECT = 226;
@@ -6510,11 +6654,35 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `accept4`.
     private static final int SYS_ACCEPT4 = 242;
 
+    /// The Linux RISC-V syscall number for `perf_event_open`.
+    private static final int SYS_PERF_EVENT_OPEN = 241;
+
     /// The Linux RISC-V syscall number for `recvmmsg`.
     private static final int SYS_RECVMMSG = 243;
 
     /// The Linux RISC-V syscall number for `madvise`.
     private static final int SYS_MADVISE = 233;
+
+    /// The Linux RISC-V syscall number for `remap_file_pages`.
+    private static final int SYS_REMAP_FILE_PAGES = 234;
+
+    /// The Linux RISC-V syscall number for `mbind`.
+    private static final int SYS_MBIND = 235;
+
+    /// The Linux RISC-V syscall number for `get_mempolicy`.
+    private static final int SYS_GET_MEMPOLICY = 236;
+
+    /// The Linux RISC-V syscall number for `set_mempolicy`.
+    private static final int SYS_SET_MEMPOLICY = 237;
+
+    /// The Linux RISC-V syscall number for `migrate_pages`.
+    private static final int SYS_MIGRATE_PAGES = 238;
+
+    /// The Linux RISC-V syscall number for `move_pages`.
+    private static final int SYS_MOVE_PAGES = 239;
+
+    /// The Linux RISC-V syscall number for `rt_tgsigqueueinfo`.
+    private static final int SYS_RT_TGSIGQUEUEINFO = 240;
 
     /// The Linux RISC-V syscall number for `riscv_hwprobe`.
     private static final int SYS_RISCV_HWPROBE = 258;
@@ -6546,6 +6714,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `syncfs`.
     private static final int SYS_SYNCFS = 267;
 
+    /// The Linux RISC-V syscall number for `setns`.
+    private static final int SYS_SETNS = 268;
+
     /// The Linux RISC-V syscall number for `sendmmsg`.
     private static final int SYS_SENDMMSG = 269;
 
@@ -6554,6 +6725,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `process_vm_writev`.
     private static final int SYS_PROCESS_VM_WRITEV = 271;
+
+    /// The Linux RISC-V syscall number for `kcmp`.
+    private static final int SYS_KCMP = 272;
+
+    /// The Linux RISC-V syscall number for `finit_module`.
+    private static final int SYS_FINIT_MODULE = 273;
 
     /// The Linux RISC-V syscall number for `sched_setattr`.
     private static final int SYS_SCHED_SETATTR = 274;
@@ -6564,11 +6741,17 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `renameat2`.
     private static final int SYS_RENAMEAT2 = 276;
 
+    /// The Linux RISC-V syscall number for `seccomp`.
+    private static final int SYS_SECCOMP = 277;
+
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final int SYS_GETRANDOM = 278;
 
     /// The Linux RISC-V syscall number for `memfd_create`.
     private static final int SYS_MEMFD_CREATE = 279;
+
+    /// The Linux RISC-V syscall number for `userfaultfd`.
+    private static final int SYS_USERFAULTFD = 282;
 
     /// The Linux RISC-V syscall number for `membarrier`.
     private static final int SYS_MEMBARRIER = 283;
@@ -6591,8 +6774,29 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `rseq`.
     private static final int SYS_RSEQ = 293;
 
+    /// The Linux RISC-V syscall number for `io_pgetevents`.
+    private static final int SYS_IO_PGETEVENTS = 292;
+
     /// The Linux RISC-V syscall number for `pidfd_send_signal`.
     private static final int SYS_PIDFD_SEND_SIGNAL = 424;
+
+    /// The Linux RISC-V syscall number for `open_tree`.
+    private static final int SYS_OPEN_TREE = 428;
+
+    /// The Linux RISC-V syscall number for `move_mount`.
+    private static final int SYS_MOVE_MOUNT = 429;
+
+    /// The Linux RISC-V syscall number for `fsopen`.
+    private static final int SYS_FSOPEN = 430;
+
+    /// The Linux RISC-V syscall number for `fsconfig`.
+    private static final int SYS_FSCONFIG = 431;
+
+    /// The Linux RISC-V syscall number for `fsmount`.
+    private static final int SYS_FSMOUNT = 432;
+
+    /// The Linux RISC-V syscall number for `fspick`.
+    private static final int SYS_FSPICK = 433;
 
     /// The Linux RISC-V syscall number for `pidfd_open`.
     private static final int SYS_PIDFD_OPEN = 434;
@@ -6603,11 +6807,20 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `faccessat2`.
     private static final int SYS_FACCESSAT2 = 439;
 
+    /// The Linux RISC-V syscall number for `process_madvise`.
+    private static final int SYS_PROCESS_MADVISE = 440;
+
     /// The Linux RISC-V syscall number for `epoll_pwait2`.
     private static final int SYS_EPOLL_PWAIT2 = 441;
 
+    /// The Linux RISC-V syscall number for `mount_setattr`.
+    private static final int SYS_MOUNT_SETATTR = 442;
+
     /// The Linux RISC-V syscall number for `futex_waitv`.
     private static final int SYS_FUTEX_WAITV = 449;
+
+    /// The Linux RISC-V syscall number for `cachestat`.
+    private static final int SYS_CACHESTAT = 451;
 
     /// The Linux RISC-V syscall number for `fchmodat2`.
     private static final int SYS_FCHMODAT2 = 452;
@@ -6617,6 +6830,24 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `futex_wait`.
     private static final int SYS_FUTEX_WAIT = 455;
+
+    /// The Linux RISC-V syscall number for `statmount`.
+    private static final int SYS_STATMOUNT = 457;
+
+    /// The Linux RISC-V syscall number for `listmount`.
+    private static final int SYS_LISTMOUNT = 458;
+
+    /// The Linux RISC-V syscall number for `lsm_get_self_attr`.
+    private static final int SYS_LSM_GET_SELF_ATTR = 459;
+
+    /// The Linux RISC-V syscall number for `lsm_set_self_attr`.
+    private static final int SYS_LSM_SET_SELF_ATTR = 460;
+
+    /// The Linux RISC-V syscall number for `lsm_list_modules`.
+    private static final int SYS_LSM_LIST_MODULES = 461;
+
+    /// The Linux RISC-V syscall number for `mseal`.
+    private static final int SYS_MSEAL = 462;
 
     /// Executes the Linux syscall described by the guest argument registers at the supplied program counter.
     @Override
@@ -6629,6 +6860,46 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         long previousMask = state.enterSyscallPointerMask();
         try {
             switch ((int) callNumber) {
+                case SYS_IO_SETUP -> state.setRegister(10, ENOSYS);
+                case SYS_IO_DESTROY -> state.setRegister(10, ENOSYS);
+                case SYS_IO_SUBMIT -> state.setRegister(10, ENOSYS);
+                case SYS_IO_CANCEL -> state.setRegister(10, ENOSYS);
+                case SYS_IO_GETEVENTS -> state.setRegister(10, ENOSYS);
+                case SYS_TIMER_CREATE -> state.setRegister(10, ENOSYS);
+                case SYS_TIMER_GETTIME -> state.setRegister(10, ENOSYS);
+                case SYS_TIMER_GETOVERRUN -> state.setRegister(10, ENOSYS);
+                case SYS_TIMER_SETTIME -> state.setRegister(10, ENOSYS);
+                case SYS_TIMER_DELETE -> state.setRegister(10, ENOSYS);
+                case SYS_RT_SIGSUSPEND -> state.setRegister(10, ENOSYS);
+                case SYS_RT_SIGTIMEDWAIT -> state.setRegister(10, ENOSYS);
+                case SYS_RT_SIGQUEUEINFO -> state.setRegister(10, ENOSYS);
+                case SYS_MQ_OPEN -> state.setRegister(10, ENOSYS);
+                case SYS_MQ_UNLINK -> state.setRegister(10, ENOSYS);
+                case SYS_MQ_TIMEDSEND -> state.setRegister(10, ENOSYS);
+                case SYS_MQ_TIMEDRECEIVE -> state.setRegister(10, ENOSYS);
+                case SYS_MQ_NOTIFY -> state.setRegister(10, ENOSYS);
+                case SYS_MSGGET -> state.setRegister(10, ENOSYS);
+                case SYS_MSGCTL -> state.setRegister(10, ENOSYS);
+                case SYS_MSGRCV -> state.setRegister(10, ENOSYS);
+                case SYS_MSGSND -> state.setRegister(10, ENOSYS);
+                case SYS_SEMGET -> state.setRegister(10, ENOSYS);
+                case SYS_SEMCTL -> state.setRegister(10, ENOSYS);
+                case SYS_SEMOP -> state.setRegister(10, ENOSYS);
+                case SYS_SHMGET -> state.setRegister(10, ENOSYS);
+                case SYS_SHMCTL -> state.setRegister(10, ENOSYS);
+                case SYS_SHMAT -> state.setRegister(10, ENOSYS);
+                case SYS_SHMDT -> state.setRegister(10, ENOSYS);
+                case SYS_ADD_KEY -> state.setRegister(10, ENOSYS);
+                case SYS_REQUEST_KEY -> state.setRegister(10, ENOSYS);
+                case SYS_KEYCTL -> state.setRegister(10, ENOSYS);
+                case SYS_MBIND -> state.setRegister(10, ENOSYS);
+                case SYS_GET_MEMPOLICY -> state.setRegister(10, ENOSYS);
+                case SYS_SET_MEMPOLICY -> state.setRegister(10, ENOSYS);
+                case SYS_MIGRATE_PAGES -> state.setRegister(10, ENOSYS);
+                case SYS_MOVE_PAGES -> state.setRegister(10, ENOSYS);
+                case SYS_RT_TGSIGQUEUEINFO -> state.setRegister(10, ENOSYS);
+                case SYS_KCMP -> state.setRegister(10, ENOSYS);
+                case SYS_IO_PGETEVENTS -> state.setRegister(10, ENOSYS);
                 case SYS_SETXATTR -> state.setRegister(10, setxattr(
                         state.register(10),
                         state.register(11),
@@ -6692,6 +6963,43 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                         (int) state.register(10),
                         state.register(11)));
                 case SYS_GETCWD -> state.setRegister(10, getcwd(state.register(10), state.register(11)));
+            case SYS_UMOUNT2 -> state.setRegister(10, EPERM);
+            case SYS_MOUNT -> state.setRegister(10, EPERM);
+            case SYS_PIVOT_ROOT -> state.setRegister(10, EPERM);
+            case SYS_CHROOT -> state.setRegister(10, EPERM);
+            case SYS_QUOTACTL -> state.setRegister(10, EPERM);
+            case SYS_ACCT -> state.setRegister(10, EPERM);
+            case SYS_UNSHARE -> state.setRegister(10, EPERM);
+            case SYS_KEXEC_LOAD -> state.setRegister(10, EPERM);
+            case SYS_INIT_MODULE -> state.setRegister(10, EPERM);
+            case SYS_DELETE_MODULE -> state.setRegister(10, EPERM);
+            case SYS_SYSLOG -> state.setRegister(10, EPERM);
+            case SYS_PTRACE -> state.setRegister(10, EPERM);
+            case SYS_REBOOT -> state.setRegister(10, EPERM);
+            case SYS_VHANGUP -> state.setRegister(10, EPERM);
+            case SYS_SWAPON -> state.setRegister(10, EPERM);
+            case SYS_SWAPOFF -> state.setRegister(10, EPERM);
+            case SYS_PERF_EVENT_OPEN -> state.setRegister(10, EPERM);
+            case SYS_SETNS -> state.setRegister(10, EPERM);
+            case SYS_FINIT_MODULE -> state.setRegister(10, EPERM);
+            case SYS_OPEN_TREE -> state.setRegister(10, EPERM);
+            case SYS_MOVE_MOUNT -> state.setRegister(10, EPERM);
+            case SYS_FSOPEN -> state.setRegister(10, EPERM);
+            case SYS_FSCONFIG -> state.setRegister(10, EPERM);
+            case SYS_FSMOUNT -> state.setRegister(10, EPERM);
+            case SYS_FSPICK -> state.setRegister(10, EPERM);
+            case SYS_MOUNT_SETATTR -> state.setRegister(10, EPERM);
+            case SYS_LSM_SET_SELF_ATTR -> state.setRegister(10, EPERM);
+            case SYS_REMAP_FILE_PAGES -> state.setRegister(10, ENOSYS);
+            case SYS_SECCOMP -> state.setRegister(10, ENOSYS);
+            case SYS_USERFAULTFD -> state.setRegister(10, ENOSYS);
+            case SYS_PROCESS_MADVISE -> state.setRegister(10, ENOSYS);
+            case SYS_CACHESTAT -> state.setRegister(10, ENOSYS);
+            case SYS_STATMOUNT -> state.setRegister(10, ENOSYS);
+            case SYS_LISTMOUNT -> state.setRegister(10, ENOSYS);
+            case SYS_LSM_GET_SELF_ATTR -> state.setRegister(10, ENOSYS);
+            case SYS_LSM_LIST_MODULES -> state.setRegister(10, ENOSYS);
+            case SYS_MSEAL -> state.setRegister(10, ENOSYS);
             case SYS_EVENTFD2 -> state.setRegister(10, eventfd2(state.register(10), state.register(11)));
             case SYS_EPOLL_CREATE1 -> state.setRegister(10, epollCreate1(state.register(10)));
             case SYS_EPOLL_CTL -> state.setRegister(10, epollCtl(
@@ -7224,10 +7532,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
-            case SYS_FANOTIFY_INIT,
-                 SYS_FANOTIFY_MARK,
-                 SYS_NAME_TO_HANDLE_AT,
-                 SYS_OPEN_BY_HANDLE_AT -> state.setRegister(10, ENOSYS);
+            case SYS_FANOTIFY_INIT -> state.setRegister(10, ENOSYS);
+            case SYS_FANOTIFY_MARK -> state.setRegister(10, ENOSYS);
+            case SYS_NAME_TO_HANDLE_AT -> state.setRegister(10, ENOSYS);
+            case SYS_OPEN_BY_HANDLE_AT -> state.setRegister(10, ENOSYS);
             case SYS_CLOCK_ADJTIME -> state.setRegister(10, clockAdjtime(state.register(10), state.register(11)));
             case SYS_SYNCFS -> state.setRegister(10, syncfs((int) state.register(10)));
             case SYS_RENAMEAT2 -> state.setRegister(10, renameat2(
