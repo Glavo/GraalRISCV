@@ -369,11 +369,91 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `O_NONBLOCK`.
     protected static final long O_NONBLOCK = 00004000L;
 
+    /// Linux `O_DSYNC`.
+    protected static final long O_DSYNC = 00010000L;
+
+    /// Linux `O_DIRECT`.
+    protected static final long O_DIRECT = 00040000L;
+
+    /// Linux `O_LARGEFILE`.
+    protected static final long O_LARGEFILE = 00100000L;
+
     /// Linux `O_DIRECTORY`.
     protected static final long O_DIRECTORY = 00200000L;
 
+    /// Linux `O_NOFOLLOW`.
+    protected static final long O_NOFOLLOW = 00400000L;
+
+    /// Linux `O_NOATIME`.
+    protected static final long O_NOATIME = 01000000L;
+
     /// Linux `O_CLOEXEC`.
     protected static final long O_CLOEXEC = 02000000L;
+
+    /// Linux internal `__O_SYNC` flag.
+    protected static final long O_SYNC_BASE = 04000000L;
+
+    /// Linux `O_SYNC`.
+    protected static final long O_SYNC = O_SYNC_BASE | O_DSYNC;
+
+    /// Linux `O_PATH`.
+    protected static final long O_PATH = 010000000L;
+
+    /// Linux `O_TMPFILE`.
+    protected static final long O_TMPFILE = 020000000L | O_DIRECTORY;
+
+    /// Linux flags accepted by `openat2`.
+    protected static final long SUPPORTED_OPENAT2_FLAGS =
+            O_ACCMODE | O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC | O_APPEND | O_NONBLOCK
+                    | O_DSYNC | O_DIRECT | O_LARGEFILE | O_DIRECTORY | O_NOFOLLOW | O_NOATIME | O_CLOEXEC
+                    | O_SYNC | O_PATH | O_TMPFILE;
+
+    /// The byte size of Linux `struct open_how` currently understood by this simulator.
+    protected static final long OPEN_HOW_SIZE = 24;
+
+    /// The byte offset of `flags` inside Linux `struct open_how`.
+    protected static final long OPEN_HOW_FLAGS_OFFSET = 0;
+
+    /// The byte offset of `mode` inside Linux `struct open_how`.
+    protected static final long OPEN_HOW_MODE_OFFSET = Long.BYTES;
+
+    /// The byte offset of `resolve` inside Linux `struct open_how`.
+    protected static final long OPEN_HOW_RESOLVE_OFFSET = 2L * Long.BYTES;
+
+    /// Linux `RESOLVE_NO_XDEV`.
+    protected static final long RESOLVE_NO_XDEV = 0x01;
+
+    /// Linux `RESOLVE_NO_MAGICLINKS`.
+    protected static final long RESOLVE_NO_MAGICLINKS = 0x02;
+
+    /// Linux `RESOLVE_NO_SYMLINKS`.
+    protected static final long RESOLVE_NO_SYMLINKS = 0x04;
+
+    /// Linux `RESOLVE_BENEATH`.
+    protected static final long RESOLVE_BENEATH = 0x08;
+
+    /// Linux `RESOLVE_IN_ROOT`.
+    protected static final long RESOLVE_IN_ROOT = 0x10;
+
+    /// Linux `RESOLVE_CACHED`.
+    protected static final long RESOLVE_CACHED = 0x20;
+
+    /// Linux `openat2` resolve flags accepted by this simulator.
+    protected static final long SUPPORTED_OPENAT2_RESOLVE_FLAGS =
+            RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS
+                    | RESOLVE_BENEATH | RESOLVE_IN_ROOT | RESOLVE_CACHED;
+
+    /// Linux `MFD_CLOEXEC`.
+    protected static final long MFD_CLOEXEC = 0x0001;
+
+    /// Linux `MFD_ALLOW_SEALING`.
+    protected static final long MFD_ALLOW_SEALING = 0x0002;
+
+    /// Linux `memfd_create` flags accepted by this simulator.
+    protected static final long SUPPORTED_MEMFD_CREATE_FLAGS = MFD_CLOEXEC | MFD_ALLOW_SEALING;
+
+    /// The maximum Linux `memfd_create` name length, excluding the trailing nul.
+    protected static final int MEMFD_NAME_MAX = 249;
 
     /// Linux `FALLOC_FL_KEEP_SIZE`.
     protected static final long FALLOC_FL_KEEP_SIZE = 0x01;
@@ -494,6 +574,36 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux flags accepted by `dup3`.
     protected static final long SUPPORTED_DUP3_FLAGS = O_CLOEXEC;
 
+    /// Linux flags accepted by `inotify_init1`.
+    protected static final long SUPPORTED_INOTIFY_INIT1_FLAGS = O_NONBLOCK | O_CLOEXEC;
+
+    /// The fixed byte size of the Linux `struct inotify_event` header.
+    protected static final long INOTIFY_EVENT_HEADER_SIZE = 16;
+
+    /// Linux flags accepted by `signalfd4`.
+    protected static final long SUPPORTED_SIGNALFD4_FLAGS = O_NONBLOCK | O_CLOEXEC;
+
+    /// The fixed byte size of Linux `struct signalfd_siginfo`.
+    protected static final long SIGNALFD_SIGNAL_INFO_SIZE = 128;
+
+    /// The byte offset of `ssi_signo` inside Linux `struct signalfd_siginfo`.
+    protected static final long SIGNALFD_SIGNAL_INFO_SIGNO_OFFSET = 0;
+
+    /// The byte offset of `ssi_errno` inside Linux `struct signalfd_siginfo`.
+    protected static final long SIGNALFD_SIGNAL_INFO_ERRNO_OFFSET = Integer.BYTES;
+
+    /// The byte offset of `ssi_code` inside Linux `struct signalfd_siginfo`.
+    protected static final long SIGNALFD_SIGNAL_INFO_CODE_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `ssi_pid` inside Linux `struct signalfd_siginfo`.
+    protected static final long SIGNALFD_SIGNAL_INFO_PID_OFFSET = 3L * Integer.BYTES;
+
+    /// The byte offset of `ssi_uid` inside Linux `struct signalfd_siginfo`.
+    protected static final long SIGNALFD_SIGNAL_INFO_UID_OFFSET = 4L * Integer.BYTES;
+
+    /// The byte offset of `ssi_status` inside Linux `struct signalfd_siginfo`.
+    protected static final long SIGNALFD_SIGNAL_INFO_STATUS_OFFSET = 10L * Integer.BYTES;
+
     /// Linux `F_DUPFD`.
     protected static final long F_DUPFD = 0;
 
@@ -532,6 +642,31 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Linux `F_DUPFD_CLOEXEC`.
     protected static final long F_DUPFD_CLOEXEC = 1030;
+
+    /// Linux `F_ADD_SEALS`.
+    protected static final long F_ADD_SEALS = 1033;
+
+    /// Linux `F_GET_SEALS`.
+    protected static final long F_GET_SEALS = 1034;
+
+    /// Linux `F_SEAL_SEAL`.
+    protected static final int F_SEAL_SEAL = 0x0001;
+
+    /// Linux `F_SEAL_SHRINK`.
+    protected static final int F_SEAL_SHRINK = 0x0002;
+
+    /// Linux `F_SEAL_GROW`.
+    protected static final int F_SEAL_GROW = 0x0004;
+
+    /// Linux `F_SEAL_WRITE`.
+    protected static final int F_SEAL_WRITE = 0x0008;
+
+    /// Linux `F_SEAL_FUTURE_WRITE`.
+    protected static final int F_SEAL_FUTURE_WRITE = 0x0010;
+
+    /// Linux memfd seals accepted by this simulator.
+    protected static final int SUPPORTED_FILE_SEALS =
+            F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_FUTURE_WRITE;
 
     /// Linux `XATTR_CREATE`.
     protected static final long XATTR_CREATE = 0x1;
@@ -2524,6 +2659,89 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         return addOpenFile(OpenFile.eventFile(counter), (flags & O_CLOEXEC) != 0);
     }
 
+    /// Creates an in-memory Linux `inotify` descriptor.
+    protected long inotifyInit1(long flags) {
+        if ((flags & ~SUPPORTED_INOTIFY_INIT1_FLAGS) != 0) {
+            return EINVAL;
+        }
+        return addOpenFile(
+                OpenFile.inotifyFile(new InotifySet(), (flags & O_NONBLOCK) != 0),
+                (flags & O_CLOEXEC) != 0);
+    }
+
+    /// Adds or replaces an in-memory `inotify` watch.
+    protected long inotifyAddWatch(int fileDescriptor, long pathAddress, long mask) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isInotifyFile()) {
+            return EINVAL;
+        }
+        if ((mask & 0xffff_ffffL) == 0) {
+            return EINVAL;
+        }
+
+        String guestPath;
+        try {
+            @Nullable String path = readGuestPath(pathAddress);
+            if (path == null) {
+                return ENAMETOOLONG;
+            }
+            guestPath = path;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        long access = accessGuestPath(guestPath, F_OK);
+        if (access != 0) {
+            return access;
+        }
+        return openFile.inotifySet().addWatch(guestPath, (int) mask);
+    }
+
+    /// Removes an in-memory `inotify` watch.
+    protected long inotifyRmWatch(int fileDescriptor, long watchDescriptor) {
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isInotifyFile() || watchDescriptor < Integer.MIN_VALUE || watchDescriptor > Integer.MAX_VALUE) {
+            return EINVAL;
+        }
+        return openFile.inotifySet().removeWatch((int) watchDescriptor);
+    }
+
+    /// Creates or updates an in-memory Linux `signalfd` descriptor.
+    protected long signalfd4(int fileDescriptor, long signalMaskAddress, long signalSetSize, long flags) {
+        if ((flags & ~SUPPORTED_SIGNALFD4_FLAGS) != 0 || signalSetSize != KERNEL_SIGSET_SIZE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(signalMaskAddress, KERNEL_SIGSET_SIZE)) {
+            return EFAULT;
+        }
+
+        long signalMask = memory.readLong(signalMaskAddress) & ~UNBLOCKABLE_SIGNAL_MASK;
+        if (fileDescriptor == -1) {
+            return addOpenFile(
+                    OpenFile.signalFile(new SignalFile(signalMask), (flags & O_NONBLOCK) != 0),
+                    (flags & O_CLOEXEC) != 0);
+        }
+
+        @Nullable OpenFile openFile = openFile(fileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        if (!openFile.isSignalFile()) {
+            return EINVAL;
+        }
+        openFile.signalFile().setMask(signalMask);
+        return fileDescriptor;
+    }
+
     /// Creates an in-memory Linux `timerfd` timer.
     protected long timerfdCreate(long clockId, long flags) {
         if (!isSupportedTimerfdClock(clockId) || (flags & ~SUPPORTED_TIMERFD_CREATE_FLAGS) != 0) {
@@ -3065,13 +3283,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns true when a child process has an unreaped exit status.
     protected boolean hasExitedChildProcess() {
         synchronized (childProcessLock) {
-            for (ChildProcess child : childProcesses) {
-                if (child.exited()) {
-                    return true;
-                }
-            }
-            return false;
+            return firstExitedChildProcessLocked() != null;
         }
+    }
+
+    /// Returns the first exited child process while `childProcessLock` is held.
+    protected @Nullable ChildProcess firstExitedChildProcessLocked() {
+        for (ChildProcess child : childProcesses) {
+            if (child.exited()) {
+                return child;
+            }
+        }
+        return null;
     }
 
     /// Returns the host `System.nanoTime()` deadline for a poll timeout, or `-1` for no timeout.
@@ -3352,6 +3575,22 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return EACCES;
         }
         return accessHostFile(hostFile, mode);
+    }
+
+    /// Checks access to a guest path string that has already been copied from guest memory.
+    protected long accessGuestPath(String guestPath, long mode) {
+        @Nullable TarPath tarPath = resolveTarPath(AT_FDCWD, guestPath);
+        if (tarPath != null) {
+            return accessTarPath(tarPath, mode);
+        }
+
+        @Nullable VirtualPath virtualPath = resolveVirtualPath(AT_FDCWD, guestPath);
+        if (virtualPath != null) {
+            return accessVirtualNode(virtualPath.node(), mode);
+        }
+
+        @Nullable Path hostFile = resolveHostFile(AT_FDCWD, guestPath);
+        return hostFile == null ? EACCES : accessHostFile(hostFile, mode);
     }
 
     /// Checks access bits on an open guest file descriptor.
@@ -4303,6 +4542,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         try {
+            long sealError = openFile.resizeSealError(length);
+            if (sealError != 0) {
+                return sealError;
+            }
             resizeHostChannel(openFile.channel(), length);
             return 0;
         } catch (IOException | SecurityException exception) {
@@ -4338,6 +4581,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         long end = offset + length;
         try {
+            if ((mode & FALLOC_FL_KEEP_SIZE) == 0) {
+                long sealError = openFile.resizeSealError(end);
+                if (sealError != 0) {
+                    return sealError;
+                }
+            }
             if ((mode & FALLOC_FL_KEEP_SIZE) == 0 && end > openFile.channel().size()) {
                 resizeHostChannel(openFile.channel(), end);
             }
@@ -5140,15 +5389,20 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Opens a host file or directory below a configured filesystem mount.
     protected long openat(long directoryFileDescriptor, long pathAddress, long flags, long mode) {
+        @Nullable String guestPath = readGuestPath(pathAddress);
+        if (guestPath == null) {
+            return ENAMETOOLONG;
+        }
+        return openGuestPath(directoryFileDescriptor, guestPath, flags, mode);
+    }
+
+    /// Opens a guest path after its path string has already been copied from guest memory.
+    protected long openGuestPath(long directoryFileDescriptor, String guestPath, long flags, long mode) {
         long accessMode = flags & O_ACCMODE;
         if (accessMode != O_RDONLY && accessMode != O_WRONLY && accessMode != O_RDWR) {
             return EINVAL;
         }
 
-        @Nullable String guestPath = readGuestPath(pathAddress);
-        if (guestPath == null) {
-            return ENAMETOOLONG;
-        }
         if (guestPath.isEmpty()) {
             return ENOENT;
         }
@@ -5169,6 +5423,107 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
 
         return openMountedPath(absoluteGuestPath, flags, mode);
+    }
+
+    /// Opens a guest path using Linux `openat2`'s extensible `struct open_how`.
+    protected long openat2(long directoryFileDescriptor, long pathAddress, long howAddress, long size) {
+        if (size < OPEN_HOW_SIZE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(howAddress, OPEN_HOW_SIZE)) {
+            return EFAULT;
+        }
+
+        long flags = memory.readLong(howAddress + OPEN_HOW_FLAGS_OFFSET);
+        long mode = memory.readLong(howAddress + OPEN_HOW_MODE_OFFSET);
+        long resolve = memory.readLong(howAddress + OPEN_HOW_RESOLVE_OFFSET);
+        if ((flags & ~SUPPORTED_OPENAT2_FLAGS) != 0
+                || (resolve & ~SUPPORTED_OPENAT2_RESOLVE_FLAGS) != 0
+                || (mode & ~STAT_MODE_CHANGE_BITS) != 0) {
+            return EINVAL;
+        }
+        if ((flags & O_TMPFILE) == O_TMPFILE) {
+            return ENOTSUP;
+        }
+        if (mode != 0 && (flags & O_CREAT) == 0) {
+            return EINVAL;
+        }
+        if (size > OPEN_HOW_SIZE) {
+            if (!memory.isBacked(howAddress, size)) {
+                return EFAULT;
+            }
+            for (long offset = OPEN_HOW_SIZE; offset < size; offset++) {
+                if (memory.readUnsignedByte(howAddress + offset) != 0) {
+                    return E2BIG;
+                }
+            }
+        }
+
+        String guestPath;
+        try {
+            @Nullable String path = readGuestPath(pathAddress);
+            if (path == null) {
+                return ENAMETOOLONG;
+            }
+            guestPath = path;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+        if (guestPath.isEmpty()) {
+            return ENOENT;
+        }
+
+        if ((resolve & RESOLVE_BENEATH) != 0
+                && (isAbsoluteGuestPath(guestPath) || guestPathContainsParentTraversal(guestPath))) {
+            return EXDEV;
+        }
+        if ((resolve & RESOLVE_NO_XDEV) != 0 && guestPathCrossesMount(directoryFileDescriptor, guestPath)) {
+            return EXDEV;
+        }
+        if ((resolve & RESOLVE_NO_MAGICLINKS) != 0
+                && guestPathHasFinalMagicLink(directoryFileDescriptor, guestPath)) {
+            return ELOOP;
+        }
+        if ((resolve & RESOLVE_NO_SYMLINKS) != 0
+                && guestPathHasFinalSymbolicLink(directoryFileDescriptor, guestPath)) {
+            return ELOOP;
+        }
+        if ((flags & O_NOFOLLOW) != 0 && guestPathHasFinalSymbolicLink(directoryFileDescriptor, guestPath)) {
+            return ELOOP;
+        }
+
+        if ((resolve & RESOLVE_IN_ROOT) != 0) {
+            @Nullable String rootedPath = inRootGuestPath(directoryFileDescriptor, guestPath);
+            if (rootedPath == null) {
+                return EBADF;
+            }
+            return openMountedPath(rootedPath, flags, mode);
+        }
+
+        return openGuestPath(directoryFileDescriptor, guestPath, flags, mode);
+    }
+
+    /// Creates an anonymous in-memory file descriptor using Linux `memfd_create` semantics.
+    protected long memfdCreate(long nameAddress, long flags) {
+        if ((flags & ~SUPPORTED_MEMFD_CREATE_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        String name;
+        try {
+            byte[] nameBytes = readGuestCStringBytes(nameAddress, MEMFD_NAME_MAX + 1);
+            if (nameBytes.length > MEMFD_NAME_MAX) {
+                return EINVAL;
+            }
+            name = new String(nameBytes, StandardCharsets.UTF_8);
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+
+        int seals = (flags & MFD_ALLOW_SEALING) == 0 ? F_SEAL_SEAL : 0;
+        return addOpenFile(
+                OpenFile.memoryFile("memfd:" + name, new MemorySeekableByteChannel(), seals),
+                (flags & MFD_CLOEXEC) != 0);
     }
 
     /// Opens an absolute guest path below its selected filesystem mount.
@@ -5636,6 +5991,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             }
             if (openFile.isTimerFile()) {
                 return readTimerFile(openFile.timerFile(), address, length, openFile.nonblocking());
+            }
+            if (openFile.isInotifyFile()) {
+                return readInotifyFile(openFile.inotifySet(), address, length, openFile.nonblocking());
+            }
+            if (openFile.isSignalFile()) {
+                return readSignalFile(openFile.signalFile(), address, length, openFile.nonblocking());
             }
             if (openFile.isEpollFile()) {
                 return EINVAL;
@@ -6438,6 +6799,10 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             openFile.channel().position(openFile.channel().size());
         }
 
+        long sealError = openFile.writeSealError(openFile.channel().position(), bytes.length);
+        if (sealError != 0) {
+            return sealError;
+        }
         ByteBuffer buffer = ByteBuffer.wrap(bytes);
         while (buffer.hasRemaining()) {
             openFile.channel().write(buffer);
@@ -6582,6 +6947,30 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Reads from an `inotify` descriptor without synthetic filesystem events.
+    protected long readInotifyFile(InotifySet inotifySet, long address, long length, boolean nonblocking) {
+        if (length < INOTIFY_EVENT_HEADER_SIZE) {
+            return EINVAL;
+        }
+        return inotifySet.isReadable() ? 0 : EAGAIN;
+    }
+
+    /// Reads one Linux `struct signalfd_siginfo` from a `signalfd` descriptor.
+    protected long readSignalFile(SignalFile signalFile, long address, long length, boolean nonblocking) {
+        if (length < SIGNALFD_SIGNAL_INFO_SIZE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(address, SIGNALFD_SIGNAL_INFO_SIZE)) {
+            return EFAULT;
+        }
+        return signalFileReadable(signalFile) ? 0 : EAGAIN;
+    }
+
+    /// Returns true when a `signalfd` descriptor can currently produce a signal record.
+    protected boolean signalFileReadable(SignalFile signalFile) {
+        return false;
+    }
+
     /// Computes the currently ready low-level `epoll` event bits for one guest descriptor.
     protected int readyEventsFor(int fileDescriptor) {
         return readyEventsFor(fileDescriptor, false);
@@ -6617,6 +7006,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
         if (openFile.isTimerFile()) {
             return openFile.timerFile().isReadable() ? EPOLLIN : 0;
+        }
+        if (openFile.isInotifyFile()) {
+            return openFile.inotifySet().isReadable() ? EPOLLIN : 0;
+        }
+        if (openFile.isSignalFile()) {
+            return signalFileReadable(openFile.signalFile()) ? EPOLLIN : 0;
         }
         if (openFile.isPidFile()) {
             return openFile.pidFile().exited() ? EPOLLIN : 0;
@@ -6694,7 +7089,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         SeekableByteChannel channel = openFile.channel();
         long position = channel.position();
         try {
-            channel.position(openFile.append() ? channel.size() : offset);
+            long writeOffset = openFile.append() ? channel.size() : offset;
+            long sealError = openFile.writeSealError(writeOffset, bytes.length);
+            if (sealError != 0) {
+                return sealError;
+            }
+            channel.position(writeOffset);
             ByteBuffer buffer = ByteBuffer.wrap(bytes);
             while (buffer.hasRemaining()) {
                 channel.write(buffer);
@@ -7178,10 +7578,25 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_FIFO | permissions, 0);
             return 0;
         }
-        if (openFile.isEventFile() || openFile.isEpollFile()) {
+        if (openFile.isEventFile()
+                || openFile.isTimerFile()
+                || openFile.isInotifyFile()
+                || openFile.isSignalFile()
+                || openFile.isEpollFile()
+                || openFile.isPidFile()) {
             int permissions = (openFile.readable() ? 0400 : 0) | (openFile.writable() ? 0200 : 0);
             writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_REGULAR_FILE | permissions, 0);
             return 0;
+        }
+        if (openFile.isMemoryFile()) {
+            int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
+                    | (openFile.writable() ? 0222 : 0);
+            try {
+                writeStat(statAddress, fileDescriptor + 1L, STAT_MODE_REGULAR_FILE | permissions, openFile.channel().size());
+                return 0;
+            } catch (IOException exception) {
+                throw new RiscVException("Guest fstat syscall failed", exception);
+            }
         }
         if (openFile.isDirectory()) {
             @Nullable VirtualNode virtualNode = openFile.virtualNode();
@@ -7284,7 +7699,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile.isPipe()) {
             return EINVAL;
         }
-        if (openFile.isEventFile() || openFile.isEpollFile()) {
+        if (openFile.isEventFile()
+                || openFile.isTimerFile()
+                || openFile.isInotifyFile()
+                || openFile.isSignalFile()
+                || openFile.isEpollFile()
+                || openFile.isPidFile()) {
             return EINVAL;
         }
         if (openFile.isTerminalDevice() || openFile.isCharacterDevice()) {
@@ -7389,10 +7809,30 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             writeStatx(statxAddress, fileDescriptor + 1L, STAT_MODE_FIFO | permissions, 0, requestedMask);
             return 0;
         }
-        if (openFile.isEventFile() || openFile.isEpollFile()) {
+        if (openFile.isEventFile()
+                || openFile.isTimerFile()
+                || openFile.isInotifyFile()
+                || openFile.isSignalFile()
+                || openFile.isEpollFile()
+                || openFile.isPidFile()) {
             int permissions = (openFile.readable() ? 0400 : 0) | (openFile.writable() ? 0200 : 0);
             writeStatx(statxAddress, fileDescriptor + 1L, STAT_MODE_REGULAR_FILE | permissions, 0, requestedMask);
             return 0;
+        }
+        if (openFile.isMemoryFile()) {
+            int permissions = (openFile.readable() ? STAT_MODE_READ_ALL : 0)
+                    | (openFile.writable() ? 0222 : 0);
+            try {
+                writeStatx(
+                        statxAddress,
+                        fileDescriptor + 1L,
+                        STAT_MODE_REGULAR_FILE | permissions,
+                        openFile.channel().size(),
+                        requestedMask);
+                return 0;
+            } catch (IOException exception) {
+                throw new RiscVException("Guest statx syscall failed", exception);
+            }
         }
         if (openFile.isDirectory()) {
             @Nullable VirtualNode virtualNode = openFile.virtualNode();
@@ -8185,6 +8625,16 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (command == F_SETLK || command == F_SETLKW) {
             return 0;
         }
+        if (command == F_ADD_SEALS || command == F_GET_SEALS) {
+            @Nullable OpenFile openFile = openFile(fileDescriptor);
+            if (openFile == null || !openFile.isMemoryFile()) {
+                return EINVAL;
+            }
+            if (command == F_GET_SEALS) {
+                return openFile.seals();
+            }
+            return openFile.addSeals(argument);
+        }
         return EINVAL;
     }
 
@@ -8856,6 +9306,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (executablePath == null) {
             return EACCES;
         }
+        return execveResolved(state, executablePath, arguments, environment);
+    }
+
+    /// Replaces the current process image with an already resolved mounted guest executable.
+    protected long execveResolved(
+            RiscVThreadState state,
+            String executablePath,
+            String @Unmodifiable [] arguments,
+            String @Unmodifiable [] environment) {
         if (!canReplaceCurrentProcessImage(state)) {
             return EAGAIN;
         }
@@ -8882,6 +9341,81 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         replaceCurrentProcessImage(state, program, arguments, environment, execCredentials);
         throw new ProcessImageReplacedException();
+    }
+
+    /// Replaces the current process image using Linux `execveat` path resolution semantics.
+    protected long execveat(
+            RiscVThreadState state,
+            long directoryFileDescriptor,
+            long pathAddress,
+            long argvAddress,
+            long envpAddress,
+            long flags) {
+        long supportedFlags = AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW;
+        if ((flags & ~supportedFlags) != 0) {
+            return EINVAL;
+        }
+
+        String rawPath;
+        String[] arguments;
+        String[] environment;
+        try {
+            @Nullable String path = readGuestPath(pathAddress);
+            if (path == null) {
+                return ENAMETOOLONG;
+            }
+            rawPath = path;
+            @Nullable String[] readArguments = readGuestStringVector(argvAddress);
+            @Nullable String[] readEnvironment = readGuestStringVector(envpAddress);
+            if (readArguments == null || readEnvironment == null) {
+                return E2BIG;
+            }
+            arguments = readArguments.length == 0 ? new String[]{rawPath} : readArguments;
+            environment = readEnvironment;
+        } catch (RiscVException exception) {
+            return EFAULT;
+        }
+
+        String executablePath;
+        if (rawPath.isEmpty()) {
+            if ((flags & AT_EMPTY_PATH) == 0) {
+                return ENOENT;
+            }
+            if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
+                return EBADF;
+            }
+            @Nullable OpenFile openFile = openFile((int) directoryFileDescriptor);
+            if (openFile == null) {
+                return EBADF;
+            }
+            if (openFile.isDirectory()) {
+                return EACCES;
+            }
+            @Nullable String descriptorPath = openFile.guestPath();
+            if (descriptorPath == null || !isAbsoluteGuestPath(descriptorPath)) {
+                return ENOENT;
+            }
+            executablePath = descriptorPath;
+            if (arguments.length == 1 && arguments[0].isEmpty()) {
+                arguments = new String[]{executablePath};
+            }
+        } else {
+            long directoryError = directoryFileDescriptorError(directoryFileDescriptor, rawPath);
+            if (directoryError != 0) {
+                return directoryError;
+            }
+            if ((flags & AT_SYMLINK_NOFOLLOW) != 0
+                    && guestPathHasFinalSymbolicLink(directoryFileDescriptor, rawPath)) {
+                return ELOOP;
+            }
+            @Nullable String resolvedPath = absoluteGuestPath(directoryFileDescriptor, rawPath);
+            if (resolvedPath == null) {
+                return EACCES;
+            }
+            executablePath = resolvedPath;
+        }
+
+        return execveResolved(state, executablePath, arguments, environment);
     }
 
     /// Returns true when this process is in a state that can be replaced without racing another guest thread.
@@ -9656,6 +10190,19 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                 infoAddress + WAITID_SIGNAL_INFO_CHILD_UID_OFFSET,
                 GuestCredentials.idToInt(child.syscalls().credentials.realUserId()));
         memory.writeInt(infoAddress + WAITID_SIGNAL_INFO_CHILD_STATUS_OFFSET, child.exitCode());
+    }
+
+    /// Writes a Linux `signalfd_siginfo` record for a child-exit `SIGCHLD`.
+    protected void writeSignalfdChildSignalInfo(long infoAddress, ChildProcess child) {
+        memory.clear(infoAddress, SIGNALFD_SIGNAL_INFO_SIZE);
+        memory.writeInt(infoAddress + SIGNALFD_SIGNAL_INFO_SIGNO_OFFSET, (int) SIGNAL_CHILD);
+        memory.writeInt(infoAddress + SIGNALFD_SIGNAL_INFO_ERRNO_OFFSET, 0);
+        memory.writeInt(infoAddress + SIGNALFD_SIGNAL_INFO_CODE_OFFSET, SIGNAL_CODE_CHILD_EXITED);
+        memory.writeInt(infoAddress + SIGNALFD_SIGNAL_INFO_PID_OFFSET, child.processId());
+        memory.writeInt(
+                infoAddress + SIGNALFD_SIGNAL_INFO_UID_OFFSET,
+                GuestCredentials.idToInt(child.syscalls().credentials.realUserId()));
+        memory.writeInt(infoAddress + SIGNALFD_SIGNAL_INFO_STATUS_OFFSET, child.exitCode());
     }
 
     /// Opens a Linux pidfd for the current process or a tracked child process.
@@ -11346,6 +11893,15 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         if (openFile.isEventFile()) {
             return "anon_inode:[eventfd]";
         }
+        if (openFile.isTimerFile()) {
+            return "anon_inode:[timerfd]";
+        }
+        if (openFile.isInotifyFile()) {
+            return "anon_inode:[inotify]";
+        }
+        if (openFile.isSignalFile()) {
+            return "anon_inode:[signalfd]";
+        }
         if (openFile.isEpollFile()) {
             return "anon_inode:[eventpoll]";
         }
@@ -11546,6 +12102,122 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         @Nullable OpenFile openFile = openFile((int) directoryFileDescriptor);
         return openFile != null && openFile.isDirectory();
+    }
+
+    /// Returns a Linux error for a relative path directory descriptor, or zero when it is usable.
+    protected long directoryFileDescriptorError(long directoryFileDescriptor, String guestPath) {
+        if (directoryFileDescriptor == AT_FDCWD || isAbsoluteGuestPath(guestPath)) {
+            return 0;
+        }
+        if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
+            return EBADF;
+        }
+
+        @Nullable OpenFile openFile = openFile((int) directoryFileDescriptor);
+        if (openFile == null) {
+            return EBADF;
+        }
+        return openFile.isDirectory() ? 0 : ENOTDIR;
+    }
+
+    /// Returns true when a relative path contains `..` components.
+    protected static boolean guestPathContainsParentTraversal(String guestPath) {
+        int start = 0;
+        while (start <= guestPath.length()) {
+            int slash = guestPath.indexOf('/', start);
+            int end = slash < 0 ? guestPath.length() : slash;
+            if (end - start == 2 && guestPath.charAt(start) == '.' && guestPath.charAt(start + 1) == '.') {
+                return true;
+            }
+            if (slash < 0) {
+                return false;
+            }
+            start = slash + 1;
+        }
+        return false;
+    }
+
+    /// Returns true when resolving a path would move from the base mount to another guest mount.
+    protected boolean guestPathCrossesMount(long directoryFileDescriptor, String guestPath) {
+        @Nullable String baseGuestPath = directoryFileDescriptor == AT_FDCWD || isAbsoluteGuestPath(guestPath)
+                ? guestWorkingDirectory
+                : absoluteGuestPath(directoryFileDescriptor, ".");
+        @Nullable String targetGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
+        if (baseGuestPath == null || targetGuestPath == null) {
+            return false;
+        }
+        return mountForGuestPath(baseGuestPath) != mountForGuestPath(targetGuestPath);
+    }
+
+    /// Returns true when the final path component is a symbolic link.
+    protected boolean guestPathHasFinalSymbolicLink(long directoryFileDescriptor, String guestPath) {
+        @Nullable String absoluteGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
+        if (absoluteGuestPath == null) {
+            return false;
+        }
+
+        @Nullable Mount mount = mountForGuestPath(absoluteGuestPath);
+        if (mount instanceof TarMount) {
+            @Nullable TarPath tarPath = fileSystem.resolveTarPath(absoluteGuestPath, false);
+            @Nullable TarNode node = tarPath == null ? null : tarPath.node();
+            return node != null && node.isSymbolicLink();
+        }
+        if (mount instanceof VirtualMount virtualMount) {
+            @Nullable VirtualPath virtualPath = fileSystem.resolveVirtualPath(virtualMount, absoluteGuestPath, false);
+            @Nullable VirtualNode node = virtualPath == null ? null : virtualPath.node();
+            return node != null && node.isSymbolicLink();
+        }
+        if (mount instanceof HostMount hostMount) {
+            @Nullable Path hostPath = GuestFileSystem.resolveHostFile(absoluteGuestPath, hostMount);
+            return hostPath != null && Files.isSymbolicLink(hostPath);
+        }
+        return false;
+    }
+
+    /// Returns true when the final path component is one of the procfs magic links modeled here.
+    protected boolean guestPathHasFinalMagicLink(long directoryFileDescriptor, String guestPath) {
+        @Nullable String absoluteGuestPath = absoluteGuestPath(directoryFileDescriptor, guestPath);
+        if (absoluteGuestPath == null) {
+            return false;
+        }
+        String processPrefix = PROC_MOUNT_PATH + "/" + process.id();
+        return ((PROC_MOUNT_PATH + "/self/exe").equals(absoluteGuestPath)
+                || (processPrefix + "/exe").equals(absoluteGuestPath)
+                || absoluteGuestPath.startsWith(PROC_MOUNT_PATH + "/self/fd/")
+                || absoluteGuestPath.startsWith(processPrefix + "/fd/"))
+                && guestPathHasFinalSymbolicLink(directoryFileDescriptor, guestPath);
+    }
+
+    /// Resolves a path as if absolute paths were scoped to the supplied directory root.
+    protected @Nullable String inRootGuestPath(long directoryFileDescriptor, String guestPath) {
+        String relativePath = isAbsoluteGuestPath(guestPath) ? guestPath.substring(1) : guestPath;
+        String basePath;
+        if (directoryFileDescriptor == AT_FDCWD) {
+            basePath = guestWorkingDirectory;
+        } else {
+            if (directoryFileDescriptor < Integer.MIN_VALUE || directoryFileDescriptor > Integer.MAX_VALUE) {
+                return null;
+            }
+            @Nullable OpenFile directory = openFile((int) directoryFileDescriptor);
+            if (directory == null || !directory.isDirectory()) {
+                return null;
+            }
+            @Nullable String descriptorGuestPath = directory.guestPath();
+            if (descriptorGuestPath != null) {
+                basePath = descriptorGuestPath;
+            } else {
+                @Nullable Path path = directory.path();
+                if (path == null) {
+                    return null;
+                }
+                @Nullable String guestDirectoryPath = guestPathForHostFile(path);
+                if (guestDirectoryPath == null) {
+                    return null;
+                }
+                basePath = guestDirectoryPath;
+            }
+        }
+        return normalizeAbsoluteGuestPath(basePath + "/" + relativePath);
     }
 
     /// Resolves a guest path below a configured filesystem mount or an open directory descriptor.
@@ -13406,6 +14078,85 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             long data) {
     }
 
+    /// One path watch stored in an in-memory Linux `inotify` descriptor.
+    ///
+    /// @param watchDescriptor the positive guest-visible watch descriptor
+    /// @param guestPath the watched guest path string
+    /// @param mask the guest-requested inotify event mask
+    protected record InotifyWatch(
+            int watchDescriptor,
+            String guestPath,
+            int mask) {
+    }
+
+    /// Stores path watches for a single in-memory Linux `inotify` descriptor.
+    protected static final class InotifySet {
+        /// The watch descriptor assigned to the next new path.
+        private int nextWatchDescriptor = 1;
+
+        /// Watches keyed by watch descriptor.
+        private final HashMap<Integer, InotifyWatch> watchesByDescriptor = new HashMap<>();
+
+        /// Watches keyed by exact guest path string.
+        private final HashMap<String, InotifyWatch> watchesByPath = new HashMap<>();
+
+        /// Adds or replaces a watched guest path.
+        synchronized int addWatch(String guestPath, int mask) {
+            @Nullable InotifyWatch previous = watchesByPath.get(guestPath);
+            if (previous != null) {
+                InotifyWatch replacement = new InotifyWatch(previous.watchDescriptor(), guestPath, mask);
+                watchesByPath.put(guestPath, replacement);
+                watchesByDescriptor.put(replacement.watchDescriptor(), replacement);
+                return replacement.watchDescriptor();
+            }
+
+            int watchDescriptor = nextWatchDescriptor++;
+            if (nextWatchDescriptor <= 0) {
+                nextWatchDescriptor = 1;
+            }
+            InotifyWatch watch = new InotifyWatch(watchDescriptor, guestPath, mask);
+            watchesByPath.put(guestPath, watch);
+            watchesByDescriptor.put(watchDescriptor, watch);
+            return watchDescriptor;
+        }
+
+        /// Removes a watch descriptor or returns a raw negative Linux error.
+        synchronized long removeWatch(int watchDescriptor) {
+            @Nullable InotifyWatch watch = watchesByDescriptor.remove(watchDescriptor);
+            if (watch == null) {
+                return EINVAL;
+            }
+            watchesByPath.remove(watch.guestPath());
+            return 0;
+        }
+
+        /// Returns true when a queued inotify event can be read.
+        synchronized boolean isReadable() {
+            return false;
+        }
+    }
+
+    /// Stores the signal mask for a single Linux `signalfd` descriptor.
+    protected static final class SignalFile {
+        /// Signal bits accepted by this descriptor.
+        private long mask;
+
+        /// Creates a signal descriptor state object.
+        protected SignalFile(long mask) {
+            this.mask = mask;
+        }
+
+        /// Replaces the accepted signal mask.
+        synchronized void setMask(long mask) {
+            this.mask = mask;
+        }
+
+        /// Returns true when the supplied signal number is accepted by this descriptor.
+        synchronized boolean accepts(long signalNumber) {
+            return (mask & signalMask(signalNumber)) != 0;
+        }
+    }
+
     /// Stores descriptor interests for a single in-memory Linux `epoll` descriptor.
     protected static final class EpollSet {
         /// Ordered descriptor interests registered by the guest.
@@ -13711,6 +14462,132 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
+    /// Implements a writable seekable byte channel backed by process memory.
+    @NotNullByDefault
+    protected static final class MemorySeekableByteChannel implements SeekableByteChannel {
+        /// The initial in-memory file capacity.
+        private static final int INITIAL_CAPACITY = 64;
+
+        /// The mutable file contents.
+        private byte[] data = new byte[INITIAL_CAPACITY];
+
+        /// The guest-visible file size.
+        private int size;
+
+        /// The current file offset.
+        private int position;
+
+        /// Whether the channel is open.
+        private boolean open = true;
+
+        /// Reads bytes from the current file offset.
+        @Override
+        public int read(ByteBuffer destination) throws IOException {
+            ensureOpen();
+            if (position >= size) {
+                return -1;
+            }
+
+            int count = Math.min(destination.remaining(), size - position);
+            destination.put(data, position, count);
+            position += count;
+            return count;
+        }
+
+        /// Writes bytes at the current file offset, growing the backing array as needed.
+        @Override
+        public int write(ByteBuffer source) throws IOException {
+            ensureOpen();
+            int count = source.remaining();
+            long end = (long) position + count;
+            if (end > Integer.MAX_VALUE) {
+                throw new IOException("Memory file is too large: " + end);
+            }
+            ensureCapacity((int) end);
+            if (position > size) {
+                Arrays.fill(data, size, position, (byte) 0);
+            }
+            source.get(data, position, count);
+            position = (int) end;
+            size = Math.max(size, position);
+            return count;
+        }
+
+        /// Returns the current file offset.
+        @Override
+        public long position() throws IOException {
+            ensureOpen();
+            return position;
+        }
+
+        /// Sets the current file offset.
+        @Override
+        public SeekableByteChannel position(long newPosition) throws IOException {
+            ensureOpen();
+            if (newPosition < 0 || newPosition > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Invalid memory file position: " + newPosition);
+            }
+            position = (int) newPosition;
+            return this;
+        }
+
+        /// Returns the guest-visible file size.
+        @Override
+        public long size() throws IOException {
+            ensureOpen();
+            return size;
+        }
+
+        /// Truncates or extends the file.
+        @Override
+        public SeekableByteChannel truncate(long newSize) throws IOException {
+            ensureOpen();
+            if (newSize < 0 || newSize > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException("Invalid memory file size: " + newSize);
+            }
+            ensureCapacity((int) newSize);
+            if (newSize > size) {
+                Arrays.fill(data, size, (int) newSize, (byte) 0);
+            }
+            size = (int) newSize;
+            if (position > size) {
+                position = size;
+            }
+            return this;
+        }
+
+        /// Returns true while this channel has not been closed.
+        @Override
+        public boolean isOpen() {
+            return open;
+        }
+
+        /// Closes this channel.
+        @Override
+        public void close() {
+            open = false;
+        }
+
+        /// Ensures that the backing array can contain the requested size.
+        private void ensureCapacity(int requestedCapacity) {
+            if (requestedCapacity <= data.length) {
+                return;
+            }
+            int capacity = data.length;
+            while (capacity < requestedCapacity) {
+                capacity = Math.max(capacity << 1, requestedCapacity);
+            }
+            data = Arrays.copyOf(data, capacity);
+        }
+
+        /// Throws when the channel is already closed.
+        private void ensureOpen() throws IOException {
+            if (!open) {
+                throw new IOException("Memory file channel is closed");
+            }
+        }
+    }
+
     /// Describes an open file description referenced by one or more guest file descriptors.
     @NotNullByDefault
     protected static final class OpenFile {
@@ -13743,6 +14620,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         /// The timer backing a timerfd descriptor.
         private final @Nullable TimerFile timerFile;
+
+        /// The watch set backing an inotify descriptor.
+        private @Nullable InotifySet inotifySet;
+
+        /// The signal mask backing a signalfd descriptor.
+        private @Nullable SignalFile signalFile;
 
         /// The interest set backing an epoll descriptor.
         private final @Nullable EpollSet epollSet;
@@ -13779,6 +14662,12 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         /// Whether writes append to the current end of a host file.
         private final boolean append;
+
+        /// Whether this descriptor is backed by an anonymous in-memory file.
+        private boolean memoryFile;
+
+        /// Linux memfd seals currently applied to this file.
+        private int seals;
 
         /// Whether empty pipe reads should return `EAGAIN`.
         private boolean nonblocking;
@@ -13920,6 +14809,33 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     writable,
                     append,
                     false);
+        }
+
+        /// Creates an entry backed by an anonymous memory file.
+        static OpenFile memoryFile(String name, SeekableByteChannel channel, int seals) {
+            OpenFile openFile = new OpenFile(
+                    -1,
+                    null,
+                    name,
+                    null,
+                    null,
+                    null,
+                    channel,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    true,
+                    false,
+                    false);
+            openFile.memoryFile = true;
+            openFile.seals = seals;
+            return openFile;
         }
 
         /// Creates an entry backed by a host directory path.
@@ -14305,6 +15221,58 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
                     timerFile.nonblocking());
         }
 
+        /// Creates an entry backed by an inotify watch set.
+        static OpenFile inotifyFile(InotifySet inotifySet, boolean nonblocking) {
+            OpenFile openFile = new OpenFile(
+                    -1,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    false,
+                    false,
+                    nonblocking);
+            openFile.inotifySet = inotifySet;
+            return openFile;
+        }
+
+        /// Creates an entry backed by a signal mask.
+        static OpenFile signalFile(SignalFile signalFile, boolean nonblocking) {
+            OpenFile openFile = new OpenFile(
+                    -1,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    false,
+                    false,
+                    false,
+                    false,
+                    true,
+                    false,
+                    false,
+                    nonblocking);
+            openFile.signalFile = signalFile;
+            return openFile;
+        }
+
         /// Creates an entry backed by an epoll interest set.
         static OpenFile epollFile(EpollSet epollSet) {
             return new OpenFile(
@@ -14400,6 +15368,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return channel != null;
         }
 
+        /// Returns true when this entry is backed by an anonymous memory file.
+        boolean isMemoryFile() {
+            return memoryFile;
+        }
+
         /// Returns true when this entry is backed by a pipe endpoint.
         boolean isPipe() {
             return pipe != null;
@@ -14413,6 +15386,16 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when this entry is backed by a timerfd timer.
         boolean isTimerFile() {
             return timerFile != null;
+        }
+
+        /// Returns true when this entry is backed by an inotify watch set.
+        boolean isInotifyFile() {
+            return inotifySet != null;
+        }
+
+        /// Returns true when this entry is backed by a signal mask.
+        boolean isSignalFile() {
+            return signalFile != null;
         }
 
         /// Returns true when this entry is backed by an epoll interest set.
@@ -14482,6 +15465,18 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         TimerFile timerFile() {
             assert timerFile != null;
             return timerFile;
+        }
+
+        /// Returns the inotify watch set backing this descriptor.
+        InotifySet inotifySet() {
+            assert inotifySet != null;
+            return inotifySet;
+        }
+
+        /// Returns the signal mask backing this descriptor.
+        SignalFile signalFile() {
+            assert signalFile != null;
+            return signalFile;
         }
 
         /// Returns the epoll interest set backing this descriptor.
@@ -14577,6 +15572,56 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         /// Returns true when writes are permitted.
         boolean writable() {
             return writable;
+        }
+
+        /// Returns Linux memfd seals currently applied to this file.
+        int seals() {
+            return seals;
+        }
+
+        /// Adds Linux memfd seals to this file.
+        long addSeals(long addedSeals) {
+            if (!memoryFile) {
+                return EINVAL;
+            }
+            if ((addedSeals & ~SUPPORTED_FILE_SEALS) != 0) {
+                return EINVAL;
+            }
+            if ((seals & F_SEAL_SEAL) != 0) {
+                return EPERM;
+            }
+            seals |= (int) addedSeals;
+            return 0;
+        }
+
+        /// Returns a raw Linux error when a write is blocked by memfd seals, otherwise zero.
+        long writeSealError(long offset, long length) throws IOException {
+            if (!memoryFile) {
+                return 0;
+            }
+            if ((seals & (F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) != 0) {
+                return EPERM;
+            }
+            long fileSize = channel().size();
+            if ((seals & F_SEAL_GROW) != 0 && offset > fileSize - length) {
+                return EPERM;
+            }
+            return 0;
+        }
+
+        /// Returns a raw Linux error when resizing is blocked by memfd seals, otherwise zero.
+        long resizeSealError(long newSize) throws IOException {
+            if (!memoryFile) {
+                return 0;
+            }
+            long fileSize = channel().size();
+            if (newSize < fileSize && (seals & F_SEAL_SHRINK) != 0) {
+                return EPERM;
+            }
+            if (newSize > fileSize && (seals & F_SEAL_GROW) != 0) {
+                return EPERM;
+            }
+            return 0;
         }
 
         /// Returns true when host file writes append to the end of file.

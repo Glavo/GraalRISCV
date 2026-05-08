@@ -41,6 +41,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -73,6 +74,9 @@ public final class GuestSyscallsTest {
     /// Linux `ENOENT` as a raw negative syscall result.
     private static final long ENOENT = -2;
 
+    /// Linux `E2BIG` as a raw negative syscall result.
+    private static final long E2BIG = -7;
+
     /// Linux `ESRCH` as a raw negative syscall result.
     private static final long ESRCH = -3;
 
@@ -90,6 +94,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `EEXIST` as a raw negative syscall result.
     private static final long EEXIST = -17;
+
+    /// Linux `EXDEV` as a raw negative syscall result.
+    private static final long EXDEV = -18;
 
     /// Linux `EINTR` as a raw negative syscall result.
     private static final long EINTR = -4;
@@ -123,6 +130,9 @@ public final class GuestSyscallsTest {
 
     /// Linux `ERANGE` as a raw negative syscall result.
     private static final long ERANGE = -34;
+
+    /// Linux `ELOOP` as a raw negative syscall result.
+    private static final long ELOOP = -40;
 
     /// Linux `ENOSYS` as a raw negative syscall result.
     private static final long ENOSYS = -38;
@@ -207,6 +217,15 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `fcntl`.
     private static final long SYS_FCNTL = 25;
+
+    /// The Linux RISC-V syscall number for `inotify_init1`.
+    private static final long SYS_INOTIFY_INIT1 = 26;
+
+    /// The Linux RISC-V syscall number for `inotify_add_watch`.
+    private static final long SYS_INOTIFY_ADD_WATCH = 27;
+
+    /// The Linux RISC-V syscall number for `inotify_rm_watch`.
+    private static final long SYS_INOTIFY_RM_WATCH = 28;
 
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final long SYS_IOCTL = 29;
@@ -321,6 +340,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `ppoll`.
     private static final long SYS_PPOLL = 73;
+
+    /// The Linux RISC-V syscall number for `signalfd4`.
+    private static final long SYS_SIGNALFD4 = 74;
 
     /// The Linux RISC-V syscall number for `readlinkat`.
     private static final long SYS_READLINKAT = 78;
@@ -691,6 +713,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final long SYS_GETRANDOM = 278;
 
+    /// The Linux RISC-V syscall number for `memfd_create`.
+    private static final long SYS_MEMFD_CREATE = 279;
+
+    /// The Linux RISC-V syscall number for `execveat`.
+    private static final long SYS_EXECVEAT = 281;
+
     /// The Linux RISC-V syscall number for `membarrier`.
     private static final long SYS_MEMBARRIER = 283;
 
@@ -708,6 +736,9 @@ public final class GuestSyscallsTest {
 
     /// The Linux RISC-V syscall number for `statx`.
     private static final long SYS_STATX = 291;
+
+    /// The Linux RISC-V syscall number for `openat2`.
+    private static final long SYS_OPENAT2 = 437;
 
     /// The Linux RISC-V syscall number for `rseq`.
     private static final long SYS_RSEQ = 293;
@@ -1240,6 +1271,9 @@ public final class GuestSyscallsTest {
     /// Linux `O_DIRECTORY`.
     private static final long O_DIRECTORY = 00200000L;
 
+    /// Linux `O_NOFOLLOW`.
+    private static final long O_NOFOLLOW = 00400000L;
+
     /// Linux `F_DUPFD`.
     private static final long F_DUPFD = 0;
 
@@ -1305,6 +1339,57 @@ public final class GuestSyscallsTest {
 
     /// Linux `O_CLOEXEC`.
     private static final long O_CLOEXEC = 02000000L;
+
+    /// The fixed byte size of the Linux `struct inotify_event` header.
+    private static final long INOTIFY_EVENT_HEADER_SIZE = 16;
+
+    /// Linux `IN_MODIFY`.
+    private static final long IN_MODIFY = 0x00000002;
+
+    /// The byte size of Linux `struct open_how` currently used by the tests.
+    private static final long OPEN_HOW_SIZE = 24;
+
+    /// The byte offset of `flags` inside Linux `struct open_how`.
+    private static final long OPEN_HOW_FLAGS_OFFSET = 0;
+
+    /// The byte offset of `mode` inside Linux `struct open_how`.
+    private static final long OPEN_HOW_MODE_OFFSET = Long.BYTES;
+
+    /// The byte offset of `resolve` inside Linux `struct open_how`.
+    private static final long OPEN_HOW_RESOLVE_OFFSET = 2L * Long.BYTES;
+
+    /// Linux `RESOLVE_NO_XDEV`.
+    private static final long RESOLVE_NO_XDEV = 0x01;
+
+    /// Linux `RESOLVE_NO_MAGICLINKS`.
+    private static final long RESOLVE_NO_MAGICLINKS = 0x02;
+
+    /// Linux `RESOLVE_NO_SYMLINKS`.
+    private static final long RESOLVE_NO_SYMLINKS = 0x04;
+
+    /// Linux `RESOLVE_BENEATH`.
+    private static final long RESOLVE_BENEATH = 0x08;
+
+    /// Linux `MFD_CLOEXEC`.
+    private static final long MFD_CLOEXEC = 0x0001;
+
+    /// Linux `MFD_ALLOW_SEALING`.
+    private static final long MFD_ALLOW_SEALING = 0x0002;
+
+    /// Linux `F_ADD_SEALS`.
+    private static final long F_ADD_SEALS = 1033;
+
+    /// Linux `F_GET_SEALS`.
+    private static final long F_GET_SEALS = 1034;
+
+    /// Linux `F_SEAL_SEAL`.
+    private static final long F_SEAL_SEAL = 0x0001;
+
+    /// Linux `F_SEAL_GROW`.
+    private static final long F_SEAL_GROW = 0x0004;
+
+    /// Linux `F_SEAL_WRITE`.
+    private static final long F_SEAL_WRITE = 0x0008;
 
     /// Linux `FALLOC_FL_KEEP_SIZE`.
     private static final long FALLOC_FL_KEEP_SIZE = 0x01;
@@ -1621,6 +1706,9 @@ public final class GuestSyscallsTest {
     /// The byte size of Linux generic 64-bit `siginfo_t`.
     private static final long SIGNAL_INFO_SIZE = 128;
 
+    /// The fixed byte size of Linux `struct signalfd_siginfo`.
+    private static final long SIGNALFD_SIGNAL_INFO_SIZE = 128;
+
     /// The rounded byte size of Linux RISC-V 64-bit `rt_sigframe`.
     private static final long SIGNAL_FRAME_SIZE = 1088;
 
@@ -1641,6 +1729,21 @@ public final class GuestSyscallsTest {
 
     /// The byte offset of `si_addr` inside the Linux generic 64-bit `siginfo_t` fault union.
     private static final long SIGNAL_INFO_FAULT_ADDRESS_OFFSET = 2L * Long.BYTES;
+
+    /// The byte offset of `ssi_signo` inside Linux `struct signalfd_siginfo`.
+    private static final long SIGNALFD_SIGNAL_INFO_SIGNO_OFFSET = 0;
+
+    /// The byte offset of `ssi_code` inside Linux `struct signalfd_siginfo`.
+    private static final long SIGNALFD_SIGNAL_INFO_CODE_OFFSET = 2L * Integer.BYTES;
+
+    /// The byte offset of `ssi_pid` inside Linux `struct signalfd_siginfo`.
+    private static final long SIGNALFD_SIGNAL_INFO_PID_OFFSET = 3L * Integer.BYTES;
+
+    /// The byte offset of `ssi_uid` inside Linux `struct signalfd_siginfo`.
+    private static final long SIGNALFD_SIGNAL_INFO_UID_OFFSET = 4L * Integer.BYTES;
+
+    /// The byte offset of `ssi_status` inside Linux `struct signalfd_siginfo`.
+    private static final long SIGNALFD_SIGNAL_INFO_STATUS_OFFSET = 10L * Integer.BYTES;
 
     /// The byte offset of `ss_sp` inside Linux RISC-V 64-bit `stack_t`.
     private static final long SIGNAL_STACK_POINTER_OFFSET = 0;
@@ -2304,6 +2407,224 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_FCNTL, 0, F_GETFL, 0);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(O_RDONLY | O_NONBLOCK, state.register(10));
+        }
+    }
+
+    /// Verifies in-memory `inotify` descriptors expose flags and watch lifecycle operations.
+    @Test
+    public void inotifySupportsDescriptorFlagsAndWatchLifecycle() throws Exception {
+        Files.writeString(tempDirectory.resolve("watched.txt"), "watch", StandardCharsets.UTF_8);
+        Files.writeString(tempDirectory.resolve("regular.txt"), "regular", StandardCharsets.UTF_8);
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 256;
+
+            setSyscall(state, SYS_INOTIFY_INIT1, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int blockingFileDescriptor = (int) state.register(10);
+            assertEquals(3, blockingFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, blockingFileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, blockingFileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY, state.register(10));
+
+            setSyscall(state, SYS_INOTIFY_INIT1, O_NONBLOCK | O_CLOEXEC, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(4, fileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY | O_NONBLOCK, state.register(10));
+
+            setSyscall(state, SYS_INOTIFY_INIT1, O_APPEND, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/watched.txt");
+            setSyscall(state, SYS_INOTIFY_ADD_WATCH, fileDescriptor, pathAddress, IN_MODIFY);
+            state.syscalls().handle(state, TEST_PC);
+            int watchDescriptor = (int) state.register(10);
+            assertEquals(1, watchDescriptor);
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, INOTIFY_EVENT_HEADER_SIZE - 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, INOTIFY_EVENT_HEADER_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_INOTIFY_RM_WATCH, fileDescriptor, watchDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_INOTIFY_RM_WATCH, fileDescriptor, watchDescriptor, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/missing.txt");
+            setSyscall(state, SYS_INOTIFY_ADD_WATCH, fileDescriptor, pathAddress, IN_MODIFY);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOENT, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/watched.txt");
+            setSyscall(state, SYS_INOTIFY_ADD_WATCH, fileDescriptor, pathAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_INOTIFY_ADD_WATCH, 99, pathAddress, IN_MODIFY);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/regular.txt");
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int regularFileDescriptor = (int) state.register(10);
+            assertEquals(5, regularFileDescriptor);
+
+            setSyscall(state, SYS_INOTIFY_ADD_WATCH, regularFileDescriptor, pathAddress, IN_MODIFY);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `signalfd4` descriptor flags, mask updates, and queued `SIGCHLD` reads.
+    @Test
+    public void signalfd4ReadsBlockedChildExitSignal() throws Exception {
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                childState.syscalls().recordThreadExit(childState, 7);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long signalSetAddress = memory.baseAddress();
+            long bufferAddress = memory.baseAddress() + 256;
+            long statusAddress = memory.baseAddress() + 512;
+
+            memory.writeLong(signalSetAddress, signalMask(SIGCHLD) | signalMask(SIGKILL));
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, signalSetAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_SIGNALFD4, -1, signalSetAddress, KERNEL_SIGSET_SIZE, O_NONBLOCK | O_CLOEXEC);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFL, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(O_RDONLY | O_NONBLOCK, state.register(10));
+
+            memory.writeLong(signalSetAddress, signalMask(SIGUSR1));
+            setSyscall(state, SYS_SIGNALFD4, fileDescriptor, signalSetAddress, KERNEL_SIGSET_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(fileDescriptor, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, SIGNALFD_SIGNAL_INFO_SIZE - 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, SIGNALFD_SIGNAL_INFO_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_SIGNALFD4, -1, signalSetAddress, KERNEL_SIGSET_SIZE, O_APPEND);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SIGNALFD4, -1, signalSetAddress, KERNEL_SIGSET_SIZE - 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_SIGNALFD4, -1, memory.baseAddress() + 4092, KERNEL_SIGSET_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_EVENTFD2, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int eventFileDescriptor = (int) state.register(10);
+            assertEquals(4, eventFileDescriptor);
+
+            setSyscall(state, SYS_SIGNALFD4, 99, signalSetAddress, KERNEL_SIGSET_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_SIGNALFD4, eventFileDescriptor, signalSetAddress, KERNEL_SIGSET_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(signalSetAddress, signalMask(SIGCHLD));
+            setSyscall(state, SYS_SIGNALFD4, fileDescriptor, signalSetAddress, KERNEL_SIGSET_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(fileDescriptor, state.register(10));
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int childProcessId = (int) state.register(10);
+            assertTrue(childProcessId > 0);
+            childExited.get(5, TimeUnit.SECONDS);
+
+            memory.clear(bufferAddress, SIGNALFD_SIGNAL_INFO_SIZE);
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, SIGNALFD_SIGNAL_INFO_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(SIGNALFD_SIGNAL_INFO_SIZE, state.register(10));
+            assertEquals(SIGCHLD, memory.readInt(bufferAddress + SIGNALFD_SIGNAL_INFO_SIGNO_OFFSET));
+            assertEquals(CLD_EXITED, memory.readInt(bufferAddress + SIGNALFD_SIGNAL_INFO_CODE_OFFSET));
+            assertEquals(childProcessId, memory.readInt(bufferAddress + SIGNALFD_SIGNAL_INFO_PID_OFFSET));
+            assertEquals(GuestCredentials.DEFAULT_USER_ID, memory.readInt(bufferAddress + SIGNALFD_SIGNAL_INFO_UID_OFFSET));
+            assertEquals(7, memory.readInt(bufferAddress + SIGNALFD_SIGNAL_INFO_STATUS_OFFSET));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, SIGNALFD_SIGNAL_INFO_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+            assertEquals(7 << 8, memory.readInt(statusAddress));
         }
     }
 
@@ -4294,6 +4615,223 @@ public final class GuestSyscallsTest {
             setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 1);
             state.syscalls().handle(state, TEST_PC);
             assertEquals(EBADF, state.register(10));
+        }
+    }
+
+    /// Verifies that `openat2` opens regular files and validates `struct open_how`.
+    @Test
+    public void openat2OpensHostFilesAndValidatesOpenHow() throws Exception {
+        Files.writeString(tempDirectory.resolve("message.txt"), "openat2-data", StandardCharsets.UTF_8);
+        Files.createSymbolicLink(tempDirectory.resolve("link.txt"), Path.of("message.txt"));
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long howAddress = memory.baseAddress() + 128;
+            long bufferAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, pathAddress, "/message.txt");
+            writeOpenHow(memory, howAddress, O_RDONLY | O_CLOEXEC, 0, 0);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            setSyscall(state, SYS_READ, fileDescriptor, bufferAddress, 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(8, state.register(10));
+            assertArrayEquals("openat2-".getBytes(StandardCharsets.UTF_8), memory.readBytes(bufferAddress, 8));
+
+            memory.clear(howAddress + OPEN_HOW_SIZE, 8);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE + 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(4, state.register(10));
+
+            memory.writeByte(howAddress + OPEN_HOW_SIZE, (byte) 1);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE + 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(E2BIG, state.register(10));
+
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE - 8);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeOpenHow(memory, howAddress, O_RDONLY, 0644, 0);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeOpenHow(memory, howAddress, O_RDONLY, 0, -1);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/link.txt");
+            writeOpenHow(memory, howAddress, O_RDONLY, 0, RESOLVE_NO_MAGICLINKS);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(5, state.register(10));
+
+            writeOpenHow(memory, howAddress, O_RDONLY, 0, RESOLVE_NO_SYMLINKS);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ELOOP, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/message.txt");
+            writeOpenHow(memory, howAddress, O_RDONLY, 0, RESOLVE_BENEATH);
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, howAddress, OPEN_HOW_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EXDEV, state.register(10));
+
+            setSyscall(state, SYS_OPENAT2, AT_FDCWD, pathAddress, memory.endAddress(), OPEN_HOW_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+        }
+    }
+
+    /// Verifies that `memfd_create` exposes an anonymous writable file and basic sealing.
+    @Test
+    public void memfdCreateProvidesAnonymousSealableFile() throws Exception {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long nameAddress = memory.baseAddress();
+            long dataAddress = memory.baseAddress() + 128;
+            long statAddress = memory.baseAddress() + 256;
+
+            writeGuestString(memory, nameAddress, "sealed");
+            setSyscall(state, SYS_MEMFD_CREATE, nameAddress, MFD_CLOEXEC | MFD_ALLOW_SEALING, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GETFD, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(FD_CLOEXEC, state.register(10));
+
+            byte[] data = "memfd".getBytes(StandardCharsets.UTF_8);
+            memory.writeBytes(dataAddress, data, 0, data.length);
+            setSyscall(state, SYS_WRITE, fileDescriptor, dataAddress, data.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(data.length, state.register(10));
+
+            setSyscall(state, SYS_LSEEK, fileDescriptor, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            memory.clear(dataAddress, data.length);
+            setSyscall(state, SYS_READ, fileDescriptor, dataAddress, data.length);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(data.length, state.register(10));
+            assertArrayEquals(data, memory.readBytes(dataAddress, data.length));
+
+            setSyscall(state, SYS_FTRUNCATE, fileDescriptor, 8, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FSTAT, fileDescriptor, statAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(8, memory.readLong(statAddress + STAT_SIZE_OFFSET));
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_ADD_SEALS, F_SEAL_GROW);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FTRUNCATE, fileDescriptor, 9, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_ADD_SEALS, F_SEAL_WRITE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, fileDescriptor, F_GET_SEALS, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(F_SEAL_GROW | F_SEAL_WRITE, state.register(10));
+
+            setSyscall(state, SYS_PWRITE64, fileDescriptor, dataAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            writeGuestString(memory, nameAddress, "closed");
+            setSyscall(state, SYS_MEMFD_CREATE, nameAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int sealedFileDescriptor = (int) state.register(10);
+            assertEquals(4, sealedFileDescriptor);
+
+            setSyscall(state, SYS_FCNTL, sealedFileDescriptor, F_GET_SEALS, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(F_SEAL_SEAL, state.register(10));
+
+            setSyscall(state, SYS_FCNTL, sealedFileDescriptor, F_ADD_SEALS, F_SEAL_GROW);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EPERM, state.register(10));
+
+            byte[] oversizedName = new byte[250];
+            Arrays.fill(oversizedName, (byte) 'x');
+            memory.writeBytes(nameAddress, oversizedName, 0, oversizedName.length);
+            setSyscall(state, SYS_MEMFD_CREATE, nameAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeGuestString(memory, nameAddress, "bad-flags");
+            setSyscall(state, SYS_MEMFD_CREATE, nameAddress, 4, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
+    /// Verifies `execveat` validates fd-relative and no-follow error cases.
+    @Test
+    public void execveatValidatesDescriptorAndSymlinkErrors() throws Exception {
+        Files.writeString(tempDirectory.resolve("file.txt"), "not-an-elf", StandardCharsets.UTF_8);
+        Files.createSymbolicLink(tempDirectory.resolve("link.txt"), Path.of("file.txt"));
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(
+                    memory,
+                    new ByteArrayInputStream(new byte[0]),
+                    new ByteArrayOutputStream(),
+                    new ByteArrayOutputStream(),
+                    memory.baseAddress(),
+                    tempDirectory);
+            long pathAddress = memory.baseAddress();
+            long secondPathAddress = memory.baseAddress() + 128;
+
+            writeGuestString(memory, pathAddress, "");
+            setSyscall(state, SYS_EXECVEAT, 99, pathAddress, 0, 0, AT_EMPTY_PATH);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/file.txt");
+            setSyscall(state, SYS_EXECVEAT, AT_FDCWD, pathAddress, 0, 0, -1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_OPENAT, AT_FDCWD, pathAddress, O_RDONLY, 0);
+            state.syscalls().handle(state, TEST_PC);
+            int fileDescriptor = (int) state.register(10);
+            assertEquals(3, fileDescriptor);
+
+            writeGuestString(memory, secondPathAddress, "child");
+            setSyscall(state, SYS_EXECVEAT, fileDescriptor, secondPathAddress, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ENOTDIR, state.register(10));
+
+            writeGuestString(memory, pathAddress, "/link.txt");
+            setSyscall(state, SYS_EXECVEAT, AT_FDCWD, pathAddress, 0, 0, AT_SYMLINK_NOFOLLOW);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ELOOP, state.register(10));
         }
     }
 
@@ -13731,6 +14269,14 @@ public final class GuestSyscallsTest {
         state.setRegister(14, a4);
         state.setRegister(15, a5);
         state.setRegister(17, callNumber);
+    }
+
+    /// Writes a Linux `struct open_how` for `openat2` tests.
+    private static void writeOpenHow(Memory memory, long address, long flags, long mode, long resolve) {
+        memory.clear(address, OPEN_HOW_SIZE);
+        memory.writeLong(address + OPEN_HOW_FLAGS_OFFSET, flags);
+        memory.writeLong(address + OPEN_HOW_MODE_OFFSET, mode);
+        memory.writeLong(address + OPEN_HOW_RESOLVE_OFFSET, resolve);
     }
 
     /// Input stream that always fails reads.

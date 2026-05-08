@@ -1781,6 +1781,42 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         deliverSignal(state, SIGNAL_CHILD, 0, 0, action);
     }
 
+    /// Returns true when a Linux `signalfd` descriptor can read a queued process signal.
+    @Override
+    protected boolean signalFileReadable(SignalFile signalFile) {
+        synchronized (childProcessLock) {
+            return childSignalPending
+                    && signalFile.accepts(SIGNAL_CHILD)
+                    && firstExitedChildProcessLocked() != null;
+        }
+    }
+
+    /// Reads one queued process signal through a Linux `signalfd` descriptor.
+    @Override
+    protected long readSignalFile(SignalFile signalFile, long address, long length, boolean nonblocking) {
+        if (length < SIGNALFD_SIGNAL_INFO_SIZE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(address, SIGNALFD_SIGNAL_INFO_SIZE)) {
+            return EFAULT;
+        }
+
+        synchronized (childProcessLock) {
+            if (!childSignalPending || !signalFile.accepts(SIGNAL_CHILD)) {
+                return EAGAIN;
+            }
+
+            @Nullable ChildProcess child = firstExitedChildProcessLocked();
+            if (child == null) {
+                return EAGAIN;
+            }
+
+            childSignalPending = false;
+            writeSignalfdChildSignalInfo(address, child);
+            return SIGNALFD_SIGNAL_INFO_SIZE;
+        }
+    }
+
     /// Builds a Linux RISC-V `rt_sigframe` and redirects execution to a guest signal handler.
     protected void deliverSignal(
             RiscVThreadState state,
@@ -5933,6 +5969,15 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `fcntl`.
     private static final int SYS_FCNTL = 25;
 
+    /// The Linux RISC-V syscall number for `inotify_init1`.
+    private static final int SYS_INOTIFY_INIT1 = 26;
+
+    /// The Linux RISC-V syscall number for `inotify_add_watch`.
+    private static final int SYS_INOTIFY_ADD_WATCH = 27;
+
+    /// The Linux RISC-V syscall number for `inotify_rm_watch`.
+    private static final int SYS_INOTIFY_RM_WATCH = 28;
+
     /// The Linux RISC-V syscall number for `ioctl`.
     private static final int SYS_IOCTL = 29;
 
@@ -6046,6 +6091,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `ppoll`.
     private static final int SYS_PPOLL = 73;
+
+    /// The Linux RISC-V syscall number for `signalfd4`.
+    private static final int SYS_SIGNALFD4 = 74;
 
     /// The Linux RISC-V syscall number for `splice`.
     private static final int SYS_SPLICE = 76;
@@ -6362,8 +6410,14 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `close_range`.
     private static final int SYS_CLOSE_RANGE = 436;
 
+    /// The Linux RISC-V syscall number for `openat2`.
+    private static final int SYS_OPENAT2 = 437;
+
     /// The Linux RISC-V syscall number for `execve`.
     private static final int SYS_EXECVE = 221;
+
+    /// The Linux RISC-V syscall number for `execveat`.
+    private static final int SYS_EXECVEAT = 281;
 
     /// The Linux RISC-V syscall number for `mmap`.
     private static final int SYS_MMAP = 222;
@@ -6442,6 +6496,9 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
 
     /// The Linux RISC-V syscall number for `getrandom`.
     private static final int SYS_GETRANDOM = 278;
+
+    /// The Linux RISC-V syscall number for `memfd_create`.
+    private static final int SYS_MEMFD_CREATE = 279;
 
     /// The Linux RISC-V syscall number for `membarrier`.
     private static final int SYS_MEMBARRIER = 283;
@@ -6583,6 +6640,14 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_DUP -> state.setRegister(10, dup((int) state.register(10)));
             case SYS_DUP3 -> state.setRegister(10, dup3((int) state.register(10), (int) state.register(11), state.register(12)));
             case SYS_FCNTL -> state.setRegister(10, fcntl((int) state.register(10), state.register(11), state.register(12)));
+            case SYS_INOTIFY_INIT1 -> state.setRegister(10, inotifyInit1(state.register(10)));
+            case SYS_INOTIFY_ADD_WATCH -> state.setRegister(10, inotifyAddWatch(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_INOTIFY_RM_WATCH -> state.setRegister(10, inotifyRmWatch(
+                    (int) state.register(10),
+                    state.register(11)));
             case SYS_IOCTL -> state.setRegister(10, ioctl((int) state.register(10), state.register(11), state.register(12)));
             case SYS_IOPRIO_SET -> state.setRegister(10, ioprioSet(
                     state.register(10),
@@ -6645,6 +6710,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_OPENAT2 -> state.setRegister(10, openat2(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_CLOSE -> state.setRegister(10, close((int) state.register(10)));
             case SYS_PIPE2 -> state.setRegister(10, pipe2(state.register(10), state.register(11)));
             case SYS_GETDENTS64 -> state.setRegister(10, getdents64((int) state.register(10), state.register(11), state.register(12)));
@@ -6693,6 +6763,11 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(12),
                     state.register(13),
                     state.register(14)));
+            case SYS_SIGNALFD4 -> state.setRegister(10, signalfd4(
+                    (int) state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
             case SYS_SPLICE -> state.setRegister(10, splice(
                     (int) state.register(10),
                     state.register(11),
@@ -6987,6 +7062,13 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(10),
                     state.register(11),
                     state.register(12)));
+            case SYS_EXECVEAT -> state.setRegister(10, execveat(
+                    state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14)));
             case SYS_BRK -> state.setRegister(10, brk(state.register(10)));
             case SYS_MUNMAP -> state.setRegister(10, munmap(state.register(10), state.register(11)));
             case SYS_MREMAP -> state.setRegister(10, mremap(
@@ -7059,6 +7141,7 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(13),
                     state.register(14)));
             case SYS_GETRANDOM -> state.setRegister(10, getrandom(state.register(10), state.register(11), state.register(12)));
+            case SYS_MEMFD_CREATE -> state.setRegister(10, memfdCreate(state.register(10), state.register(11)));
             case SYS_MEMBARRIER -> state.setRegister(10, membarrier(state.register(10), state.register(11), state.register(12)));
             case SYS_MLOCK2 -> state.setRegister(10, mlock2(state.register(10), state.register(11), state.register(12)));
             case SYS_COPY_FILE_RANGE -> state.setRegister(10, copyFileRange(
