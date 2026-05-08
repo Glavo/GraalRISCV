@@ -716,6 +716,12 @@ public final class GuestSyscallsTest {
     /// The Linux RISC-V syscall number for `sendmmsg`.
     private static final long SYS_SENDMMSG = 269;
 
+    /// The Linux RISC-V syscall number for `process_vm_readv`.
+    private static final long SYS_PROCESS_VM_READV = 270;
+
+    /// The Linux RISC-V syscall number for `process_vm_writev`.
+    private static final long SYS_PROCESS_VM_WRITEV = 271;
+
     /// The Linux RISC-V syscall number for `sched_setattr`.
     private static final long SYS_SCHED_SETATTR = 274;
 
@@ -7817,6 +7823,91 @@ public final class GuestSyscallsTest {
             assertArrayEquals("AB".getBytes(StandardCharsets.UTF_8), memory.readBytes(firstBuffer, 2));
             assertEquals('C', memory.readUnsignedByte(secondBuffer));
             assertEquals('Z', memory.readUnsignedByte(secondBuffer + 1));
+        }
+    }
+
+    /// Verifies that `process_vm_readv` and `process_vm_writev` copy memory through iovec ranges.
+    @Test
+    public void processVmReadvAndWritevCopyCurrentProcessMemory() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long base = memory.baseAddress();
+            long localIovecAddress = base;
+            long remoteIovecAddress = base + 64;
+            long localReadFirstBuffer = base + 256;
+            long localReadSecondBuffer = base + 264;
+            long remoteReadBuffer = base + 512;
+            long localWriteFirstBuffer = base + 768;
+            long localWriteSecondBuffer = base + 776;
+            long remoteWriteBuffer = base + 1024;
+
+            memory.writeBytes(remoteReadBuffer, "remote".getBytes(StandardCharsets.UTF_8), 0, 6);
+            memory.writeLong(localIovecAddress + IOVEC_BASE_OFFSET, localReadFirstBuffer);
+            memory.writeLong(localIovecAddress + IOVEC_LENGTH_OFFSET, 3);
+            memory.writeLong(localIovecAddress + IOVEC_SIZE + IOVEC_BASE_OFFSET, localReadSecondBuffer);
+            memory.writeLong(localIovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, 3);
+            memory.writeLong(remoteIovecAddress + IOVEC_BASE_OFFSET, remoteReadBuffer);
+            memory.writeLong(remoteIovecAddress + IOVEC_LENGTH_OFFSET, 6);
+
+            setSyscall(state, SYS_PROCESS_VM_READV, 1, localIovecAddress, 2, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(6, state.register(10));
+            assertArrayEquals("rem".getBytes(StandardCharsets.UTF_8), memory.readBytes(localReadFirstBuffer, 3));
+            assertArrayEquals("ote".getBytes(StandardCharsets.UTF_8), memory.readBytes(localReadSecondBuffer, 3));
+
+            memory.writeBytes(localWriteFirstBuffer, "XY".getBytes(StandardCharsets.UTF_8), 0, 2);
+            memory.writeBytes(localWriteSecondBuffer, "Z".getBytes(StandardCharsets.UTF_8), 0, 1);
+            memory.writeLong(localIovecAddress + IOVEC_BASE_OFFSET, localWriteFirstBuffer);
+            memory.writeLong(localIovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(localIovecAddress + IOVEC_SIZE + IOVEC_BASE_OFFSET, localWriteSecondBuffer);
+            memory.writeLong(localIovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, 1);
+            memory.writeLong(remoteIovecAddress + IOVEC_BASE_OFFSET, remoteWriteBuffer);
+            memory.writeLong(remoteIovecAddress + IOVEC_LENGTH_OFFSET, 3);
+
+            setSyscall(state, SYS_PROCESS_VM_WRITEV, 1, localIovecAddress, 2, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(3, state.register(10));
+            assertArrayEquals("XYZ".getBytes(StandardCharsets.UTF_8), memory.readBytes(remoteWriteBuffer, 3));
+
+            setSyscall(state, SYS_PROCESS_VM_READV, 1, localIovecAddress, 2, remoteIovecAddress, 1, 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PROCESS_VM_READV, 9999, localIovecAddress, 2, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_PROCESS_VM_READV, 1, localIovecAddress, IOV_MAX + 1, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_PROCESS_VM_READV, 1, memory.endAddress() - Long.BYTES, 1, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            memory.writeLong(localIovecAddress + IOVEC_LENGTH_OFFSET, -1);
+            setSyscall(state, SYS_PROCESS_VM_READV, 1, localIovecAddress, 1, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeLong(localIovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(remoteIovecAddress + IOVEC_BASE_OFFSET, memory.endAddress() - 1);
+            memory.writeLong(remoteIovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            setSyscall(state, SYS_PROCESS_VM_READV, 1, localIovecAddress, 1, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            memory.writeBytes(remoteReadBuffer, "abcd".getBytes(StandardCharsets.UTF_8), 0, 4);
+            memory.writeLong(localIovecAddress + IOVEC_BASE_OFFSET, localReadFirstBuffer);
+            memory.writeLong(localIovecAddress + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(localIovecAddress + IOVEC_SIZE + IOVEC_BASE_OFFSET, memory.endAddress() - 1);
+            memory.writeLong(localIovecAddress + IOVEC_SIZE + IOVEC_LENGTH_OFFSET, 2);
+            memory.writeLong(remoteIovecAddress + IOVEC_BASE_OFFSET, remoteReadBuffer);
+            memory.writeLong(remoteIovecAddress + IOVEC_LENGTH_OFFSET, 4);
+            setSyscall(state, SYS_PROCESS_VM_READV, 1, localIovecAddress, 2, remoteIovecAddress, 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(2, state.register(10));
+            assertArrayEquals("ab".getBytes(StandardCharsets.UTF_8), memory.readBytes(localReadFirstBuffer, 2));
         }
     }
 

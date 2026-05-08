@@ -6549,6 +6549,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// The Linux RISC-V syscall number for `sendmmsg`.
     private static final int SYS_SENDMMSG = 269;
 
+    /// The Linux RISC-V syscall number for `process_vm_readv`.
+    private static final int SYS_PROCESS_VM_READV = 270;
+
+    /// The Linux RISC-V syscall number for `process_vm_writev`.
+    private static final int SYS_PROCESS_VM_WRITEV = 271;
+
     /// The Linux RISC-V syscall number for `sched_setattr`.
     private static final int SYS_SCHED_SETATTR = 274;
 
@@ -7116,6 +7122,20 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(11),
                     state.register(12),
                     state.register(13)));
+            case SYS_PROCESS_VM_READV -> state.setRegister(10, processVmReadv(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
+            case SYS_PROCESS_VM_WRITEV -> state.setRegister(10, processVmWritev(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13),
+                    state.register(14),
+                    state.register(15)));
             case SYS_READAHEAD -> state.setRegister(10, readahead(
                     (int) state.register(10),
                     state.register(11),

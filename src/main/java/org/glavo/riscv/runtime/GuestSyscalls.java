@@ -256,6 +256,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// The maximum transient buffer size used by one `sendfile` copy step.
     protected static final int SENDFILE_BUFFER_SIZE = 64 * 1024;
 
+    /// The maximum transient buffer size used by one `process_vm_readv` or `process_vm_writev` copy step.
+    protected static final int PROCESS_VM_BUFFER_SIZE = 64 * 1024;
+
     /// Linux `SPLICE_F_MOVE`.
     protected static final long SPLICE_F_MOVE = 1;
 
@@ -6416,6 +6419,159 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         } catch (IOException exception) {
             throw new RiscVException("Guest pwritev2 syscall failed", exception);
         }
+    }
+
+    /// Copies memory from another guest process into this process using Linux `process_vm_readv` semantics.
+    protected long processVmReadv(
+            long processId,
+            long localIovecAddress,
+            long localIovecCount,
+            long remoteIovecAddress,
+            long remoteIovecCount,
+            long flags) {
+        return processVmTransfer(
+                processId,
+                localIovecAddress,
+                localIovecCount,
+                remoteIovecAddress,
+                remoteIovecCount,
+                flags,
+                true);
+    }
+
+    /// Copies memory from this process into another guest process using Linux `process_vm_writev` semantics.
+    protected long processVmWritev(
+            long processId,
+            long localIovecAddress,
+            long localIovecCount,
+            long remoteIovecAddress,
+            long remoteIovecCount,
+            long flags) {
+        return processVmTransfer(
+                processId,
+                localIovecAddress,
+                localIovecCount,
+                remoteIovecAddress,
+                remoteIovecCount,
+                flags,
+                false);
+    }
+
+    /// Copies bytes between local and remote process iovec ranges.
+    private long processVmTransfer(
+            long processId,
+            long localIovecAddress,
+            long localIovecCount,
+            long remoteIovecAddress,
+            long remoteIovecCount,
+            long flags,
+            boolean readFromRemote) {
+        if (flags != 0
+                || localIovecCount < 0
+                || localIovecCount > IOV_MAX
+                || remoteIovecCount < 0
+                || remoteIovecCount > IOV_MAX) {
+            return EINVAL;
+        }
+        if (!processVmIovecArrayBacked(localIovecAddress, localIovecCount)
+                || !processVmIovecArrayBacked(remoteIovecAddress, remoteIovecCount)) {
+            return EFAULT;
+        }
+
+        @Nullable Memory remoteMemory = processVmTargetMemory(processId);
+        if (remoteMemory == null) {
+            return ESRCH;
+        }
+
+        ProcessVmIovec @Nullable [] localIovecs = readProcessVmIovecs(localIovecAddress, localIovecCount);
+        ProcessVmIovec @Nullable [] remoteIovecs = readProcessVmIovecs(remoteIovecAddress, remoteIovecCount);
+        if (localIovecs == null || remoteIovecs == null) {
+            return EINVAL;
+        }
+
+        int localIndex = 0;
+        int remoteIndex = 0;
+        long localOffset = 0;
+        long remoteOffset = 0;
+        long total = 0;
+        byte[] buffer = new byte[PROCESS_VM_BUFFER_SIZE];
+        while (localIndex < localIovecs.length && remoteIndex < remoteIovecs.length) {
+            ProcessVmIovec localIovec = localIovecs[localIndex];
+            ProcessVmIovec remoteIovec = remoteIovecs[remoteIndex];
+            if (localOffset == localIovec.length()) {
+                localIndex++;
+                localOffset = 0;
+                continue;
+            }
+            if (remoteOffset == remoteIovec.length()) {
+                remoteIndex++;
+                remoteOffset = 0;
+                continue;
+            }
+
+            long localAddress = localIovec.baseAddress() + localOffset;
+            long remoteAddress = remoteIovec.baseAddress() + remoteOffset;
+            long chunkLength = Math.min(
+                    Math.min(localIovec.length() - localOffset, remoteIovec.length() - remoteOffset),
+                    buffer.length);
+            int copyLength = (int) chunkLength;
+            Memory sourceMemory = readFromRemote ? remoteMemory : memory;
+            Memory destinationMemory = readFromRemote ? memory : remoteMemory;
+            long sourceAddress = readFromRemote ? remoteAddress : localAddress;
+            long destinationAddress = readFromRemote ? localAddress : remoteAddress;
+            if (!sourceMemory.isBacked(sourceAddress, copyLength)
+                    || !destinationMemory.isBacked(destinationAddress, copyLength)) {
+                return total == 0 ? EFAULT : total;
+            }
+
+            byte[] bytes = sourceMemory.readBytes(sourceAddress, copyLength);
+            System.arraycopy(bytes, 0, buffer, 0, copyLength);
+            destinationMemory.writeBytes(destinationAddress, buffer, 0, copyLength);
+            total += copyLength;
+            localOffset += copyLength;
+            remoteOffset += copyLength;
+        }
+        return total;
+    }
+
+    /// Returns the memory for the requested process id, or null when it is not a live known process.
+    private @Nullable Memory processVmTargetMemory(long processId) {
+        if (processId <= 0 || processId != (int) processId) {
+            return null;
+        }
+        if (processId == process.id() || isKnownGuestThreadId(processId)) {
+            return memory;
+        }
+
+        synchronized (childProcessLock) {
+            @Nullable ChildProcess child = childProcess((int) processId);
+            if (child == null || child.exited()) {
+                return null;
+            }
+            return child.syscalls().memory;
+        }
+    }
+
+    /// Returns true when the caller-owned `struct iovec` array can be read.
+    private boolean processVmIovecArrayBacked(long iovecAddress, long iovecCount) {
+        return iovecCount == 0 || memory.isBacked(iovecAddress, iovecCount * IOVEC_SIZE);
+    }
+
+    /// Reads a caller-owned `struct iovec` array, or null when any length is invalid.
+    private ProcessVmIovec @Nullable [] readProcessVmIovecs(long iovecAddress, long iovecCount) {
+        ProcessVmIovec[] iovecs = new ProcessVmIovec[(int) iovecCount];
+        long totalLength = 0;
+        for (int index = 0; index < iovecs.length; index++) {
+            long entryAddress = iovecAddress + (long) index * IOVEC_SIZE;
+            long baseAddress = memory.readLong(entryAddress + IOVEC_BASE_OFFSET);
+            long length = memory.readLong(entryAddress + IOVEC_LENGTH_OFFSET);
+            if (length < 0 || Long.MAX_VALUE - totalLength < length) {
+                return null;
+            }
+            totalLength += length;
+            iovecs[index] = new ProcessVmIovec(baseAddress, length);
+        }
+        return iovecs;
     }
 
     /// Copies bytes between two seekable file descriptors using Linux `copy_file_range` semantics.
@@ -13587,6 +13743,13 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns true when the file descriptor is one of stdin, stdout, or stderr.
     protected static boolean isStandardFileDescriptor(int fileDescriptor) {
         return fileDescriptor >= 0 && fileDescriptor <= 2;
+    }
+
+    /// Describes one `struct iovec` entry owned by a `process_vm_readv` or `process_vm_writev` caller.
+    ///
+    /// @param baseAddress the guest buffer start address
+    /// @param length the guest buffer byte length
+    private record ProcessVmIovec(long baseAddress, long length) {
     }
 
     /// Stores one process-style `clone` child tracked by its parent process.
