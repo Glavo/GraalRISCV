@@ -2361,6 +2361,30 @@ public final class GuestSyscallsTest {
     /// Linux `personality(2)` query value.
     private static final long PERSONALITY_QUERY = 0xffff_ffffL;
 
+    /// Linux `KCMP_FILE`.
+    private static final long KCMP_FILE = 0;
+
+    /// Linux `KCMP_VM`.
+    private static final long KCMP_VM = 1;
+
+    /// Linux `KCMP_FILES`.
+    private static final long KCMP_FILES = 2;
+
+    /// Linux `KCMP_FS`.
+    private static final long KCMP_FS = 3;
+
+    /// Linux `KCMP_SIGHAND`.
+    private static final long KCMP_SIGHAND = 4;
+
+    /// Linux `KCMP_IO`.
+    private static final long KCMP_IO = 5;
+
+    /// Linux `KCMP_SYSVSEM`.
+    private static final long KCMP_SYSVSEM = 6;
+
+    /// Linux `KCMP_EPOLL_TFD`.
+    private static final long KCMP_EPOLL_TFD = 7;
+
     /// Linux `CLOCK_REALTIME`.
     private static final long CLOCK_REALTIME = 0;
 
@@ -8985,6 +9009,79 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `kcmp` compares deterministic current-process resources and file descriptions.
+    @Test
+    public void kcmpComparesCurrentProcessResources() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+
+            setSyscall(state, SYS_GETPID, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long processId = state.register(10);
+
+            long @Unmodifiable [] sameProcessResourceTypes = {
+                    KCMP_VM,
+                    KCMP_FILES,
+                    KCMP_FS,
+                    KCMP_SIGHAND,
+                    KCMP_IO,
+                    KCMP_SYSVSEM,
+            };
+            for (long type : sameProcessResourceTypes) {
+                setSyscall(state, SYS_KCMP, processId, processId, type, 0, 0);
+                state.syscalls().handle(state, TEST_PC);
+                assertEquals(0, state.register(10), "kcmp type " + type);
+            }
+
+            setSyscall(state, SYS_EVENTFD2, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long firstFileDescriptor = state.register(10);
+            assertTrue(firstFileDescriptor >= 3);
+
+            setSyscall(state, SYS_FCNTL, firstFileDescriptor, F_DUPFD, 10);
+            state.syscalls().handle(state, TEST_PC);
+            long duplicatedFileDescriptor = state.register(10);
+            assertTrue(duplicatedFileDescriptor >= 10);
+
+            setSyscall(state, SYS_EVENTFD2, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long secondFileDescriptor = state.register(10);
+            assertTrue(secondFileDescriptor >= 3);
+
+            setSyscall(state, SYS_KCMP, processId, processId, KCMP_FILE, firstFileDescriptor, firstFileDescriptor);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_KCMP, processId, processId, KCMP_FILE, firstFileDescriptor, duplicatedFileDescriptor);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_KCMP, processId, processId, KCMP_FILE, firstFileDescriptor, secondFileDescriptor);
+            state.syscalls().handle(state, TEST_PC);
+            assertTrue(state.register(10) != 0);
+
+            setSyscall(state, SYS_KCMP, processId, processId, KCMP_FILE, firstFileDescriptor, 99);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EBADF, state.register(10));
+
+            setSyscall(state, SYS_KCMP, processId + 1, processId, KCMP_VM, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_KCMP, 0, processId, KCMP_VM, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_KCMP, processId, processId, KCMP_EPOLL_TFD, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_KCMP, processId, processId, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies `rt_sigtimedwait` consumes a pending blocked child-exit signal.
     @Test
     public void rtSigtimedwaitConsumesPendingChildSignal() throws Exception {
@@ -13076,7 +13173,6 @@ public final class GuestSyscallsTest {
                     SYS_SET_MEMPOLICY,
                     SYS_MIGRATE_PAGES,
                     SYS_MOVE_PAGES,
-                    SYS_KCMP,
                     SYS_IO_PGETEVENTS,
                     SYS_FANOTIFY_INIT,
                     SYS_FANOTIFY_MARK,

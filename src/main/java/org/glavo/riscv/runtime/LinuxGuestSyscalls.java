@@ -759,6 +759,33 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
     /// Linux `PR_GET_AUXV`.
     private static final long PR_GET_AUXV = 0x4155_5856L;
 
+    /// Linux `KCMP_FILE`.
+    private static final long KCMP_FILE = 0;
+
+    /// Linux `KCMP_VM`.
+    private static final long KCMP_VM = 1;
+
+    /// Linux `KCMP_FILES`.
+    private static final long KCMP_FILES = 2;
+
+    /// Linux `KCMP_FS`.
+    private static final long KCMP_FS = 3;
+
+    /// Linux `KCMP_SIGHAND`.
+    private static final long KCMP_SIGHAND = 4;
+
+    /// Linux `KCMP_IO`.
+    private static final long KCMP_IO = 5;
+
+    /// Linux `KCMP_SYSVSEM`.
+    private static final long KCMP_SYSVSEM = 6;
+
+    /// Linux `KCMP_EPOLL_TFD`.
+    private static final long KCMP_EPOLL_TFD = 7;
+
+    /// Synthetic open-file-description keys for inherited standard descriptors.
+    private static final Object @Unmodifiable [] KCMP_STANDARD_FILE_KEYS = {new Object(), new Object(), new Object()};
+
     /// Linux `PR_TAGGED_ADDR_ENABLE`.
     private static final long PR_TAGGED_ADDR_ENABLE = 1;
 
@@ -1513,6 +1540,72 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         childProcessLock.wait(
                 nanoseconds / NANOSECONDS_PER_MILLISECOND,
                 (int) (nanoseconds % NANOSECONDS_PER_MILLISECOND));
+    }
+
+    /// Compares deterministic current-process resources for Linux `kcmp`.
+    protected long kcmp(long processId1, long processId2, long type, long index1, long index2) {
+        if (!isSupportedKcmpType(type)) {
+            return EINVAL;
+        }
+        if (!isKnownKcmpProcessId(processId1) || !isKnownKcmpProcessId(processId2)) {
+            return ESRCH;
+        }
+        if (processId1 != process.id() || processId2 != process.id()) {
+            return EPERM;
+        }
+
+        return switch ((int) type) {
+            case (int) KCMP_FILE -> kcmpFile(index1, index2);
+            case (int) KCMP_VM,
+                 (int) KCMP_FILES,
+                 (int) KCMP_FS,
+                 (int) KCMP_SIGHAND,
+                 (int) KCMP_IO,
+                 (int) KCMP_SYSVSEM -> 0;
+            case (int) KCMP_EPOLL_TFD -> EINVAL;
+            default -> throw new AssertionError(type);
+        };
+    }
+
+    /// Compares two current-process open file descriptions for Linux `KCMP_FILE`.
+    protected long kcmpFile(long fileDescriptor1, long fileDescriptor2) {
+        @Nullable Object left = kcmpFileDescription(fileDescriptor1);
+        if (left == null) {
+            return EBADF;
+        }
+        @Nullable Object right = kcmpFileDescription(fileDescriptor2);
+        if (right == null) {
+            return EBADF;
+        }
+        return left == right ? 0 : 1;
+    }
+
+    /// Returns the resource identity used by Linux `KCMP_FILE`.
+    protected @Nullable Object kcmpFileDescription(long fileDescriptor) {
+        if (fileDescriptor != (int) fileDescriptor) {
+            return null;
+        }
+
+        int descriptor = (int) fileDescriptor;
+        @Nullable OpenFile openFile = openFile(descriptor);
+        if (openFile != null) {
+            return openFile.isStandardFileDescriptor()
+                    ? KCMP_STANDARD_FILE_KEYS[openFile.standardFileDescriptor()]
+                    : openFile;
+        }
+        return isStandardFileDescriptor(descriptor) ? KCMP_STANDARD_FILE_KEYS[descriptor] : null;
+    }
+
+    /// Returns true when a Linux `kcmp` type is recognized.
+    protected static boolean isSupportedKcmpType(long type) {
+        return type >= KCMP_FILE && type <= KCMP_EPOLL_TFD;
+    }
+
+    /// Returns true when a Linux `kcmp` process id names a known process.
+    protected boolean isKnownKcmpProcessId(long processId) {
+        return processId > 0
+                && processId == (int) processId
+                && (processId == process.id() || isKnownChildProcessId(processId));
     }
 
     /// Reads Linux capability sets for the current process.
@@ -7054,7 +7147,12 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 case SYS_SET_MEMPOLICY -> state.setRegister(10, ENOSYS);
                 case SYS_MIGRATE_PAGES -> state.setRegister(10, ENOSYS);
                 case SYS_MOVE_PAGES -> state.setRegister(10, ENOSYS);
-                case SYS_KCMP -> state.setRegister(10, ENOSYS);
+                case SYS_KCMP -> state.setRegister(10, kcmp(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13),
+                        state.register(14)));
                 case SYS_IO_PGETEVENTS -> state.setRegister(10, ENOSYS);
                 case SYS_SETXATTR -> state.setRegister(10, setxattr(
                         state.register(10),
