@@ -6865,11 +6865,20 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 case SYS_IO_SUBMIT -> state.setRegister(10, ENOSYS);
                 case SYS_IO_CANCEL -> state.setRegister(10, ENOSYS);
                 case SYS_IO_GETEVENTS -> state.setRegister(10, ENOSYS);
-                case SYS_TIMER_CREATE -> state.setRegister(10, ENOSYS);
-                case SYS_TIMER_GETTIME -> state.setRegister(10, ENOSYS);
-                case SYS_TIMER_GETOVERRUN -> state.setRegister(10, ENOSYS);
-                case SYS_TIMER_SETTIME -> state.setRegister(10, ENOSYS);
-                case SYS_TIMER_DELETE -> state.setRegister(10, ENOSYS);
+                case SYS_TIMER_CREATE -> state.setRegister(10, timerCreate(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12)));
+                case SYS_TIMER_GETTIME -> state.setRegister(10, timerGettime(
+                        state.register(10),
+                        state.register(11)));
+                case SYS_TIMER_GETOVERRUN -> state.setRegister(10, timerGetoverrun(state.register(10)));
+                case SYS_TIMER_SETTIME -> state.setRegister(10, timerSettime(
+                        state.register(10),
+                        state.register(11),
+                        state.register(12),
+                        state.register(13)));
+                case SYS_TIMER_DELETE -> state.setRegister(10, timerDelete(state.register(10)));
                 case SYS_RT_SIGSUSPEND -> state.setRegister(10, ENOSYS);
                 case SYS_RT_SIGTIMEDWAIT -> state.setRegister(10, ENOSYS);
                 case SYS_RT_SIGQUEUEINFO -> state.setRegister(10, ENOSYS);

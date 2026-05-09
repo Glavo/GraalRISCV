@@ -1961,6 +1961,9 @@ public final class GuestSyscallsTest {
     /// Linux `SIGUSR1`.
     private static final long SIGUSR1 = 10;
 
+    /// Linux `SIGALRM`.
+    private static final long SIGALRM = 14;
+
     /// Linux `SIGSTOP`.
     private static final long SIGSTOP = 19;
 
@@ -2414,6 +2417,18 @@ public final class GuestSyscallsTest {
 
     /// Linux `TFD_TIMER_ABSTIME`.
     private static final long TFD_TIMER_ABSTIME = 1;
+
+    /// The `sigev_signo` byte offset inside Linux RISC-V 64-bit `struct sigevent`.
+    private static final long SIGEVENT_SIGNAL_NUMBER_OFFSET = Long.BYTES;
+
+    /// The `sigev_notify` byte offset inside Linux RISC-V 64-bit `struct sigevent`.
+    private static final long SIGEVENT_NOTIFY_OFFSET = Long.BYTES + Integer.BYTES;
+
+    /// Linux `SIGEV_SIGNAL`.
+    private static final int SIGEV_SIGNAL = 0;
+
+    /// Linux `SIGEV_NONE`.
+    private static final int SIGEV_NONE = 1;
 
     /// The byte offset of `it_interval` inside Linux RISC-V 64-bit `struct itimerspec`.
     private static final long ITIMERSPEC_INTERVAL_OFFSET = 0;
@@ -10706,6 +10721,155 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies POSIX timer creation, arming, querying, overrun reporting, and deletion.
+    @Test
+    public void posixTimersCreateSettimeGettimeAndDelete() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096)) {
+            TimeSource fixedTimeSource = TimeSource.fixed(Instant.ofEpochSecond(1_700_000_000L));
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]), fixedTimeSource);
+            long timerIdAddress = memory.baseAddress() + 64;
+            long sigeventAddress = memory.baseAddress() + 128;
+            long newValueAddress = memory.baseAddress() + 256;
+            long currentValueAddress = memory.baseAddress() + 384;
+            long oldValueAddress = memory.baseAddress() + 512;
+
+            memory.writeInt(timerIdAddress, -1);
+            setSyscall(state, SYS_TIMER_CREATE, CLOCK_MONOTONIC, 0, timerIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int timerId = memory.readInt(timerIdAddress);
+            assertEquals(0, timerId);
+
+            setSyscall(state, SYS_TIMER_GETTIME, timerId, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerspec(memory, currentValueAddress, 0, 0, 0, 0);
+
+            writeItimerspec(memory, newValueAddress, 1, 2, 3, 4);
+            setSyscall(state, SYS_TIMER_SETTIME, timerId, 0, newValueAddress, oldValueAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerspec(memory, oldValueAddress, 0, 0, 0, 0);
+
+            setSyscall(state, SYS_TIMER_GETTIME, timerId, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerspec(memory, currentValueAddress, 1, 2, 3, 4);
+
+            setSyscall(state, SYS_TIMER_GETOVERRUN, timerId, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            writeItimerspec(memory, newValueAddress, 0, 0, 0, 0);
+            setSyscall(state, SYS_TIMER_SETTIME, timerId, 0, newValueAddress, oldValueAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerspec(memory, oldValueAddress, 1, 2, 3, 4);
+
+            setSyscall(state, SYS_TIMER_DELETE, timerId, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_TIMER_GETTIME, timerId, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeInt(sigeventAddress + SIGEVENT_SIGNAL_NUMBER_OFFSET, (int) SIGALRM);
+            memory.writeInt(sigeventAddress + SIGEVENT_NOTIFY_OFFSET, SIGEV_SIGNAL);
+            setSyscall(state, SYS_TIMER_CREATE, CLOCK_REALTIME, sigeventAddress, timerIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int realtimeTimerId = memory.readInt(timerIdAddress);
+            assertEquals(0, realtimeTimerId);
+
+            writeItimerspec(memory, newValueAddress, 0, 0, 1_700_000_005L, 123);
+            setSyscall(state, SYS_TIMER_SETTIME, realtimeTimerId, TIMER_ABSTIME, newValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_TIMER_GETTIME, realtimeTimerId, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertItimerspec(memory, currentValueAddress, 0, 0, 5, 123);
+        }
+    }
+
+    /// Verifies POSIX timer syscalls validate clocks, pointers, ids, flags, and timespec values.
+    @Test
+    public void posixTimersValidateArguments() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long timerIdAddress = memory.baseAddress() + 64;
+            long sigeventAddress = memory.baseAddress() + 128;
+            long newValueAddress = memory.baseAddress() + 256;
+            long currentValueAddress = memory.baseAddress() + 384;
+            long invalidAddress = memory.endAddress();
+
+            setSyscall(state, SYS_TIMER_CREATE, CLOCK_THREAD_CPUTIME_ID, 0, timerIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TIMER_CREATE, CLOCK_MONOTONIC, 0, invalidAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_TIMER_CREATE, CLOCK_MONOTONIC, invalidAddress, timerIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            memory.writeInt(sigeventAddress + SIGEVENT_SIGNAL_NUMBER_OFFSET, 0);
+            memory.writeInt(sigeventAddress + SIGEVENT_NOTIFY_OFFSET, SIGEV_SIGNAL);
+            setSyscall(state, SYS_TIMER_CREATE, CLOCK_MONOTONIC, sigeventAddress, timerIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            memory.writeInt(sigeventAddress + SIGEVENT_SIGNAL_NUMBER_OFFSET, -1);
+            memory.writeInt(sigeventAddress + SIGEVENT_NOTIFY_OFFSET, SIGEV_NONE);
+            setSyscall(state, SYS_TIMER_CREATE, CLOCK_MONOTONIC, sigeventAddress, timerIdAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            int timerId = memory.readInt(timerIdAddress);
+
+            setSyscall(state, SYS_TIMER_SETTIME, 99, 0, newValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TIMER_SETTIME, timerId, 2, newValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TIMER_SETTIME, timerId, 0, invalidAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            writeItimerspec(memory, newValueAddress, 0, 1_000_000_000L, 1, 0);
+            setSyscall(state, SYS_TIMER_SETTIME, timerId, 0, newValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            writeItimerspec(memory, newValueAddress, 0, 0, 0, 0);
+            setSyscall(state, SYS_TIMER_SETTIME, timerId, 0, newValueAddress, invalidAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_TIMER_GETTIME, timerId, invalidAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_TIMER_GETTIME, 99, currentValueAddress, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TIMER_GETOVERRUN, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_TIMER_DELETE, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies deterministic `sysinfo` memory, load, and process metadata.
     @Test
     public void sysinfoReportsSyntheticSystemMetadata() {
@@ -12674,11 +12838,6 @@ public final class GuestSyscallsTest {
                     SYS_IO_SUBMIT,
                     SYS_IO_CANCEL,
                     SYS_IO_GETEVENTS,
-                    SYS_TIMER_CREATE,
-                    SYS_TIMER_GETTIME,
-                    SYS_TIMER_GETOVERRUN,
-                    SYS_TIMER_SETTIME,
-                    SYS_TIMER_DELETE,
                     SYS_RT_SIGSUSPEND,
                     SYS_RT_SIGTIMEDWAIT,
                     SYS_RT_SIGQUEUEINFO,
@@ -14360,6 +14519,24 @@ public final class GuestSyscallsTest {
             long valueNanoseconds) {
         writeTimespec(memory, address + ITIMERSPEC_INTERVAL_OFFSET, intervalSeconds, intervalNanoseconds);
         writeTimespec(memory, address + ITIMERSPEC_VALUE_OFFSET, valueSeconds, valueNanoseconds);
+    }
+
+    /// Asserts one Linux RISC-V 64-bit `struct itimerspec` in guest memory.
+    private static void assertItimerspec(
+            Memory memory,
+            long address,
+            long intervalSeconds,
+            long intervalNanoseconds,
+            long valueSeconds,
+            long valueNanoseconds) {
+        assertEquals(intervalSeconds, memory.readLong(address + ITIMERSPEC_INTERVAL_OFFSET));
+        assertEquals(
+                intervalNanoseconds,
+                memory.readLong(address + ITIMERSPEC_INTERVAL_OFFSET + Long.BYTES));
+        assertEquals(valueSeconds, memory.readLong(address + ITIMERSPEC_VALUE_OFFSET));
+        assertEquals(
+                valueNanoseconds,
+                memory.readLong(address + ITIMERSPEC_VALUE_OFFSET + Long.BYTES));
     }
 
     /// Writes one regular tar entry with explicit Linux metadata to an open archive.

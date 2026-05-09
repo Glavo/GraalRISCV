@@ -1458,6 +1458,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Linux `TIMER_ABSTIME`.
     protected static final long TIMER_ABSTIME = 1;
 
+    /// Linux flags accepted by `timer_settime`.
+    protected static final long SUPPORTED_POSIX_TIMER_SETTIME_FLAGS = TIMER_ABSTIME;
+
     /// Linux `TFD_TIMER_ABSTIME`.
     protected static final long TFD_TIMER_ABSTIME = 1;
 
@@ -1502,6 +1505,21 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// The byte size of Linux RISC-V 64-bit `struct itimerspec`.
     protected static final int ITIMERSPEC_SIZE = TIMESPEC_SIZE * 2;
+
+    /// The `sigev_signo` byte offset inside Linux RISC-V 64-bit `struct sigevent`.
+    protected static final int SIGEVENT_SIGNAL_NUMBER_OFFSET = Long.BYTES;
+
+    /// The `sigev_notify` byte offset inside Linux RISC-V 64-bit `struct sigevent`.
+    protected static final int SIGEVENT_NOTIFY_OFFSET = Long.BYTES + Integer.BYTES;
+
+    /// The byte size needed to read common Linux RISC-V 64-bit `struct sigevent` header fields.
+    protected static final int SIGEVENT_HEADER_SIZE = SIGEVENT_NOTIFY_OFFSET + Integer.BYTES;
+
+    /// Linux `SIGEV_SIGNAL`.
+    protected static final int SIGEV_SIGNAL = 0;
+
+    /// Linux `SIGEV_NONE`.
+    protected static final int SIGEV_NONE = 1;
 
     /// The number of nanoseconds in one second.
     protected static final long NANOSECONDS_PER_SECOND = 1_000_000_000L;
@@ -1982,6 +2000,9 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
     /// Elapsed guest time when each interval timer was last armed.
     protected final long[] intervalTimerStartMicroseconds = new long[ITIMER_COUNT];
+
+    /// Process-local POSIX timers indexed by Linux kernel timer id.
+    protected final ArrayList<@Nullable TimerFile> posixTimers = new ArrayList<>();
 
     /// Creates the default process name used by `PR_GET_NAME`.
     protected static byte[] initialProcessName() {
@@ -2820,6 +2841,141 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
 
         writeItimerspec(currentValueAddress, openFile.timerFile().currentSpec());
         return 0;
+    }
+
+    /// Creates an in-memory Linux POSIX timer and writes its kernel timer id.
+    protected long timerCreate(long clockId, long sigeventAddress, long timerIdAddress) {
+        if (!isSupportedPosixTimerClock(clockId)) {
+            return EINVAL;
+        }
+
+        long sigeventError = validateTimerSigevent(sigeventAddress);
+        if (sigeventError != 0) {
+            return sigeventError;
+        }
+        if (!memory.isBacked(timerIdAddress, Integer.BYTES)) {
+            return EFAULT;
+        }
+
+        int timerId = addPosixTimer(new TimerFile(clockId, false, this::timerfdClockNanoseconds, null));
+        memory.writeInt(timerIdAddress, timerId);
+        return 0;
+    }
+
+    /// Arms, rearms, or disarms a Linux POSIX timer.
+    protected long timerSettime(long timerId, long flags, long newValueAddress, long oldValueAddress) {
+        if ((flags & ~SUPPORTED_POSIX_TIMER_SETTIME_FLAGS) != 0) {
+            return EINVAL;
+        }
+
+        @Nullable TimerFile timer = posixTimer(timerId);
+        if (timer == null) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(newValueAddress, ITIMERSPEC_SIZE)
+                || (oldValueAddress != 0 && !memory.isBacked(oldValueAddress, ITIMERSPEC_SIZE))) {
+            return EFAULT;
+        }
+
+        long intervalSeconds = memory.readLong(newValueAddress + ITIMERSPEC_INTERVAL_OFFSET + TIMESPEC_SECONDS_OFFSET);
+        long intervalNanoseconds =
+                memory.readLong(newValueAddress + ITIMERSPEC_INTERVAL_OFFSET + TIMESPEC_NANOSECONDS_OFFSET);
+        long valueSeconds = memory.readLong(newValueAddress + ITIMERSPEC_VALUE_OFFSET + TIMESPEC_SECONDS_OFFSET);
+        long valueNanoseconds =
+                memory.readLong(newValueAddress + ITIMERSPEC_VALUE_OFFSET + TIMESPEC_NANOSECONDS_OFFSET);
+        if (!isValidTimespec(intervalSeconds, intervalNanoseconds)
+                || !isValidTimespec(valueSeconds, valueNanoseconds)) {
+            return EINVAL;
+        }
+
+        TimerFileSpec oldSpec = timer.setTime(
+                (flags & TIMER_ABSTIME) != 0,
+                timespecToSaturatedNanoseconds(intervalSeconds, intervalNanoseconds),
+                timespecToSaturatedNanoseconds(valueSeconds, valueNanoseconds));
+        if (oldValueAddress != 0) {
+            writeItimerspec(oldValueAddress, oldSpec);
+        }
+        return 0;
+    }
+
+    /// Writes the current Linux POSIX timer configuration.
+    protected long timerGettime(long timerId, long currentValueAddress) {
+        @Nullable TimerFile timer = posixTimer(timerId);
+        if (timer == null) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(currentValueAddress, ITIMERSPEC_SIZE)) {
+            return EFAULT;
+        }
+
+        writeItimerspec(currentValueAddress, timer.currentSpec());
+        return 0;
+    }
+
+    /// Reports the POSIX timer overrun count for a timer without delivered signals.
+    protected long timerGetoverrun(long timerId) {
+        return posixTimer(timerId) == null ? EINVAL : 0;
+    }
+
+    /// Deletes a Linux POSIX timer.
+    protected long timerDelete(long timerId) {
+        if (timerId < 0 || timerId != (int) timerId) {
+            return EINVAL;
+        }
+
+        synchronized (posixTimers) {
+            int index = (int) timerId;
+            if (index >= posixTimers.size() || posixTimers.get(index) == null) {
+                return EINVAL;
+            }
+            posixTimers.set(index, null);
+            return 0;
+        }
+    }
+
+    /// Validates a Linux POSIX timer notification request.
+    protected long validateTimerSigevent(long sigeventAddress) {
+        if (sigeventAddress == 0) {
+            return 0;
+        }
+        if (!memory.isBacked(sigeventAddress, SIGEVENT_HEADER_SIZE)) {
+            return EFAULT;
+        }
+
+        int signalNumber = memory.readInt(sigeventAddress + SIGEVENT_SIGNAL_NUMBER_OFFSET);
+        int notify = memory.readInt(sigeventAddress + SIGEVENT_NOTIFY_OFFSET);
+        return switch (notify) {
+            case SIGEV_NONE -> 0;
+            case SIGEV_SIGNAL -> isTimerSignalNumber(signalNumber) ? 0 : EINVAL;
+            default -> EINVAL;
+        };
+    }
+
+    /// Stores a Linux POSIX timer and returns its kernel timer id.
+    protected int addPosixTimer(TimerFile timer) {
+        synchronized (posixTimers) {
+            for (int index = 0; index < posixTimers.size(); index++) {
+                if (posixTimers.get(index) == null) {
+                    posixTimers.set(index, timer);
+                    return index;
+                }
+            }
+
+            posixTimers.add(timer);
+            return posixTimers.size() - 1;
+        }
+    }
+
+    /// Returns the POSIX timer for a Linux kernel timer id.
+    protected @Nullable TimerFile posixTimer(long timerId) {
+        if (timerId < 0 || timerId != (int) timerId) {
+            return null;
+        }
+
+        synchronized (posixTimers) {
+            int index = (int) timerId;
+            return index < posixTimers.size() ? posixTimers.get(index) : null;
+        }
     }
 
     /// Writes a Linux RISC-V 64-bit `struct itimerspec` from nanosecond timer fields.
@@ -9804,6 +9960,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         procEnvironmentBytes = new byte[0];
         procExecutablePath = executablePath == null ? "/" : executablePath;
         futexWaiters.clear();
+        posixTimers.clear();
         state.guestThread().resetForExec();
         setProcessNameFromExecutablePath(executablePath);
     }
@@ -10269,6 +10426,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns true when a signal number is zero or a regular Linux signal.
     protected static boolean isValidSignalNumber(long signalNumber) {
         return signalNumber == 0 || (signalNumber >= MIN_SIGNAL_NUMBER && signalNumber <= MAX_SIGNAL_NUMBER);
+    }
+
+    /// Returns true when a signal number can be used by a POSIX timer notification.
+    protected static boolean isTimerSignalNumber(long signalNumber) {
+        return signalNumber >= MIN_SIGNAL_NUMBER && signalNumber <= MAX_SIGNAL_NUMBER;
     }
 
     /// Returns the Linux `sigset_t` bit for a signal number.
@@ -11109,6 +11271,11 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
     /// Returns true when `timerfd_create` accepts the supplied Linux clock id.
     protected static boolean isSupportedTimerfdClock(long clockId) {
         return clockId == CLOCK_REALTIME || clockId == CLOCK_MONOTONIC || clockId == CLOCK_BOOTTIME;
+    }
+
+    /// Returns true when `timer_create` accepts the supplied Linux clock id.
+    protected static boolean isSupportedPosixTimerClock(long clockId) {
+        return isSupportedTimerfdClock(clockId);
     }
 
     /// Returns true when the Linux clock id represents a wall-clock source.
@@ -14110,14 +14277,14 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
         }
     }
 
-    /// Stores the user-visible configuration of one Linux `timerfd` timer.
+    /// Stores the user-visible configuration of one Linux timer object.
     ///
     /// @param intervalNanoseconds the periodic interval, or zero for a one-shot timer
     /// @param valueNanoseconds the remaining time before the next expiration, or zero when disarmed
     protected record TimerFileSpec(long intervalNanoseconds, long valueNanoseconds) {
     }
 
-    /// Stores the timer state for one Linux `timerfd` open-file description.
+    /// Stores arming and expiration state for one Linux timer object.
     protected static final class TimerFile {
         /// The Linux clock id used by this timer.
         private final long clockId;
@@ -14163,7 +14330,7 @@ public sealed abstract class GuestSyscalls implements AutoCloseable
             return nonblocking;
         }
 
-        /// Returns the current `itimerspec` values visible through `timerfd_gettime`.
+        /// Returns the current `itimerspec` values visible through timer query syscalls.
         synchronized TimerFileSpec currentSpec() {
             long nowNanoseconds = clockNanoseconds();
             refresh(nowNanoseconds);
