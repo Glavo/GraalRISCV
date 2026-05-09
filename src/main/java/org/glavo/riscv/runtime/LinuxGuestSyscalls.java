@@ -1364,6 +1364,157 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
         return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
     }
 
+    /// Suspends the calling thread until a deterministic pending signal is observed.
+    protected long rtSigsuspend(RiscVThreadState state, long maskAddress, long sigsetSize) {
+        if (sigsetSize != KERNEL_SIGSET_SIZE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(maskAddress, KERNEL_SIGSET_SIZE)) {
+            return EFAULT;
+        }
+
+        GuestThread thread = state.guestThread();
+        long oldMask = thread.signalMask();
+        long suspendMask = memory.readLong(maskAddress) & ~UNBLOCKABLE_SIGNAL_MASK;
+        thread.setSignalMask(suspendMask);
+        try {
+            synchronized (childProcessLock) {
+                while (true) {
+                    if (processExitRequested || threadFailure != null) {
+                        return EINTR;
+                    }
+                    if (childSignalPending && (suspendMask & signalMask(SIGNAL_CHILD)) == 0) {
+                        if (firstExitedChildProcessLocked() != null) {
+                            childSignalPending = false;
+                            return EINTR;
+                        }
+                        childSignalPending = false;
+                    }
+                    childProcessLock.wait();
+                }
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return EINTR;
+        } finally {
+            thread.setSignalMask(oldMask);
+        }
+    }
+
+    /// Waits for deterministic process-level signals matching a Linux signal set.
+    protected long rtSigtimedwait(long setAddress, long infoAddress, long timeoutAddress, long sigsetSize) {
+        if (sigsetSize != KERNEL_SIGSET_SIZE) {
+            return EINVAL;
+        }
+        if (!memory.isBacked(setAddress, KERNEL_SIGSET_SIZE)) {
+            return EFAULT;
+        }
+        if (infoAddress != 0 && !memory.isBacked(infoAddress, SIGNAL_INFO_SIZE)) {
+            return EFAULT;
+        }
+
+        long timeoutNanoseconds = -1;
+        if (timeoutAddress != 0) {
+            if (!memory.isBacked(timeoutAddress, TIMESPEC_SIZE)) {
+                return EFAULT;
+            }
+            long seconds = memory.readLong(timeoutAddress + TIMESPEC_SECONDS_OFFSET);
+            long nanoseconds = memory.readLong(timeoutAddress + TIMESPEC_NANOSECONDS_OFFSET);
+            if (!isValidTimespec(seconds, nanoseconds)) {
+                return EINVAL;
+            }
+            timeoutNanoseconds = timespecToSaturatedNanoseconds(seconds, nanoseconds);
+        }
+
+        long waitMask = memory.readLong(setAddress) & ~UNBLOCKABLE_SIGNAL_MASK;
+        return waitForQueuedSignal(waitMask, infoAddress, timeoutNanoseconds);
+    }
+
+    /// Accepts queued process-directed signal requests for known guest processes.
+    protected long rtSigqueueinfo(long processId, long signalNumber, long infoAddress) {
+        long signalError = queuedSignalInfoError(signalNumber, infoAddress);
+        if (signalError != 0) {
+            return signalError;
+        }
+        return processId == process.id() || isKnownChildProcessId(processId) ? 0 : ESRCH;
+    }
+
+    /// Accepts queued thread-directed signal requests for known guest threads.
+    protected long rtTgsigqueueinfo(long processId, long threadId, long signalNumber, long infoAddress) {
+        long signalError = queuedSignalInfoError(signalNumber, infoAddress);
+        if (signalError != 0) {
+            return signalError;
+        }
+        if (processId != process.id()) {
+            return ESRCH;
+        }
+        return isKnownGuestThreadId(threadId) ? 0 : ESRCH;
+    }
+
+    /// Returns an errno for an invalid queued signal request, or zero when it is valid.
+    protected long queuedSignalInfoError(long signalNumber, long infoAddress) {
+        if (!isValidSignalNumber(signalNumber)) {
+            return EINVAL;
+        }
+        if (signalNumber != 0 && !memory.isBacked(infoAddress, SIGNAL_INFO_SIZE)) {
+            return EFAULT;
+        }
+        return 0;
+    }
+
+    /// Waits for one queued signal, or reports `EAGAIN` when a finite timeout elapses.
+    protected long waitForQueuedSignal(long waitMask, long infoAddress, long timeoutNanoseconds) {
+        long startNanoseconds = timeSource.monotonicNanoseconds();
+        long remainingNanoseconds = timeoutNanoseconds;
+        synchronized (childProcessLock) {
+            while (true) {
+                if (processExitRequested || threadFailure != null) {
+                    return EINTR;
+                }
+                if (childSignalPending && (waitMask & signalMask(SIGNAL_CHILD)) != 0) {
+                    @Nullable ChildProcess child = firstExitedChildProcessLocked();
+                    if (child != null) {
+                        childSignalPending = false;
+                        if (infoAddress != 0) {
+                            writeWaitidSignalInfo(infoAddress, child);
+                        }
+                        return SIGNAL_CHILD;
+                    }
+                    childSignalPending = false;
+                }
+
+                if (timeoutNanoseconds == 0) {
+                    return EAGAIN;
+                }
+
+                try {
+                    if (timeoutNanoseconds < 0) {
+                        childProcessLock.wait();
+                    } else {
+                        waitForQueuedSignalTimeout(remainingNanoseconds);
+                        long elapsedNanoseconds = Math.max(0, timeSource.monotonicNanoseconds() - startNanoseconds);
+                        remainingNanoseconds = timeoutNanoseconds > elapsedNanoseconds
+                                ? timeoutNanoseconds - elapsedNanoseconds
+                                : 0;
+                        if (remainingNanoseconds == 0) {
+                            return EAGAIN;
+                        }
+                    }
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    return EINTR;
+                }
+            }
+        }
+    }
+
+    /// Waits on the child-process monitor for at most the supplied nanosecond count.
+    protected void waitForQueuedSignalTimeout(long nanoseconds) throws InterruptedException {
+        childProcessLock.wait(
+                nanoseconds / NANOSECONDS_PER_MILLISECOND,
+                (int) (nanoseconds % NANOSECONDS_PER_MILLISECOND));
+    }
+
     /// Reads Linux capability sets for the current process.
     protected long capget(long headerAddress, long dataAddress) {
         CapabilityHeader header = readCapabilityHeader(headerAddress);
@@ -6879,9 +7030,6 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                         state.register(12),
                         state.register(13)));
                 case SYS_TIMER_DELETE -> state.setRegister(10, timerDelete(state.register(10)));
-                case SYS_RT_SIGSUSPEND -> state.setRegister(10, ENOSYS);
-                case SYS_RT_SIGTIMEDWAIT -> state.setRegister(10, ENOSYS);
-                case SYS_RT_SIGQUEUEINFO -> state.setRegister(10, ENOSYS);
                 case SYS_MQ_OPEN -> state.setRegister(10, ENOSYS);
                 case SYS_MQ_UNLINK -> state.setRegister(10, ENOSYS);
                 case SYS_MQ_TIMEDSEND -> state.setRegister(10, ENOSYS);
@@ -6906,7 +7054,6 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                 case SYS_SET_MEMPOLICY -> state.setRegister(10, ENOSYS);
                 case SYS_MIGRATE_PAGES -> state.setRegister(10, ENOSYS);
                 case SYS_MOVE_PAGES -> state.setRegister(10, ENOSYS);
-                case SYS_RT_TGSIGQUEUEINFO -> state.setRegister(10, ENOSYS);
                 case SYS_KCMP -> state.setRegister(10, ENOSYS);
                 case SYS_IO_PGETEVENTS -> state.setRegister(10, ENOSYS);
                 case SYS_SETXATTR -> state.setRegister(10, setxattr(
@@ -7267,6 +7414,10 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
             case SYS_TKILL -> state.setRegister(10, tkill(state.register(10), state.register(11)));
             case SYS_TGKILL -> state.setRegister(10, tgkill(state.register(10), state.register(11), state.register(12)));
             case SYS_SIGALTSTACK -> state.setRegister(10, sigaltstack(state, state.register(10), state.register(11)));
+            case SYS_RT_SIGSUSPEND -> state.setRegister(10, rtSigsuspend(
+                    state,
+                    state.register(10),
+                    state.register(11)));
             case SYS_RT_SIGACTION -> state.setRegister(10, rtSigaction(
                     state.register(10),
                     state.register(11),
@@ -7274,6 +7425,20 @@ public final class LinuxGuestSyscalls extends GuestSyscalls {
                     state.register(13)));
             case SYS_RT_SIGPROCMASK -> state.setRegister(10, rtSigprocmask(
                     state,
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_RT_SIGTIMEDWAIT -> state.setRegister(10, rtSigtimedwait(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12),
+                    state.register(13)));
+            case SYS_RT_SIGQUEUEINFO -> state.setRegister(10, rtSigqueueinfo(
+                    state.register(10),
+                    state.register(11),
+                    state.register(12)));
+            case SYS_RT_TGSIGQUEUEINFO -> state.setRegister(10, rtTgsigqueueinfo(
                     state.register(10),
                     state.register(11),
                     state.register(12),

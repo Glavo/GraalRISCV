@@ -8985,6 +8985,220 @@ public final class GuestSyscallsTest {
         }
     }
 
+    /// Verifies `rt_sigtimedwait` consumes a pending blocked child-exit signal.
+    @Test
+    public void rtSigtimedwaitConsumesPendingChildSignal() throws Exception {
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                childState.syscalls().recordThreadExit(childState, 33);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long signalSetAddress = memory.baseAddress() + 64;
+            long infoAddress = memory.baseAddress() + 128;
+            long timeoutAddress = memory.baseAddress() + 384;
+            long statusAddress = memory.baseAddress() + 512;
+
+            memory.writeLong(signalSetAddress, signalMask(SIGCHLD));
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, signalSetAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+            childExited.get(5, TimeUnit.SECONDS);
+
+            writeTimespec(memory, timeoutAddress, 0, 0);
+            setSyscall(state, SYS_RT_SIGTIMEDWAIT, signalSetAddress, infoAddress, timeoutAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(SIGCHLD, state.register(10));
+            assertWaitidSiginfo(memory, infoAddress, childProcessId, 33);
+
+            setSyscall(state, SYS_RT_SIGTIMEDWAIT, signalSetAddress, infoAddress, timeoutAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+            assertEquals(33 << 8, memory.readInt(statusAddress));
+        }
+    }
+
+    /// Verifies `rt_sigsuspend` wakes for a pending child signal and restores the caller mask.
+    @Test
+    public void rtSigsuspendWakesForPendingChildSignalAndRestoresMask() throws Exception {
+        CountDownLatch releaseChild = new CountDownLatch(1);
+        CompletableFuture<Void> childExited = new CompletableFuture<>();
+        GuestThreadRunner runner = (childMemory, childState) -> {
+            try {
+                if (!releaseChild.await(5, TimeUnit.SECONDS)) {
+                    throw new AssertionError("Timed out waiting to release child process");
+                }
+                childState.syscalls().recordThreadExit(childState, 0);
+                childExited.complete(null);
+            } catch (Throwable throwable) {
+                childExited.completeExceptionally(throwable);
+                childState.syscalls().recordThreadFailure(throwable);
+            }
+        };
+
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 4096);
+             GuestSyscalls syscalls = new LinuxGuestSyscalls(
+                     memory,
+                     new ByteArrayInputStream(new byte[0]),
+                     new ByteArrayOutputStream(),
+                     new ByteArrayOutputStream(),
+                     memory.baseAddress(),
+                     ".",
+                     TimeSource.system(),
+                     runner)) {
+            RiscVThreadState state = new RiscVThreadState(
+                    memory,
+                    0,
+                    false,
+                    ElfImage.ABSENT_ADDRESS,
+                    ElfImage.ABSENT_ADDRESS,
+                    syscalls);
+            long blockedSetAddress = memory.baseAddress() + 64;
+            long suspendSetAddress = memory.baseAddress() + 128;
+            long oldSetAddress = memory.baseAddress() + 192;
+            long statusAddress = memory.baseAddress() + 256;
+
+            memory.writeLong(blockedSetAddress, signalMask(SIGCHLD));
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_BLOCK, blockedSetAddress, 0, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_CLONE, 0, 0, 0, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            long childProcessId = state.register(10);
+            assertTrue(childProcessId > 0);
+
+            releaseChild.countDown();
+            childExited.get(5, TimeUnit.SECONDS);
+
+            memory.writeLong(suspendSetAddress, 0);
+            setSyscall(state, SYS_RT_SIGSUSPEND, suspendSetAddress, KERNEL_SIGSET_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINTR, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGPROCMASK, SIG_SETMASK, 0, oldSetAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+            assertEquals(signalMask(SIGCHLD), memory.readLong(oldSetAddress));
+
+            setSyscall(state, SYS_WAIT4, childProcessId, statusAddress, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(childProcessId, state.register(10));
+            assertEquals(0, memory.readInt(statusAddress));
+        }
+    }
+
+    /// Verifies RT signal wait and queue syscalls validate pointers, masks, and targets.
+    @Test
+    public void rtSignalWaitAndQueueSyscallsValidateArguments() {
+        try (Memory memory = new Memory(Memory.DEFAULT_BASE_ADDRESS, 1024)) {
+            RiscVThreadState state = state(memory, new ByteArrayInputStream(new byte[0]));
+            long signalSetAddress = memory.baseAddress() + 64;
+            long infoAddress = memory.baseAddress() + 128;
+            long timeoutAddress = memory.baseAddress() + 384;
+            long invalidAddress = memory.endAddress();
+
+            memory.writeLong(signalSetAddress, signalMask(SIGUSR1));
+            writeTimespec(memory, timeoutAddress, 0, 0);
+
+            setSyscall(state, SYS_RT_SIGTIMEDWAIT, signalSetAddress, 0, timeoutAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EAGAIN, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGTIMEDWAIT, signalSetAddress, 0, timeoutAddress, KERNEL_SIGSET_SIZE - 1);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGTIMEDWAIT, invalidAddress, 0, timeoutAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGTIMEDWAIT, signalSetAddress, invalidAddress, timeoutAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            writeTimespec(memory, timeoutAddress, 0, 1_000_000_000L);
+            setSyscall(state, SYS_RT_SIGTIMEDWAIT, signalSetAddress, 0, timeoutAddress, KERNEL_SIGSET_SIZE);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGSUSPEND, invalidAddress, KERNEL_SIGSET_SIZE, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGSUSPEND, signalSetAddress, KERNEL_SIGSET_SIZE - 1, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGQUEUEINFO, 1, SIGUSR1, infoAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGQUEUEINFO, 1, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGQUEUEINFO, 99, 0, 0);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGQUEUEINFO, 1, 65, infoAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+
+            setSyscall(state, SYS_RT_SIGQUEUEINFO, 1, SIGUSR1, invalidAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EFAULT, state.register(10));
+
+            setSyscall(state, SYS_RT_TGSIGQUEUEINFO, 1, 1, SIGUSR1, infoAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(0, state.register(10));
+
+            setSyscall(state, SYS_RT_TGSIGQUEUEINFO, 99, 1, SIGUSR1, infoAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_RT_TGSIGQUEUEINFO, 1, 99, SIGUSR1, infoAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(ESRCH, state.register(10));
+
+            setSyscall(state, SYS_RT_TGSIGQUEUEINFO, 1, 1, 65, infoAddress);
+            state.syscalls().handle(state, TEST_PC);
+            assertEquals(EINVAL, state.register(10));
+        }
+    }
+
     /// Verifies `pidfd_open` creates a close-on-exec pidfd for the current process.
     @Test
     public void pidfdOpenSelfValidatesFlagsAndSignals() {
@@ -12838,9 +13052,6 @@ public final class GuestSyscallsTest {
                     SYS_IO_SUBMIT,
                     SYS_IO_CANCEL,
                     SYS_IO_GETEVENTS,
-                    SYS_RT_SIGSUSPEND,
-                    SYS_RT_SIGTIMEDWAIT,
-                    SYS_RT_SIGQUEUEINFO,
                     SYS_MQ_OPEN,
                     SYS_MQ_UNLINK,
                     SYS_MQ_TIMEDSEND,
@@ -12865,7 +13076,6 @@ public final class GuestSyscallsTest {
                     SYS_SET_MEMPOLICY,
                     SYS_MIGRATE_PAGES,
                     SYS_MOVE_PAGES,
-                    SYS_RT_TGSIGQUEUEINFO,
                     SYS_KCMP,
                     SYS_IO_PGETEVENTS,
                     SYS_FANOTIFY_INIT,
